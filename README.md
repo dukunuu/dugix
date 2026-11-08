@@ -519,7 +519,24 @@ indents), a `Choice` list that marks right and wrong once you pick, and an
 answer you reveal on request. “Grade my answers” sends everything, code
 included, for review.
 Click controls directly, or press `F2` to focus the newest visible panel and use
-Tab/arrows + Enter. `Esc`/`Ctrl+C` returns to chat without changing your draft.
+Tab/arrows + Enter (inside a text field, arrows move the caret). `Esc` returns to chat without changing your draft; `Ctrl+C`
+copies a field's selected text, or returns to chat when nothing is selected.
+Text fields have rounded borders, persistent labels, placeholders and inline
+help/errors. Click to place the caret, drag or Shift+arrows to select, use
+Home/End or Ctrl/Alt+arrows to navigate, and Ctrl+A/Z/Y to select all/undo/redo.
+Tab/Shift+Tab move between controls; PageUp/PageDown scroll the chat except inside a
+textarea. `Input` is single-line (Enter advances);
+`Textarea` is soft-wrapped prose (Enter inserts a newline), distinct from the code editor:
+
+```nexus-ui
+root = Panel("Contact", [email, notes, save])
+$email = ""
+$notes = ""
+email = Input($email, "Email", {required: true, email: true}, "you@example.com")
+notes = Textarea($notes, "What do you need?", 4, "Describe your goal", null, "Include any constraints")
+save = Buttons([Button("Review message", @ToAssistant("Contact request"), true)])
+```
+
 New panels display progressively but activate only when the reply finishes.
 Text reflows at the available width; streamed previews never execute actions.
 Validation happens automatically, with no preflight tool call.
@@ -535,7 +552,9 @@ non-control text/borders; invalid or unsupported definitions retain a source fal
 This is a bounded declarative renderer, not an HTML/JavaScript/script runtime.
 See the [model-facing schema](crates/core/assets/prompts/interactive-ui.md) for supported
 controls and expressions. Complex applications may still need scripts or `/apps`;
-the web client and inline web-app previews remain unchanged.
+the web client and inline web-app previews remain unchanged. The
+[interaction research](docs/interactive-ui-research.md) explains the ChatGPT-inspired
+patterns and terminal-specific limits.
 
 ### Documents and presentations
 

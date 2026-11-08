@@ -3,14 +3,21 @@
 use anyhow::{Result, bail, ensure};
 use serde_json::{Map, Value};
 
-pub(super) fn check(rules: &Map<String, Value>) -> Result<()> {
+/// Check rule shapes; length rules may not exceed the field's byte `limit`.
+pub(super) fn check(rules: &Map<String, Value>, limit: usize) -> Result<()> {
     for (key, value) in rules {
         match key.as_str() {
             "required" | "email" | "url" | "numeric" => {
                 ensure!(value.is_boolean(), "{key} must be boolean");
             }
             "minLength" | "maxLength" => {
-                ensure!(value.as_u64().is_some_and(|n| n <= 1024), "invalid {key}");
+                ensure!(
+                    value
+                        .as_u64()
+                        .and_then(|n| usize::try_from(n).ok())
+                        .is_some_and(|n| n <= limit),
+                    "invalid {key}: at most {limit}"
+                );
             }
             "min" | "max" => ensure!(value.as_f64().is_some_and(f64::is_finite), "invalid {key}"),
             "pattern" => {

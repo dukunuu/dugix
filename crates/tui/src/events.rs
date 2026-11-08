@@ -143,7 +143,9 @@ async fn run_loop(
                 }
             } => app.poll_studio(),
             maybe = reader.next() => match maybe {
-                Some(Ok(Event::Key(k))) if k.kind == KeyEventKind::Press => {
+                Some(Ok(Event::Key(k))) if k.kind == KeyEventKind::Press
+                    || (k.kind == KeyEventKind::Repeat && app.popup == Popup::InteractiveUi
+                        && app.interactive.input_focused()) => {
                     // A failed action is reported, never fatal: one bad db
                     // write or editor exit must not kill in-flight streams.
                     if let Err(e) = on_key(app, terminal, k) {
@@ -390,6 +392,9 @@ fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
         && !key.modifiers.contains(KeyModifiers::SHIFT)
         && key.code == KeyCode::Char('c')
     {
+        if app.popup == Popup::InteractiveUi && crate::interactive::copy_selection(app, false) {
+            return Ok(());
+        }
         return ctrl_c(app);
     }
     app.quit_armed_at = None;
@@ -1462,6 +1467,70 @@ mod tests {
         assert_eq!(app.popup, Popup::None);
         assert!(!app.should_quit);
         assert_eq!(app.input_text(), "keep this draft");
+    }
+
+    #[test]
+    fn interactive_text_editing_routes_modified_keys_without_touching_the_composer() {
+        let mut app = test_app();
+        app.clipboard = None;
+        app.set_input("keep this draft");
+        let source = "root = Panel('Contact', [Input($name, 'Name'), Textarea($notes, 'Notes', 3)])\n$name = 'Ada'\n$notes = ''";
+        app.messages.push(nexus_core::db::Message {
+            role: "assistant".into(),
+            content: format!("```nexus-ui\n{source}\n```"),
+            model: None,
+            reasoning: None,
+            tokens: None,
+            secs: None,
+            cost: None,
+            phrase: None,
+            persona: None,
+            created_at: None,
+        });
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 40)).unwrap();
+        terminal.draw(|frame| ui::render(frame, &mut app)).unwrap();
+        handle_key(&mut app, KeyCode::F(2).into()).unwrap();
+        handle_key(&mut app, KeyCode::Left.into()).unwrap();
+        handle_key(&mut app, KeyCode::Char('X').into()).unwrap();
+        let contents =
+            |app: &mut AppView, terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>| {
+                terminal.draw(|frame| ui::render(frame, app)).unwrap();
+                terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .map(|cell| cell.symbol())
+                    .collect::<String>()
+            };
+        assert!(contents(&mut app, &mut terminal).contains("AdXa"));
+        handle_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT)).unwrap();
+        app.paste("é");
+        assert!(contents(&mut app, &mut terminal).contains("Adéa"));
+        handle_key(&mut app, ctrl('a')).unwrap();
+        handle_key(&mut app, ctrl('c')).unwrap();
+        assert_eq!(
+            app.popup,
+            Popup::InteractiveUi,
+            "copy selection must not close the panel"
+        );
+        handle_key(&mut app, ctrl('x')).unwrap();
+        app.paste("Lin");
+        assert!(contents(&mut app, &mut terminal).contains("Lin"));
+        handle_key(&mut app, KeyCode::Tab.into()).unwrap();
+        app.paste("line one");
+        handle_key(&mut app, KeyCode::Enter.into()).unwrap();
+        app.paste("line two");
+        let before = app.scroll;
+        handle_key(&mut app, KeyCode::PageUp.into()).unwrap();
+        assert_eq!(app.scroll, before, "editing must not scroll the transcript");
+        let rendered = contents(&mut app, &mut terminal);
+        assert!(rendered.contains("line one") && rendered.contains("line two"));
+        handle_key(&mut app, KeyCode::Esc.into()).unwrap();
+        assert_eq!(app.popup, Popup::None);
+        assert_eq!(app.input_text(), "keep this draft");
+        assert_eq!(app.messages.len(), 1);
     }
 
     #[test]

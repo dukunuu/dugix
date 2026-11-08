@@ -141,12 +141,7 @@ fn refined_cards_and_badges_use_theme_surfaces_not_hardcoded_colors() {
     let source = "root = Panel(\"Demo\", [Hero(\"Explore\", null, \"NEW\"), Cards([Card(\"Stay curious\", \"One small discovery every day\", \"TIP\")])])";
     let session = Session::new(Document::parse(source).unwrap()).unwrap();
     let theme = Theme::default();
-    let entry = Entry {
-        session: Ok(session),
-        focus: 0,
-        error: String::new(),
-        scroll: 0,
-    };
+    let entry = Entry::new(Ok(session));
     let (buffer, _) = entry.canvas(80, &theme, false, true);
     assert!(
         buffer

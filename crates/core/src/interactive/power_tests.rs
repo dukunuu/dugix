@@ -244,7 +244,11 @@ fn every_input_rule_reports_inline_and_blocks_reads_but_not_reset() {
         assert_eq!(s.value("v"), "");
     }
     assert!(
-        validation::check(&serde_json::from_value(json!({"pattern":"^(a|b)+$"})).unwrap()).is_err()
+        validation::check(
+            &serde_json::from_value(json!({"pattern":"^(a|b)+$"})).unwrap(),
+            1024
+        )
+        .is_err()
     );
     assert_eq!(
         validation::error(&serde_json::from_value(json!({"email":true})).unwrap(), ""),

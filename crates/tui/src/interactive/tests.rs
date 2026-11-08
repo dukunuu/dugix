@@ -3,7 +3,7 @@ use ratatui::{Terminal, backend::TestBackend};
 
 pub(crate) const COUNTER: &str =
     include_str!("../../../core/tests/fixtures/interactive/counter.json");
-fn placement(source: &str, owner: usize) -> Placement {
+pub(super) fn placement(source: &str, owner: usize) -> Placement {
     Placement {
         row: 0,
         width: 70,
@@ -14,7 +14,11 @@ fn placement(source: &str, owner: usize) -> Placement {
         complete: true,
     }
 }
-fn draw(widgets: &mut Widgets, placements: &[Placement], top: usize) -> Terminal<TestBackend> {
+pub(super) fn draw(
+    widgets: &mut Widgets,
+    placements: &[Placement],
+    top: usize,
+) -> Terminal<TestBackend> {
     let mut terminal = Terminal::new(TestBackend::new(80, 32)).unwrap();
     terminal
         .draw(|f| {
@@ -141,12 +145,7 @@ fn measured_reservations_match_the_drawn_card_at_actual_widths() {
                 crate::ui::markdown::MdColors::default(),
             );
             let p = &rendered.widgets[0];
-            let entry = Entry {
-                session: Ok(Session::new(Document::parse(&source).unwrap()).unwrap()),
-                focus: 0,
-                error: String::new(),
-                scroll: 0,
-            };
+            let entry = Entry::new(Ok(Session::new(Document::parse(&source).unwrap()).unwrap()));
             let (canvas, hits) = entry.canvas(
                 u16::try_from(width).unwrap(),
                 &Theme::default(),

@@ -6,12 +6,7 @@ fn doc(frame: &str, accent: &str, view: Value) -> String {
     json!({"version":1,"title":"Overview","frame":frame,"accent":accent,"view":view}).to_string()
 }
 fn entry(source: &str) -> Entry {
-    Entry {
-        session: Ok(Session::new(Document::parse(source).unwrap()).unwrap()),
-        focus: 0,
-        error: String::new(),
-        scroll: 0,
-    }
+    Entry::new(Ok(Session::new(Document::parse(source).unwrap()).unwrap()))
 }
 fn buffer_text(buffer: &Buffer) -> Vec<String> {
     (0..buffer.area.height)

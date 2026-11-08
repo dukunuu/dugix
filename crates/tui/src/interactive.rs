@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use unicode_width::UnicodeWidthStr;
 
 mod components;
+mod inputs;
 pub(crate) mod live;
 mod persist;
 mod practice;
@@ -92,7 +93,7 @@ impl Placement {
 #[derive(Clone)]
 enum Control {
     Action((usize, usize)),
-    Input(String),
+    Input(usize),
     Toggle(String),
     Select(usize),
     Stepper(usize),
@@ -109,13 +110,45 @@ enum Control {
     Reveal(usize),
     Load,
 }
+/// No modifier other than Shift: the key may drive panel shortcuts.
+fn plain(key: &KeyEvent) -> bool {
+    key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
+}
+/// Hand the terminal caret to a focused text field (for IMEs), replacing
+/// the reversed-video cell the editor drew there.
+fn place_caret(f: &mut Frame, position: Position) {
+    f.buffer_mut()[position].modifier.remove(Modifier::REVERSED);
+    f.set_cursor_position(position);
+}
 struct Entry {
     session: Result<Session, String>,
     focus: usize,
     error: String,
     scroll: u16,
+    inputs: std::cell::RefCell<inputs::Inputs>,
 }
 impl Entry {
+    fn new(session: Result<Session, String>) -> Self {
+        Self {
+            session,
+            focus: 0,
+            error: String::new(),
+            scroll: 0,
+            inputs: std::cell::RefCell::default(),
+        }
+    }
+    /// The focused text field, as its node index in the document.
+    fn focused_input(&self) -> Option<usize> {
+        match self.controls().get(self.focus) {
+            Some(Control::Input(node)) => Some(*node),
+            _ => None,
+        }
+    }
+    /// Terminal caret of the focused field on a canvas this entry just drew.
+    fn input_caret(&self, buffer: &Buffer) -> Option<Position> {
+        self.focused_input()?;
+        self.inputs.borrow().caret(buffer)
+    }
     /// Layouts are display-only: never focusable, pinned or counted as panels.
     fn is_interactive(&self) -> bool {
         self.session
@@ -135,7 +168,7 @@ impl Entry {
                             .enumerate()
                             .map(|(item, _)| Control::Action((index, item)))
                             .collect(),
-                        Node::Input { key, .. } => vec![Control::Input(key.clone())],
+                        Node::Input { .. } => vec![Control::Input(index)],
                         Node::Toggle { key, .. } => vec![Control::Toggle(key.clone())],
                         Node::Checklist { items } => items
                             .iter()
@@ -452,19 +485,20 @@ impl Entry {
             }
             return;
         }
-        let Some(Control::Input(key)) = control else {
+        let Some(Control::Input(node)) = control else {
             return;
         };
-        let mut value = session.value(&key);
-        if backspace {
-            value.pop();
+        let result = if backspace {
+            self.inputs
+                .get_mut()
+                .key(session, node, KeyCode::Backspace.into())
+                .map(|_| ())
         } else {
-            value.extend(text.chars().filter(|ch| !ch.is_control()).take(1024));
-        }
-        match session.input(&key, value) {
-            Ok(()) => self.error.clear(),
-            Err(error) => self.error = error.to_string(),
-        }
+            self.inputs.get_mut().paste(session, node, text)
+        };
+        self.error = result
+            .err()
+            .map_or_else(String::new, |error| error.to_string());
     }
     fn canvas(
         &self,
@@ -480,19 +514,28 @@ impl Entry {
         let height = self.session.as_ref().map_or(6, |_| card_height(&regions));
         let choices = self.choices().len().min(9);
         let pending_url = self.session.as_ref().ok().and_then(Session::pending_url);
-        let hint = if let Some(status) = self.session.as_ref().ok().and_then(Session::data_hint) {
-            status.into()
-        } else if let Some(url) = pending_url {
-            persist::url_prompt(url, usize::from(width))
-        } else if choices > 0 {
-            format!("1–{choices} pick · F2 keyboard")
-        } else if focused && practice::editing(self).is_some() {
-            "typing edits the code · Esc stop editing".into()
-        } else if focused {
-            "Tab next · Enter press · Esc done".into()
-        } else {
-            "F2 keyboard".into()
-        };
+        let hint =
+            if let Some(status) = self.session.as_ref().ok().and_then(Session::data_hint) {
+                status.into()
+            } else if let Some(url) = pending_url {
+                persist::url_prompt(url, usize::from(width))
+            } else if focused && practice::editing(self).is_some() {
+                "typing edits the code · Esc stop editing".into()
+            } else if focused && let Some(node) = self.focused_input() {
+                if self.session.as_ref().is_ok_and(|session| {
+                    session.document().node(node).is_some_and(Node::is_textarea)
+                }) {
+                    "Enter newline · Tab next · Esc done".into()
+                } else {
+                    "Tab next · Shift+arrows select · Ctrl+A all · Esc done".into()
+                }
+            } else if choices > 0 {
+                format!("1–{choices} pick · F2 keyboard")
+            } else if focused {
+                "Tab next · Enter press · Esc done".into()
+            } else {
+                "F2 keyboard".into()
+            };
         let mut buffer = self.session.as_ref().map_or_else(
             |_| card_buffer(width, height, "UI unavailable", theme, &hint),
             |session| document_buffer(width, height, session, theme, &hint),
@@ -524,6 +567,11 @@ impl Entry {
             can_send,
             &mut buffer,
         );
+        if focused && let Some(node) = self.focused_input() {
+            self.inputs
+                .borrow_mut()
+                .draw_focused(session, node, width, theme, &mut buffer);
+        }
         if session.needs_data_load() {
             let rect = Rect::new(
                 2,
@@ -630,52 +678,15 @@ impl Entry {
                     ));
                     control += items.len();
                 }
-                Node::Input { key, label, .. } => {
-                    let selected = focus == Some(control);
-                    let label = clipped(
-                        &safe(label),
-                        (region.width / 2).min(region.width.saturating_sub(18)),
+                Node::Input { .. } => {
+                    inputs::render_static(
+                        node,
+                        session,
+                        region,
+                        theme,
+                        focus == Some(control),
+                        buffer,
                     );
-                    let offset = u16::try_from(label.width())
-                        .unwrap_or(0)
-                        .saturating_add(2)
-                        .min(region.width.saturating_sub(16));
-                    Paragraph::new(label)
-                        .style(Style::default().fg(theme.fg_dim))
-                        .render(region, buffer);
-                    let value = format!(
-                        "{}{}",
-                        safe(&session.value(key)),
-                        if selected { "▁" } else { "" }
-                    );
-                    let scroll = if selected {
-                        u16::try_from(value.width())
-                            .unwrap_or(u16::MAX)
-                            .saturating_sub(region.width - offset)
-                    } else {
-                        0
-                    };
-                    Paragraph::new(value)
-                        .scroll((0, scroll))
-                        .style(
-                            control_style(theme, selected)
-                                .bg(theme.raised)
-                                .add_modifier(Modifier::UNDERLINED)
-                                .underline_color(if selected {
-                                    theme.accent
-                                } else {
-                                    theme.border_dim
-                                }),
-                        )
-                        .render(
-                            Rect::new(region.x + offset, region.y, region.width - offset, 1),
-                            buffer,
-                        );
-                    if let Some(error) = session.input_error(key) {
-                        Paragraph::new(error)
-                            .style(Style::default().fg(theme.error))
-                            .render(Rect::new(region.x, region.y + 1, region.width, 1), buffer);
-                    }
                     hits.push((region, control));
                     control += 1;
                 }
@@ -1161,12 +1172,8 @@ fn branch_regions(session: &Session, nodes: &[Node], area: Rect) -> Vec<Rect> {
                         .max()
                         .unwrap_or(1)
                 }
-                Node::Input { rules, .. } => {
-                    if rules.is_empty() {
-                        1
-                    } else {
-                        2
-                    }
+                Node::Input { rules, hint, .. } => {
+                    node.rows() + u16::from(!rules.is_empty() || !hint.is_empty())
                 }
                 _ => layout_lines(node, session, width, &Theme::default()).map_or_else(
                     || node.rows(),
@@ -2355,6 +2362,45 @@ impl Widgets {
     pub(crate) fn is_focused(&self) -> bool {
         self.focused.is_some()
     }
+    /// Whether a text field owns editing keys (including terminal key repeats).
+    pub(crate) fn input_focused(&self) -> bool {
+        self.focused
+            .as_ref()
+            .and_then(|key| self.entries.get(key))
+            .is_some_and(|entry| entry.focused_input().is_some())
+    }
+    /// Whether the focused field is a multiline textarea, which keeps
+    /// PageUp/PageDown for itself; other panels let them scroll the transcript.
+    fn textarea_focused(&self) -> bool {
+        self.focused
+            .as_ref()
+            .and_then(|key| self.entries.get(key))
+            .is_some_and(|entry| {
+                entry.focused_input().is_some_and(|node| {
+                    entry.session.as_ref().is_ok_and(|session| {
+                        session.document().node(node).is_some_and(Node::is_textarea)
+                    })
+                })
+            })
+    }
+    /// Copy (or cut) the focused field's nonempty selection.
+    fn take_selection(&mut self, cut: bool) -> Option<String> {
+        let entry = self
+            .focused
+            .as_ref()
+            .and_then(|key| self.entries.get_mut(key))?;
+        let node = entry.focused_input()?;
+        let Ok(session) = &mut entry.session else {
+            return None;
+        };
+        match entry.inputs.get_mut().selection(session, node, cut) {
+            Ok(text) => text,
+            Err(error) => {
+                entry.error = error.to_string();
+                None
+            }
+        }
+    }
     /// Return keyboard ownership without resetting document state.
     pub fn unfocus(&mut self) {
         self.focused = None;
@@ -2402,15 +2448,7 @@ impl Widgets {
         if let Ok(session) = &mut session {
             self.restore_message_panel(key, session);
         }
-        self.entries.insert(
-            key.clone(),
-            Entry {
-                session,
-                focus: 0,
-                error: String::new(),
-                scroll: 0,
-            },
-        );
+        self.entries.insert(key.clone(), Entry::new(session));
     }
     fn reconcile_patches(&mut self, placements: &[Placement]) {
         self.index_occurrences(placements);
@@ -2448,15 +2486,7 @@ impl Widgets {
                 .and_then(Session::new)
             })()
             .map_err(|error: anyhow::Error| error.to_string());
-            self.entries.insert(
-                key,
-                Entry {
-                    session: result,
-                    focus: 0,
-                    error: String::new(),
-                    scroll: 0,
-                },
-            );
+            self.entries.insert(key, Entry::new(result));
         }
     }
     /// Keep transcript reservations in sync with locally edited, wrapping content.
@@ -2618,6 +2648,23 @@ impl Widgets {
                         canvas[(x, u16::try_from(offset).unwrap_or(0))].clone();
                 }
             }
+            if active
+                && focused
+                && let Some(caret) = self
+                    .entries
+                    .get(&key)
+                    .and_then(|entry| entry.input_caret(&canvas))
+                && usize::from(caret.y) >= first
+                && usize::from(caret.y) < end.saturating_sub(usize::from(pinned))
+            {
+                place_caret(
+                    f,
+                    Position::new(
+                        viewport.x + 2 + caret.x,
+                        viewport.y + u16::try_from(row + usize::from(caret.y) - top).unwrap_or(0),
+                    ),
+                );
+            }
             if active && placement.complete {
                 let limit = end.saturating_sub(usize::from(pinned));
                 let screen = |rect: Rect, low: usize, high: usize| {
@@ -2672,17 +2719,34 @@ impl Widgets {
         screen: Rect,
         can_send: bool,
     ) -> (bool, Option<String>) {
-        if mouse.kind != MouseEventKind::Down(MouseButton::Left) || self.screen != Some(screen) {
+        let dragging = mouse.kind == MouseEventKind::Drag(MouseButton::Left);
+        if (!dragging && mouse.kind != MouseEventKind::Down(MouseButton::Left))
+            || self.screen != Some(screen)
+        {
             return (false, None);
         }
         let pos = Position::new(mouse.column, mouse.row);
-        let Some(hit) = self
-            .hits
-            .iter()
-            .rev()
-            .find(|hit| hit.rect.contains(pos))
-            .cloned()
-        else {
+        // A drag keeps selecting in the focused field even after the pointer
+        // leaves it; the field clamps the position to its edge.
+        let hit = if dragging {
+            self.hits
+                .iter()
+                .rev()
+                .find(|hit| {
+                    self.focused.as_ref() == Some(&hit.key)
+                        && self.entries.get(&hit.key).is_some_and(|entry| {
+                            hit.control == Some(entry.focus) && entry.focused_input().is_some()
+                        })
+                })
+                .cloned()
+        } else {
+            self.hits
+                .iter()
+                .rev()
+                .find(|hit| hit.rect.contains(pos))
+                .cloned()
+        };
+        let Some(hit) = hit else {
             return (false, None);
         };
         if let Some((url, index)) = hit.image {
@@ -2717,8 +2781,20 @@ impl Widgets {
                 true,
                 entry.activate(index, can_send, self.answer_blocked.is_none()),
             ),
-            Some((index, Control::Input(_))) => {
+            Some((index, Control::Input(node))) => {
                 entry.focus = index;
+                if let Ok(session) = &entry.session {
+                    entry.inputs.get_mut().click(
+                        session,
+                        node,
+                        Position::new(
+                            mouse.column.saturating_sub(hit.rect.x),
+                            mouse.row.saturating_sub(hit.rect.y) + hit.row_offset,
+                        ),
+                        hit.rect.width,
+                        dragging || mouse.modifiers.contains(KeyModifiers::SHIFT),
+                    );
+                }
                 self.focused = Some(hit.key);
                 (true, None)
             }
@@ -2826,13 +2902,14 @@ impl Widgets {
     }
     #[allow(clippy::too_many_lines)]
     fn handle_key(&mut self, key: KeyEvent, can_send: bool) -> (bool, Option<String>) {
-        if key.kind != KeyEventKind::Press
-            || !key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
-        {
+        if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
             return (false, None);
         }
         if self.pending_url_focused() {
-            if matches!(key.code, KeyCode::Enter | KeyCode::Esc | KeyCode::Char('a')) {
+            if key.kind == KeyEventKind::Press
+                && plain(&key)
+                && matches!(key.code, KeyCode::Enter | KeyCode::Esc | KeyCode::Char('a'))
+            {
                 self.resolve_url(key.code);
             }
             return (false, None);
@@ -2841,12 +2918,13 @@ impl Widgets {
             .focused
             .as_ref()
             .and_then(|key| self.entries.get_mut(key))
+            && plain(&key)
             && let Some(node) = practice::editing(entry)
             && practice::editor_key(entry, node, key.code)
         {
             return (false, None);
         }
-        if matches!(key.code, KeyCode::Esc | KeyCode::F(2)) {
+        if matches!(key.code, KeyCode::Esc | KeyCode::F(2)) && plain(&key) {
             self.unfocus();
             return (true, None);
         }
@@ -2861,6 +2939,24 @@ impl Widgets {
             session.interact_data(std::time::Instant::now());
         }
         let controls = entry.controls();
+        if let Some(node) = entry.focused_input()
+            && let Ok(session) = &mut entry.session
+        {
+            match entry.inputs.get_mut().key(session, node, key) {
+                Ok(true) => {
+                    entry.error.clear();
+                    return (false, None);
+                }
+                Err(error) => {
+                    entry.error = error.to_string();
+                    return (false, None);
+                }
+                Ok(false) => {}
+            }
+        }
+        if !plain(&key) {
+            return (false, None);
+        }
         let count = controls.len() + 1;
         entry.focus %= count;
         if entry.focus == controls.len() && matches!(key.code, KeyCode::Enter | KeyCode::Char(' '))
@@ -2957,7 +3053,15 @@ impl Widgets {
             return;
         };
         let (canvas, hits) = entry.canvas(area.width, app_theme, true, can_send);
-        if let Some((rect, _)) = hits.iter().find(|(_, control)| *control == entry.focus) {
+        let caret = entry.input_caret(&canvas);
+        let target = caret
+            .map(|caret| Rect::new(caret.x, caret.y, 1, 1))
+            .or_else(|| {
+                hits.iter()
+                    .find(|(_, control)| *control == entry.focus)
+                    .map(|(rect, _)| *rect)
+            });
+        if let Some(rect) = target {
             if rect.bottom() > entry.scroll + area.height {
                 entry.scroll = rect.bottom().saturating_sub(area.height);
             }
@@ -2973,6 +3077,15 @@ impl Widgets {
             for x in 0..area.width {
                 f.buffer_mut()[(area.x + x, area.y + y)] = canvas[(x, y + entry.scroll)].clone();
             }
+        }
+        if let Some(caret) = caret
+            && caret.y >= entry.scroll
+            && caret.y < entry.scroll + area.height
+        {
+            place_caret(
+                f,
+                Position::new(area.x + caret.x, area.y + caret.y - entry.scroll),
+            );
         }
         let scroll = entry.scroll;
         let shown = |rect: Rect| {
@@ -3165,13 +3278,36 @@ fn open_pending_image(app: &mut AppView) {
         app.open_widget_image(&pending, back);
     }
 }
+/// Copy/cut a nonempty field selection to the clipboard. Returns false when
+/// nothing is selected, so Ctrl+C can still back out of the panel.
+pub(crate) fn copy_selection(app: &mut AppView, cut: bool) -> bool {
+    let Some(text) = app.interactive.take_selection(cut) else {
+        return false;
+    };
+    let status = crate::composer::copy_to_clipboard(&mut app.clipboard, &text);
+    if !status.is_empty() {
+        app.push_status(status);
+    }
+    true
+}
+
 /// Focused keyboard events stay inside the selected document.
 pub fn key(app: &mut AppView, event: KeyEvent) {
-    if event.kind != KeyEventKind::Press
-        || !event.modifiers.difference(KeyModifiers::SHIFT).is_empty()
+    if !matches!(event.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+        return;
+    }
+    if event
+        .modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER)
+        && matches!(event.code, KeyCode::Char('c' | 'C' | 'x' | 'X'))
+        && copy_selection(app, matches!(event.code, KeyCode::Char('x' | 'X')))
     {
         return;
     }
+    if !app.interactive.input_focused() && !plain(&event) {
+        return;
+    }
+    let textarea_focused = app.interactive.textarea_focused();
     let table_focused = app
         .interactive
         .focused
@@ -3179,14 +3315,14 @@ pub fn key(app: &mut AppView, event: KeyEvent) {
         .and_then(|key| app.interactive.entries.get(key))
         .is_some_and(|entry| matches!(entry.controls().get(entry.focus), Some(Control::Table(node, _)) if entry.session.as_ref().is_ok_and(|session| matches!(session.document().node(*node), Some(Node::Table { page_size: Some(_), .. })))));
     match event.code {
-        KeyCode::PageUp if !table_focused => {
+        KeyCode::PageUp if !table_focused && !textarea_focused => {
             app.scroll = app
                 .scroll
                 .saturating_add(app.history_page())
                 .min(app.max_scroll);
             return;
         }
-        KeyCode::PageDown if !table_focused => {
+        KeyCode::PageDown if !table_focused && !textarea_focused => {
             app.scroll = app.scroll.saturating_sub(app.history_page());
             return;
         }
@@ -3310,3 +3446,7 @@ mod extended_tests;
 #[cfg(test)]
 #[path = "interactive/practice_tests.rs"]
 mod practice_tests;
+
+#[cfg(test)]
+#[path = "interactive/input_tests.rs"]
+mod input_tests;

@@ -266,12 +266,10 @@ fn nook() -> Value {
 }
 
 fn entry(data: &Value) -> Entry {
-    Entry {
-        session: Ok(Session::new(Document::parse(&data.to_string()).unwrap()).unwrap()),
-        focus: 0,
-        error: String::new(),
-        scroll: 0,
-    }
+    Entry::new(Ok(Session::new(
+        Document::parse(&data.to_string()).unwrap(),
+    )
+    .unwrap()))
 }
 
 fn rows(buffer: &Buffer) -> Vec<String> {

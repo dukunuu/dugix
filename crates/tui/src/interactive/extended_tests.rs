@@ -6,12 +6,10 @@ fn source(node: Value, state: Value) -> String {
     json!({"version":1,"title":"Demo","view":[node],"state":state,"actions":{"save":[{"op":"send","text":"Name={{name}}"}]}}).to_string()
 }
 fn entry(node: Value, state: Value) -> Entry {
-    Entry {
-        session: Ok(Session::new(Document::parse(&source(node, state)).unwrap()).unwrap()),
-        focus: 0,
-        error: String::new(),
-        scroll: 0,
-    }
+    Entry::new(Ok(Session::new(
+        Document::parse(&source(node, state)).unwrap(),
+    )
+    .unwrap()))
 }
 fn content(entry: &Entry, width: u16) -> (String, Buffer) {
     let (canvas, _) = entry.canvas(width, &Theme::default(), true, true);
@@ -161,12 +159,26 @@ fn form_submit_snapshots_and_actions_respect_required_values_and_send_readiness(
         json!({"type":"form","title":"Profile","fields":[{"type":"input","key":"name","label":"Name","rules":{"required":true}}],"submit_label":"Save","action":"save"}),
         json!({"name":""}),
     );
-    assert_eq!(content(&entry, 36).0, "Profile\nName\n\n[ Save ↵ ]");
+    let top = format!("╭ Name * {}╮", "─".repeat(22));
+    let bottom = format!("╰{}╯", "─".repeat(30));
+    assert_eq!(
+        content(&entry, 36).0,
+        format!(
+            "Profile\n{top}\n│{}│\n{bottom}\nRequired\n[ Save ↵ ]",
+            " ".repeat(30)
+        )
+    );
     assert!(entry.activate(0, true, true).is_none());
     assert!(entry.error.contains("required"));
     entry.focus = 1;
     entry.edit("Ada", false);
-    assert_eq!(content(&entry, 36).0, "Profile\nName  Ada▁\n\n[ Save ↵ ]");
+    assert_eq!(
+        content(&entry, 36).0,
+        format!(
+            "Profile\n{top}\n│ Ada{}│\n{bottom}\n\n[ Save ↵ ]",
+            " ".repeat(26)
+        )
+    );
     assert!(entry.activate(0, false, true).is_none());
     assert!(entry.error.contains("draft"));
     assert_eq!(

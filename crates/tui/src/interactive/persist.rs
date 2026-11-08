@@ -406,15 +406,7 @@ pub(crate) fn open_pinned(app: &mut AppView, reference: &str) -> bool {
             saved: Some(pinned.record.clone()),
         },
     );
-    widgets.entries.insert(
-        key.clone(),
-        Entry {
-            session: Ok(session),
-            focus: 0,
-            error: String::new(),
-            scroll: 0,
-        },
-    );
+    widgets.entries.insert(key.clone(), Entry::new(Ok(session)));
     widgets.focused = Some(key);
     widgets.expanded = true;
     widgets.pinned = false;

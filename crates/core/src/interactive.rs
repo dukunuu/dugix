@@ -351,7 +351,7 @@ pub enum Node {
         #[serde(default = "three")]
         rows: u16,
     },
-    /// A single-line string state editor.
+    /// A bounded string state editor, single-line or multiline.
     Input {
         /// Bound string state field.
         key: String,
@@ -360,6 +360,15 @@ pub enum Node {
         /// Optional bounded validation rules.
         #[serde(default)]
         rules: Map<String, Value>,
+        /// Example text shown only while the field is empty.
+        #[serde(default)]
+        placeholder: String,
+        /// Persistent help text, replaced by a validation error when invalid.
+        #[serde(default)]
+        hint: String,
+        /// Visible text rows: one for an input, two to eight for a textarea.
+        #[serde(default = "one")]
+        rows: u16,
     },
     /// Aligned label/value template pairs.
     Kv {
@@ -592,6 +601,25 @@ fn image_ok(src: Option<&str>, alt: Option<&str>) -> Result<()> {
     Ok(())
 }
 impl Node {
+    /// Whether this text field is a multiline `Textarea` rather than a
+    /// single-line `Input`. Every frontend branches on this one predicate.
+    #[must_use]
+    pub fn is_textarea(&self) -> bool {
+        matches!(self, Self::Input { rows, .. } if *rows > 1)
+    }
+
+    /// Byte budget for a text field's value; `None` for other nodes.
+    #[must_use]
+    pub fn input_limit(&self) -> Option<usize> {
+        matches!(self, Self::Input { .. }).then(|| {
+            if self.is_textarea() {
+                MAX_TEXT
+            } else {
+                MAX_VALUE
+            }
+        })
+    }
+
     fn is_display(&self) -> bool {
         matches!(
             self,
@@ -649,7 +677,8 @@ impl Node {
                     3
                 }
             }
-            Self::Stats { .. } | Self::Input { .. } => 3,
+            Self::Stats { .. } => 3,
+            Self::Input { rows, .. } => rows.saturating_add(2),
             Self::Kv { items } => u16::try_from(items.len()).unwrap_or(u16::MAX),
             Self::Table {
                 rows_data,
@@ -892,7 +921,9 @@ fn check_shape(value: &Value, path: &str, shape: &str, errors: &mut Vec<CheckErr
                 ("node", "divider") => "label:?string",
                 ("node", "text") => "text:string tone:tone rows:u16",
                 ("node", "buttons") => "items:button[] rows:u16",
-                ("node", "input") => "key:string label:string rules:value",
+                ("node", "input") => {
+                    "key:string label:string rules:value placeholder:string hint:string rows:u16"
+                }
                 ("node", "toggle") => "key:string label:string",
                 ("node", "kv") => "items:pair[]",
                 ("node", "table") => {
@@ -1512,6 +1543,8 @@ impl Document {
             Node::Steps { .. } | Node::Timeline { .. } => 16,
             Node::Hero { .. } | Node::Code { .. } | Node::Choice { .. } => 9,
             Node::Editor { .. } => 17,
+            // Up to eight text rows plus the field's two border rows.
+            Node::Input { .. } => 10,
             Node::Tabs { .. } | Node::Accordion { .. } | Node::Form { .. } | Node::Quiz { .. } => {
                 45
             }
@@ -1570,8 +1603,18 @@ impl Document {
                 binding_ok(&self.state, key, Value::is_number)?;
                 controls += 1;
             }
-            Node::Input { key, label, rules } => {
-                validation::check(rules)?;
+            Node::Input {
+                key,
+                label,
+                rules,
+                placeholder,
+                hint,
+                rows,
+            } => {
+                validation::check(rules, node.input_limit().unwrap_or(MAX_VALUE))?;
+                ensure!((1..=8).contains(rows), "input rows must be 1–8");
+                line_ok(placeholder, 120)?;
+                line_ok(hint, 120)?;
                 ensure!(
                     self.state.contains_key(key),
                     "unknown input field: {key} — valid: {}",
@@ -1581,10 +1624,10 @@ impl Document {
                 let value = &self.state[key];
                 if let Some(values) = value.get("random").and_then(Value::as_array) {
                     for value in values {
-                        input_ok(value)?;
+                        input_ok(value, node)?;
                     }
                 } else {
-                    input_ok(value)?;
+                    input_ok(value, node)?;
                 }
                 controls += 1;
             }
@@ -2224,7 +2267,6 @@ impl Session {
                 .any(|n| matches!(n, Node::Input { key: k, .. } if k == key)),
             "not an input field"
         );
-        line_ok(&value, MAX_VALUE)?;
         let mut next = self.state.clone();
         next.insert(key.into(), Value::String(value));
         self.bindings_ok(&mut next)?;
@@ -2677,17 +2719,20 @@ impl Session {
         self.field_error(key, &self.state)
     }
     fn field_error(&self, key: &str, state: &Map<String, Value>) -> Option<String> {
-        self.document.view.iter().find_map(|node| match node {
-            Node::Input {
-                key: field, rules, ..
-            } if field == key => {
-                validation::error(rules, state.get(key).and_then(Value::as_str).unwrap_or(""))
-            }
-            _ => None,
-        })
+        self.document
+            .all_nodes()
+            .into_iter()
+            .find_map(|node| match node {
+                Node::Input {
+                    key: field, rules, ..
+                } if field == key => {
+                    validation::error(rules, state.get(key).and_then(Value::as_str).unwrap_or(""))
+                }
+                _ => None,
+            })
     }
     fn validate_form(&self, state: &Map<String, Value>) -> Result<()> {
-        for node in &self.document.view {
+        for node in self.document.all_nodes() {
             if let Node::Input { key, .. } = node
                 && let Some(error) = self.field_error(key, state)
             {
@@ -2721,7 +2766,7 @@ impl Session {
     fn bindings_ok(&self, state: &mut Map<String, Value>) -> Result<()> {
         for node in self.document.all_nodes() {
             match node {
-                Node::Input { key, .. } => input_ok(&state[key])?,
+                Node::Input { key, .. } => input_ok(&state[key], node)?,
                 Node::Toggle { key, .. } => {
                     boolean(&state[key])?;
                 }
@@ -2901,11 +2946,16 @@ fn line_ok(text: &str, max: usize) -> Result<()> {
     ensure!(!text.contains('\n'), "expected single-line UI text");
     Ok(())
 }
-fn input_ok(value: &Value) -> Result<()> {
+fn input_ok(value: &Value, field: &Node) -> Result<()> {
     let text = value
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("input state must be a string"))?;
-    line_ok(text, MAX_VALUE)
+    let limit = field.input_limit().unwrap_or(MAX_VALUE);
+    if field.is_textarea() {
+        text_ok(text, limit)
+    } else {
+        line_ok(text, limit)
+    }
 }
 fn scalar_ok(value: &Value) -> Result<()> {
     match value {
@@ -3207,6 +3257,10 @@ mod power_tests;
 mod check_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "interactive/input_tests.rs"]
+mod input_tests;
 
 #[cfg(test)]
 #[path = "interactive/answer_tests.rs"]

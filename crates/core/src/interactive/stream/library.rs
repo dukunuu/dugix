@@ -26,7 +26,12 @@ const COMPONENTS: &[(&str, &str, &str)] = &[
     ("Divider", "divider", "label?"),
     ("Buttons", "buttons", "items rows?"),
     ("Button", "", "label action primary? body? image? alt?"),
-    ("Input", "input", "key label rules?"),
+    ("Input", "input", "key label rules? placeholder? hint?"),
+    (
+        "Textarea",
+        "input",
+        "key label rows? placeholder? rules? hint?",
+    ),
     ("Kv", "kv", "items"),
     (
         "Table",
@@ -544,6 +549,9 @@ impl Context<'_> {
         if !tag.is_empty() && *tag != "panel" {
             object.insert("type".into(), (*tag).into());
         }
+        if name == "Textarea" {
+            object.insert("rows".into(), 4.into());
+        }
         for (index, field) in fields.iter().enumerate() {
             let key = field.trim_end_matches('?');
             let optional = field.ends_with('?');
@@ -572,6 +580,8 @@ impl Context<'_> {
                     | "time"
                     | "name"
                     | "explain"
+                    | "placeholder"
+                    | "hint"
             ) || matches!((name, key), ("Stat", "value") | ("Question", "answer"))
             {
                 self.template(expression, depth + 1)?
@@ -606,6 +616,14 @@ impl Context<'_> {
                 value = id.into();
             }
             object.insert(key.into(), value);
+        }
+        if name == "Textarea" {
+            ensure!(
+                object["rows"]
+                    .as_u64()
+                    .is_some_and(|rows| (2..=8).contains(&rows)),
+                "Textarea rows must be 2–8"
+            );
         }
         Ok(Some(object.into()))
     }

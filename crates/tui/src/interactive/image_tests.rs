@@ -34,12 +34,7 @@ fn text_of(buffer: &Buffer) -> Vec<String> {
 }
 
 fn canvas(source: &str) -> Vec<String> {
-    let entry = Entry {
-        session: Ok(Session::new(Document::parse(source).unwrap()).unwrap()),
-        focus: 0,
-        error: String::new(),
-        scroll: 0,
-    };
+    let entry = Entry::new(Ok(Session::new(Document::parse(source).unwrap()).unwrap()));
     text_of(&entry.canvas(80, &Theme::default(), false, true).0)
 }
 

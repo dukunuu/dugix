@@ -16,10 +16,8 @@ fn source(days: i32) -> String {
 
 fn entry(source: &str) -> Entry {
     Entry {
-        session: Ok(Session::new(Document::parse(source).unwrap()).unwrap()),
         focus: 1,
-        error: String::new(),
-        scroll: 0,
+        ..Entry::new(Ok(Session::new(Document::parse(source).unwrap()).unwrap()))
     }
 }
 

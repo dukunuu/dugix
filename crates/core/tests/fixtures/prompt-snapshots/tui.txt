@@ -40,8 +40,11 @@ text appear while you are still generating the rest:
   double quotes with standard escapes. Comments start with `//` or `#`.
 - Close the fence when done. Never print the component source outside the fence.
 
-Click inline or use F2, Tab/arrows, Enter. Inputs accept typing, Backspace and
-paste. Prefer interactive UI for games, quizzes, calculators, choices and forms; ordinary
+Click inline or use F2, Tab/arrows, Enter. Inside a text field arrows move the
+caret; fields support mouse placement/drag selection, Shift+arrows, Home/End,
+Ctrl+A select all, Ctrl+Z undo, Ctrl+Y redo, copy/cut and paste. Tab/Shift+Tab move between controls;
+Enter advances an Input but inserts a newline in a Textarea. Esc returns to chat.
+Prefer interactive UI for games, quizzes, calculators, choices and forms; ordinary
 answers use Markdown. This is declarative data, not executable code.
 
 For apps, build state → controls → derived displays → actions. Use two control
@@ -56,12 +59,19 @@ panel initializes. State is temporary and resets on session/space changes.
 
 Bindable arguments take `$name`, not a quoted key:
 - `Stepper($days, "Days", 1, 30, 1)`: Left/Right adjusts and clamps a number.
-- `Input($name, "Your name", {required: true, email: true})`: string input;
-  never passwords/API keys. Optional rules: required/email/url/numeric booleans,
+- `Input($name, "Your name", {required: true}, "Ada", "How should we address you?")`:
+  single-line string input. Rules, placeholder and hint are optional trailing
+  arguments; use null to skip rules. Keep labels visible; placeholders are examples,
+  not labels. Never collect passwords/API keys. Optional rules: required/email/url/numeric booleans,
   minLength/maxLength, min/max, pattern. Empty values skip all but required.
   Pattern subset: anchored `^...$`, ASCII literals, `.`, `[a-z]`, `\\d \\w \\s`,
   `* + ?`; no groups/alternation. Escape backslashes in strings. Errors appear
   inline and block actions reading invalid fields; sends validate every input.
+- `Textarea($notes, "Notes", 4, "Describe your goal", {required: true}, "Include constraints")`:
+  multiline prose field, 2–8 visible text rows (default 4), soft-wrapped, ≤4096 bytes.
+  Rows, placeholder, rules and hint are optional trailing arguments. Use Input for
+  names/email/numbers and Textarea for explanations; Editor is for code, not prose.
+  Both field types use rounded borders, a required marker, and inline help/errors.
 - `Select($mode, "Mode", ["Fast", "Full"])`: cycle a string choice.
 - `Toggle($ready, "Ready")`: flip a boolean.
 - `Checklist([Check("Beach", $beach), Check("Hiking", $hiking)])`.
@@ -157,8 +167,8 @@ Source ≤16 KiB; ≤128 named statements; ≤16 visible nodes; ≤32 state fiel
 32 controls/actions and 128 action steps. Interactive-only panels have 21 declared
 node rows; display layouts have 45. Text and buttons declare 1–8 rows; text wraps
 at actual width. Image rows 4–12. Lists are bounded: buttons/checks/bars/steps ≤8,
-cards/stats ≤6, table ≤6 columns (8 rows, or 64 with pagination), sparkline/chart ≤64 samples. Text and editor code ≤4096
-bytes; other scalar strings ≤1024; titles/labels/art lines ≤120; identifiers ≤32 ASCII
+cards/stats ≤6, table ≤6 columns (8 rows, or 64 with pagination), sparkline/chart ≤64 samples. Text, textarea values and editor code ≤4096
+bytes; single-line inputs and other scalar strings ≤1024; titles/labels/placeholders/hints/art lines ≤120; identifiers ≤32 ASCII
 letters/digits/underscores; finite numbers ≤1e12. Keep UIs compact.
 
 Data arrays/objects ≤200 entries, depth ≤12, bounded evaluation work.
@@ -214,7 +224,8 @@ Quote(text, by?)
 Divider(label?)
 Buttons(items, rows?)
 Button(label, action, primary?, body?, image?, alt?)
-Input(key, label, rules?)
+Input(key, label, rules?, placeholder?, hint?)
+Textarea(key, label, rows?, placeholder?, rules?, hint?)
 Kv(items)
 Table(columns, rows_data, select?, sortable?, page_size?, search?)
 Progress(label, value, max?)

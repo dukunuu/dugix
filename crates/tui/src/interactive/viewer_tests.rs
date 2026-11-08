@@ -199,12 +199,7 @@ fn image_targets_line_up_with_the_drawn_images() {
     for source in documents {
         let session = Session::new(Document::parse(&source).unwrap()).unwrap();
         for width in [40u16, 80, 110] {
-            let entry = Entry {
-                session: Ok(Session::new(Document::parse(&source).unwrap()).unwrap()),
-                focus: 0,
-                error: String::new(),
-                scroll: 0,
-            };
+            let entry = Entry::new(Ok(Session::new(Document::parse(&source).unwrap()).unwrap()));
             let (buffer, _) = entry.canvas(width, &Theme::default(), false, true);
             let targets = image_targets(&session, width);
             let expected = document_images(session.document());

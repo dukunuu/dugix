@@ -99,12 +99,7 @@ async fn loading_and_loaded_query_panel_snapshots() {
     let now = Instant::now();
     session.load_data(now);
     let call = session.next_data_call(now, &mut 0).unwrap().unwrap();
-    let mut entry = Entry {
-        session: Ok(session),
-        focus: 0,
-        error: String::new(),
-        scroll: 0,
-    };
+    let mut entry = Entry::new(Ok(session));
     assert_eq!(snapshot(&entry), ["Defaults", "Loading data"]);
     let outcome = data::execute(
         &call,
