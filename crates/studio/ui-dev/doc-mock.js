@@ -110,6 +110,9 @@
           if (m.command === 'HistoryPreview') { const i = Number(m.id.slice(1)); return emit({ event: 'HistoryPreview', id: m.id, deck: null, doc: undo[i] }); }
           if (m.command === 'HistoryRestore') { const i = Number(m.id.slice(1)); const kept = undo[i]; undo.push(doc); redo.length = 0; doc = structuredClone(kept); sequence++; return emit(current()); }
           if (m.command === 'DocPages') return emit({ event: 'Pages', revision: revision(), pages: [1, 2, 3].map(n => ({ n, width: 595.28, height: 841.89, src: `/pages/${revision()}-${n}.png` })) });
+          // The source view: a rough Markdown rendering; applied text is kept for asserts.
+          if (m.command === 'DocSource') return emit({ event: 'DocSource', revision: revision(), markdown: doc.blocks.map(b => b.kind === 'title' ? `# ${b.text}` : b.kind === 'heading' ? `${'#'.repeat(b.level)} ${b.text}` : (b.text ?? '')).join('\n\n') + '\n' });
+          if (m.command === 'DocApplySource') { window.__mock.source = m.markdown; return emit(current()); }
           // A stand-in for tree-sitter: keywords in accent, double-quoted strings in accent2.
           if (m.command === 'Highlight') return emit({ event: 'Highlights', blocks: m.blocks.map(b => ({ id: b.id, spans: [
             ...[...b.text.matchAll(/\b(const|let|return)\b/g)].map(x => [x.index, x.index + x[0].length, 'accent']),

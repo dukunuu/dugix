@@ -418,6 +418,16 @@ impl Backend {
                 return Ok(self.doc_feedback_event(vec![]));
             }
             Command::DocApply { ops } => self.apply_ops(ops)?,
+            Command::DocSource {} => {
+                return Ok(Event::DocSource {
+                    markdown: doc::markdown::render(&self.session()?.doc),
+                    revision: self.session()?.doc.revision(),
+                });
+            }
+            Command::DocApplySource { markdown } => {
+                let next = doc::markdown::apply_source(&self.session()?.doc, &markdown)?;
+                self.replace_doc(next)?;
+            }
             Command::HistoryRestore { id } => {
                 let kept = self.history_doc(&id)?;
                 self.replace_doc(kept)?;
@@ -707,6 +717,8 @@ impl Backend {
             !matches!(
                 command,
                 Command::DocApply { .. }
+                    | Command::DocSource {}
+                    | Command::DocApplySource { .. }
                     | Command::DocApplyDesign { .. }
                     | Command::DocExport { .. }
                     | Command::DocCommentCreate { .. }
@@ -727,6 +739,7 @@ impl Backend {
         matches!(
             command,
             Command::DocApply { .. }
+                | Command::DocApplySource { .. }
                 | Command::DocApplyDesign { .. }
                 | Command::ApplyDesign { .. }
                 | Command::Undo {}

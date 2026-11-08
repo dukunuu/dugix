@@ -9,6 +9,7 @@ import { menusController } from './menus.js';
 import { toolbarController } from './toolbar.js';
 import { commentsController } from './comments.js';
 import { syntaxController } from './syntax.js';
+import { sourceController } from './source.js';
 import { glyph } from './glyphs.js';
 import * as M from './model.js';
 import * as E from './edits.js';
@@ -302,6 +303,7 @@ export function mount(shared) {
       // Edits still on their way (in flight or queued) stay visible.
       for (const item of [pending, ...queue]) if (item?.ops) { const next = M.applyOps(state.doc, item.ops); if (next) state.doc = next; }
       if (external) for (const id of event.changed || []) editor.discardDirty(id);
+      if (external) source.onExternal();
       editor.overlayDirty();
     }
     Object.assign(state, {
@@ -680,6 +682,7 @@ export function mount(shared) {
   moreItem('Version history', '', () => openSidebar('history'), 'narrow-only');
   moreItem('Design', '', () => openSidebar('design'), 'narrow-only');
   const pagesItem = moreItem('Page preview', '', () => setPreview(!state.preview));
+  const sourceItem = moreItem('Markdown source', '⇧⌘M', () => setSource(!source.open));
   moreItem('Save a copy…', '.doc.json', () => command({ command: 'SaveCopy' }));
   moreItem('Library', '⌘O', () => shared.library.show());
   overlay.append(exportPop, morePop);
@@ -695,6 +698,7 @@ export function mount(shared) {
     if (pop === morePop) {
       undoItem.disabled = !state.canUndo; redoItem.disabled = !state.canRedo;
       pagesItem.querySelector('.menu-label').textContent = state.preview ? 'Back to editing' : 'Page preview';
+      sourceItem.querySelector('.menu-label').textContent = source.open ? 'Back to editing' : 'Markdown source';
     }
     pop.hidden = false;
     button.setAttribute('aria-expanded', 'true');
@@ -721,7 +725,24 @@ export function mount(shared) {
   // -- page preview -------------------------------------------------------------------------------------------
 
   function requestPages() { command({ command: 'DocPages' }); }
+  /** Swap the page for the doc's Markdown source (and back, once it is applied). */
+  async function setSource(on) {
+    if (on === source.open) return;
+    if (on) {
+      if (state.preview) setPreview(false);
+      leaveVersion();
+      apply([]);
+      api.toolbar.hide();
+      page.hidden = true;
+      await source.show();
+    } else {
+      await source.hide();
+      page.hidden = false;
+      surface.focus({ preventScroll: true });
+    }
+  }
   function setPreview(on) {
+    if (on && source.open) return;
     if (on) leaveVersion();
     state.preview = on;
     page.hidden = on; previewPane.hidden = !on;
@@ -798,6 +819,9 @@ export function mount(shared) {
     if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); toast('Every change is saved to the doc file as you make it.'); return; }
     if (mod && ['=', '+', '-', '0'].includes(e.key)) { e.preventDefault(); setZoom(e.key === '0' ? 1.2 : state.zoom + (e.key === '-' ? -.1 : .1)); return; }
     if (mod && e.key === '\\') { e.preventDefault(); toggleOutline(); return; }
+    if (mod && e.shiftKey && e.key.toLowerCase() === 'm') { e.preventDefault(); setSource(!source.open); return; }
+    // The source view's own keys (vim's Esc among them) stay with it.
+    if (source.open) return;
     if (e.key === 'Escape') {
       if (state.preview) { e.preventDefault(); setPreview(false); return; }
       if (historyView) { e.preventDefault(); leaveVersion(); return; }
@@ -845,6 +869,9 @@ export function mount(shared) {
   api.comments = commentsController(api);
   const comments = api.comments;
   const syntax = syntaxController({ surface, ask });
+  const source = sourceController({ ask });
+  body.insertBefore(source.pane, sidebar);
+  source.done.addEventListener('click', () => setSource(false));
   renderSidebar();
   renderOutlinePanel();
 
@@ -852,6 +879,7 @@ export function mount(shared) {
     handle,
     unmount() {
       syntax.stop();
+      source.hide();
       lifetime.abort();
       app.hidden = true;
       app.replaceChildren();

@@ -419,6 +419,55 @@ pub fn render(doc: &Doc) -> String {
     out
 }
 
+/// `doc` with its blocks and footnotes replaced by `source`, Markdown in the
+/// lossless [`render`] form (a source editor's text). Blocks keep their ids
+/// when unchanged, or when they are the same kind of block in the same place
+/// (an edited paragraph), so comments stay anchored; the first title also
+/// renames the doc.
+/// # Errors
+/// The result fails document validation (the message lists each problem).
+pub fn apply_source(doc: &Doc, source: &str) -> anyhow::Result<Doc> {
+    let parsed = parse_document(source, true);
+    let mut blocks = parsed.blocks;
+    keep_ids(&doc.blocks, &mut blocks);
+    let mut next = doc.clone();
+    if let Some(Kind::Title { text }) = blocks.first().map(|block| &block.kind) {
+        next.title = plain(text);
+    }
+    next.blocks = blocks;
+    next.footnotes = parsed.footnotes;
+    Doc::check(&serde_json::to_string(&next)?).map_err(|errors| {
+        anyhow::anyhow!(
+            errors
+                .iter()
+                .map(|error| format!("{}: {}", error.path, error.message))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )
+    })
+}
+
+/// Give each new block the id of an old block it continues: the next equal
+/// block, else the next old block when it is the same kind.
+fn keep_ids(old: &[Block], new: &mut [Block]) {
+    let same_kind =
+        |a: &Block, b: &Block| std::mem::discriminant(&a.kind) == std::mem::discriminant(&b.kind);
+    let equal = |a: &Block, b: &Block| {
+        a.style == b.style
+            && serde_json::to_value(&a.kind).ok() == serde_json::to_value(&b.kind).ok()
+    };
+    let mut next = 0;
+    for block in new.iter_mut() {
+        if let Some(index) = (next..old.len()).find(|&index| equal(&old[index], block)) {
+            block.id.clone_from(&old[index].id);
+            next = index + 1;
+        } else if next < old.len() && same_kind(&old[next], block) {
+            block.id.clone_from(&old[next].id);
+            next += 1;
+        }
+    }
+}
+
 /// Clean GitHub Markdown for sharing, deliberately dropping presentation-only
 /// overrides rather than emitting the lossless internal JSON extension.
 #[must_use]

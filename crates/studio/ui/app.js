@@ -229,7 +229,7 @@ function handleEvent(event, reply) {
 }
 // Doc mode lives in ./doc/doc.js, loaded when the backend opens a doc. Its
 // events go there; a deck event brings the deck UI back.
-const DOC_EVENTS = new Set(['Doc', 'DocFeedback', 'DocPreview', 'DocFocus', 'Pages', 'Highlights']);
+const DOC_EVENTS = new Set(['Doc', 'DocFeedback', 'DocPreview', 'DocFocus', 'Pages', 'Highlights', 'DocSource']);
 const SHARED_EVENTS = new Set(['Asset', 'Exported', 'Saved', 'Revealed', 'Error', 'Theme', 'Designs', 'TemplateImported', 'Library', 'Idle', 'History', 'HistoryPreview']);
 let docUi = null, docQueue = Promise.resolve();
 function route(event, reply) {

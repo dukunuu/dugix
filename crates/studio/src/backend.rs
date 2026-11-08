@@ -203,6 +203,12 @@ pub enum Command {
     HistoryRestore {
         id: String,
     },
+    /// The open doc as Markdown, for the source view.
+    DocSource {},
+    /// Replace the doc from its Markdown source: one undo step.
+    DocApplySource {
+        markdown: String,
+    },
     /// Syntax spans for code blocks (no state changes).
     Highlight {
         blocks: Vec<highlight::Request>,
@@ -335,6 +341,11 @@ pub enum Event {
         id: String,
         deck: Option<Deck>,
         doc: Option<nexus_core::doc::Doc>,
+    },
+    /// The open doc as Markdown (`DocSource`).
+    DocSource {
+        markdown: String,
+        revision: String,
     },
     /// Syntax spans for the code blocks in a `Highlight` command.
     Highlights {
@@ -1378,6 +1389,8 @@ fn embedded(path: &str) -> Option<(&'static str, &'static str)> {
         "/doc/paste.js" => ("text/javascript", include_str!("../ui/doc/paste.js")),
         "/doc/glyphs.js" => ("text/javascript", include_str!("../ui/doc/glyphs.js")),
         "/doc/syntax.js" => ("text/javascript", include_str!("../ui/doc/syntax.js")),
+        "/doc/source.js" => ("text/javascript", include_str!("../ui/doc/source.js")),
+        "/doc/vim.js" => ("text/javascript", include_str!("../ui/doc/vim.js")),
         _ => return None,
     })
 }

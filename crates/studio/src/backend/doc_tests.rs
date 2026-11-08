@@ -1057,3 +1057,39 @@ fn history_previews_and_restores_kept_docs() {
         "a restore is one undo step"
     );
 }
+
+#[test]
+fn markdown_source_view_reads_and_replaces_the_doc_as_one_undo_step() {
+    let temp = Temp::new();
+    let mut backend = temp.backend();
+    let Event::DocSource { markdown, .. } = send(&mut backend, json!({"command": "DocSource"}))
+    else {
+        panic!("expected the source");
+    };
+    assert!(
+        markdown.starts_with("# Q3 strategy\n\nWe grew **18%**"),
+        "{markdown}"
+    );
+    let before = on_disk(&backend);
+    let edited = markdown.replace("churn fell", "churn fell again");
+    let (doc, _, _) = doc_event(send(
+        &mut backend,
+        json!({"command": "DocApplySource", "markdown": edited}),
+    ));
+    let paragraph = &before.blocks[1];
+    assert_eq!(
+        doc.blocks[1].id, paragraph.id,
+        "the edited paragraph keeps its id"
+    );
+    assert!(text(&doc, &paragraph.id).ends_with("churn fell again."));
+    assert_eq!(on_disk(&backend), doc);
+    let (undone, _, _) = doc_event(send(&mut backend, json!({"command": "Undo"})));
+    assert_eq!(undone, before);
+    let Event::Highlights { blocks } = send(
+        &mut backend,
+        json!({"command": "Highlight", "blocks": [{"id": "source", "lang": "markdown", "text": "# Hi"}]}),
+    ) else {
+        panic!("expected highlights");
+    };
+    assert_eq!(blocks.len(), 1);
+}

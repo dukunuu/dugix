@@ -160,3 +160,31 @@ fn html_and_docx_color_code_by_syntax() {
         "{xml}"
     );
 }
+#[test]
+fn markdown_source_round_trips_and_keeps_block_ids() {
+    let doc = sample();
+    let source = markdown::render(&doc);
+    let same = markdown::apply_source(&doc, &source).unwrap();
+    assert_eq!(
+        serde_json::to_value(&same.blocks).unwrap(),
+        serde_json::to_value(&doc.blocks).unwrap(),
+        "an untouched source changes nothing"
+    );
+    assert_eq!(same.footnotes, doc.footnotes);
+    let edited = source
+        .replacen("A carefully set document", "A freshly set document", 1)
+        .replacen("# Research report", "# Field report", 1);
+    let next = markdown::apply_source(&doc, &edited).unwrap();
+    assert_eq!(next.title, "Field report");
+    let intro = next
+        .blocks
+        .iter()
+        .find(|b| b.id == "intro")
+        .expect("the edited paragraph keeps its id");
+    assert!(intro.text().unwrap().starts_with("A freshly set document"));
+    assert_eq!(next.blocks.len(), doc.blocks.len());
+    let added = markdown::apply_source(&doc, &format!("{source}\nOne more paragraph.\n")).unwrap();
+    assert_eq!(added.blocks.len(), doc.blocks.len() + 1);
+    let ids: std::collections::HashSet<_> = added.blocks.iter().map(|b| b.id.clone()).collect();
+    assert_eq!(ids.len(), added.blocks.len(), "ids stay unique");
+}

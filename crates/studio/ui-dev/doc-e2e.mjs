@@ -717,6 +717,41 @@ Object.assign(tests, {
     assert.ok((await blockOf(page, 'b16')).text.startsWith('let s = "hi"; qconst growth'));
     await page.close();
   },
+  async markdownSourceViewEditsWithVimKeys() {
+    const page = await open('dark');
+    await page.keyboard.press('Meta+Shift+m');
+    const input = page.locator('.source-input');
+    await input.waitFor();
+    await page.waitForFunction(() => document.querySelector('.source-input').value.startsWith('# '));
+    assert.equal(await page.locator('.doc-body .page-scroll, .page-scroll').first().isHidden(), true, 'the page is swapped out');
+    assert.equal(await page.locator('.source-mode').textContent(), 'NORMAL');
+    const original = await input.inputValue();
+    // `x` deletes the `#`, `.` the space; Esc stays in the view.
+    await page.keyboard.press('x');
+    await page.keyboard.press('.');
+    await page.keyboard.press('Escape');
+    assert.equal(await input.inputValue(), original.slice(2));
+    assert.ok(await page.locator('.source-pane').isVisible());
+    await page.keyboard.press('A');
+    assert.equal(await page.locator('.source-mode').textContent(), 'INSERT');
+    await page.keyboard.type(' (draft)');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('u');
+    assert.equal(await input.inputValue(), original.slice(2), 'u undid the whole insert');
+    await page.waitForFunction(() => window.__mock.source !== undefined, null, { timeout: 3000 });
+    assert.equal(await page.evaluate(() => window.__mock.source), original.slice(2));
+    // Colors come from the backend's Markdown spans.
+    await page.waitForFunction(() => document.querySelector('.source-colors').textContent.trim().length > 0);
+    // vim can be switched off; then keys type.
+    await page.locator('.source-vim').click();
+    await page.keyboard.press('Home');
+    await page.keyboard.type('Z');
+    assert.ok((await input.inputValue()).includes('Z'));
+    await page.evaluate(() => localStorage.removeItem('nexus.studio.sourceVim'));
+    await page.keyboard.press('Meta+Shift+m');
+    await page.locator('.source-pane').waitFor({ state: 'hidden' });
+    await page.close();
+  },
   async imageWidthAndToc() {
     const page = await open('dark');
     await part(page, 'b14', 'caption').scrollIntoViewIfNeeded();
