@@ -12,7 +12,7 @@ use ratatui::layout::{Position, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthChar;
 
 pub(super) fn height(node: &Node, session: &Session, width: u16) -> Option<u16> {
     Some(match node {
@@ -250,63 +250,15 @@ fn quiz(
     hits
 }
 
-/// Highlighted lines of `source`, one per `\n`-separated line. Lines the
-/// highlighter reshaped fall back to plain text so the caret stays aligned.
+/// Highlighted lines of `source`, one per `\n`-separated line, so the caret
+/// stays aligned with the text.
 pub(super) fn highlighted(source: &str, lang: &str, theme: &Theme) -> Vec<Line<'static>> {
-    let plain: Vec<&str> = source.split('\n').collect();
-    let fence = "`".repeat(
-        source
-            .split(|ch| ch != '`')
-            .map(str::len)
-            .max()
-            .unwrap_or(0)
-            .max(3)
-            + 1,
-    );
-    let lang = if lang.eq_ignore_ascii_case("nexus-ui") || lang.eq_ignore_ascii_case("mermaid") {
-        "plain"
-    } else {
-        lang
-    };
-    let rendered = crate::ui::markdown::render(
-        &format!("{fence}{lang}\n{source}\n{fence}"),
-        plain
-            .iter()
-            .map(|line| line.width())
-            .max()
-            .unwrap_or(1)
-            .max(1)
-            .saturating_add(4),
-        crate::ui::markdown::MdColors {
-            heading: theme.accent,
-            rule: theme.border_dim,
-            code: theme.fg,
-        },
-    );
-    let mut lines = rendered.lines.into_iter().skip(1);
-    plain
-        .iter()
-        .map(|text| {
-            let content = lines.next().map(|line| {
-                let count = line.spans.len().saturating_sub(2);
-                Line::from(
-                    line.spans
-                        .into_iter()
-                        .skip(1)
-                        .take(count)
-                        .collect::<Vec<_>>(),
-                )
-            });
-            match content {
-                Some(line)
-                    if crate::ui::markdown::line_text(&line).trim_end() == text.trim_end() =>
-                {
-                    line
-                }
-                _ => Line::styled((*text).to_string(), Style::default().fg(theme.fg)),
-            }
-        })
-        .collect()
+    crate::ui::style::highlighted_lines(
+        source,
+        lang,
+        crate::ui::style::SyntaxColors::from_theme(theme),
+        Style::default().fg(theme.fg),
+    )
 }
 
 /// `line` without its first `skip` display columns, at most `take` wide.

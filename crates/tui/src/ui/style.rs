@@ -12,7 +12,8 @@
 //! - `border_dim`: chrome (frames, rules, rails, separators)
 //! - `success` / `warning` / `error`: status, nothing else
 
-use ratatui::style::{Modifier, Style};
+use nexus_core::highlight::Role;
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::theme::Theme;
@@ -79,6 +80,118 @@ pub mod glyph {
 /// The one separator between inline fields.
 pub const SEP: &str = " · ";
 
+/// Theme colors for syntax roles (`nexus_core::highlight`). Code reuses the
+/// existing roles rather than adding a palette: keywords and markup in
+/// `accent`, calls in `accent2`, literals in the status colors, comments and
+/// punctuation dim.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SyntaxColors {
+    pub accent: Color,
+    pub accent2: Color,
+    pub warning: Color,
+    pub success: Color,
+    pub error: Color,
+    pub dim: Color,
+    pub fg: Color,
+}
+
+impl SyntaxColors {
+    #[must_use]
+    pub fn from_theme(theme: &Theme) -> Self {
+        Self {
+            accent: theme.accent,
+            accent2: theme.accent2,
+            warning: theme.warning,
+            success: theme.success,
+            error: theme.error,
+            dim: theme.fg_dim,
+            fg: theme.fg,
+        }
+    }
+}
+
+impl Default for SyntaxColors {
+    fn default() -> Self {
+        Self {
+            accent: Color::Cyan,
+            accent2: Color::Magenta,
+            warning: Color::Yellow,
+            success: Color::Green,
+            error: Color::Red,
+            dim: Color::DarkGray,
+            fg: Color::Reset,
+        }
+    }
+}
+
+/// The one style for each syntax role.
+#[must_use]
+pub fn syntax_style(colors: SyntaxColors, role: Role) -> Style {
+    let fg = |color: Color| Style::default().fg(color);
+    match role {
+        Role::Keyword | Role::Tag => fg(colors.accent),
+        Role::Function => fg(colors.accent2),
+        Role::Type | Role::Attribute => fg(colors.warning),
+        Role::String | Role::Code => fg(colors.success),
+        Role::Number | Role::Constant | Role::Escape => fg(colors.error),
+        Role::Comment => fg(colors.dim).add_modifier(Modifier::ITALIC),
+        Role::Punctuation | Role::Quote | Role::ListMarker => fg(colors.dim),
+        Role::Operator | Role::Property | Role::Variable => fg(colors.fg),
+        Role::Heading => fg(colors.accent).add_modifier(Modifier::BOLD),
+        Role::Emphasis => Style::default().add_modifier(Modifier::ITALIC),
+        Role::Strong => Style::default().add_modifier(Modifier::BOLD),
+        Role::Link => fg(colors.accent).add_modifier(Modifier::UNDERLINED),
+    }
+}
+
+/// `source` split on `\n` into one styled line per source line, colored by
+/// tree-sitter spans for `lang`; text outside any span keeps `base`.
+#[must_use]
+pub fn highlighted_lines(
+    source: &str,
+    lang: &str,
+    colors: SyntaxColors,
+    base: Style,
+) -> Vec<Line<'static>> {
+    let spans = nexus_core::highlight::highlight(source, lang);
+    let mut spans = spans.iter().peekable();
+    let mut lines = Vec::new();
+    let mut start = 0;
+    for text in source.split('\n') {
+        let end = start + text.len();
+        let mut parts: Vec<Span<'static>> = Vec::new();
+        let mut at = start;
+        while let Some(span) = spans.peek() {
+            if span.range.start >= end {
+                break;
+            }
+            let from = span.range.start.max(at);
+            let to = span.range.end.min(end);
+            if from > at {
+                parts.push(Span::styled(source[at..from].to_string(), base));
+            }
+            if to > from {
+                parts.push(Span::styled(
+                    source[from..to].to_string(),
+                    base.patch(syntax_style(colors, span.role)),
+                ));
+                at = to;
+            }
+            if span.range.end <= end {
+                spans.next();
+            } else {
+                break;
+            }
+        }
+        if end > at || parts.is_empty() {
+            parts.push(Span::styled(source[at..end].to_string(), base));
+        }
+        lines.push(Line::from(parts));
+        start = end + 1;
+    }
+    lines
+}
+
 /// A popup or panel title: the name in bold accent.
 pub fn title(theme: &Theme, name: impl Into<String>) -> Span<'static> {
     Span::styled(
@@ -140,6 +253,8 @@ pub fn event_body(text: &str, style: Style) -> Line<'static> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     /// The vocabulary is monochrome: an emoji in any UI string (outside
     /// tests) would reintroduce varying widths and a second visual language.
     #[test]
@@ -176,5 +291,24 @@ mod tests {
             "emoji in UI strings:\n{}",
             offenders.join("\n")
         );
+    }
+
+    #[test]
+    fn highlighted_lines_split_multiline_spans_and_keep_text() {
+        let colors = SyntaxColors::default();
+        let source = "/* a\nb */ fn x() {}\n\nlet é = 1;";
+        let lines = highlighted_lines(source, "rust", colors, Style::default());
+        let text: Vec<String> = lines
+            .iter()
+            .map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        assert_eq!(text, ["/* a", "b */ fn x() {}", "", "let é = 1;"]);
+        let comment = syntax_style(colors, Role::Comment);
+        assert_eq!(lines[0].spans[0].style, comment);
+        assert_eq!(lines[1].spans[0].content, "b */");
+        assert_eq!(lines[1].spans[0].style, comment);
+        let plain = highlighted_lines("a\nb", "nope", colors, Style::default());
+        assert_eq!(plain.len(), 2);
+        assert_eq!(plain[1].spans[0].content, "b");
     }
 }

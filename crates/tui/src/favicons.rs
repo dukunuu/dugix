@@ -187,6 +187,7 @@ mod tests {
                 heading: Color::Blue,
                 rule: Color::Gray,
                 code: Color::White,
+                ..crate::ui::markdown::MdColors::default()
             },
         );
         let height = u16::try_from(rendered.lines.len()).unwrap();

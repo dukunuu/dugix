@@ -1170,55 +1170,12 @@ fn read_body(
 
 /// Highlight the whole file slice before adding gutters or wrapping its rows.
 fn highlight_read(source: &str, lang: &str, theme: &crate::theme::Theme) -> Vec<Line<'static>> {
-    let safe = markdown_tool_text(source);
-    if lang == "plain" {
-        return safe
-            .split('\n')
-            .map(|line| {
-                Line::from(Span::styled(
-                    line.to_string(),
-                    Style::default().fg(theme.fg),
-                ))
-            })
-            .collect();
-    }
-    let code_width = safe
-        .split('\n')
-        .map(unicode_width::UnicodeWidthStr::width)
-        .max()
-        .unwrap_or(1)
-        .max(1);
-    // A longer fence cannot be closed by backticks in the file itself.
-    let fence = "`".repeat(
-        safe.split(|c| c != '`')
-            .map(str::len)
-            .max()
-            .unwrap_or(0)
-            .max(3)
-            + 1,
-    );
-    let rendered = crate::ui::markdown::render(
-        &format!("{fence}{lang}\n{safe}\n{fence}"),
-        code_width + 4,
-        md_colors(theme),
-    );
-    // The existing fenced renderer supplies syntax spans inside its box.
-    rendered
-        .lines
-        .into_iter()
-        .skip(1)
-        .take(safe.split('\n').count())
-        .map(|line| {
-            let count = line.spans.len().saturating_sub(2);
-            Line::from(
-                line.spans
-                    .into_iter()
-                    .skip(1)
-                    .take(count)
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .collect()
+    crate::ui::style::highlighted_lines(
+        &markdown_tool_text(source),
+        lang,
+        crate::ui::style::SyntaxColors::from_theme(theme),
+        Style::default().fg(theme.fg),
+    )
 }
 
 /// Sanitize before Markdown parsing, which can otherwise discard controls.
@@ -1977,6 +1934,7 @@ fn md_colors(theme: &crate::theme::Theme) -> crate::ui::markdown::MdColors {
         heading: theme.accent,
         rule: theme.border_dim,
         code: theme.warning,
+        syntax: crate::ui::style::SyntaxColors::from_theme(theme),
     }
 }
 

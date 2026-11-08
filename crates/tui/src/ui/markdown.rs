@@ -162,6 +162,8 @@ pub struct MdColors {
     pub rule: Color,
     /// Inline `code`.
     pub code: Color,
+    /// Fenced code, colored by tree-sitter roles.
+    pub syntax: crate::ui::style::SyntaxColors,
 }
 
 impl Default for MdColors {
@@ -170,6 +172,7 @@ impl Default for MdColors {
             heading: Color::Cyan,
             rule: Color::DarkGray,
             code: Color::Yellow,
+            syntax: crate::ui::style::SyntaxColors::default(),
         }
     }
 }
@@ -363,6 +366,7 @@ fn render_text(r: &mut Rendered, content: &str, width: usize, colors: MdColors) 
     let text = tui_markdown::from_str_with_options(content, &md_options(colors));
     let mut in_code = false;
     let mut raw: Vec<String> = Vec::new();
+    let mut lang = String::new();
 
     for line in &text.lines {
         let plain = line_text(line);
@@ -372,21 +376,23 @@ fn render_text(r: &mut Rendered, content: &str, width: usize, colors: MdColors) 
         if unstyled && plain.trim_start().starts_with("```") {
             if in_code {
                 in_code = false;
-                push_code_border(r, width, None, colors.rule);
-                r.blocks.push(raw.join("\n"));
+                close_code_block(r, &raw, &lang, width, colors);
             } else {
                 in_code = true;
                 raw.clear();
                 // ```rust → the box's top rule is labelled `rust`.
-                let lang = plain.trim_start().trim_start_matches('`').trim();
-                push_code_border(r, width, Some(lang), colors.rule);
+                plain
+                    .trim_start()
+                    .trim_start_matches('`')
+                    .trim()
+                    .clone_into(&mut lang);
+                push_code_border(r, width, Some(&lang), colors.rule);
             }
             continue;
         }
 
         if in_code {
             raw.push(plain);
-            push_code_content(r, line, width, colors.rule);
             continue;
         }
 
@@ -408,9 +414,23 @@ fn render_text(r: &mut Rendered, content: &str, width: usize, colors: MdColors) 
 
     // Unterminated block (e.g. mid-stream): close it so metadata stays valid.
     if in_code {
-        push_code_border(r, width, None, colors.rule);
-        r.blocks.push(raw.join("\n"));
+        close_code_block(r, &raw, &lang, width, colors);
     }
+}
+
+/// A fenced block's content rows, highlighted as one source so multi-line
+/// constructs (block comments, strings) color correctly, then its bottom rule.
+fn close_code_block(r: &mut Rendered, raw: &[String], lang: &str, width: usize, colors: MdColors) {
+    let source = raw.join("\n");
+    if !raw.is_empty() {
+        let lines =
+            crate::ui::style::highlighted_lines(&source, lang, colors.syntax, Style::default());
+        for line in &lines {
+            push_code_content(r, line, width, colors.rule);
+        }
+    }
+    push_code_border(r, width, None, colors.rule);
+    r.blocks.push(source);
 }
 
 /// Top (`lang` given, maybe empty) or bottom rule of a code box, tagged with
@@ -986,5 +1006,68 @@ mod table_tests {
             .filter(|l| l.starts_with('├'))
             .count();
         assert_eq!(rules, 2, "header rule plus one between the two body rows");
+    }
+
+    fn span_style<'a>(r: &'a Rendered, text: &str) -> &'a Span<'static> {
+        r.lines
+            .iter()
+            .flat_map(|line| &line.spans)
+            .find(|span| span.content.trim() == text)
+            .unwrap_or_else(|| panic!("no span {text:?}"))
+    }
+
+    #[test]
+    fn code_blocks_take_tree_sitter_colors() {
+        let colors = MdColors::default();
+        let code = "fn main() { let s = \"x\"; } // c";
+        let r = render(&format!("```rust\n{code}\n```"), 60, colors);
+        assert_eq!(span_style(&r, "fn").style.fg, Some(colors.syntax.accent));
+        assert_eq!(
+            span_style(&r, "\"x\"").style.fg,
+            Some(colors.syntax.success)
+        );
+        assert!(
+            span_style(&r, "// c")
+                .style
+                .add_modifier
+                .contains(Modifier::ITALIC)
+        );
+        assert!(line_text(&r.lines[0]).starts_with("┌─ rust ─"));
+        assert!(line_text(&r.lines[2]).starts_with('└'));
+        assert_eq!(r.blocks, vec![code.to_string()]);
+    }
+
+    #[test]
+    fn unknown_language_code_stays_plain() {
+        let r = render("```brainfuck\n+[-->+<]\n```", 40, MdColors::default());
+        let row = &r.lines[1];
+        let text: Vec<_> = row
+            .spans
+            .iter()
+            .filter(|span| span.content.trim() == "+[-->+<]")
+            .collect();
+        assert_eq!(text.len(), 1, "{row:?}");
+        assert_eq!(text[0].style, Style::default());
+    }
+
+    #[test]
+    fn streaming_code_is_highlighted_before_the_fence_closes() {
+        let colors = MdColors::default();
+        let r = render("```rust\nlet x = 1;", 40, colors);
+        assert_eq!(span_style(&r, "let").style.fg, Some(colors.syntax.accent));
+        assert_eq!(r.blocks, vec!["let x = 1;".to_string()]);
+    }
+
+    #[test]
+    fn each_code_line_is_one_row() {
+        let r = render(
+            "```python\na = 1\nb = 2\nc = 3\n```",
+            60,
+            MdColors::default(),
+        );
+        assert_eq!(r.lines.len(), 5, "top rule, three rows, bottom rule");
+        for (row, want) in r.lines[1..4].iter().zip(["a = 1", "b = 2", "c = 3"]) {
+            assert!(line_text(row).contains(want), "{}", line_text(row));
+        }
     }
 }

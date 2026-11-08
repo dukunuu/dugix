@@ -346,6 +346,7 @@ pub(super) fn render(
                     heading: theme.accent,
                     rule: theme.border_dim,
                     code: theme.fg,
+                    syntax: crate::ui::style::SyntaxColors::from_theme(theme),
                 },
             );
             let lines: Vec<_> = rendered
