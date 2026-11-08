@@ -653,6 +653,38 @@ Type `/` in the composer for autocomplete. Aliases in parentheses.
 While a research survey or plan approval is pending, Enter in that session
 answers the gate; a reply with edits is folded in once by the approval agent.
 
+### Vim keys and syntax colors
+
+Every text input edits with vim keys: the composer, nexus-ui `Input` and
+`Textarea` fields, and code `Editor`s. They are on by default; `/vim off`
+switches to the plain keys above, and `/vim on` brings vim back.
+
+- **Modes:** each input starts in Insert mode, so typing works as usual.
+  `Esc` switches to Normal mode, and a second `Esc` does what `Esc` does
+  without vim (stop the reply, clear the composer, leave a panel). In Normal
+  mode, `Enter` sends.
+- **Keys:**
+  - motions: `h j k l`, `w b e`, `W B E`, `0 ^ $`, `gg G`, `{ }`;
+  - inserting: `i a I A o O`;
+  - operators `d c y` over any motion, and `dd cc yy`;
+  - editing: `x X D C s S Y`, `p P`, `J`, `r`, `~`;
+  - selecting: `v` / `V`;
+  - undo and redo: `u`, `Ctrl+R`;
+  - counts, and `.` to repeat the last change.
+- **Mode display:** the composer's border shows the mode, and a panel's hint
+  line does the same for its fields.
+
+Code is colored by tree-sitter in Bash, C, C++, CSS, Go, HTML, Java,
+JavaScript, JSON, Markdown, Python, Ruby, Rust, TOML, TypeScript/TSX and
+YAML. That covers code blocks in replies and file reads, the composer while
+you type (Markdown, with each fenced block in its own language, and `!`
+commands as Bash), and nexus-ui fields. In studio docs, code blocks take
+the design's palette in the editor, page previews, PDF, HTML and DOCX. A
+doc's **Markdown source** view (⇧⌘M, or More › Markdown source) edits the
+whole document as Markdown with the same vim keys and colors. Its "vim on"
+toggle is remembered per device. Edits apply after a pause, each one as a
+single undo step.
+
 ## Architecture
 
 Two-crate workspace: the engine and the terminal frontend.

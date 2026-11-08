@@ -101,6 +101,39 @@ it.
   anchors survive. If the parse fails, the editor shows the error and leaves
   the doc unchanged.
 
+## Status
+
+All six phases landed on 2026-11-08:
+- E1, the core highlighter: 78dc514.
+- E2, chat code blocks: 3e8ba3d.
+- E3, vim in the composer: a55c5df.
+- E4, fields, code editors and live colors: 42ccb8d.
+- E5, studio code blocks and exports: d1ac8c9.
+- E6, the source view: eb4abff.
+
+Notes from building it:
+
+- **Startup cost:** a grammar's query compiles on first use, so the
+  highlighter builds a Markdown source's injected languages before its time
+  budget starts. A first-time compile therefore never blanks the result.
+- **Undo:** tui-textarea's own history cannot group a vim change. The engine
+  keeps its own snapshots instead: one entry per change, restored with
+  `set_lines`. Ctrl+Z in Insert mode is still the widget's own undo.
+- **Code editors:** the nexus-ui code `Editor` keeps its value and caret in
+  the core session. Vim runs on a temporary TextArea built from them and
+  writes back with `Session::set_code`. Insert-mode typing keeps the editor's
+  smart indent. The Visual selection is not painted there yet.
+- **Studio code blocks:** they are painted through `CSS.highlights`, because
+  rewriting the contenteditable DOM would move the caret and break undo.
+- **Source view:** the colored layer under the textarea draws vim's block
+  cursor and Visual selection, since the textarea's own selection is not
+  reliably visible. Studio has no access to the TUI's `keymap` setting, so
+  the vim toggle is remembered per device in `localStorage`. Esc in Normal
+  mode stays in the view; ⇧⌘M or "Back to editing" leaves it.
+- **Ids in source edits:** `doc::markdown::apply_source` reuses the id of an
+  unchanged block, or of the same kind of block in the same place. Comments
+  therefore stay anchored to paragraphs edited in the source view.
+
 ## Phases
 
 1. **E1 (core highlighter):** `highlight.rs`, the grammars, and the roles, with
