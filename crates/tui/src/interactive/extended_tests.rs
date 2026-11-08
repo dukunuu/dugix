@@ -96,10 +96,16 @@ fn every_chart_kind_has_wide_and_narrow_backend_snapshots() {
             snapshots.push(format!("{kind}/{width}\n{text}"));
         }
     }
-    assert_eq!(
-        snapshots.join("\n---\n"),
-        include_str!("chart_snapshots.txt").trim_end()
-    );
+    let snapshots = snapshots.join("\n---\n");
+    if std::env::var_os("NEXUS_UPDATE_SNAPSHOTS").is_some() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/interactive/chart_snapshots.txt"
+        );
+        std::fs::write(path, format!("{snapshots}\n")).unwrap();
+        return;
+    }
+    assert_eq!(snapshots, include_str!("chart_snapshots.txt").trim_end());
 }
 
 #[test]

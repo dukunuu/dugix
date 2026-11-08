@@ -245,6 +245,9 @@ impl Document {
                     }
                 }
             }
+            Node::Canvas { shapes, rows, alt } => {
+                self.validate_canvas(shapes, *rows, alt, budget)?;
+            }
             Node::Timeline { items } => {
                 item_count(items.len(), 1, 8)?;
                 for item in items {

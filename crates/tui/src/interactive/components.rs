@@ -64,7 +64,7 @@ pub(super) fn height(node: &Node, session: &Session, width: u16) -> Option<u16> 
             .map(|item| 1 + branch_height(&item.view, session, width))
             .sum(),
         Node::Form { fields, .. } => 2 + branch_height(fields, session, width),
-        Node::Chart { rows, .. } => *rows,
+        Node::Chart { rows, .. } | Node::Canvas { rows, .. } => *rows,
         Node::Timeline { .. }
         | Node::Code { .. }
         | Node::Badge { .. }
@@ -140,7 +140,7 @@ pub(super) fn visible_regions(session: &Session, width: u16) -> Vec<(&Node, Rect
 fn row(area: Rect, offset: u16) -> Rect {
     Rect::new(area.x, area.y + offset, area.width, 1)
 }
-fn color(tone: Tone, session: &Session, theme: &Theme) -> Color {
+pub(super) fn color(tone: Tone, session: &Session, theme: &Theme) -> Color {
     tone_color(Some(tone), accent_color(session.document(), theme), theme)
 }
 fn body(area: Rect, offset: u16, height: u16) -> Rect {
@@ -277,6 +277,7 @@ pub(super) fn render(
             labels,
             ..
         } => chart(*kind, series, labels, session, area, theme, buffer),
+        Node::Canvas { shapes, .. } => super::canvas::draw(shapes, session, area, theme, buffer),
         Node::Timeline { items } => {
             let mut y = 0;
             for item in items {
@@ -605,7 +606,38 @@ fn chart(
             .style(Style::default().fg(theme.fg_dim))
             .render(Rect::new(area.x, plot.bottom() - 1, 5, 1), buffer);
         let samples = values.iter().map(Vec::len).max().unwrap_or(1);
+        // Lines and points go on one braille grid shared by every series.
+        let mut dots = super::canvas::Dots::new(plot.width, plot.height);
         for (index, values) in values.iter().enumerate() {
+            if kind != ChartKind::Bar {
+                let points = braille_points(values, samples, (min, max), &dots);
+                if kind == ChartKind::Scatter {
+                    // A 2×2 block that never straddles cells stays crisp.
+                    for &(x, y) in &points {
+                        let x = ((x / 2.0).floor() * 2.0).min(dots.width() - 2.0);
+                        let y = ((y / 2.0).floor() * 2.0).min(dots.height() - 2.0);
+                        for (dx, dy) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)] {
+                            dots.set(x + dx, y + dy, tones[index]);
+                        }
+                    }
+                    continue;
+                }
+                for pair in points.windows(2) {
+                    dots.line(pair[0], pair[1], tones[index]);
+                }
+                if let [point] = points[..] {
+                    dots.set(point.0, point.1, tones[index]);
+                }
+                if kind == ChartKind::Area
+                    && let (Some(first), Some(last)) = (points.first(), points.last())
+                {
+                    let zero = (max / (max - min)) * (dots.height() - 1.0);
+                    let mut outline = points.clone();
+                    outline.extend([(last.0, zero), (first.0, zero)]);
+                    dots.shade(&outline, tones[index]);
+                }
+                continue;
+            }
             for x in 0..plot.width {
                 let sample = f64::from(x)
                     * f64::from(u16::try_from(samples.saturating_sub(1)).unwrap_or(0))
@@ -617,56 +649,27 @@ fn chart(
                             .total_cmp(&(f64::from(u16::try_from(*b).unwrap_or(0)) - sample).abs())
                     })
                     .unwrap_or(0);
-                let left = (0..samples)
-                    .rev()
-                    .find(|n| f64::from(u16::try_from(*n).unwrap_or(0)) <= sample)
-                    .unwrap_or(0);
-                let value = if matches!(kind, ChartKind::Line | ChartKind::Area) {
-                    let a = values.get(left).copied().unwrap_or_default();
-                    let b = values.get(left + 1).copied().unwrap_or(a);
-                    a + (b - a) * (sample - f64::from(u16::try_from(left).unwrap_or(0)))
-                } else {
-                    values.get(nearest).copied().unwrap_or_default()
-                };
                 if nearest >= values.len() {
                     continue;
                 }
-                let ratio = (value - min) / (max - min);
-                let level = ratio * f64::from(plot.height.saturating_sub(1));
+                let value = values[nearest];
+                let level = (value - min) / (max - min) * f64::from(plot.height.saturating_sub(1));
                 let baseline = (-min / (max - min)) * f64::from(plot.height.saturating_sub(1));
                 for y in 0..plot.height {
                     let pos = f64::from(plot.height - 1 - y);
-                    let point = (pos - level).abs() <= 0.5;
                     let fill = pos >= baseline.min(level) && pos <= baseline.max(level);
-                    let visible = match kind {
-                        ChartKind::Line => point,
-                        ChartKind::Area => point || fill,
-                        ChartKind::Scatter => {
-                            point
-                                && usize::from(x)
-                                    == nearest * usize::from(plot.width.saturating_sub(1))
-                                        / samples.saturating_sub(1).max(1)
-                        }
-                        ChartKind::Bar => fill && usize::from(x) % series.len().max(1) == index,
-                        ChartKind::Pie => false,
-                    };
-                    if visible {
+                    if fill && usize::from(x) % series.len().max(1) == index {
                         buffer.set_string(
                             plot.x + x,
                             plot.y + y,
-                            if kind == ChartKind::Area && !point {
-                                "░"
-                            } else if kind == ChartKind::Bar {
-                                glyph::SECTION
-                            } else {
-                                glyph::DOT
-                            },
+                            glyph::SECTION,
                             Style::default().fg(tones[index]),
                         );
                     }
                 }
             }
         }
+        dots.render(plot, buffer);
     }
     let first = labels
         .first()
@@ -691,6 +694,24 @@ fn chart(
         .right_aligned()
         .style(Style::default().fg(theme.fg_dim))
         .render(axis, buffer);
+}
+/// Samples as braille dot positions, spread evenly across the plot.
+fn braille_points(
+    values: &[f64],
+    samples: usize,
+    (min, max): (f64, f64),
+    dots: &super::canvas::Dots,
+) -> Vec<(f64, f64)> {
+    let span = f64::from(u16::try_from(samples.saturating_sub(1)).unwrap_or(u16::MAX)).max(1.0);
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let x = f64::from(u16::try_from(index).unwrap_or(u16::MAX)) / span;
+            let y = 1.0 - (value - min) / (max - min);
+            (x * (dots.width() - 1.0), y * (dots.height() - 1.0))
+        })
+        .collect()
 }
 fn ring(values: &[Vec<f64>], colors: &[Color], area: Rect, buffer: &mut Buffer) {
     let width = area.width.min(area.height.saturating_mul(2));

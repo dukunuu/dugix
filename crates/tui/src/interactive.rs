@@ -22,6 +22,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Sparkline, 
 use std::collections::HashMap;
 use unicode_width::UnicodeWidthStr;
 
+mod canvas;
 mod components;
 mod inputs;
 pub(crate) mod live;
@@ -126,6 +127,8 @@ struct Entry {
     error: String,
     scroll: u16,
     inputs: std::cell::RefCell<inputs::Inputs>,
+    /// When this panel was first shown; canvas animations count from here.
+    born: std::time::Instant,
 }
 impl Entry {
     fn new(session: Result<Session, String>) -> Self {
@@ -135,7 +138,16 @@ impl Entry {
             error: String::new(),
             scroll: 0,
             inputs: std::cell::RefCell::default(),
+            born: std::time::Instant::now(),
         }
+    }
+    /// Move the animation clock to now; whether a canvas is still moving.
+    fn advance_clock(&mut self) -> bool {
+        let elapsed = self.born.elapsed().as_secs_f64();
+        self.session.as_mut().is_ok_and(|session| {
+            session.set_clock(elapsed);
+            session.animating()
+        })
     }
     /// The focused text field, as its node index in the document.
     fn focused_input(&self) -> Option<usize> {
@@ -2362,6 +2374,8 @@ pub struct Widgets {
     data_calls: HashMap<String, usize>,
     data_running: Option<live::Running>,
     window_unfocused: bool,
+    /// A canvas drawn this frame is still animating.
+    animating: bool,
     /// Saved-state bookkeeping and pinned apps; see `persist`.
     store: persist::Store,
     /// Vim keys in text fields and code editors (the app's `/vim` setting).
@@ -2387,6 +2401,12 @@ impl Widgets {
         self.send_ready = send_ready;
         self.hits.clear();
         self.visible.clear();
+        self.animating = false;
+    }
+    /// Whether the last frame drew a moving canvas, so the event loop should
+    /// keep redrawing. Off while the terminal window is unfocused.
+    pub(crate) fn animating(&self) -> bool {
+        self.animating && !self.window_unfocused
     }
     /// Whether a document currently owns the keyboard.
     pub(crate) fn is_focused(&self) -> bool {
@@ -2628,7 +2648,7 @@ impl Widgets {
             let focused = self.focused.as_ref() == Some(&key);
             let (mut canvas, hits) = if placement.complete {
                 self.register(&key);
-                let Some(entry) = self.entries.get(&key) else {
+                let Some(entry) = self.entries.get_mut(&key) else {
                     let y = viewport.y + u16::try_from(row.saturating_sub(top)).unwrap_or(0);
                     f.render_widget(
                         Paragraph::new("UI instance limit reached; start a new session.")
@@ -2641,6 +2661,7 @@ impl Widgets {
                     self.visible.push(key.clone());
                 }
                 entry.inputs.borrow_mut().vim = self.vim;
+                self.animating |= entry.advance_clock();
                 entry.canvas(width, theme, focused, self.send_ready)
             } else {
                 let document = if placement.source.trim_start().starts_with('{') {
@@ -3112,6 +3133,7 @@ impl Widgets {
             return;
         };
         entry.inputs.get_mut().vim = self.vim;
+        self.animating |= entry.advance_clock();
         let (canvas, hits) = entry.canvas(area.width, app_theme, true, can_send);
         let caret = entry.input_caret(&canvas);
         let target = caret

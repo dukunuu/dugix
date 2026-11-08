@@ -133,6 +133,15 @@ Rating: numeric stars; arrows/click edit.
 Code: literal source, optional language, Copy button.
 Badge: compact themed text. Meter: themed gauge.
 Slider: numeric range; arrows/click adjust by step.
+Canvas: a drawing of ≤48 shapes, drawn in order; 3–16 rows (default 8); always give
+alt. Coordinates run 0–100 on both axes, origin top-left, y down; the canvas is wider
+than tall. Circle r and Ray len are in height units, so circles stay round. Ray angle
+is degrees clockwise from 12 o'clock; Label is centred; Poly takes [[x, y], ...].
+Numbers may use $state. animate is a list of Anim: one property through 2–12 absolute
+keyframes per pass; prop is a shape field, dx/dy (offset) or on (hidden below 0.5);
+repeat loop (default)|bounce|once; ease smooth (default)|linear (use linear for steady
+spins); seconds 0.1–120 (default 2); delay in seconds.
+E.g. `Ray(50, 50, 40, 0, "accent", [Anim("angle", [0, 360], 4, "loop", "linear")])`.
 Quiz: Question(prompt, view?, answer?, explain?) children, one shown at a time;
 arrows page, Show answer reveals, header counts right Choice answers. For
 interview/practice sets put Editor/Choice/Input in each question and end with

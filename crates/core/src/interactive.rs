@@ -8,6 +8,8 @@ use anyhow::{Result, bail, ensure};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
+mod canvas;
+pub use canvas::{Anim, Drawn, Ease, Repeat, Shape};
 mod components;
 pub use components::{ChartKind, ChartSeries, Section, Tab, TableState, TimelineEvent};
 mod practice;
@@ -469,6 +471,17 @@ pub enum Node {
         #[serde(default = "six")]
         rows: u16,
     },
+    /// Shapes on a 0–100 grid with optional keyframe animation.
+    Canvas {
+        /// One to forty-eight shapes, drawn in order.
+        shapes: Vec<Shape>,
+        /// Fixed height, three to sixteen rows.
+        #[serde(default = "eight_rows")]
+        rows: u16,
+        /// Plain-text description of what the drawing shows.
+        #[serde(default)]
+        alt: String,
+    },
     /// Controls submitted together through a transactional action.
     Form {
         /// Group title.
@@ -586,6 +599,9 @@ const fn three() -> u16 {
 const fn six() -> u16 {
     6
 }
+const fn eight_rows() -> u16 {
+    8
+}
 
 fn image_ok(src: Option<&str>, alt: Option<&str>) -> Result<()> {
     if let Some(src) = src {
@@ -633,6 +649,7 @@ impl Node {
                 | Self::Quote { .. }
                 | Self::Divider { .. }
                 | Self::Chart { .. }
+                | Self::Canvas { .. }
                 | Self::Timeline { .. }
                 | Self::Code { .. }
                 | Self::Badge { .. }
@@ -702,7 +719,7 @@ impl Node {
                 rows.saturating_add(components::view_rows(&item.view).saturating_add(1))
             }),
             Self::Form { fields, .. } => components::view_rows(fields).saturating_add(2),
-            Self::Chart { rows, .. } => *rows,
+            Self::Chart { rows, .. } | Self::Canvas { rows, .. } => *rows,
             Self::Timeline { items } => bounded_rows(
                 items
                     .iter()
@@ -801,7 +818,7 @@ pub struct CheckError {
 }
 
 /// Valid presentation node types, shared by validation and tool reports.
-pub const NODE_TYPES: &str = "hero, image, columns, cards, stats, steps, callout, quote, divider, text, buttons, input, kv, table, progress, bars, sparkline, checklist, select, stepper, toggle, tabs, accordion, chart, form, timeline, rating, code, badge, meter, slider, editor, choice, quiz";
+pub const NODE_TYPES: &str = "hero, image, columns, cards, stats, steps, callout, quote, divider, text, buttons, input, kv, table, progress, bars, sparkline, checklist, select, stepper, toggle, tabs, accordion, chart, canvas, form, timeline, rating, code, badge, meter, slider, editor, choice, quiz";
 const ACTION_OPS: &str = "set, call, run, send, answer, reset, open_url, to_assistant";
 const EXPR_OPS: &str = "get, random, not, number, if, add, sub, mul, div, mod, eq, lt, gt, and, or, literal, object, array, field, index, count, first, last, sum, avg, min, max, filter, sort, round, abs, floor, ceil";
 const MAX_ERRORS: usize = 10;
@@ -940,6 +957,7 @@ fn check_shape(value: &Value, path: &str, shape: &str, errors: &mut Vec<CheckErr
                 ("node", "tabs") => "items:tab[] key:?string",
                 ("node", "accordion") => "items:section[]",
                 ("node", "chart") => "kind:chart_kind series:series[] labels:string[] rows:u16",
+                ("node", "canvas") => "shapes:value rows:u16 alt:string",
                 ("node", "form") => "title:string fields:node[] submit_label:string action:string",
                 ("node", "timeline") => "items:event[]",
                 ("node", "rating") => "key:string label:string max:u16",
@@ -1047,6 +1065,7 @@ fn check_shape(value: &Value, path: &str, shape: &str, errors: &mut Vec<CheckErr
         "tab" => "label view",
         "section" => "title view",
         "chart" => "kind series",
+        "canvas" => "shapes",
         "series" => "name values",
         "event" => "time title",
         "form" => "title fields submit_label action",
@@ -1540,7 +1559,7 @@ impl Document {
             Node::Cards { .. } => 30,
             Node::Image { .. } | Node::Table { .. } | Node::Chart { .. } => 12,
             Node::Buttons { .. } => 14,
-            Node::Steps { .. } | Node::Timeline { .. } => 16,
+            Node::Steps { .. } | Node::Timeline { .. } | Node::Canvas { .. } => 16,
             Node::Hero { .. } | Node::Code { .. } | Node::Choice { .. } => 9,
             Node::Editor { .. } => 17,
             // Up to eight text rows plus the field's two border rows.
@@ -1980,6 +1999,8 @@ pub struct Session {
     /// Bumped by every state or presentation change; frontends use it to
     /// notice what needs saving.
     revision: u64,
+    /// Seconds of animation time; see [`Session::clock`].
+    clock: f64,
 }
 
 #[derive(Default)]
@@ -2013,6 +2034,7 @@ impl Session {
             continuation: None,
             held: Map::new(),
             revision: 0,
+            clock: 0.0,
         };
         let mut state = session.state.clone();
         session.bindings_ok(&mut state)?;
@@ -2218,6 +2240,11 @@ impl Session {
                 })
                 .collect(),
             Node::Code { source, .. } => vec![source.clone()],
+            Node::Canvas { alt, shapes, .. } => vec![if alt.is_empty() {
+                format!("[drawing: {} shapes]", shapes.len())
+            } else {
+                format!("[drawing: {alt}]")
+            }],
             Node::Editor { key, label, .. } => {
                 vec![format!("{}:", text(label)), self.value(key)]
             }

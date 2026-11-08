@@ -520,6 +520,11 @@ highlighted code `Editor` with line numbers (Enter to edit, Esc to stop, Tab
 indents), a `Choice` list that marks right and wrong once you pick, and an
 answer you reveal on request. “Grade my answers” sends everything, code
 included, for review.
+A `Canvas` draws circles, boxes, lines, rays, polygons and labels in braille
+dots on a 0–100 grid, and `Anim` keyframes move them: a spinning clock hand, a
+bouncing ball, an orbit diagram. Animations run at about 15 frames a second
+only while the canvas is on screen and the terminal has focus; shapes can also
+follow panel state, so a slider can drive a drawing.
 Click controls directly, or press `F2` to focus the newest visible panel and use
 Tab/arrows + Enter (inside a text field, arrows move the caret). `Esc` returns to chat without changing your draft; `Ctrl+C`
 copies a field's selected text, or returns to chat when nothing is selected.

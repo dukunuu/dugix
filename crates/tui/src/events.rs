@@ -127,6 +127,7 @@ async fn run_loop(
         let welcome = app.is_welcome();
         let status_deadline = app.status_deadline();
         let panel_data = app.interactive.data_pending();
+        let animating = app.interactive.animating();
         let images = std::sync::Arc::clone(&app.remote_images);
         let studio_wake = app.studio_wake();
         let studio_retry = app.studio.has_queued();
@@ -304,6 +305,14 @@ async fn run_loop(
                     std::future::pending::<()>().await;
                 }
             } => crate::interactive::live::tick(app),
+            // About 15 frames a second while a canvas on screen is moving.
+            () = async {
+                if animating {
+                    tokio::time::sleep(std::time::Duration::from_millis(66)).await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {}
             _ = jobs_poll.tick() => {
                 if let Err(error) = app.collect_job_notifications() {
                     app.push_status(format!("jobs notifications: {error}"));
