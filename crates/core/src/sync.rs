@@ -1981,7 +1981,7 @@ pub fn unpack_bundle(src: &Path, dest_dir: &Path) -> Result<Changeset> {
     let mut changeset: Option<Changeset> = None;
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
-        let name = entry.name().to_string();
+        let name = entry.name()?.into_owned();
         if name == "changeset.json" {
             changeset = Some(serde_json::from_reader(&mut entry)?);
             continue;

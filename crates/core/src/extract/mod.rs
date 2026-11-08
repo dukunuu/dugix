@@ -453,7 +453,11 @@ fn zip_listing(bytes: &[u8]) -> Vec<String> {
     let Ok(zip) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) else {
         return Vec::new();
     };
-    let names: Vec<&str> = zip.file_names().take(40).collect();
+    let names: Vec<String> = zip
+        .file_names()
+        .filter_map(|n| n.ok().map(std::borrow::Cow::into_owned))
+        .take(40)
+        .collect();
     if names.is_empty() {
         return Vec::new();
     }

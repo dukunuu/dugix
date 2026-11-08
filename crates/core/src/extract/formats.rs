@@ -30,7 +30,11 @@ fn read_entry(zip: &mut Zip<'_>, name: &str) -> Option<String> {
 
 fn entry_names(zip: &mut Zip<'_>) -> Vec<String> {
     (0..zip.len())
-        .filter_map(|i| zip.by_index(i).ok().map(|e| e.name().to_string()))
+        .filter_map(|i| {
+            zip.by_index(i)
+                .ok()
+                .and_then(|e| e.name().ok().map(std::borrow::Cow::into_owned))
+        })
         .collect()
 }
 

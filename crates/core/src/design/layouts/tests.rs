@@ -512,7 +512,7 @@ fn package_is_complete(bytes: &[u8]) {
         let mut part = archive.by_index(i).unwrap();
         let mut bytes = Vec::new();
         part.read_to_end(&mut bytes).unwrap();
-        parts.insert(part.name().to_string(), bytes);
+        parts.insert(part.name().unwrap().into_owned(), bytes);
     }
     let types =
         deck::import::xml::parse(std::str::from_utf8(&parts["[Content_Types].xml"]).unwrap())

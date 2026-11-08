@@ -2669,7 +2669,7 @@ fn unzip_into(archive_path: &Path, dest_root: &Path) -> Result<()> {
         .with_context(|| format!("reading {}", archive_path.display()))?;
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
-        let name = entry.name().to_string();
+        let name = entry.name()?.into_owned();
         let rel = Path::new(&name);
         if rel.is_absolute()
             || rel.components().any(|c| {

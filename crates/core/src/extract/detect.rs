@@ -221,7 +221,10 @@ pub fn vision_mime(bytes: &[u8]) -> Option<&'static str> {
 
 fn probe_zip(bytes: &[u8], ext: &str) -> Option<Kind> {
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).ok()?;
-    let names: Vec<String> = zip.file_names().map(str::to_string).collect();
+    let names: Vec<String> = zip
+        .file_names()
+        .filter_map(|n| n.ok().map(std::borrow::Cow::into_owned))
+        .collect();
     let has = |n: &str| names.iter().any(|x| x == n);
     let starts = |p: &str| names.iter().any(|x| x.starts_with(p));
     // ODF and EPUB put their MIME type in a stored `mimetype` entry.

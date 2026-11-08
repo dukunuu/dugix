@@ -99,7 +99,8 @@ impl Package {
         }
         let names = zip
             .file_names()
-            .map(|n| (n.trim_start_matches('/').to_lowercase(), n.to_string()))
+            .filter_map(Result::ok)
+            .map(|n| (n.trim_start_matches('/').to_lowercase(), n.into_owned()))
             .collect();
         Ok(Self {
             zip,

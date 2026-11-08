@@ -124,7 +124,8 @@ pub(super) fn bundle(app: &mut App, input: Option<&[u8]>) -> Result<Vec<u8>> {
         let entry = archive.by_index(index)?;
         expanded = expanded.saturating_add(entry.size());
         if expanded > MAX_EXPANDED
-            || (entry.name() == "changeset.json" && entry.size() > 10 * 1024 * 1024)
+            || (entry.name().is_ok_and(|n| n == "changeset.json")
+                && entry.size() > 10 * 1024 * 1024)
         {
             bail!("expanded bundle exceeds limits");
         }
