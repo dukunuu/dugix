@@ -253,3 +253,19 @@ fn stable_role_names() {
         assert_eq!(role.name(), name);
     }
 }
+
+#[test]
+fn segments_cover_the_source_and_roles_map_to_design_colors() {
+    let source = "let x = \"é\"; // c";
+    let pieces = super::segments(source, "rust");
+    let joined: String = pieces.iter().map(|(r, _)| &source[r.clone()]).collect();
+    assert_eq!(joined, source);
+    assert!(pieces.windows(2).all(|w| w[0].0.end == w[1].0.start));
+    assert!(pieces.iter().any(|(_, role)| *role == Some(Role::Keyword)));
+    assert_eq!(super::segments("plain", "nope"), vec![(0..5, None)]);
+    assert!(super::segments("", "rust").is_empty());
+    assert_eq!(Role::Keyword.color_key(), "accent");
+    assert_eq!(Role::String.color_key(), "accent2");
+    assert_eq!(Role::Number.color_key(), "accent3");
+    assert_eq!(Role::Comment.color_key(), "muted");
+}

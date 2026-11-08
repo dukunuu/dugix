@@ -154,3 +154,38 @@ fn a4_letter_and_custom_dimensions() {
         assert_eq!((page.width, page.height), size);
     }
 }
+#[test]
+fn code_runs_take_design_syntax_colors_without_changing_line_breaks() {
+    let text = "fn main() { let s = \"hi\"; } // done";
+    let colored = doc(
+        json!([{"id":"c","kind":"code","lang":"rust","text":text}]),
+        400.0,
+    );
+    let plain = doc(
+        json!([{"id":"c","kind":"code","lang":"","text":text}]),
+        400.0,
+    );
+    let colored_pages = paginate(&colored, None);
+    let plain_pages = paginate(&plain, None);
+    assert_eq!(words(&colored_pages[0], "c"), words(&plain_pages[0], "c"));
+    assert_eq!(lines(&colored_pages[0], "c"), lines(&plain_pages[0], "c"));
+    let theme = crate::doc::inline::theme(&colored);
+    let color_of = |want: &str| {
+        colored_pages[0]
+            .items
+            .iter()
+            .find_map(|item| match &item.paint {
+                Paint::Run(run) if item.block == "c" && run.text.trim() == want => {
+                    Some(run.color.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no run {want:?}"))
+    };
+    assert_eq!(color_of("fn"), crate::deck::text::color(&theme, "accent"));
+    assert_eq!(
+        color_of("\"hi\""),
+        crate::deck::text::color(&theme, "accent2")
+    );
+    assert_eq!(color_of("done"), crate::deck::text::color(&theme, "muted"));
+}

@@ -21,6 +21,7 @@ mod doc_comments;
 mod exports;
 mod feedback;
 mod fonts;
+mod highlight;
 mod history;
 mod library;
 pub use library::Answer;
@@ -202,6 +203,10 @@ pub enum Command {
     HistoryRestore {
         id: String,
     },
+    /// Syntax spans for code blocks (no state changes).
+    Highlight {
+        blocks: Vec<highlight::Request>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -330,6 +335,10 @@ pub enum Event {
         id: String,
         deck: Option<Deck>,
         doc: Option<nexus_core::doc::Doc>,
+    },
+    /// Syntax spans for the code blocks in a `Highlight` command.
+    Highlights {
+        blocks: Vec<highlight::Reply>,
     },
     /// A dialog was cancelled or the command changed nothing on screen.
     Idle {},
@@ -662,6 +671,11 @@ impl Backend {
             return Ok(event);
         }
         match &command {
+            Command::Highlight { blocks } => {
+                return Ok(Event::Highlights {
+                    blocks: highlight::highlight(blocks),
+                });
+            }
             Command::ImportTemplate { path } => return self.import_template(path),
             Command::ImportTemplateData { name, data } => {
                 return self.import_template_data(name, data);
@@ -1363,6 +1377,7 @@ fn embedded(path: &str) -> Option<(&'static str, &'static str)> {
         "/doc/comments.js" => ("text/javascript", include_str!("../ui/doc/comments.js")),
         "/doc/paste.js" => ("text/javascript", include_str!("../ui/doc/paste.js")),
         "/doc/glyphs.js" => ("text/javascript", include_str!("../ui/doc/glyphs.js")),
+        "/doc/syntax.js" => ("text/javascript", include_str!("../ui/doc/syntax.js")),
         _ => return None,
     })
 }

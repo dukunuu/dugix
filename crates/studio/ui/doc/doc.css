@@ -156,6 +156,11 @@ body.doc-mode { overflow:hidden; background:var(--canvas); }
 .code-head .lang:hover, .code-head .lang:focus { background:color-mix(in srgb, var(--d-fg) 7%, transparent); }
 .code-head .lang:empty::before { content:attr(data-ph); opacity:.55; }
 .blk-code pre.part { white-space:pre-wrap; tab-size:2; }
+/* Tree-sitter colors from the backend, painted by syntax.js in the design's palette. */
+::highlight(hl-accent) { color:var(--d-accent); }
+::highlight(hl-accent2) { color:var(--d-accent2); }
+::highlight(hl-accent3) { color:var(--d-accent3); }
+::highlight(hl-muted) { color:var(--d-muted); }
 ul.items, ol.items { margin:0; padding-left:calc(var(--l-list-indent) * var(--z)); }
 ul.items { list-style:disc; } ul.items ul.items { list-style:circle; } ul.items ul.items ul.items { list-style:square; }
 ol.items { list-style:decimal; } ol.items ol.items { list-style:lower-alpha; }

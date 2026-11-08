@@ -101,17 +101,32 @@ impl Package {
         }
         out
     }
-    fn rich(&mut self, text: &str, literal: bool, block: &str) -> String {
-        let runs = if literal {
-            vec![inline::Run {
-                text: text.into(),
-                ..Default::default()
-            }]
-        } else {
-            inline::runs(text)
+    /// Runs for `text`. `literal` gives code as pieces with an optional
+    /// syntax color (hex without `#`) instead of parsing inline Markdown.
+    fn rich(
+        &mut self,
+        text: &str,
+        literal: Option<Vec<(String, Option<String>)>>,
+        block: &str,
+    ) -> String {
+        let runs: Vec<(inline::Run, Option<String>)> = match literal {
+            Some(pieces) => pieces
+                .into_iter()
+                .map(|(text, color)| {
+                    let run = inline::Run {
+                        text,
+                        ..Default::default()
+                    };
+                    (run, color)
+                })
+                .collect(),
+            None => inline::runs(text)
+                .into_iter()
+                .map(|run| (run, None))
+                .collect(),
         };
         let mut out = self.markers(block, self.offset);
-        for span in runs {
+        for (span, color) in runs {
             let mut properties = String::new();
             if span.bold {
                 properties.push_str("<w:b/>");
@@ -124,6 +139,9 @@ impl Package {
             }
             if span.code {
                 properties.push_str("<w:rStyle w:val=\"CodeChar\"/>");
+            }
+            if let Some(color) = color {
+                let _ = write!(properties, "<w:color w:val=\"{color}\"/>");
             }
             let link = span.link.as_ref().map(|url| {
                 if let Some(id) = self.links.get(url) {
@@ -177,7 +195,8 @@ impl Package {
         out
     }
     fn p(&mut self, block: &str, style: &str, text: &str, properties: &str) -> String {
-        let content = self.rich(text, style == "Code", block);
+        let literal = (style == "Code").then(|| vec![(text.to_string(), None)]);
+        let content = self.rich(text, literal, block);
         format!("<w:p><w:pPr><w:pStyle w:val=\"{style}\"/>{properties}</w:pPr>{content}</w:p>")
     }
     fn list(&mut self, block: &str, items: &[ListItem], depth: usize, number: usize) -> String {
@@ -659,9 +678,21 @@ pub fn export(
                 }
                 body.push_str("<w:p><w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>");
             }
-            Kind::Code { text, .. } => {
+            Kind::Code { text, lang } => {
                 let style = style_id(block, doc);
-                let text = package.rich(text, true, &block.id);
+                let theme = inline::theme(doc);
+                let pieces = crate::highlight::segments(text, lang)
+                    .into_iter()
+                    .map(|(range, role)| {
+                        let color = role.map(|role| {
+                            crate::deck::text::color(&theme, role.color_key())
+                                .trim_start_matches('#')
+                                .to_string()
+                        });
+                        (text[range].to_string(), color)
+                    })
+                    .collect();
+                let text = package.rich(text, Some(pieces), &block.id);
                 let _ = write!(
                     body,
                     "<w:p><w:pPr><w:pStyle w:val=\"{}\"/></w:pPr>{text}</w:p>",
@@ -723,7 +754,7 @@ pub fn export(
         );
         for (id, text) in &doc.footnotes {
             let number = package.footnotes[id];
-            let text = package.rich(text, false, "");
+            let text = package.rich(text, None, "");
             let _ = write!(
                 notes,
                 "<w:footnote w:id=\"{number}\"><w:p>{text}</w:p></w:footnote>"

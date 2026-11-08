@@ -8,6 +8,20 @@ use super::super::{
 use anyhow::Result;
 use base64::Engine as _;
 use std::{fmt::Write as _, path::Path};
+/// Code with each syntax span wrapped in its design color class.
+fn highlighted(text: &str, lang: &str) -> String {
+    crate::highlight::segments(text, lang)
+        .into_iter()
+        .map(|(range, role)| match role {
+            Some(role) => format!(
+                "<span class=\"hl-{}\">{}</span>",
+                role.color_key(),
+                escape(&text[range])
+            ),
+            None => escape(&text[range]),
+        })
+        .collect()
+}
 fn rich(text: &str) -> String {
     let mut out = String::new();
     for run in inline::runs(text) {
@@ -156,6 +170,9 @@ pub fn export(doc: &Doc, assets: Option<&Path>, warnings: &mut Vec<String>) -> R
         c("accent"),
         c("border")
     );
+    for key in ["accent", "accent2", "accent3", "muted", "fg"] {
+        let _ = write!(css, ".hl-{key}{{color:{}}}", c(key));
+    }
     let mut body = String::new();
     for block in &doc.blocks {
         let id = escape(&block.id);
@@ -185,7 +202,7 @@ pub fn export(doc: &Doc, assets: Option<&Path>, warnings: &mut Vec<String>) -> R
                     body,
                     "<pre id=\"{id}\"><code class=\"language-{}\">{}</code></pre>",
                     escape(lang),
-                    escape(text)
+                    highlighted(text, lang)
                 );
             }
             Kind::List { items, ordered } => {

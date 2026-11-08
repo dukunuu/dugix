@@ -96,6 +96,45 @@ impl Role {
     }
 }
 
+impl Role {
+    /// The design-palette color key a document paints this role with:
+    /// keywords and markup in `accent`, strings in `accent2`, types and
+    /// literals in `accent3`, comments and punctuation `muted`, the rest `fg`.
+    #[must_use]
+    pub fn color_key(self) -> &'static str {
+        match self {
+            Self::Keyword | Self::Function | Self::Tag | Self::Heading | Self::Link => "accent",
+            Self::String | Self::Code => "accent2",
+            Self::Type | Self::Number | Self::Constant | Self::Escape | Self::Attribute => {
+                "accent3"
+            }
+            Self::Comment | Self::Punctuation | Self::Quote | Self::ListMarker => "muted",
+            Self::Operator | Self::Property | Self::Variable | Self::Emphasis | Self::Strong => {
+                "fg"
+            }
+        }
+    }
+}
+
+/// `source` cut into consecutive pieces covering all of it, each with its
+/// role (`None` between highlights). Empty sources give no pieces.
+#[must_use]
+pub fn segments(source: &str, lang: &str) -> Vec<(Range<usize>, Option<Role>)> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    for span in highlight(source, lang) {
+        if span.range.start > at {
+            out.push((at..span.range.start, None));
+        }
+        at = span.range.end;
+        out.push((span.range, Some(span.role)));
+    }
+    if at < source.len() {
+        out.push((at..source.len(), None));
+    }
+    out
+}
+
 /// A highlighted, non-empty byte range on UTF-8 character boundaries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Span {

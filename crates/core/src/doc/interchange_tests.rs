@@ -127,3 +127,36 @@ fn suggestion_rechecks_keep_custom_design_resolver_through_storage() {
         feedback::EditStatus::Outdated
     );
 }
+#[test]
+fn html_and_docx_color_code_by_syntax() {
+    let doc = crate::doc::test_support::checked(serde_json::json!({
+        "version": 1,
+        "title": "Code",
+        "blocks": [{"id": "c", "kind": "code", "lang": "rust", "text": "let x = \"<y>\";"}]
+    }));
+    let html = export::html::export(&doc, None, &mut vec![]).unwrap();
+    assert!(
+        html.contains("<span class=\"hl-accent\">let</span>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<span class=\"hl-accent2\">&quot;&lt;y&gt;&quot;</span>")
+            || html.contains("<span class=\"hl-accent2\">\"&lt;y&gt;\"</span>"),
+        "{html}"
+    );
+    assert!(html.contains(".hl-accent{color:"));
+    let bytes = export::docx::export(&doc, None, &[], &mut vec![]).unwrap();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml)
+        .unwrap();
+    let theme = crate::doc::inline::theme(&doc);
+    let accent = crate::deck::text::color(&theme, "accent");
+    assert!(
+        xml.contains(&format!(
+            "<w:color w:val=\"{}\"/>",
+            accent.trim_start_matches('#')
+        )),
+        "{xml}"
+    );
+}

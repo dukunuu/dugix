@@ -702,6 +702,21 @@ Object.assign(tests, {
     assert.equal(await page.locator('[data-block="b11"]').getAttribute('data-tone'), 'success');
     await page.close();
   },
+  async codeBlocksAreSyntaxColoredWithoutMovingTheCaret() {
+    const page = await open('dark');
+    const painted = key => page.evaluate(key => [...(CSS.highlights.get(`hl-${key}`) || [])].map(r => r.toString()), key);
+    await page.waitForFunction(() => CSS.highlights.get('hl-accent')?.size > 0);
+    assert.ok((await painted('accent')).includes('const'));
+    await caretAt(page, 'b16', 'text', 0);
+    await page.keyboard.type('let s = "hi"; ');
+    await page.waitForFunction(() => [...(CSS.highlights.get('hl-accent2') || [])].some(r => r.toString() === '"hi"'));
+    assert.ok((await painted('accent')).includes('let'));
+    // The repaint changed no DOM, so typing continues where it left off.
+    await page.keyboard.type('q');
+    await settle(page);
+    assert.ok((await blockOf(page, 'b16')).text.startsWith('let s = "hi"; qconst growth'));
+    await page.close();
+  },
   async imageWidthAndToc() {
     const page = await open('dark');
     await part(page, 'b14', 'caption').scrollIntoViewIfNeeded();

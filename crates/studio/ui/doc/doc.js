@@ -8,6 +8,7 @@ import { editorController } from './editor.js';
 import { menusController } from './menus.js';
 import { toolbarController } from './toolbar.js';
 import { commentsController } from './comments.js';
+import { syntaxController } from './syntax.js';
 import { glyph } from './glyphs.js';
 import * as M from './model.js';
 import * as E from './edits.js';
@@ -347,6 +348,7 @@ export function mount(shared) {
     set('--d-surface', colors.surface || mix(colors.fg || '#1d1d1f', colors.bg || '#fff', 6));
     set('--d-border', colors.border || mix(colors.fg || '#1d1d1f', colors.bg || '#fff', 20));
     set('--d-accent2', colors.accent2 || colors.accent || '#0a6cff');
+    set('--d-accent3', colors.accent3 || colors.accent2 || colors.accent || '#0a6cff');
     set('--measure', String(theme.measure_ch));
     set('--z', String(state.zoom));
     const family = name => fontStack(theme.fonts?.[name] || name);
@@ -842,12 +844,14 @@ export function mount(shared) {
   api.toolbar = toolbarController(api);
   api.comments = commentsController(api);
   const comments = api.comments;
+  const syntax = syntaxController({ surface, ask });
   renderSidebar();
   renderOutlinePanel();
 
   return {
     handle,
     unmount() {
+      syntax.stop();
       lifetime.abort();
       app.hidden = true;
       app.replaceChildren();
