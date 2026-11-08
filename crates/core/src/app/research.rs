@@ -2556,12 +2556,24 @@ impl super::App {
                 // Failures surface as a transcript stage row (mirrored into
                 // the in-memory transcript and the live popup) instead of
                 // vanishing (incognito skips the write by design).
-                if let Err(e) = self.save_research_report(&space_id, &space_name, &topic, &report) {
-                    self.mirror_stage(
+                let mut in_library = None;
+                match self.save_research_report(&space_id, &space_name, &topic, &report) {
+                    Ok(Some(path)) => {
+                        match self.save_research_doc(&space_name, &topic, &path, &report) {
+                            Ok(relative) => in_library = Some(relative),
+                            Err(e) => self.mirror_stage(
+                                &session_id,
+                                "report doc",
+                                &format!("error — could not add the report to the library: {e}"),
+                            ),
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => self.mirror_stage(
                         &session_id,
                         "report file",
                         &format!("error — could not save report file: {e}"),
-                    );
+                    ),
                 }
                 if viewing {
                     self.messages.push(crate::db::Message {
@@ -2576,7 +2588,10 @@ impl super::App {
                         persona: None,
                         created_at: None,
                     });
-                    self.push_status("research complete".to_string());
+                    self.push_status(in_library.map_or_else(
+                        || "research complete".to_string(),
+                        |doc| format!("research complete · in your library as {doc} (/library)"),
+                    ));
                 } else {
                     self.unread.insert(session_id);
                     if let Some((_, topic)) = &self.research_running {
@@ -2683,6 +2698,29 @@ impl super::App {
             }
         }
         Ok(saved)
+    }
+
+    /// The report as a doc in the space's library, beside its `.md` file
+    /// (`research-x-<stamp>.md` gives `docs/research-x-<stamp>.doc.json`), so
+    /// it opens in studio and exports in the space's design. The `.md` stays:
+    /// watches and citations find reports by that name. Returns the doc's
+    /// library path.
+    fn save_research_doc(
+        &mut self,
+        space_name: &str,
+        topic: &str,
+        report_path: &std::path::Path,
+        report: &str,
+    ) -> anyhow::Result<String> {
+        let files = self.space.files_dir(space_name);
+        let stem = report_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("research");
+        let relative = format!("docs/{stem}.doc.json");
+        let doc = crate::doc::import::from_markdown(&files, report, topic)?;
+        crate::doc::storage::save(&files, &relative, &doc, crate::doc::history::Who::Model)?;
+        Ok(relative)
     }
 }
 
@@ -3749,14 +3787,65 @@ mod tests {
 
         // Saved into the space's files dir and picked up by a rescan.
         let dir = a.space.files_dir(&space_name);
-        let saved = std::fs::read_dir(&dir)
-            .unwrap()
-            .filter_map(std::result::Result::ok)
-            .count();
+        let saved = report_files(&dir);
         assert_eq!(
-            saved, 1,
+            saved.len(),
+            1,
             "expected exactly one saved report file in {dir:?}"
         );
+        // And as a doc in the library, titled by the report's heading.
+        let library = crate::canvas::library(&dir);
+        assert_eq!(library.len(), 1, "{library:?}");
+        assert_eq!(library[0].title, "Rust Async Runtimes");
+        assert_eq!(
+            library[0].relative,
+            format!("docs/{}.doc.json", saved[0].strip_suffix(".md").unwrap())
+        );
+    }
+
+    /// Names of the `.md` files at the top of a space's files.
+    fn report_files(dir: &std::path::Path) -> Vec<String> {
+        std::fs::read_dir(dir).map_or_else(
+            |_| Vec::new(),
+            |read| {
+                read.filter_map(std::result::Result::ok)
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .filter(|n| n.ends_with(".md"))
+                    .collect()
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn research_doc_keeps_watch_notes_and_links_unusable_images() {
+        let mut a = test_app();
+        a.start_research("tide tables");
+        let session_id = a.session.as_ref().unwrap().id.clone();
+        let space_id = a.active_space.id.clone();
+        let space_name = a.active_space.name.clone();
+        a.on_research_done(Some((
+            session_id,
+            space_id,
+            space_name.clone(),
+            ResearchUpdate::Done(Ok("## What changed\n\nNew data.\n\n# Tides\n\n\
+                 ![chart](file:///etc/x.png)\n\n![map](https://example.com/m.png)\n"
+                .to_string())),
+        )));
+        let dir = a.space.files_dir(&space_name);
+        let entry = &crate::canvas::library(&dir)[0];
+        let doc = crate::doc::storage::load(&dir, &entry.relative).unwrap();
+        assert_eq!(doc.title, "Tides");
+        let kinds: Vec<_> = doc.blocks.iter().map(|b| &b.kind).collect();
+        assert!(matches!(
+            kinds[0],
+            crate::doc::Kind::Heading { level: 2, .. }
+        ));
+        assert!(matches!(kinds[2], crate::doc::Kind::Title { .. }));
+        assert!(
+            matches!(kinds[3], crate::doc::Kind::Paragraph { text } if text.contains("file:///etc/x.png")),
+            "{kinds:?}"
+        );
+        assert!(matches!(kinds[4], crate::doc::Kind::Image { .. }));
     }
 
     #[tokio::test]
@@ -3793,10 +3882,8 @@ mod tests {
 
         // Assert: the report file lands in the ORIGINAL space's files_dir
         let original_dir = a.space.files_dir(&original_space_name);
-        let original_files = std::fs::read_dir(&original_dir)
-            .unwrap()
-            .filter_map(std::result::Result::ok)
-            .count();
+        let original_files = report_files(&original_dir).len();
+        assert_eq!(crate::canvas::library(&original_dir).len(), 1);
         assert_eq!(
             original_files, 1,
             "expected exactly one report file in original space {original_dir:?}"

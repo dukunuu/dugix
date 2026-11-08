@@ -105,17 +105,8 @@ impl ToolBox {
                 .is_some_and(|e| !e.eq_ignore_ascii_case("md"))
         {
             imported.doc.title.clone()
-        } else if let Some(block) = parsed.blocks.iter_mut().find(|b| {
-            matches!(
-                b.kind,
-                BlockKind::Heading { level: 1, .. } | BlockKind::Title { .. }
-            )
-        }) {
-            let text = block.text().unwrap_or_default().to_string();
-            block.kind = BlockKind::Title { text: text.clone() };
-            doc::markdown::plain(&text)
         } else {
-            "Untitled".into()
+            doc::markdown::take_title(&mut parsed.blocks).unwrap_or_else(|| "Untitled".into())
         };
         let relative = v["path"]
             .as_str()

@@ -167,6 +167,18 @@ pub fn parse(source: &str) -> Vec<Block> {
     parse_document(source, false).blocks
 }
 
+/// Make the first title or level-one heading the doc's title block and return
+/// its plain text; `None` when there is neither.
+pub fn take_title(blocks: &mut [Block]) -> Option<String> {
+    let block = blocks
+        .iter_mut()
+        .find(|b| matches!(b.kind, Kind::Heading { level: 1, .. } | Kind::Title { .. }))?;
+    let text = block.text().unwrap_or_default().to_string();
+    let title = plain(&text);
+    block.kind = Kind::Title { text };
+    Some(title)
+}
+
 /// Parse GFM, optionally treating the first H1 as the document's title block.
 #[must_use]
 #[allow(clippy::too_many_lines)]

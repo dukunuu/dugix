@@ -454,7 +454,9 @@ Chat search is available in chat and agent mode, never in research searcher tool
 - **Deep research** (`/research <topic>`): a conversational scoping survey →
   a plan of questions with why/angles/sources briefs → parallel searcher
   agents → synthesis → critic → verifier → writer, with a live activity view
-  and `/steer` mid-run. `/research! <topic>` runs ungated
+  and `/steer` mid-run. `/research! <topic>` runs ungated. The finished report
+  is saved as `research-<topic>-<time>.md` in the space files and as a doc in
+  the **Library**, so it opens in studio to edit, comment on and export
 - **Swarm** (`/swarm`): a moderator-conducted multi-persona roundtable that
   iterates toward consensus
 - **Watches** (`/watch`): standing research jobs that re-run daily
