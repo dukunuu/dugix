@@ -51,6 +51,7 @@ pub(super) fn install_cleanup(conn: &Connection) -> Result<()> {
             DELETE FROM message_chunks WHERE message_id IN (SELECT id FROM messages WHERE session_id = OLD.id);
             DELETE FROM message_embeddings WHERE message_id IN (SELECT id FROM messages WHERE session_id = OLD.id);
             DELETE FROM message_index WHERE message_id IN (SELECT id FROM messages WHERE session_id = OLD.id);
+            DELETE FROM subagent_runs WHERE session_id = OLD.id;
         END;",
     )?;
     Ok(())

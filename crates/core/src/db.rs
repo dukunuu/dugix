@@ -15,6 +15,7 @@ use uuid::Uuid;
 use crate::provider::ModelPricing;
 
 pub(crate) mod chats;
+mod subagents;
 
 /// Stored per-model preferences.
 #[derive(Debug, Clone)]
@@ -439,6 +440,26 @@ pub fn migrate_cache(conn: &Connection, schema: &str) -> Result<()> {
             result_chars INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS {schema}.tool_events_at ON tool_events(at);
+        CREATE TABLE IF NOT EXISTS {schema}.subagent_runs (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            number INTEGER NOT NULL,
+            prompt TEXT NOT NULL,
+            model TEXT NOT NULL,
+            writable INTEGER NOT NULL,
+            max_steps INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            steps INTEGER NOT NULL,
+            tokens INTEGER NOT NULL,
+            cost REAL,
+            secs REAL NOT NULL,
+            review TEXT,
+            rows TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS {schema}.subagent_runs_session
+            ON subagent_runs(session_id, started_at);
         CREATE TABLE IF NOT EXISTS {schema}.watch_jobs (
             watch_id TEXT PRIMARY KEY,
             job_id TEXT NOT NULL

@@ -419,6 +419,7 @@ fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
         Popup::Files => ui::popups::files::handle_key(app, key)?,
         Popup::Apps => ui::popups::apps::handle_key(app, key)?,
         Popup::Library => ui::popups::library::handle_key(app, key),
+        Popup::Subagents => ui::popups::subagents::handle_key(app, key),
         Popup::InteractiveUi => crate::interactive::key(app, key),
         Popup::Watch => ui::popups::watches::handle_key(app, key)?,
         Popup::ResearchLive => {
@@ -773,6 +774,10 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
         // Ctrl+↑ opens the live research-activity view (per-searcher
         // reasoning/tool calls) — only while a research job is running.
         KeyCode::Up if ctrl && app.research_rx.is_some() => app.open_research_live(),
+        // Otherwise it opens this conversation's sub-agents while it has some.
+        KeyCode::Up if ctrl && ui::popups::subagents::has_live(app) => {
+            ui::popups::subagents::open(app);
+        }
         // Alt+↑/↓ recall this session's sent messages into the composer.
         KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT) => app.recall_prev(),
         KeyCode::Down if key.modifiers.contains(KeyModifiers::ALT) => app.recall_next(),
@@ -2364,5 +2369,40 @@ mod tests {
         handle_key(&mut app, KeyCode::Esc.into()).unwrap();
         handle_key(&mut app, KeyCode::Esc.into()).unwrap();
         assert_eq!(app.popup, Popup::None, "Esc in Normal leaves as before");
+    }
+
+    #[test]
+    fn ctrl_up_opens_the_sub_agents_only_while_this_chat_has_some() {
+        let mut app = test_app();
+        let session = app
+            .db
+            .create_session("helpers", "a/one", &app.active_space.id, "chat")
+            .unwrap();
+        app.session = Some(session.clone());
+        let ctrl_up = KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL);
+        handle_key(&mut app, ctrl_up).unwrap();
+        assert_eq!(app.popup, Popup::None);
+        app.subagent_runs.push(nexus_core::app::SubagentRun {
+            id: "run".into(),
+            session_id: session.id,
+            number: 1,
+            prompt: "look".into(),
+            model: "m".into(),
+            writable: false,
+            max_steps: 20,
+            status: nexus_core::app::SubagentStatus::Running,
+            started_at: "2026-11-08T00:00:00Z".into(),
+            finished_at: None,
+            steps: 0,
+            tokens: 0,
+            cost: None,
+            secs: 0.0,
+            review: None,
+            rows: Vec::new(),
+            live_reasoning: String::new(),
+            live_content: String::new(),
+        });
+        handle_key(&mut app, ctrl_up).unwrap();
+        assert_eq!(app.popup, Popup::Subagents);
     }
 }

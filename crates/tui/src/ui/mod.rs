@@ -121,6 +121,7 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
         Popup::Files => popups::files::render(f, app),
         Popup::Apps => popups::apps::render(f, app),
         Popup::Library => popups::library::render(f, app),
+        Popup::Subagents => popups::subagents::render(f, app),
         Popup::InteractiveUi => crate::interactive::render_popup(f, app),
         Popup::Watch => popups::watches::render(f, app),
         Popup::ResearchLive => popups::research_live::render(f, app),

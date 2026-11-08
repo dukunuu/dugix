@@ -316,6 +316,7 @@ pub struct AppView {
     pub jobs_popup: crate::ui::popups::jobs::JobsPopup,
     /// The `/library` popup: the space's decks and docs, cursor and mode.
     pub library: crate::ui::popups::library::LibraryPopup,
+    pub subagents: crate::ui::popups::subagents::SubagentsPopup,
     /// The Open and Save dialogs the library's export asks (scripted in tests).
     pub dialogs: Box<dyn nexus_core::canvas::dialogs::Dialogs>,
     /// The `/connectors` popup: mode, cursors, add form and import rows.
@@ -601,6 +602,7 @@ impl AppView {
             harness_selected: 0,
             jobs_popup: crate::ui::popups::jobs::JobsPopup::default(),
             library: crate::ui::popups::library::LibraryPopup::default(),
+            subagents: crate::ui::popups::subagents::SubagentsPopup::default(),
             dialogs: crate::ui::popups::library::default_dialogs(),
             connectors_popup: crate::ui::popups::connectors::ConnectorsPopup::default(),
             procs_selected: 0,

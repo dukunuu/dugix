@@ -1888,8 +1888,9 @@ impl OpenRouter {
         request: crate::subagent::Request<'_>,
     ) -> Result<crate::subagent::Round> {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let finish = self
-            .run_stream(
+        let run = async {
+            let tx = tx;
+            self.run_stream(
                 request.model,
                 request.messages,
                 request.params,
@@ -1897,17 +1898,31 @@ impl OpenRouter {
                 request.final_round,
                 &tx,
             )
-            .await?;
-        let (calls, output) = match finish {
+            .await
+        };
+        // Stream the round's text to the live view while it runs; the
+        // channel closes when `run` drops its sender.
+        let forward = async {
+            let mut error = None;
+            while let Some(event) = rx.recv().await {
+                match event {
+                    StreamEvent::Reasoning(text) => (request.live)(&text, ""),
+                    StreamEvent::Token(text) => (request.live)("", &text),
+                    StreamEvent::Error(text) => error = Some(text),
+                    _ => {}
+                }
+            }
+            error
+        };
+        let (finish, error) = tokio::join!(run, forward);
+        let (calls, output) = match finish? {
             Finish::Done(output) => (Vec::new(), output),
             Finish::ToolCalls(calls, output) => (calls, output),
             Finish::Errored => {
-                while let Ok(event) = rx.try_recv() {
-                    if let StreamEvent::Error(error) = event {
-                        anyhow::bail!("{error}");
-                    }
-                }
-                anyhow::bail!("sub-agent provider failed");
+                anyhow::bail!(
+                    "{}",
+                    error.as_deref().unwrap_or("sub-agent provider failed")
+                );
             }
         };
         Ok(crate::subagent::Round {

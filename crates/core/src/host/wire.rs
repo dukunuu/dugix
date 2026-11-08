@@ -392,6 +392,27 @@ impl From<StreamEvent> for WireStreamEvent {
             },
             StreamEvent::Done => Self::Done,
             StreamEvent::Error(e) => Self::Error(e),
+            // Thin clients get a status line; the transcript stays in the TUI.
+            StreamEvent::Subagent(update) => {
+                let n = update.number;
+                Self::Status(match update.event {
+                    crate::provider::SubagentEvent::Started { .. } => {
+                        format!("sub-agent {n}: started")
+                    }
+                    crate::provider::SubagentEvent::Delta { .. } => {
+                        format!("sub-agent {n}: thinking")
+                    }
+                    crate::provider::SubagentEvent::Round { step, .. } => {
+                        format!("sub-agent {n}: step {}", step + 1)
+                    }
+                    crate::provider::SubagentEvent::Finished { error, .. } => {
+                        format!(
+                            "sub-agent {n}: {}",
+                            if error.is_some() { "failed" } else { "done" }
+                        )
+                    }
+                })
+            }
         }
     }
 }

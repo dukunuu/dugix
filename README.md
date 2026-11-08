@@ -615,6 +615,7 @@ Type `/` in the composer for autocomplete. Aliases in parentheses.
 | `/apps` (`webapps`) | view web apps and pinned interactive panels |
 | `/pin-panel [name]` (`pin`) | keep the focused panel as a reusable mini-app |
 | `/studio [file]` (`deck`, `slides`) | open the last doc or deck (or the named one) in the studio window linked to this conversation; with none yet, open the library (see `docs/studio.md`) |
+| `/agents` (`subagents`) | this conversation's `task` sub-agents: status, model, steps, tokens and cost; Enter opens a run's transcript (prompt, reasoning, tool calls, answer, review diff), live while it runs (`t` tool bodies, `r` reasoning, ←→ other runs). Ctrl+↑ opens it while the chat has sub-agents. The reply's cost includes its sub-agents |
 | `/library` (`decks`, `lib`) | list the space's decks and docs: Enter opens in studio, `e` exports through the Save dialog, `d` deletes (to `.trash/`) |
 | `/skills` | manage skills (app + project/user/global Agent Skills) |
 | `/usage` (`analytics`, `costs`) | token/cache/cost analytics by backend & model (←/→ for 24h/7d/30d/all windows) |

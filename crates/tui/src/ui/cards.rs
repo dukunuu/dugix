@@ -571,7 +571,7 @@ fn push_slide_thumbnails(
 /// What the model thought and said before a round of tool calls, drawn
 /// above the round's first call so a tool loop reads in order: thinking,
 /// calls, thinking, calls, answer. Reasoning folds like a reply's (Ctrl+R).
-fn push_round_preamble(
+pub(super) fn push_round_preamble(
     out: &mut Vec<Line<'static>>,
     reasoning: &[String],
     said: &str,
@@ -945,7 +945,14 @@ fn expanded_tool_body(
         } else {
             result
         };
-        return tool_markdown(report, width, theme);
+        let mut rows = tool_markdown(report, width, theme);
+        rows.extend(super::diff::escaped_rows(
+            "/agents — its reasoning, tool calls and cost",
+            width,
+            dim,
+            dim,
+        ));
+        return rows;
     }
     let mut rows = Vec::new();
     if let Some(args) = args.as_object() {
@@ -1239,7 +1246,11 @@ fn dim_tool_escapes(lines: &mut [Line<'static>], dim: Style, rule: ratatui::styl
     }
 }
 
-fn tool_markdown(text: &str, width: usize, theme: &crate::theme::Theme) -> Vec<Line<'static>> {
+pub(super) fn tool_markdown(
+    text: &str,
+    width: usize,
+    theme: &crate::theme::Theme,
+) -> Vec<Line<'static>> {
     let dim = Style::default().fg(theme.fg_dim);
     let mut lines =
         crate::ui::markdown::render(&markdown_tool_text(text), width, md_colors(theme)).lines;

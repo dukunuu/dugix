@@ -630,6 +630,7 @@ async fn subagent_rounds_use_the_inherited_session_usage_sink() {
     let app = &fixture.app;
     let (provider, server) = workflow_server(vec![("Subagent answer", true)]).await;
     let provider = app.usage_provider(provider, "chat").usage_kind("subagent");
+    let streamed = std::sync::Mutex::new(String::new());
     let answer = provider
         .subagent_round(crate::subagent::Request {
             model: "mock/model",
@@ -637,10 +638,13 @@ async fn subagent_rounds_use_the_inherited_session_usage_sink() {
             params: &crate::provider::ChatParams::default(),
             tools: &[],
             final_round: true,
+            live: &|_, content| streamed.lock().unwrap().push_str(content),
         })
         .await
         .unwrap();
     assert_eq!(answer.content, "Subagent answer");
+    // The live view saw the answer as it streamed.
+    assert_eq!(*streamed.lock().unwrap(), "Subagent answer");
     server.await.unwrap();
     let rows = app
         .db

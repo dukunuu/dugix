@@ -67,7 +67,10 @@ pub const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+Shift+N", "new incognito session"),
             ("Alt+1–4", "reopen a recent session (start screen)"),
             ("Ctrl+G", "context breakdown"),
-            ("Ctrl+↑", "live research view (while research runs)"),
+            (
+                "Ctrl+↑",
+                "live research view, or this chat's sub-agents (/agents)",
+            ),
         ],
     ),
     (

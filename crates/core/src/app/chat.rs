@@ -1145,6 +1145,15 @@ impl App {
                     task.tool_status = Some(s);
                 }
             }
+            StreamEvent::Subagent(update) => {
+                let Some(task) = self.chat_tasks.get(&task_id) else {
+                    return Ok(());
+                };
+                let (session_id, incognito) = (task.session_id.clone(), task.incognito);
+                if let Some(cost) = self.on_subagent(&session_id, incognito, *update) {
+                    *self.subagent_turn_cost.entry(task_id).or_default() += cost;
+                }
+            }
             StreamEvent::ToolCall {
                 id,
                 reasoning,
@@ -1326,6 +1335,7 @@ impl App {
         use crate::deck::link::{ActivityState, TurnOutcome};
 
         let id = task.id;
+        self.end_subagents(&task.session_id, task.incognito);
         let watching = self
             .deck_link
             .lock()
@@ -1371,6 +1381,7 @@ impl App {
         error: Option<String>,
         stopped: bool,
     ) -> Result<()> {
+        let helpers_cost = self.subagent_turn_cost.remove(&task.id);
         if self
             .session
             .as_ref()
@@ -1449,6 +1460,12 @@ impl App {
                 )
             })
         });
+        // The reply's cost is the whole turn's, its sub-agents included (each
+        // priced under its own model; their rows are logged as `subagent`).
+        let cost = match (cost, helpers_cost) {
+            (Some(own), Some(helpers)) => Some(own + helpers),
+            (own, helpers) => own.or(helpers),
+        };
         let reasoning = (!reasoning.is_empty()).then_some(reasoning);
         let phrase = Some(THINKING[task.thinking_idx].1.to_string());
         let created_at = Some(chrono::Utc::now().to_rfc3339());

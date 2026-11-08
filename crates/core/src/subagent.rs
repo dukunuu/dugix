@@ -12,7 +12,9 @@ use tokio::sync::mpsc;
 
 use crate::jobs::service::{Tree, git};
 use crate::provider::openrouter::OpenRouter;
-use crate::provider::{ChatMessage, ChatParams, StreamEvent, ToolCall, ToolDef, Usage};
+use crate::provider::{
+    ChatMessage, ChatParams, StreamEvent, SubagentEvent, SubagentUpdate, ToolCall, ToolDef, Usage,
+};
 use crate::tools::{ToolBox, cap_head_tail, run_scheduled};
 use crate::trace::{TraceResponse, TraceStep, TraceToolResult};
 use crate::workspace::Workspace;
@@ -22,6 +24,8 @@ const REPORT_CAP: usize = 6_000;
 /// Sub-agents running at once; more wait for a slot. Parallel helpers mostly
 /// buy token spend, and a burst of them trips provider rate limits.
 const MAX_CONCURRENT: usize = 3;
+/// How often streamed sub-agent text reaches the view, at most.
+const DELTA_EVERY: std::time::Duration = std::time::Duration::from_millis(100);
 
 fn slots() -> &'static tokio::sync::Semaphore {
     static SLOTS: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
@@ -56,6 +60,8 @@ pub(crate) struct Request<'a> {
     pub params: &'a ChatParams,
     pub tools: &'a [ToolDef],
     pub final_round: bool,
+    /// Streamed `(reasoning, content)` chunks of this round, as they arrive.
+    pub live: &'a (dyn Fn(&str, &str) + Send + Sync),
 }
 
 pub(crate) struct Round {
@@ -90,6 +96,16 @@ pub struct Context {
 }
 
 impl Context {
+    fn send(&self, id: &str, number: u64, event: SubagentEvent) {
+        let _ = self
+            .events
+            .send(StreamEvent::Subagent(Box::new(SubagentUpdate {
+                id: id.to_string(),
+                number,
+                event,
+            })));
+    }
+
     pub(crate) fn new(
         provider: OpenRouter,
         model: String,
@@ -102,6 +118,53 @@ impl Context {
             params,
             events,
         }
+    }
+}
+
+/// Streamed text batched into `Delta` events, at most one per [`DELTA_EVERY`].
+struct Live<'a> {
+    context: &'a Context,
+    id: &'a str,
+    number: u64,
+    pending: std::sync::Mutex<(String, String, Instant)>,
+}
+
+impl<'a> Live<'a> {
+    fn new(context: &'a Context, id: &'a str, number: u64) -> Self {
+        Self {
+            context,
+            id,
+            number,
+            pending: std::sync::Mutex::new((String::new(), String::new(), Instant::now())),
+        }
+    }
+
+    fn push(&self, reasoning: &str, content: &str) {
+        let mut pending = self.pending.lock().expect("live text");
+        pending.0.push_str(reasoning);
+        pending.1.push_str(content);
+        if pending.2.elapsed() >= DELTA_EVERY {
+            self.flush_locked(&mut pending);
+        }
+    }
+
+    fn flush(&self) {
+        self.flush_locked(&mut self.pending.lock().expect("live text"));
+    }
+
+    fn flush_locked(&self, pending: &mut (String, String, Instant)) {
+        pending.2 = Instant::now();
+        if pending.0.is_empty() && pending.1.is_empty() {
+            return;
+        }
+        self.context.send(
+            self.id,
+            self.number,
+            SubagentEvent::Delta {
+                reasoning: std::mem::take(&mut pending.0),
+                content: std::mem::take(&mut pending.1),
+            },
+        );
     }
 }
 
@@ -235,10 +298,19 @@ pub(crate) async fn run(context: &Context, toolbox: &ToolBox, args: &Value) -> R
         ),
     );
     system.cache_breakpoint = crate::provider::model_needs_cache_breakpoints(&model);
-    let messages = vec![
-        system,
-        ChatMessage::text("user", args["prompt"].as_str().expect("validated prompt")),
-    ];
+    let prompt = args["prompt"].as_str().expect("validated prompt");
+    let messages = vec![system, ChatMessage::text("user", prompt)];
+    let id = uuid::Uuid::new_v4().to_string();
+    context.send(
+        &id,
+        number,
+        SubagentEvent::Started {
+            prompt: prompt.to_string(),
+            model: model.clone(),
+            writable,
+            max_steps,
+        },
+    );
     let slot = if let Ok(permit) = slots().try_acquire() {
         permit
     } else {
@@ -248,14 +320,44 @@ pub(crate) async fn run(context: &Context, toolbox: &ToolBox, args: &Value) -> R
         slots().acquire().await.context("sub-agent slots closed")?
     };
     let outcome = run_loop(
-        context, &child, &model, &params, messages, max_steps, number,
+        context,
+        &child,
+        &model,
+        &params,
+        messages,
+        max_steps,
+        (number, &id),
     )
     .await;
     drop(slot);
     let review = prepared
         .as_ref()
         .map(|(tree, _)| finish_tree(tree, number))
-        .transpose()?;
+        .transpose();
+    conclude(context, (number, &id), outcome, review)
+}
+
+/// Tell the live view how the run ended and build the parent's report.
+fn conclude(
+    context: &Context,
+    (number, id): (u64, &str),
+    outcome: Result<String>,
+    review: Result<Option<String>>,
+) -> Result<String> {
+    let error = match (&outcome, &review) {
+        (Err(error), _) => Some(error.to_string()),
+        (_, Err(error)) => Some(format!("review branch failed: {error}")),
+        _ => None,
+    };
+    context.send(
+        id,
+        number,
+        SubagentEvent::Finished {
+            error,
+            review: review.as_ref().ok().cloned().flatten(),
+        },
+    );
+    let review = review?;
     let mut report = outcome.unwrap_or_else(|error| format!("sub-agent failed: {error}"));
     if let Some(review) = review {
         report.push_str("\n\n");
@@ -271,16 +373,17 @@ async fn run_loop(
     params: &ChatParams,
     mut messages: Vec<ChatMessage>,
     max_steps: usize,
-    number: u64,
+    (number, id): (u64, &str),
 ) -> Result<String> {
     let tools = toolbox.defs();
     let mut tokens = 0;
     for step in 0..=max_steps {
         let _ = context.events.send(StreamEvent::Status(format!(
-            "sub-agent: {}/{max_steps}",
+            "sub-agent {number}: step {}/{max_steps} · /agents to watch",
             (step + 1).min(max_steps)
         )));
         let started = Instant::now();
+        let live = Live::new(context, id, number);
         let round = context
             .provider
             .round(Request {
@@ -289,8 +392,11 @@ async fn run_loop(
                 params,
                 tools: &tools,
                 final_round: step == max_steps,
+                live: &|reasoning, content| live.push(reasoning, content),
             })
-            .await?;
+            .await;
+        live.flush();
+        let round = round?;
         // Usage is recorded by the sub-agent's own client, under its own
         // model; forwarding it would price it as the session model and move
         // the parent's context bar.
@@ -335,6 +441,23 @@ async fn run_loop(
                 });
             }
         }
+        context.send(
+            id,
+            number,
+            SubagentEvent::Round {
+                step,
+                reasoning: round.reasoning.clone(),
+                content: round.content.clone(),
+                calls: round
+                    .calls
+                    .iter()
+                    .cloned()
+                    .zip(results.iter().map(|result| result.seen.clone()))
+                    .collect(),
+                usage: round.usage,
+                secs: started.elapsed().as_secs_f64(),
+            },
+        );
         record_step(
             model, params, &tools, request, &round, results, step, number, started,
         )

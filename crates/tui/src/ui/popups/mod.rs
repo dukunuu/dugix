@@ -20,12 +20,15 @@ pub mod session;
 pub mod settings;
 pub mod skills;
 pub mod space;
+pub mod subagents;
 pub mod swarm;
 pub mod usage;
 pub mod watches;
 
 #[cfg(test)]
 mod library_tests;
+#[cfg(test)]
+mod subagents_tests;
 #[cfg(test)]
 mod tests;
 

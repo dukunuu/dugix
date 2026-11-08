@@ -112,6 +112,7 @@ impl Provider for Fake {
             tools: request.tools.to_vec(),
             final_round: request.final_round,
         });
+        (request.live)("thinking", "");
         Box::pin(std::future::ready(Ok(self
             .replies
             .lock()
@@ -248,16 +249,63 @@ async fn read_only_task_is_fresh_restricted_capped_accounted_and_traced() {
     );
     drop(seen);
     // The sub-agent's client records its own usage under its own model; none
-    // of it reaches the parent's stream (it would be priced as the session
-    // model and move the parent's context bar).
+    // of it reaches the parent's stream as `Usage` (it would be priced as the
+    // session model and move the parent's context bar). The live view gets
+    // the run as `Subagent` events instead.
     let mut statuses = Vec::new();
+    let mut updates = Vec::new();
     while let Ok(event) = events.try_recv() {
         match event {
             StreamEvent::Status(status) => statuses.push(status),
+            StreamEvent::Subagent(update) => updates.push(*update),
             other => panic!("child output leaked to parent: {other:?}"),
         }
     }
-    assert_eq!(statuses, ["sub-agent: 1/20", "sub-agent: 2/20"]);
+    assert_eq!(statuses.len(), 2);
+    assert!(
+        statuses[0].starts_with("sub-agent ")
+            && statuses[0].ends_with("step 1/20 · /agents to watch")
+    );
+    assert!(statuses[1].contains("step 2/20"));
+    assert!(updates.iter().all(|update| update.id == updates[0].id));
+    let kinds: Vec<_> = updates
+        .iter()
+        .map(|update| match &update.event {
+            SubagentEvent::Started {
+                prompt,
+                model,
+                writable,
+                ..
+            } => {
+                assert_eq!(
+                    (prompt.as_str(), model.as_str(), *writable),
+                    ("find callers", "session-model", false)
+                );
+                "started"
+            }
+            SubagentEvent::Delta { reasoning, .. } => {
+                assert_eq!(reasoning, "thinking");
+                "delta"
+            }
+            SubagentEvent::Round { calls, usage, .. } => {
+                assert_eq!(usage.unwrap().cost, Some(0.125));
+                if calls.is_empty() {
+                    "answer"
+                } else {
+                    assert!(calls[0].1.contains("useful finding"), "{calls:?}");
+                    "calls"
+                }
+            }
+            SubagentEvent::Finished { error, review } => {
+                assert!(error.is_none() && review.is_none());
+                "finished"
+            }
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        ["started", "delta", "calls", "delta", "answer", "finished"]
+    );
     let steps = store.steps_for_session("parent-session").unwrap();
     assert_eq!(steps.len(), 2);
     for id in steps {

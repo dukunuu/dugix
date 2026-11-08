@@ -517,6 +517,49 @@ pub enum StreamEvent {
     },
     Done,
     Error(String),
+    /// What a `task` sub-agent is doing, for the live sub-agent view. Its
+    /// usage rides here (priced under the sub-agent's own model) rather than
+    /// as `Usage`, which would move the parent's context bar.
+    Subagent(Box<SubagentUpdate>),
+}
+
+/// One step of a sub-agent run, keyed by the run's id.
+#[derive(Debug, Clone)]
+pub struct SubagentUpdate {
+    /// Unique per run (a UUID).
+    pub id: String,
+    /// The process-wide task number, as in its review branch `nexus/sub/…/<n>`.
+    pub number: u64,
+    pub event: SubagentEvent,
+}
+
+#[derive(Debug, Clone)]
+pub enum SubagentEvent {
+    Started {
+        prompt: String,
+        model: String,
+        /// Edits an isolated worktree (`tools: "workspace"`) rather than reading.
+        writable: bool,
+        max_steps: usize,
+    },
+    /// Streamed text of the round in flight, batched.
+    Delta { reasoning: String, content: String },
+    /// A finished model round and the results of its tool calls.
+    Round {
+        step: usize,
+        reasoning: Option<String>,
+        content: String,
+        /// `(call, result the sub-agent saw)`.
+        calls: Vec<(ToolCall, String)>,
+        usage: Option<Usage>,
+        secs: f64,
+    },
+    /// The run ended: `error` when it failed, `review` for a workspace task's
+    /// branch summary and diff.
+    Finished {
+        error: Option<String>,
+        review: Option<String>,
+    },
 }
 
 #[cfg(test)]

@@ -157,6 +157,11 @@ pub const COMMANDS: &[Command] = &[
         aliases: &["deck", "slides"],
     },
     Command {
+        name: "agents",
+        desc: "this conversation's sub-agents: live transcripts, steps, tokens and cost",
+        aliases: &["subagents", "sub-agents"],
+    },
+    Command {
         name: "library",
         desc: "your decks and docs: open in studio, export, delete",
         aliases: &["decks", "lib"],
@@ -426,6 +431,8 @@ pub enum AppCommand {
     OpenStudio { deck: Option<String> },
     /// `/library` — the decks and docs of this space (view-owned).
     OpenLibrary,
+    /// `/agents` — the conversation's sub-agents (view-owned).
+    OpenSubagents,
     /// `/view <path|url>` — show an image in the in-terminal viewer (or the
     /// system viewer, per the `image_viewer` setting). View-owned.
     OpenImage { target: String },
@@ -579,6 +586,7 @@ impl App {
                 deck: Some(rest(cmd, token)).filter(|deck| !deck.is_empty()),
             }),
             "library" => Ok(AppCommand::OpenLibrary),
+            "agents" => Ok(AppCommand::OpenSubagents),
             "connectors" => parse_connectors(&rest(cmd, token)),
             "pin-panel" => parse_pin_panel(token, &rest(cmd, token)),
             "research" => Ok(AppCommand::RunResearch {
@@ -666,6 +674,7 @@ impl App {
             | AppCommand::PinPanel { .. }
             | AppCommand::OpenStudio { .. }
             | AppCommand::OpenLibrary
+            | AppCommand::OpenSubagents
             | AppCommand::OpenImage { .. }
             | AppCommand::OpenUsage
             | AppCommand::OpenJobForm

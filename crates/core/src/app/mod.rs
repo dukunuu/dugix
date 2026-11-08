@@ -60,6 +60,7 @@ mod connectors;
 mod skills_popup;
 mod snapshot;
 mod spaces;
+mod subagents;
 mod swarm;
 #[cfg(test)]
 mod tests;
@@ -80,6 +81,7 @@ pub use sessions::session_score;
 pub use snapshot::{
     CoreSnapshot, MessageSnapshot, ModelSnapshot, SessionSnapshot, SettingsSnapshot, TaskSnapshot,
 };
+pub use subagents::{SubagentRow, SubagentRun, SubagentStatus};
 pub use swarm::{SwarmUpdate, parse_persona_editor};
 pub use watches::due_watches;
 
@@ -322,6 +324,8 @@ pub enum Popup {
     Connectors,
     /// `/library`: the space's decks and docs, to open in studio, export or delete.
     Library,
+    /// `/agents`: the conversation's sub-agents and their transcripts.
+    Subagents,
     /// `/usage`: aggregated per-backend/per-model token, cache, and cost stats.
     Usage,
     /// `/harness`: ranked tool failure modes and their latest transcripts.
@@ -1220,6 +1224,10 @@ pub struct App {
     /// in sync by `mirror_stage` regardless of which session is viewed — the
     /// live popup renders from here instead of re-reading the db per frame.
     pub research_stage_rows: Vec<String>,
+    /// `task` sub-agent runs of this process, live and recent (see `subagents`).
+    pub subagent_runs: Vec<SubagentRun>,
+    /// What each chat task's sub-agents have cost so far, added to its reply.
+    pub subagent_turn_cost: HashMap<ChatTaskId, f64>,
     /// Incognito mode captured when the job started: artifact persistence
     /// (plan files, and the plan message itself, which folds in survey
     /// replies) is decided by this, never by toggling `incognito` mid-job.
@@ -1480,6 +1488,8 @@ impl App {
             research_steer_log: Vec::new(),
             research_steer_acked: std::collections::HashSet::new(),
             research_stage_rows: Vec::new(),
+            subagent_runs: Vec::new(),
+            subagent_turn_cost: HashMap::new(),
             research_incognito: false,
             research_steer_tx: None,
             research_topic_rx: None,
