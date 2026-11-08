@@ -74,6 +74,16 @@ pub(super) fn render_input(f: &mut Frame, app: &mut AppView, area: Rect) {
             Style::default().fg(app.theme.fg_dim),
         ));
     }
+    if app.vim_enabled {
+        let style = if app.vim.mode() == crate::vim::Mode::Insert {
+            Style::default().fg(app.theme.fg_dim)
+        } else {
+            Style::default()
+                .fg(app.theme.accent)
+                .add_modifier(Modifier::BOLD)
+        };
+        title.push(Span::styled(format!("{} ", app.vim.label()), style));
+    }
     let name = app.session.as_ref().map(|s| s.title.clone());
     let mut block = Block::default()
         .borders(Borders::ALL)
@@ -103,6 +113,9 @@ pub(super) fn render_input(f: &mut Frame, app: &mut AppView, area: Rect) {
     } else {
         "Ask anything · / commands · @ files · F1 help"
     });
+    let selection = Style::default().bg(app.theme.selection).fg(app.theme.fg);
+    let vim = app.vim_enabled.then_some(&app.vim);
+    crate::editor::decorate(&mut app.input, vim, selection);
     f.render_widget(&app.input, inner);
     // Terminal IMEs draw in-progress (preedit) text at the real cursor, which
     // otherwise trails wherever the last changed cell was. Park it on the

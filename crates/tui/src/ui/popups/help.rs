@@ -36,6 +36,18 @@ pub const KEYS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "vim keys (on by default; /vim off)",
+        &[
+            ("Esc · i a I A o O", "Normal mode · back to Insert"),
+            ("h j k l · w b e · 0 ^ $", "move by char · word · line"),
+            ("gg G · { }", "first / last line · paragraph"),
+            ("d c y + motion · dd cc yy", "delete · change · yank"),
+            ("x D C J r ~ · p P", "edit · put"),
+            ("v V · u Ctrl+R · .", "select · undo / redo · repeat"),
+            ("Enter · Esc (Normal)", "send · stop the reply or clear"),
+        ],
+    ),
+    (
         "conversation",
         &[
             ("↑/↓", "scroll (at the composer's edge)"),

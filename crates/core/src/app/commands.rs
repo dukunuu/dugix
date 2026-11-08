@@ -119,6 +119,11 @@ pub const COMMANDS: &[Command] = &[
         aliases: &["appearance", "colors"],
     },
     Command {
+        name: "vim",
+        desc: "vim keys in text inputs: /vim on|off",
+        aliases: &["keymap"],
+    },
+    Command {
         name: "skills",
         desc: "manage skills",
         aliases: &["addskill"],
@@ -360,6 +365,8 @@ pub enum AppCommand {
     OpenSettings,
     /// `/theme [opaque|transparent]` — configure the TUI background.
     SetTheme { mode: String },
+    /// `/vim [on|off]` — vim keys in text inputs (TUI-only).
+    SetKeymap { mode: String },
     /// `/retry` — regenerate the last reply.
     Retry,
     /// `/undo` — restore the files the last agent turn changed.
@@ -545,6 +552,9 @@ impl App {
             "theme" => Ok(AppCommand::SetTheme {
                 mode: rest(cmd, token),
             }),
+            "vim" => Ok(AppCommand::SetKeymap {
+                mode: rest(cmd, token),
+            }),
             "retry" => Ok(AppCommand::Retry),
             "undo" => Ok(AppCommand::Undo),
             "copy" => Ok(AppCommand::OpenCopyMenu),
@@ -647,6 +657,7 @@ impl App {
             | AppCommand::OpenSwarm
             | AppCommand::OpenSettings
             | AppCommand::SetTheme { .. }
+            | AppCommand::SetKeymap { .. }
             | AppCommand::OpenCopyMenu
             | AppCommand::OpenSkills
             | AppCommand::OpenFiles { .. }

@@ -439,6 +439,11 @@ pub struct AppView {
     /// How the TUI surface background is painted; persisted per device and
     /// changed with `/theme opaque` or `/theme transparent`.
     pub background_mode: BackgroundMode,
+    /// Vim keys in the composer and panel text fields (`/vim on|off`,
+    /// persisted as the `keymap` setting; on unless set to `standard`).
+    pub vim_enabled: bool,
+    /// The composer's vim mode and pending command.
+    pub vim: crate::vim::Vim,
     pub theme_link: String,
     /// Bumped every time `theme` changes, so the history render cache (which
     /// bakes colors into cached `Line`s) knows to re-wrap on a theme switch.
@@ -470,6 +475,14 @@ impl DerefMut for AppView {
     fn deref_mut(&mut self) -> &mut App {
         &mut self.core
     }
+}
+
+fn load_vim_enabled(core: &App) -> bool {
+    core.db.load_settings().ok().is_none_or(|settings| {
+        settings
+            .iter()
+            .all(|(key, value)| key != crate::vim::KEYMAP_SETTING || value != "standard")
+    })
 }
 
 fn load_background_mode(core: &App) -> BackgroundMode {
@@ -511,6 +524,7 @@ impl AppView {
         #[cfg(test)]
         remote_images.set_enabled(false);
         let background_mode = load_background_mode(&core);
+        let vim_enabled = load_vim_enabled(&core);
         let mut theme = crate::theme::load();
         theme.set_background_mode(background_mode);
         Self {
@@ -644,6 +658,8 @@ impl AppView {
             greeting: nexus_core::app::pick_greeting(),
             theme,
             background_mode,
+            vim_enabled,
+            vim: crate::vim::Vim::default(),
             theme_link: crate::theme::source_stamp(),
             theme_gen: 0,
             status,
@@ -746,6 +762,25 @@ impl AppView {
         self.theme_gen = self.theme_gen.wrapping_add(1);
         self.invalidate_history_cache();
         self.push_status(format!("theme background: {}", mode.label()));
+        Ok(())
+    }
+
+    /// Turn vim keys on or off and persist the choice. With no argument,
+    /// toggles.
+    pub fn set_keymap(&mut self, requested: &str) -> Result<()> {
+        let enabled = match requested.trim() {
+            "" => !self.vim_enabled,
+            "on" | "vim" => true,
+            "off" | "standard" => false,
+            other => bail!("unknown keymap {other:?} — use /vim on or /vim off"),
+        };
+        self.core.db.set_setting(
+            crate::vim::KEYMAP_SETTING,
+            if enabled { "vim" } else { "standard" },
+        )?;
+        self.vim_enabled = enabled;
+        self.vim.reset();
+        self.push_status(format!("vim keys: {}", if enabled { "on" } else { "off" }));
         Ok(())
     }
 

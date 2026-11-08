@@ -605,9 +605,6 @@ fn open_new_session(app: &mut AppView, incognito: bool) -> Result<()> {
 // Long by design (key dispatch).
 #[allow(clippy::too_many_lines)]
 fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-
     if app.shell_state.is_some() {
         match key.code {
             KeyCode::Up => {
@@ -689,6 +686,24 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
             _ => {}
         }
     }
+
+    // Vim gets the key first; whatever it passes on keeps today's handling,
+    // and Normal-mode Enter/Esc act exactly like plain Enter/Esc.
+    let key = if app.vim_enabled {
+        match app.vim.key(&mut app.input, key) {
+            crate::vim::Outcome::Handled => {
+                app.refresh_at_matches();
+                return Ok(());
+            }
+            crate::vim::Outcome::Submit => KeyEvent::from(KeyCode::Enter),
+            crate::vim::Outcome::Leave => KeyEvent::from(KeyCode::Esc),
+            crate::vim::Outcome::Passthrough => key,
+        }
+    } else {
+        key
+    };
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
     match key.code {
         KeyCode::BackTab => {
@@ -2234,5 +2249,51 @@ mod tests {
         handle_mouse(&mut app, event(MouseEventKind::ScrollUp, 40, 10), screen).unwrap();
         assert_ne!(app.image_viewer.zoom(), crate::image_viewer::Zoom::Fit);
         assert_eq!(app.scroll, 0, "the transcript behind it did not scroll");
+    }
+
+    fn type_keys(app: &mut AppView, text: &str) {
+        for c in text.chars() {
+            handle_normal(app, KeyCode::Char(c).into()).unwrap();
+        }
+    }
+
+    #[test]
+    fn vim_is_on_by_default_and_edits_the_composer() {
+        let mut app = test_app();
+        assert!(app.vim_enabled);
+        type_keys(&mut app, "hello");
+        handle_normal(&mut app, KeyCode::Esc.into()).unwrap();
+        assert_eq!(app.vim.mode(), crate::vim::Mode::Normal);
+        assert_eq!(
+            app.input_text(),
+            "hello",
+            "the first Esc only leaves Insert"
+        );
+        type_keys(&mut app, "0x");
+        assert_eq!(app.input_text(), "ello");
+        handle_normal(&mut app, KeyCode::Esc.into()).unwrap();
+        assert_eq!(app.input_text(), "", "Esc in Normal mode clears, as before");
+        assert_eq!(app.vim.mode(), crate::vim::Mode::Insert);
+    }
+
+    #[test]
+    fn vim_normal_enter_submits_and_vim_off_restores_plain_esc() {
+        let mut app = test_app();
+        type_keys(&mut app, "/vim off");
+        // The command menu owns Esc while it shows, so leave Insert from a
+        // plain draft: delete the slash, go Normal, put it back, then send.
+        app.set_input("vim off");
+        handle_normal(&mut app, KeyCode::Esc.into()).unwrap();
+        type_keys(&mut app, "I/");
+        handle_normal(&mut app, KeyCode::Esc.into()).unwrap();
+        assert_eq!(app.input_text(), "/vim off");
+        handle_normal(&mut app, KeyCode::Enter.into()).unwrap();
+        assert!(!app.vim_enabled, "Normal-mode Enter ran /vim off");
+        app.set_input("draft");
+        handle_normal(&mut app, KeyCode::Esc.into()).unwrap();
+        assert_eq!(app.input_text(), "", "one Esc clears without vim");
+        app.set_keymap("on").unwrap();
+        assert!(app.vim_enabled);
+        assert!(app.set_keymap("emacs").is_err());
     }
 }

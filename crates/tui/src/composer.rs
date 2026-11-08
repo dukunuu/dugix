@@ -270,12 +270,14 @@ impl AppView {
         let row = lines.len().saturating_sub(1);
         let col = lines.last().map_or(0, |l| l.chars().count());
         self.input.set_lines(lines, (row, col));
+        self.vim.reset();
     }
 
     pub fn clear_input(&mut self) {
         self.shell_state = None;
         self.shell_completion_rx = None;
         self.input = new_textarea();
+        self.vim.reset();
     }
 
     /// Copy the current selection to the OS clipboard, then clear the highlight
@@ -1013,6 +1015,7 @@ impl AppView {
             AppCommand::OpenSwarm => self.open_swarm_popup(),
             AppCommand::OpenSettings => self.open_settings(),
             AppCommand::SetTheme { mode } => self.set_background_mode(&mode)?,
+            AppCommand::SetKeymap { mode } => self.set_keymap(&mode)?,
             AppCommand::OpenCopyMenu => self.open_copy_menu(),
             AppCommand::OpenSkills => self.open_skills_popup(),
             AppCommand::OpenFiles { tab } => {

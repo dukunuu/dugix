@@ -1685,7 +1685,7 @@ fn help_popup_lists_keys_and_every_command() {
     app.execute(nexus_core::app::AppCommand::OpenHelp).unwrap();
     assert!(app.popup == nexus_core::app::Popup::Help);
     // Tall enough to show everything without scrolling.
-    let screen = render_to_string(140, 120, |f| super::help::render(f, &mut app));
+    let screen = render_to_string(140, 140, |f| super::help::render(f, &mut app));
     assert!(screen.contains("composer"), "{screen}");
     assert!(screen.contains("Shift/Ctrl+Enter"), "{screen}");
     for c in nexus_core::app::COMMANDS {

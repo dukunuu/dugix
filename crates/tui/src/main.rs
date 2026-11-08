@@ -4,6 +4,7 @@ mod cli_library;
 mod composer;
 mod connectors_cli;
 mod diagrams;
+mod editor;
 mod events;
 mod favicons;
 mod filter_input;
@@ -18,6 +19,7 @@ mod selection;
 mod studio;
 mod theme;
 mod ui;
+mod vim;
 
 use anyhow::Result;
 use nexus_core::config;
