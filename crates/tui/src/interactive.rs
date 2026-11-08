@@ -500,6 +500,57 @@ impl Entry {
             .err()
             .map_or_else(String::new, |error| error.to_string());
     }
+    /// The card's bottom hint line: data status, a pending link, the focused
+    /// control's keys (with the vim mode when vim keys are on), or how to start.
+    fn hint(&self, width: u16, focused: bool) -> String {
+        let choices = self.choices().len().min(9);
+        let pending_url = self.session.as_ref().ok().and_then(Session::pending_url);
+        if let Some(status) = self.session.as_ref().ok().and_then(Session::data_hint) {
+            status.into()
+        } else if let Some(url) = pending_url {
+            persist::url_prompt(url, usize::from(width))
+        } else if focused
+            && let Some(node) = practice::editing(self)
+            && let Some(mode) = self.inputs.borrow().code_mode_label(node)
+        {
+            match mode {
+                "INSERT" => "INSERT · Esc normal".into(),
+                "NORMAL" => "NORMAL · i insert · Esc stop editing".into(),
+                mode => format!("{mode} · Esc normal"),
+            }
+        } else if focused && practice::editing(self).is_some() {
+            "typing edits the code · Esc stop editing".into()
+        } else if focused
+            && let Some(node) = self.focused_input()
+            && let Ok(session) = &self.session
+            && let Some(mode) = self.inputs.borrow().mode_label(session, node)
+        {
+            match mode {
+                "INSERT" if session.document().node(node).is_some_and(Node::is_textarea) => {
+                    "INSERT · Enter newline · Esc normal · Tab next".into()
+                }
+                "INSERT" => "INSERT · Esc normal · Enter/Tab next".into(),
+                "NORMAL" => "NORMAL · i insert · Tab next · Esc done".into(),
+                mode => format!("{mode} · Esc normal"),
+            }
+        } else if focused && let Some(node) = self.focused_input() {
+            if self
+                .session
+                .as_ref()
+                .is_ok_and(|session| session.document().node(node).is_some_and(Node::is_textarea))
+            {
+                "Enter newline · Tab next · Esc done".into()
+            } else {
+                "Tab next · Shift+arrows select · Ctrl+A all · Esc done".into()
+            }
+        } else if choices > 0 {
+            format!("1–{choices} pick · F2 keyboard")
+        } else if focused {
+            "Tab next · Enter press · Esc done".into()
+        } else {
+            "F2 keyboard".into()
+        }
+    }
     fn canvas(
         &self,
         width: u16,
@@ -512,30 +563,7 @@ impl Entry {
             .as_ref()
             .map_or_else(|_| Vec::new(), |session| node_regions(session, width));
         let height = self.session.as_ref().map_or(6, |_| card_height(&regions));
-        let choices = self.choices().len().min(9);
-        let pending_url = self.session.as_ref().ok().and_then(Session::pending_url);
-        let hint =
-            if let Some(status) = self.session.as_ref().ok().and_then(Session::data_hint) {
-                status.into()
-            } else if let Some(url) = pending_url {
-                persist::url_prompt(url, usize::from(width))
-            } else if focused && practice::editing(self).is_some() {
-                "typing edits the code · Esc stop editing".into()
-            } else if focused && let Some(node) = self.focused_input() {
-                if self.session.as_ref().is_ok_and(|session| {
-                    session.document().node(node).is_some_and(Node::is_textarea)
-                }) {
-                    "Enter newline · Tab next · Esc done".into()
-                } else {
-                    "Tab next · Shift+arrows select · Ctrl+A all · Esc done".into()
-                }
-            } else if choices > 0 {
-                format!("1–{choices} pick · F2 keyboard")
-            } else if focused {
-                "Tab next · Enter press · Esc done".into()
-            } else {
-                "F2 keyboard".into()
-            };
+        let hint = self.hint(width, focused);
         let mut buffer = self.session.as_ref().map_or_else(
             |_| card_buffer(width, height, "UI unavailable", theme, &hint),
             |session| document_buffer(width, height, session, theme, &hint),
@@ -2336,6 +2364,8 @@ pub struct Widgets {
     window_unfocused: bool,
     /// Saved-state bookkeeping and pinned apps; see `persist`.
     store: persist::Store,
+    /// Vim keys in text fields and code editors (the app's `/vim` setting).
+    pub(crate) vim: bool,
 }
 impl Widgets {
     /// Discard all local state and stale hit areas on a viewport/session reset.
@@ -2610,6 +2640,7 @@ impl Widgets {
                 if entry.is_interactive() {
                     self.visible.push(key.clone());
                 }
+                entry.inputs.borrow_mut().vim = self.vim;
                 entry.canvas(width, theme, focused, self.send_ready)
             } else {
                 let document = if placement.source.trim_start().starts_with('{') {
@@ -2895,6 +2926,28 @@ impl Widgets {
             entry.edit(text, false);
         }
     }
+    /// Offer `key` to the focused text field; whether it consumed it.
+    fn field_takes(&mut self, key: KeyEvent) -> bool {
+        let vim = self.vim;
+        let Some(entry) = self.focused.as_ref().and_then(|k| self.entries.get_mut(k)) else {
+            return false;
+        };
+        let Some(node) = entry.focused_input() else {
+            return false;
+        };
+        let Ok(session) = &mut entry.session else {
+            return false;
+        };
+        let inputs = entry.inputs.get_mut();
+        inputs.vim = vim;
+        match inputs.key(session, node, key) {
+            Ok(consumed) => consumed,
+            Err(error) => {
+                entry.error = error.to_string();
+                true
+            }
+        }
+    }
     fn key(&mut self, key: KeyEvent, can_send: bool) -> (bool, Option<String>) {
         let result = self.handle_key(key, can_send);
         self.open_trusted();
@@ -2914,17 +2967,22 @@ impl Widgets {
             }
             return (false, None);
         }
+        let vim = self.vim;
         if let Some(entry) = self
             .focused
             .as_ref()
             .and_then(|key| self.entries.get_mut(key))
-            && plain(&key)
+            && (plain(&key) || vim)
             && let Some(node) = practice::editing(entry)
-            && practice::editor_key(entry, node, key.code)
+            && practice::editor_key(entry, node, key, vim)
         {
             return (false, None);
         }
         if matches!(key.code, KeyCode::Esc | KeyCode::F(2)) && plain(&key) {
+            // With vim keys, Esc first leaves Insert/Visual in a text field.
+            if key.code == KeyCode::Esc && self.vim && self.field_takes(key) {
+                return (false, None);
+            }
             self.unfocus();
             return (true, None);
         }
@@ -2939,6 +2997,7 @@ impl Widgets {
             session.interact_data(std::time::Instant::now());
         }
         let controls = entry.controls();
+        entry.inputs.get_mut().vim = self.vim;
         if let Some(node) = entry.focused_input()
             && let Ok(session) = &mut entry.session
         {
@@ -3052,6 +3111,7 @@ impl Widgets {
         let Some(entry) = self.entries.get_mut(&key) else {
             return;
         };
+        entry.inputs.get_mut().vim = self.vim;
         let (canvas, hits) = entry.canvas(area.width, app_theme, true, can_send);
         let caret = entry.input_caret(&canvas);
         let target = caret
@@ -3296,6 +3356,7 @@ pub fn key(app: &mut AppView, event: KeyEvent) {
     if !matches!(event.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
         return;
     }
+    app.interactive.vim = app.vim_enabled;
     if event
         .modifiers
         .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER)

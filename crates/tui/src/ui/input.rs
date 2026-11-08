@@ -20,6 +20,21 @@ use super::{popups, to_color};
 use crate::app_view::AppView;
 use crate::composer::AtMatch;
 
+/// The composer's vim mode in its border: dim while inserting, accent
+/// otherwise.
+fn vim_mode(app: &AppView) -> Option<Span<'static>> {
+    app.vim_enabled.then(|| {
+        let style = if app.vim.mode() == crate::vim::Mode::Insert {
+            Style::default().fg(app.theme.fg_dim)
+        } else {
+            Style::default()
+                .fg(app.theme.accent)
+                .add_modifier(Modifier::BOLD)
+        };
+        Span::styled(format!("{} ", app.vim.label()), style)
+    })
+}
+
 pub(super) fn render_input(f: &mut Frame, app: &mut AppView, area: Rect) {
     let hints = !app.settings.hide_hints;
     let busy = app.is_streaming() || app.is_compacting_current_session();
@@ -74,16 +89,7 @@ pub(super) fn render_input(f: &mut Frame, app: &mut AppView, area: Rect) {
             Style::default().fg(app.theme.fg_dim),
         ));
     }
-    if app.vim_enabled {
-        let style = if app.vim.mode() == crate::vim::Mode::Insert {
-            Style::default().fg(app.theme.fg_dim)
-        } else {
-            Style::default()
-                .fg(app.theme.accent)
-                .add_modifier(Modifier::BOLD)
-        };
-        title.push(Span::styled(format!("{} ", app.vim.label()), style));
-    }
+    title.extend(vim_mode(app));
     let name = app.session.as_ref().map(|s| s.title.clone());
     let mut block = Block::default()
         .borders(Borders::ALL)
@@ -113,9 +119,14 @@ pub(super) fn render_input(f: &mut Frame, app: &mut AppView, area: Rect) {
     } else {
         "Ask anything · / commands · @ files · F1 help"
     });
-    let selection = Style::default().bg(app.theme.selection).fg(app.theme.fg);
-    let vim = app.vim_enabled.then_some(&app.vim);
-    crate::editor::decorate(&mut app.input, vim, selection);
+    let syntax = crate::editor::composer_syntax(&app.input_text());
+    let decor = crate::editor::Decor {
+        syntax: Some(syntax),
+        colors: crate::ui::style::SyntaxColors::from_theme(&app.theme),
+        vim: app.vim_enabled.then_some(&app.vim),
+        selection: Style::default().bg(app.theme.selection).fg(app.theme.fg),
+    };
+    crate::editor::decorate(&mut app.input, decor);
     f.render_widget(&app.input, inner);
     // Terminal IMEs draw in-progress (preedit) text at the real cursor, which
     // otherwise trails wherever the last changed cell was. Park it on the

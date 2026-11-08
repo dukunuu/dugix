@@ -3,6 +3,7 @@
 
 use super::{components, safe};
 use crate::theme::Theme;
+use crate::vim::{Outcome, Vim};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use nexus_core::interactive::{Node, Session};
 use ratatui::{
@@ -17,6 +18,12 @@ use tui_textarea::{CursorMove, TextArea, WrapMode};
 #[derive(Default)]
 pub(super) struct Inputs {
     fields: HashMap<String, TextArea<'static>>,
+    /// Vim keys on (mirrors the app's `/vim` setting before keys and draws).
+    pub(super) vim: bool,
+    /// Each field's vim mode and pending command.
+    vims: HashMap<String, Vim>,
+    /// Vim state of each code `Editor`, by node.
+    code_vims: HashMap<usize, Vim>,
     /// Text body of the focused field as last drawn on the panel canvas, so
     /// the terminal caret is looked up only inside that field.
     body: Option<Rect>,
@@ -71,13 +78,15 @@ impl Inputs {
             return None;
         };
         // Patches, reset buttons and live data may replace the value externally.
-        self.fields.retain(|key, _| {
+        let live = |key: &String| {
             session
                 .document()
                 .all_nodes()
                 .iter()
                 .any(|node| matches!(node, Node::Input { key: field, .. } if field == key))
-        });
+        };
+        self.fields.retain(|key, _| live(key));
+        self.vims.retain(|key, _| live(key));
         let value = session.value(key);
         let field = self
             .fields
@@ -115,6 +124,30 @@ impl Inputs {
         Ok(())
     }
 
+    /// Vim first: `Some(consumed)` when vim decided, `None` to fall through
+    /// to the plain field keys (Insert-mode typing).
+    fn vim_key(
+        &mut self,
+        session: &mut Session,
+        node: usize,
+        key: KeyEvent,
+    ) -> anyhow::Result<Option<bool>> {
+        let Some(Node::Input { key: name, .. }) = session.document().node(node) else {
+            return Ok(Some(false));
+        };
+        let name = name.clone();
+        let mut vim = self.vims.remove(&name).unwrap_or_default();
+        let mut outcome = Outcome::Passthrough;
+        let result = self.change(session, node, |field| outcome = vim.key(field, key));
+        self.vims.insert(name, vim);
+        result?;
+        Ok(match outcome {
+            Outcome::Handled => Some(true),
+            Outcome::Submit | Outcome::Leave => Some(false),
+            Outcome::Passthrough => None,
+        })
+    }
+
     /// Apply an editing key; `Ok(true)` means the field consumed it, and
     /// `Ok(false)` leaves it to the panel (Tab, Esc, Enter in a single-line
     /// input, PageUp/PageDown outside a textarea).
@@ -131,6 +164,11 @@ impl Inputs {
             return Ok(false);
         }
         let textarea = field.is_textarea();
+        if self.vim
+            && let Some(consumed) = self.vim_key(session, node, key)?
+        {
+            return Ok(consumed);
+        }
         if matches!(
             key.code,
             KeyCode::Tab | KeyCode::BackTab | KeyCode::Esc | KeyCode::F(_)
@@ -273,6 +311,13 @@ impl Inputs {
         else {
             return;
         };
+        let name = match input {
+            Node::Input { key, .. } => key.clone(),
+            _ => String::new(),
+        };
+        let vim = self
+            .vim
+            .then(|| self.vims.remove(&name).unwrap_or_default());
         if let Some(field) = self.sync_editor(session, node) {
             self.body = Some(paint(
                 field,
@@ -282,10 +327,34 @@ impl Inputs {
                     area,
                     theme,
                     selected: true,
+                    vim: vim.as_ref(),
                 },
                 buffer,
             ));
         }
+        if let Some(vim) = vim {
+            self.vims.insert(name, vim);
+        }
+    }
+
+    /// The vim state for code editor `node`.
+    pub(super) fn code_vim(&mut self, node: usize) -> &mut Vim {
+        self.code_vims.entry(node).or_default()
+    }
+
+    /// A code editor's vim mode label, when vim keys are on.
+    pub(super) fn code_mode_label(&self, node: usize) -> Option<&'static str> {
+        self.vim
+            .then(|| self.code_vims.get(&node).map_or("INSERT", Vim::label))
+    }
+
+    /// The focused field's vim mode label, when vim keys are on.
+    pub(super) fn mode_label(&self, session: &Session, node: usize) -> Option<&'static str> {
+        let Some(Node::Input { key, .. }) = session.document().node(node) else {
+            return None;
+        };
+        self.vim
+            .then(|| self.vims.get(key).map_or("INSERT", Vim::label))
     }
 
     /// The terminal caret inside the focused field's last drawn body.
@@ -319,6 +388,7 @@ impl Inputs {
                 area,
                 theme: &Theme::default(),
                 selected: true,
+                vim: None,
             },
             &mut buffer,
         );
@@ -431,6 +501,7 @@ pub(super) fn render_static(
                 area,
                 theme,
                 selected,
+                vim: None,
             },
             buffer,
         );
@@ -444,6 +515,8 @@ struct FieldView<'a> {
     area: Rect,
     theme: &'a Theme,
     selected: bool,
+    /// The focused field's vim state, for its Visual selection.
+    vim: Option<&'a Vim>,
 }
 
 /// Paint one field into `view.area`; returns the editor's text body.
@@ -454,6 +527,7 @@ fn paint(field: &mut TextArea<'static>, view: FieldView<'_>, buffer: &mut Buffer
         area,
         theme,
         selected,
+        vim,
     } = view;
     let Node::Input {
         key,
@@ -504,6 +578,15 @@ fn paint(field: &mut TextArea<'static>, view: FieldView<'_>, buffer: &mut Buffer
     field.set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
     field.set_placeholder_text(safe(placeholder));
     field.set_placeholder_style(Style::default().fg(theme.fg_dim).bg(theme.raised));
+    crate::editor::decorate(
+        field,
+        crate::editor::Decor {
+            syntax: node.is_textarea().then_some(("markdown", 0)),
+            colors: crate::ui::style::SyntaxColors::from_theme(theme),
+            vim,
+            selection: Style::default().fg(theme.fg).bg(theme.selection),
+        },
+    );
     if body.width > 0 && body.height > 0 {
         (&*field).render(body, buffer);
         if !selected && let Some(caret) = caret(buffer, body) {

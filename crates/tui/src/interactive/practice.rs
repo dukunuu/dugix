@@ -5,13 +5,15 @@
 
 use super::{Control, Entry, branch_regions, control_style, display, glyph, wrapped_text};
 use crate::theme::Theme;
-use crossterm::event::KeyCode;
-use nexus_core::interactive::{EditorKey, Node, Question, Session};
+use crate::vim::Outcome;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use nexus_core::interactive::{EditorKey, Node, Question, Session, line_col};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
+use tui_textarea::{CursorMove, TextArea};
 use unicode_width::UnicodeWidthChar;
 
 pub(super) fn height(node: &Node, session: &Session, width: u16) -> Option<u16> {
@@ -367,11 +369,20 @@ fn editor(
 
 /// Route a key to the focused editor while it is editing. Returns whether
 /// the key was consumed.
-pub(super) fn editor_key(entry: &mut Entry, node: usize, code: KeyCode) -> bool {
+pub(super) fn editor_key(entry: &mut Entry, node: usize, key: KeyEvent, vim: bool) -> bool {
+    if vim && let Some(consumed) = vim_editor_key(entry, node, key) {
+        return consumed;
+    }
+    if key
+        .modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+    {
+        return false;
+    }
     let Ok(session) = &mut entry.session else {
         return false;
     };
-    let key = match code {
+    let key = match key.code {
         KeyCode::Esc => {
             entry.error = session
                 .set_editing(node, false)
@@ -398,6 +409,45 @@ pub(super) fn editor_key(entry: &mut Entry, node: usize, code: KeyCode) -> bool 
         .err()
         .map_or_else(String::new, |error| error.to_string());
     true
+}
+
+/// Vim over the editor's code: `None` hands the key to the plain editor
+/// (Insert-mode typing keeps its smart indent; Normal-mode Esc stops editing).
+fn vim_editor_key(entry: &mut Entry, node: usize, key: KeyEvent) -> Option<bool> {
+    let Ok(session) = &mut entry.session else {
+        return Some(false);
+    };
+    let Some(Node::Editor { key: field, .. }) = session.document().node(node) else {
+        return Some(false);
+    };
+    let text = session.value(field);
+    let cursor = session.editor(node).cursor;
+    let (row, column) = line_col(&text, cursor);
+    let mut area = TextArea::new(text.split('\n').map(str::to_owned).collect());
+    area.move_cursor(CursorMove::Jump(
+        u16::try_from(row).unwrap_or(u16::MAX),
+        u16::try_from(column).unwrap_or(u16::MAX),
+    ));
+    match entry.inputs.get_mut().code_vim(node).key(&mut area, key) {
+        Outcome::Passthrough | Outcome::Leave => None,
+        Outcome::Submit => Some(true),
+        Outcome::Handled => {
+            let next = area.lines().join("\n");
+            let (row, column) = area.cursor();
+            let offset = area.lines()[..row]
+                .iter()
+                .map(|line| line.chars().count() + 1)
+                .sum::<usize>()
+                + column;
+            if next != text || offset != cursor {
+                entry.error = session
+                    .set_code(node, &next, offset)
+                    .err()
+                    .map_or_else(String::new, |error| error.to_string());
+            }
+            Some(true)
+        }
+    }
 }
 
 /// Whether the focused control is an editor that is taking keys.

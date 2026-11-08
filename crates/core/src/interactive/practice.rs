@@ -333,6 +333,25 @@ impl Session {
         Self::follow(state, &next, rows);
         Ok(())
     }
+    /// Replace the code and caret in one step (a frontend editor applied a
+    /// whole command, such as a vim change), with `edit_code`'s budget.
+    /// # Errors
+    /// Rejects non-editors and text past the 4 KiB budget.
+    pub fn set_code(&mut self, node: usize, text: &str, cursor: usize) -> Result<()> {
+        let (field, rows) = self.editor_binding(node)?;
+        if text != self.value(&field) {
+            ensure!(text.len() <= MAX_TEXT, "code is limited to 4 KiB");
+            let mut state = self.state.clone();
+            state.insert(field, Value::String(text.to_string()));
+            self.bindings_ok(&mut state)?;
+            self.commit(state)?;
+        }
+        let state = self.components.editors.entry(node).or_default();
+        state.cursor = cursor;
+        state.editing = true;
+        Self::follow(state, text, rows);
+        Ok(())
+    }
     fn follow(state: &mut EditorState, text: &str, rows: usize) {
         state.cursor = state.cursor.min(text.chars().count());
         let (line, _) = line_col(text, state.cursor);
@@ -531,6 +550,23 @@ mod tests {
         assert!(ui.edit_code(node, &huge).is_err());
         assert!(ui.value("code").len() < MAX_TEXT);
         assert!(ui.set_editing(5, true).is_err());
+    }
+
+    #[test]
+    fn set_code_replaces_text_and_caret_within_the_budget() {
+        let mut ui = session(
+            "root = Panel(\"Practice\", [code])\n$code = \"a\\nb\\nc\\nd\"\ncode = Editor($code, \"Solution\", \"rust\", 3)",
+        );
+        let node = 0;
+        ui.set_code(node, "a\nb\nc\nd\ne", 8).unwrap();
+        assert_eq!(ui.value("code"), "a\nb\nc\nd\ne");
+        let state = ui.editor(node);
+        assert_eq!((state.cursor, state.editing, state.top), (8, true, 2));
+        ui.set_code(node, "x", 99).unwrap();
+        assert_eq!(ui.editor(node).cursor, 1, "the caret is clamped");
+        assert!(ui.set_code(node, &"y".repeat(MAX_TEXT + 1), 0).is_err());
+        assert_eq!(ui.value("code"), "x");
+        assert!(ui.set_code(5, "", 0).is_err());
     }
 
     #[test]

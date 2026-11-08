@@ -1487,6 +1487,8 @@ mod tests {
     #[test]
     fn interactive_text_editing_routes_modified_keys_without_touching_the_composer() {
         let mut app = test_app();
+        // The standard keymap: one Esc leaves the panel.
+        app.vim_enabled = false;
         app.clipboard = None;
         app.set_input("keep this draft");
         let source = "root = Panel('Contact', [Input($name, 'Name'), Textarea($notes, 'Notes', 3)])\n$name = 'Ada'\n$notes = ''";
@@ -2295,5 +2297,72 @@ mod tests {
         app.set_keymap("on").unwrap();
         assert!(app.vim_enabled);
         assert!(app.set_keymap("emacs").is_err());
+    }
+
+    #[test]
+    fn vim_keys_edit_panel_fields_and_code_editors() {
+        let mut app = test_app();
+        let source = "root = Panel('Form', [Input($name, 'Name'), Editor($code, 'Solution', 'python', 3)])\n$name = 'Ada'\n$code = 'x = 1'";
+        app.messages.push(nexus_core::db::Message {
+            role: "assistant".into(),
+            content: format!("```nexus-ui\n{source}\n```"),
+            model: None,
+            reasoning: None,
+            tokens: None,
+            secs: None,
+            cost: None,
+            phrase: None,
+            persona: None,
+            created_at: None,
+        });
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 40)).unwrap();
+        let mut screen = |app: &mut AppView| {
+            terminal.draw(|frame| ui::render(frame, app)).unwrap();
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+        };
+        screen(&mut app);
+        handle_key(&mut app, KeyCode::F(2).into()).unwrap();
+        assert_eq!(app.popup, Popup::InteractiveUi);
+        assert!(
+            screen(&mut app).contains("INSERT"),
+            "the hint shows the mode"
+        );
+        handle_key(&mut app, KeyCode::Esc.into()).unwrap();
+        assert_eq!(app.popup, Popup::InteractiveUi, "Esc only left Insert");
+        assert!(screen(&mut app).contains("NORMAL"));
+        for c in "0x".chars() {
+            handle_key(&mut app, KeyCode::Char(c).into()).unwrap();
+        }
+        assert!(screen(&mut app).contains("da"), "x deleted the A");
+        assert!(!screen(&mut app).contains("Ada"));
+        // Normal-mode digits and `p` stay with the field, not panel shortcuts.
+        handle_key(&mut app, KeyCode::Char('p').into()).unwrap();
+        assert!(
+            screen(&mut app).contains("dAa"),
+            "p put the deleted char back"
+        );
+        // Tab moves on to the code editor; Enter starts editing it.
+        handle_key(&mut app, KeyCode::Tab.into()).unwrap();
+        handle_key(&mut app, KeyCode::Enter.into()).unwrap();
+        handle_key(&mut app, KeyCode::Esc.into()).unwrap();
+        assert!(screen(&mut app).contains("NORMAL · i insert · Esc stop editing"));
+        for c in "0dwix".chars() {
+            handle_key(&mut app, KeyCode::Char(c).into()).unwrap();
+        }
+        assert!(screen(&mut app).contains("x= 1"), "dw then ix");
+        handle_key(&mut app, KeyCode::Esc.into()).unwrap();
+        handle_key(&mut app, KeyCode::Char('u').into()).unwrap();
+        assert!(screen(&mut app).contains("= 1"));
+        assert!(!screen(&mut app).contains("x= 1"), "u undid the insert");
+        handle_key(&mut app, KeyCode::Esc.into()).unwrap();
+        handle_key(&mut app, KeyCode::Esc.into()).unwrap();
+        assert_eq!(app.popup, Popup::None, "Esc in Normal leaves as before");
     }
 }

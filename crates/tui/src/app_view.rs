@@ -527,6 +527,8 @@ impl AppView {
         let vim_enabled = load_vim_enabled(&core);
         let mut theme = crate::theme::load();
         theme.set_background_mode(background_mode);
+        let mut interactive = crate::interactive::Widgets::default();
+        interactive.vim = vim_enabled;
         Self {
             core,
             input: crate::composer::new_textarea(),
@@ -557,7 +559,7 @@ impl AppView {
             } else {
                 std::time::Duration::from_millis(400)
             },
-            interactive: crate::interactive::Widgets::default(),
+            interactive,
             spaces_cache: Vec::new(),
             space_selected: 0,
             space_filter: FilterInput::default(),
@@ -779,6 +781,7 @@ impl AppView {
             if enabled { "vim" } else { "standard" },
         )?;
         self.vim_enabled = enabled;
+        self.interactive.vim = enabled;
         self.vim.reset();
         self.push_status(format!("vim keys: {}", if enabled { "on" } else { "off" }));
         Ok(())
