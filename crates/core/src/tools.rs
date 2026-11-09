@@ -10,6 +10,7 @@ mod effect;
 mod image_tests;
 #[cfg(test)]
 mod keyless_search_tests;
+mod memory_tool;
 #[cfg(test)]
 mod search_tests;
 mod spec;
@@ -279,6 +280,9 @@ pub struct ToolBox {
     pub image_gen_backend: Option<(OpenRouter, String)>,
     /// Directory to save generated images into / search for reference images.
     pub space_files_dir: PathBuf,
+    /// The space's memory book; `None` hides the `memory` tool (incognito,
+    /// evals).
+    pub memory: Option<MemoryCtx>,
     pub space_apps_dir: PathBuf,
     /// Directory holding space-local scripts (created by the model via the
     /// `scripts` tool).
@@ -292,6 +296,8 @@ pub struct ToolBox {
 }
 
 /// Where the file tools read from: the shared db plus the space to scope to.
+pub use memory_tool::MemoryCtx;
+
 /// The toolbox opens its own short-lived connection per call — the app's
 /// `Db` handle stays on the UI task and is never shared with the stream task.
 #[derive(Clone)]
@@ -1000,6 +1006,7 @@ impl ToolBox {
             image_gen_backend: None,
             supports_images: false,
             space_files_dir: PathBuf::new(),
+            memory: None,
             space_apps_dir: PathBuf::new(),
             space_scripts_dir: PathBuf::new(),
             session_id: String::new(),
@@ -1083,6 +1090,7 @@ impl ToolBox {
             cache_only: self.cache_only,
             image_gen_backend: self.image_gen_backend.clone(),
             space_files_dir: self.space_files_dir.clone(),
+            memory: self.memory.clone(),
             space_apps_dir: self.space_apps_dir.clone(),
             space_scripts_dir: self.space_scripts_dir.clone(),
             session_id: self.session_id.clone(),
@@ -1348,6 +1356,9 @@ impl ToolBox {
         }
         if self.files_count() > 0 {
             defs.push(def(&spec::FILES, &["list", "search", "read", "pdf_page"]));
+        }
+        if self.memory.is_some() {
+            defs.push(def(&spec::MEMORY, &["read", "add", "update", "delete"]));
         }
         if self.apps.is_some() {
             defs.push(tool_def(
@@ -3016,6 +3027,18 @@ impl ToolBox {
                     result.unwrap_or_else(|error| format!("chat lookup failed: {error}")),
                     "Reading past chats".to_string(),
                 )
+            }
+            "memory_read" | "memory_add" | "memory_update" | "memory_delete" => {
+                let status = if name == "memory_read" {
+                    "Reading memory…"
+                } else {
+                    "Updating memory…"
+                };
+                let result = match &self.memory {
+                    Some(ctx) => memory_tool::run(ctx, name, args),
+                    None => "memory is off in this chat".to_string(),
+                };
+                (result, status.to_string())
             }
             "list_files" => {
                 let status = "Listing files…".to_string();

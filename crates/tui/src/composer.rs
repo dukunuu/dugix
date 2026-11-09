@@ -965,6 +965,22 @@ impl AppView {
         Ok(())
     }
 
+    /// `/memory edit`: render the active space's memory and queue it for
+    /// `$EDITOR` (the event loop owns the terminal).
+    fn queue_memory_editor(&mut self) {
+        if self.core.incognito {
+            self.push_status("memory is off in incognito");
+            return;
+        }
+        let space = self.core.active_space.name.clone();
+        match self.core.memory_edit_file(&space) {
+            Ok(path) => {
+                self.pending_editor = Some(nexus_core::app::PendingEditor::Memory { space, path });
+            }
+            Err(error) => self.push_status(format!("memory: {error:#}")),
+        }
+    }
+
     /// The command seam's view front: parse into the seam, then execute with
     /// view interception (popup opens, quit). Unknown commands surface as a
     /// status line rather than an error.
@@ -1052,6 +1068,9 @@ impl AppView {
             AppCommand::OpenJobs => crate::ui::popups::jobs::open(self, false)?,
             AppCommand::OpenJobForm => crate::ui::popups::jobs::open(self, true)?,
             AppCommand::OpenUsage => self.open_usage_popup(),
+            AppCommand::Memory {
+                action: nexus_core::app::MemoryAction::Edit,
+            } => self.queue_memory_editor(),
             AppCommand::OpenHelp => self.open_help(),
             AppCommand::OpenProcs => {
                 self.core.execute(AppCommand::OpenProcs)?;

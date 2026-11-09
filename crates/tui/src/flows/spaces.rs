@@ -133,16 +133,17 @@ impl AppView {
         self.popup = Popup::None;
     }
 
-    /// Ctrl+E/Ctrl+K target resolution for the space picker (the event loop
-    /// owns the editor handoff).
-    pub fn space_edit_target(&self) -> (Option<std::path::PathBuf>, Option<std::path::PathBuf>) {
-        let Some(s) = self.selected_space() else {
-            return (None, None);
-        };
-        (
-            self.core.instructions_path_for_space(&s.name),
-            self.core.memory_path_for_space(&s.name),
-        )
+    /// Ctrl+E target for the space picker: the highlighted space's
+    /// instructions file (the event loop owns the editor handoff).
+    pub fn space_instructions_target(&self) -> Option<std::path::PathBuf> {
+        self.selected_space()
+            .and_then(|s| self.core.instructions_path_for_space(&s.name))
+    }
+
+    /// Ctrl+K target for the space picker: the highlighted space's name,
+    /// whose memory is rendered for the editor.
+    pub fn selected_space_name(&self) -> Option<String> {
+        self.selected_space().map(|s| s.name.clone())
     }
 }
 

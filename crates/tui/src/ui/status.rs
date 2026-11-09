@@ -130,6 +130,9 @@ pub(super) fn render_status(f: &mut Frame, app: &AppView, area: Rect) {
     if app.incognito {
         tags.push(format!("{} incognito", glyph::INCOGNITO));
     }
+    if app.memory_tidy_due() > 0 && !app.incognito {
+        tags.push(format!("{} memory tidy", glyph::DIGEST));
+    }
     if app.training_enabled() {
         tags.push(format!("{} training", glyph::DOT));
     }

@@ -35,8 +35,10 @@ pub const OCR: &str = include_str!("../assets/prompts/ocr.md");
 pub const COMPACTION: &str = include_str!("../assets/prompts/compaction.md");
 /// Experimental item-preserving conversation compaction instructions.
 pub const COMPACTION_ITEMIZED: &str = include_str!("../assets/prompts/compaction-itemized.md");
-/// Durable memory extraction instructions.
-pub const MEMORY: &str = include_str!("../assets/prompts/memory.md");
+/// `/memory tidy`: review one chapter's facts.
+pub const MEMORY_TIDY: &str = include_str!("../assets/prompts/memory-tidy.md");
+/// `/memory tidy`: merge or rename chapters by title.
+pub const MEMORY_BOOK: &str = include_str!("../assets/prompts/memory-book.md");
 /// Session title and slug instructions.
 pub const TITLE: &str = include_str!("../assets/prompts/title.md");
 /// Swarm persona system instructions.
@@ -97,7 +99,8 @@ mod tests {
         (RESEARCH_TOPIC_FROM_CHAT, &["conversation"]),
         (OCR, &[]),
         (COMPACTION, &[]),
-        (MEMORY, &["facts", "user", "assistant"]),
+        (MEMORY_TIDY, &["title", "description", "facts"]),
+        (MEMORY_BOOK, &["chapters"]),
         (TITLE, &["conversation"]),
         (SWARM_PERSONA, &["name", "blurb"]),
         (SWARM_REPLY_TURN, &["transcript", "round", "name"]),
@@ -172,29 +175,6 @@ mod tests {
         assert_eq!(
             render(RESEARCH_CRITIC, &[]),
             "You are the critic stage of a research pipeline. Given the original topic and a draft report, decide if it's ready. Respond in exactly one of these forms:\n- the single word SATISFIED, if the draft thoroughly covers the topic with no notable gaps or contradictions.\n- GAPS: followed by a newline-separated bullet list (each line starting with '- ') of specific missing sub-topics or unanswered angles, each phrased as a searchable question.\n- CONTRADICTION: followed by one line describing a specific factual contradiction between sources in the draft that isn't resolved.\nUse CONTRADICTION only for an actual conflict between sources, not a missing angle — missing angles are always GAPS. Respond with nothing else."
-        );
-        let facts = "1. Prefers Rust";
-        let user = "Remember my preference.";
-        let assistant = "I will remember it.";
-        assert_eq!(
-            render(
-                MEMORY,
-                &[("facts", facts), ("user", user), ("assistant", assistant)],
-            ),
-            format!(
-                "Stored facts (numbered, may be empty):\n{facts}\n\n\
-                 Latest exchange:\nuser: {}\nassistant: {}\n\n\
-                 Reply with ONLY a JSON array of memory ops, no markdown, no prose. \
-                 Each op is one of:\n\
-                 {{\"op\":\"add\",\"text\":\"<durable single-line fact>\"}}\n\
-                 {{\"op\":\"update\",\"id\":<N>,\"text\":\"<replacement>\"}}\n\
-                 {{\"op\":\"delete\",\"id\":<N>}}\n\
-                 Empty array [] if nothing memory-worthy. Facts must be durable and \
-                 user/project-relevant (preferences, identity, ongoing goals) — never a \
-                 summary of what was just said. Merge/update instead of duplicating. \
-                 Keep the total under 500 facts.",
-                user, assistant,
-            )
         );
     }
 }

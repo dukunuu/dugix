@@ -1305,6 +1305,60 @@ pub(super) fn push_compaction(
     out.push(Line::from(""));
 }
 
+/// Memory named for the message below it: one dim line of chapter and doc
+/// titles. The model sees the full hint; the user only needs the names.
+pub(super) fn push_recall(
+    out: &mut Vec<Line<'static>>,
+    content: &str,
+    width: usize,
+    theme: &crate::theme::Theme,
+) {
+    let Some(recall) = nexus_core::memory::recall::Recall::from_row(content) else {
+        return;
+    };
+    let names = recall
+        .targets
+        .iter()
+        .map(|t| t.label.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let dim = Style::default().fg(theme.fg_dim);
+    let label: String = format!("memory{}{names}", style::SEP)
+        .chars()
+        .take(width.saturating_sub(2).max(8))
+        .collect();
+    out.push(style::event_head(glyph::DIGEST, dim, label, dim));
+}
+
+/// A `/memory tidy` preview: what would change, and how to apply it.
+pub(super) fn push_memory_tidy(
+    out: &mut Vec<Line<'static>>,
+    content: &str,
+    width: usize,
+    theme: &crate::theme::Theme,
+) {
+    let agent = Style::default().fg(theme.accent2);
+    let dim = Style::default().fg(theme.fg_dim);
+    let mut lines = content.lines();
+    let head = lines.next().unwrap_or("memory tidy").to_string();
+    out.push(style::event_head(
+        glyph::DIGEST,
+        agent,
+        head,
+        agent.add_modifier(Modifier::BOLD),
+    ));
+    for line in lines {
+        for wrapped in wrap_plain(line, width.saturating_sub(2)) {
+            out.push(style::event_body(&wrapped, dim));
+        }
+    }
+    out.push(style::event_body(
+        &format!("/memory apply{}/memory discard", style::SEP),
+        Style::default().fg(theme.accent),
+    ));
+    out.push(Line::from(""));
+}
+
 /// A user-invoked skill: show its name and scope, never its instruction body.
 pub(super) fn push_skill(
     out: &mut Vec<Line<'static>>,

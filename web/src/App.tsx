@@ -266,6 +266,10 @@ function MessageView(props: { message: Message }) {
   if (props.message.role === "tool_call") {
     return <ToolCallView call={parseToolCall(props.message.content)} />;
   }
+  // Memory hints are for the model; the terminal shows them as one dim line.
+  if (props.message.role === "recall") {
+    return null;
+  }
   const assistant = props.message.role !== "user";
   return <article classList={{ message: true, user: !assistant, assistant }}>
     <div class="message-avatar">{assistant ? "✦" : "You"}</div>

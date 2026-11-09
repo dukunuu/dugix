@@ -13,20 +13,51 @@ use crate::app_view::AppView;
 use crate::ui;
 use nexus_core::app::{AppCommand, AppEvent, ModelPanel, MouseTarget, Popup, WorkMode};
 
-/// Ctrl+E/Ctrl+K in the space picker edit that space's instructions/memory
-/// file. Returns the path to open, if the key matches and one resolves.
+/// Ctrl+E in the space picker edits that space's instructions file.
 fn edit_file_target(app: &AppView, key: &KeyEvent) -> Option<std::path::PathBuf> {
     if !(app.popup == Popup::Space
         && app.space_mode == nexus_core::app::SpaceMode::Browse
-        && key.modifiers.contains(KeyModifiers::CONTROL))
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+        && key.code == KeyCode::Char('e'))
     {
         return None;
     }
-    let (instructions, memory) = app.space_edit_target();
-    match key.code {
-        KeyCode::Char('e') => instructions,
-        KeyCode::Char('k') => memory,
-        _ => None,
+    app.space_instructions_target()
+}
+
+/// Ctrl+K in the space picker edits that space's memory: the space's name.
+fn memory_edit_target(app: &AppView, key: &KeyEvent) -> Option<String> {
+    (app.popup == Popup::Space
+        && app.space_mode == nexus_core::app::SpaceMode::Browse
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+        && key.code == KeyCode::Char('k'))
+    .then(|| app.selected_space_name())
+    .flatten()
+}
+
+/// Render a space's memory to Markdown, hand it to `$EDITOR`, and apply the
+/// result as a diff.
+fn edit_memory(app: &mut AppView, terminal: &mut DefaultTerminal, space: &str) {
+    match app.core.memory_edit_file(space) {
+        Ok(path) => edit_memory_file(app, terminal, space, &path),
+        Err(error) => app.push_status(format!("memory: {error:#}")),
+    }
+}
+
+/// Open a rendered memory file in `$EDITOR`, then apply it.
+fn edit_memory_file(
+    app: &mut AppView,
+    terminal: &mut DefaultTerminal,
+    space: &str,
+    path: &std::path::Path,
+) {
+    match edit_in_external_editor(terminal, path) {
+        Ok(()) => {
+            if let Err(error) = app.core.finish_memory_edit(space, path) {
+                app.push_status(format!("memory not saved: {error:#}"));
+            }
+        }
+        Err(error) => app.push_status(format!("editor failed: {error}")),
     }
 }
 
@@ -335,6 +366,8 @@ async fn run_loop(
 fn on_key(app: &mut AppView, terminal: &mut DefaultTerminal, k: KeyEvent) -> Result<()> {
     if let Some(path) = edit_file_target(app, &k) {
         edit_in_external_editor(terminal, &path)?;
+    } else if let Some(space) = memory_edit_target(app, &k) {
+        edit_memory(app, terminal, &space);
     } else if let Some(path) = skill_edit_target(app, &k) {
         edit_in_external_editor(terminal, &path)?;
         app.reload_skills();
@@ -371,6 +404,9 @@ fn on_key(app: &mut AppView, terminal: &mut DefaultTerminal, k: KeyEvent) -> Res
                         app.push_status(format!("editor failed: {e}"));
                     }
                     app.refresh_scripts();
+                }
+                nexus_core::app::PendingEditor::Memory { space, path } => {
+                    edit_memory_file(app, terminal, &space, &path);
                 }
                 nexus_core::app::PendingEditor::UserCommand(cmd) => {
                     let cwd = app.user_command_cwd();

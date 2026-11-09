@@ -163,6 +163,10 @@ fn every_offered_tool_is_current_and_its_recorded_definition_exports() {
         }),
     )
     .with_research_session("session-1".into());
+    toolbox.memory = Some(crate::tools::MemoryCtx {
+        db_path: fixture.root.join("nexus.db"),
+        space_id: db.default_space_id().unwrap(),
+    });
     toolbox.interactive_ui = true;
     toolbox.approver = Some(Arc::new(crate::app::EvalApprover {
         allow_shell: Vec::new(),

@@ -953,6 +953,7 @@ impl Db {
             );",
         )?;
         crate::panels::migrate(&self.conn)?;
+        crate::memory::migrate(&self.conn)?;
         for (column, ddl) in [
             (
                 "kind",
@@ -1197,6 +1198,7 @@ impl Db {
         self.conn
             .execute("DELETE FROM spaces WHERE id = ?1", [id])?;
         self.tombstone("spaces", id)?;
+        crate::memory::delete_space(&self.conn, id)?;
         Ok(())
     }
 

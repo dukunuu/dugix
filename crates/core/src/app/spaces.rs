@@ -48,20 +48,4 @@ impl App {
         }
         Some(path)
     }
-
-    /// Path to the highlighted space's memory file (the numbered facts a
-    /// conversation in that space has accumulated), creating an empty stub
-    /// with a header comment if nothing's been extracted yet.
-    pub fn memory_path_for_space(&self, name: &str) -> Option<std::path::PathBuf> {
-        let path = self.space.memory_path(name);
-        if !path.exists() {
-            let _ = std::fs::write(
-                &path,
-                format!(
-                    "<!-- memory for the \"{name}\" space — numbered facts, one per line -->\n"
-                ),
-            );
-        }
-        Some(path)
-    }
 }

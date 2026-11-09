@@ -16,7 +16,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::app::{
-    AppEvent, GateState, LoginMsg, MemoryOp, OcrUpdate, PlanQuestion, ResearchUpdate, SurveyPhase,
+    AppEvent, GateState, LoginMsg, OcrUpdate, PlanQuestion, ResearchUpdate, SurveyPhase,
     SwarmUpdate,
 };
 use crate::db::Persona;
@@ -61,9 +61,9 @@ pub enum WireEvent {
     Models(Option<WireModelsResult>),
     /// A generated session topic: (session id, title, slug).
     Title(Option<(String, String, String)>),
-    /// Extracted memory ops for a space, tagged with the space name so a
-    /// meanwhile space-switch can discard stale results.
-    Memory(Option<(String, Vec<WireMemoryOp>)>),
+    /// A finished `/memory tidy` review: how many chapters it covered, or
+    /// why it failed. The plan itself stays in the app.
+    Memory(Option<Result<String, String>>),
     /// A compaction digest: (session id, digest, messages covered,
     /// pre-compaction %).
     Compact(Option<(String, String, i64, u64)>),
@@ -160,14 +160,6 @@ pub enum WireSurveyPhase {
     /// Approval of a presented artifact; `rework` is true on a
     /// re-presentation after the user's edits were folded in.
     Approve { rework: bool },
-}
-
-/// One memory-extraction op, as emitted by the memory model.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum WireMemoryOp {
-    Add(String),
-    Update(usize, String),
-    Delete(usize),
 }
 
 /// A message from the background `OCR` batch about one file.
@@ -343,9 +335,9 @@ impl From<AppEvent> for WireEvent {
                 m.map(|r| r.map(|models| models.into_iter().map(WireModel::from).collect())),
             ),
             AppEvent::Title(t) => Self::Title(t),
-            AppEvent::Memory(m) => Self::Memory(
-                m.map(|(space, ops)| (space, ops.into_iter().map(WireMemoryOp::from).collect())),
-            ),
+            AppEvent::Memory(m) => Self::Memory(m.map(|result| {
+                result.map(|plan| format!("{} chapters reviewed", plan.chapters.len()))
+            })),
             AppEvent::Compact(c) => Self::Compact(c),
             AppEvent::SkillInstall(s) => Self::SkillInstall(s),
             AppEvent::Ocr(o) => Self::Ocr(
@@ -445,16 +437,6 @@ impl From<SurveyPhase> for WireSurveyPhase {
         match p {
             SurveyPhase::Clarify { round } => Self::Clarify { round },
             SurveyPhase::Approve { rework } => Self::Approve { rework },
-        }
-    }
-}
-
-impl From<MemoryOp> for WireMemoryOp {
-    fn from(op: MemoryOp) -> Self {
-        match op {
-            MemoryOp::Add(s) => Self::Add(s),
-            MemoryOp::Update(i, s) => Self::Update(i, s),
-            MemoryOp::Delete(i) => Self::Delete(i),
         }
     }
 }
@@ -666,14 +648,7 @@ mod tests {
             WireEvent::Models(Some(Err("no backend configured".into()))),
             WireEvent::Models(None),
             WireEvent::Title(Some(("s1".into(), "Hello".into(), "hello".into()))),
-            WireEvent::Memory(Some((
-                "sp1".into(),
-                vec![
-                    WireMemoryOp::Add("alpha".into()),
-                    WireMemoryOp::Update(2, "beta".into()),
-                    WireMemoryOp::Delete(3),
-                ],
-            ))),
+            WireEvent::Memory(Some(Ok("2 chapters reviewed".into()))),
             WireEvent::Compact(Some(("s1".into(), "digest".into(), 12, 40))),
             WireEvent::SkillInstall(Some(Ok("python".into()))),
             WireEvent::SkillInstall(Some(Err("no model".into()))),
@@ -930,24 +905,10 @@ mod tests {
     /// Memory and `OCR` payloads map every op/update shape.
     #[test]
     fn from_app_event_maps_memory_and_ocr() {
-        let app = AppEvent::Memory(Some((
-            "sp1".into(),
-            vec![
-                MemoryOp::Add("alpha".into()),
-                MemoryOp::Update(2, "beta".into()),
-                MemoryOp::Delete(3),
-            ],
-        )));
+        let app = AppEvent::Memory(Some(Ok(crate::memory::tidy::Plan::default())));
         assert_eq!(
             WireEvent::from(app),
-            WireEvent::Memory(Some((
-                "sp1".into(),
-                vec![
-                    WireMemoryOp::Add("alpha".into()),
-                    WireMemoryOp::Update(2, "beta".into()),
-                    WireMemoryOp::Delete(3),
-                ],
-            )))
+            WireEvent::Memory(Some(Ok("0 chapters reviewed".into())))
         );
 
         let app = AppEvent::Ocr(Some((

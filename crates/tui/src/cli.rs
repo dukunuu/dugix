@@ -249,12 +249,12 @@ pub enum Command {
         #[arg(long)]
         yes: bool,
     },
-    /// Print (or edit) a space's memory file.
+    /// Print (or edit) a space's memory: chapters of facts as Markdown.
     Memory {
         /// Which space (default: your default space).
         #[arg(long)]
         space: Option<String>,
-        /// Open the file in $EDITOR instead of printing it.
+        /// Open it in $EDITOR; the saved file is applied as a diff.
         #[arg(long)]
         edit: bool,
     },
@@ -2463,10 +2463,42 @@ fn prune_targets(
 // --- local data commands ---
 
 fn memory(space_name: Option<&str>, edit: bool) -> Result<()> {
+    use nexus_core::memory::{self, book};
     let space = space::Space::open()?;
     let db = db::Db::open(&space.db_path())?;
     let name = resolve_space_name(&db, space_name)?;
-    show_or_edit(&space.memory_path(&name), "memory", edit)
+    let space_id = db
+        .list_spaces()?
+        .into_iter()
+        .find(|s| s.name == name)
+        .map(|s| s.id)
+        .with_context(|| format!("no space named {name:?}"))?;
+    let conn = db::open_conn(&space.db_path())?;
+    let legacy = space.memory_path(&name);
+    if legacy.exists() {
+        memory::import_legacy(&conn, &space_id, &legacy)?;
+    }
+    let text = book::render_edit(
+        &memory::chapters(&conn, &space_id)?,
+        &memory::facts(&conn, &space_id)?,
+    );
+    if !edit {
+        if memory::chapters(&conn, &space_id)?.is_empty() {
+            out("(no memory yet — run with --edit to add some)");
+        } else {
+            out(text.trim_end());
+        }
+        return Ok(());
+    }
+    space.ensure_space_dir(&name)?;
+    let path = legacy.with_file_name("memory.edit.md");
+    std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))?;
+    open_editor(&path)?;
+    let edited = std::fs::read_to_string(&path)?;
+    let summary = book::apply_edit(&conn, &space_id, &book::parse_edit(&edited))?;
+    std::fs::remove_file(&path)?;
+    out(summary.to_string());
+    Ok(())
 }
 
 fn instructions(space_name: Option<&str>, edit: bool) -> Result<()> {

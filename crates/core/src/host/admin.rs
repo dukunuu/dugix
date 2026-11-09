@@ -180,6 +180,34 @@ fn attach_image(app: &mut App, query: &str, body: &[u8]) -> Result<Value> {
     Ok(json!({ "markdown": markdown }))
 }
 
+/// The memory book as an editable Markdown document: saving applies the
+/// edit as a diff against the database.
+fn memory_document(app: &mut App, method: &str, body: &[u8]) -> Result<Value> {
+    #[derive(Deserialize)]
+    struct Edit {
+        content: String,
+        hash: String,
+    }
+    let content = app.memory_markdown()?;
+    let hash = super::api::hex_string(&Sha256::digest(content.as_bytes()));
+    if method == "GET" {
+        return Ok(json!({ "content": content, "hash": hash }));
+    }
+    let edit: Edit = serde_json::from_slice(body)?;
+    if edit.hash != hash {
+        bail!("document changed; reload before saving");
+    }
+    if edit.content.len() > 1024 * 1024 {
+        bail!("document must be 1 MiB or smaller");
+    }
+    app.save_memory_markdown(&edit.content)?;
+    let content = app.memory_markdown()?;
+    Ok(json!({
+        "content": content,
+        "hash": super::api::hex_string(&Sha256::digest(content.as_bytes())),
+    }))
+}
+
 fn document(app: &mut App, method: &str, query: &str, body: &[u8]) -> Result<Value> {
     #[derive(Deserialize)]
     struct Edit {
@@ -191,10 +219,12 @@ fn document(app: &mut App, method: &str, query: &str, body: &[u8]) -> Result<Val
         bail!("active space changed; reload document");
     }
     let kind = super::api::query_param(query, "kind").unwrap_or_default();
+    if kind == "memory" {
+        return memory_document(app, method, body);
+    }
     let path = match kind.as_str() {
         "system" => crate::config::system_prompt_path()?,
         "instructions" => app.space.instructions_path(&app.active_space.name),
-        "memory" => app.space.memory_path(&app.active_space.name),
         _ => bail!("unknown document"),
     };
     let content = match std::fs::read_to_string(&path) {

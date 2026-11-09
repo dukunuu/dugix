@@ -402,6 +402,47 @@
     }
   },
   {
+    "name": "memory",
+    "description": "Long-term memory for this space: chapters of short facts kept across chats. Save lasting preferences, decisions and facts the user states (never chat summaries) under a fitting chapter. Read a chapter before relying on it; fix or forget wrong facts.\n- action=read: List chapters, or a chapter's facts. optional chapter.\n- action=add: Save a fact. Needs chapter, text; optional description, pinned.\n- action=update: Rewrite or move a fact. Needs id; optional text, chapter.\n- action=delete: Forget a fact. Needs id.",
+    "parameters": {
+      "properties": {
+        "action": {
+          "enum": [
+            "read",
+            "add",
+            "update",
+            "delete"
+          ],
+          "type": "string"
+        },
+        "chapter": {
+          "description": "chapter title; for update, moves the fact",
+          "type": "string"
+        },
+        "description": {
+          "description": "one line on the chapter",
+          "type": "string"
+        },
+        "id": {
+          "description": "fact id",
+          "type": "string"
+        },
+        "pinned": {
+          "description": "show the chapter in every chat (identity, standing preferences)",
+          "type": "boolean"
+        },
+        "text": {
+          "description": "one short fact",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "name": "media",
     "description": "Generate images/video; transform video locally with ffmpeg; save named image references for video consistency.\n- action=generate_image: Generate image. Needs prompt.\n- action=generate_video: Generate video with frame or named references. Needs prompt.\n- action=edit: Transform video. Needs video_id.\n- action=extract_frame: Extract frame. Needs video_id.\n- action=stitch: Concatenate clips in order. Needs video_ids.\n- action=save_reference: Save reference. Needs name, image_id, description.\n- action=list_references: List references.\n- action=delete_reference: Delete reference. Needs name.",
     "parameters": {

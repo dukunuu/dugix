@@ -187,6 +187,11 @@ pub const COMMANDS: &[Command] = &[
         aliases: &["save-report"],
     },
     Command {
+        name: "memory",
+        desc: "what nexus remembers — /memory [edit|tidy|apply|discard|undo]",
+        aliases: &["remember"],
+    },
+    Command {
         name: "watch",
         desc: "standing research, re-runs every 24h",
         aliases: &["watches"],
@@ -328,6 +333,21 @@ pub fn command_score(c: &Command, needle: &str) -> Option<i32> {
 /// Serde: `POST /v1/command` ships this enum directly — every payload is
 /// plain (strings, bools, optionals, [`FilesTab`](super::FilesTab)), so the
 /// seam itself is the wire type; no mirror needed.
+/// What `/memory` does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum MemoryAction {
+    /// Open the book in `$EDITOR` (terminal UI only).
+    Edit,
+    /// Review changed chapters with the helper model; preview only.
+    Tidy,
+    /// Apply the reviewed plan.
+    Apply,
+    /// Drop the reviewed plan.
+    Discard,
+    /// Restore memory to before the last applied tidy.
+    Undo,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[allow(clippy::large_enum_variant)] // Keep the infrequent job form's existing command payload.
 pub enum AppCommand {
@@ -444,6 +464,8 @@ pub enum AppCommand {
     RunResearch { topic: String, gated: bool },
     /// `/export` — print the latest report + sources.
     Export,
+    /// `/memory [edit|tidy|apply|discard|undo]`.
+    Memory { action: MemoryAction },
     /// `/auto` — toggle automatic approval while in an agent mode.
     ToggleAuto,
     /// `/agent [path]` or `/chat` — choose local workspace access.
@@ -598,6 +620,24 @@ impl App {
                 gated: true,
             }),
             "export" => Ok(AppCommand::Export),
+            "memory" => match rest(cmd, token).as_str() {
+                "" | "edit" => Ok(AppCommand::Memory {
+                    action: MemoryAction::Edit,
+                }),
+                "tidy" => Ok(AppCommand::Memory {
+                    action: MemoryAction::Tidy,
+                }),
+                "apply" => Ok(AppCommand::Memory {
+                    action: MemoryAction::Apply,
+                }),
+                "discard" => Ok(AppCommand::Memory {
+                    action: MemoryAction::Discard,
+                }),
+                "undo" => Ok(AppCommand::Memory {
+                    action: MemoryAction::Undo,
+                }),
+                _ => Err("usage: /memory [edit|tidy|apply|discard|undo]".to_string()),
+            },
             "agent" => {
                 let root = rest(cmd, token);
                 Ok(AppCommand::SetWorkMode {
@@ -785,6 +825,16 @@ impl App {
                     self.start_research(&topic);
                 }
             }
+            AppCommand::Memory { action } => match action {
+                // Editing needs a terminal; the TUI intercepts it.
+                MemoryAction::Edit => self.push_status(
+                    "edit memory in the terminal UI with /memory, or run nexus memory --edit",
+                ),
+                MemoryAction::Tidy => self.memory_tidy(),
+                MemoryAction::Apply => self.memory_apply()?,
+                MemoryAction::Discard => self.memory_discard(),
+                MemoryAction::Undo => self.memory_undo()?,
+            },
             AppCommand::Export => {
                 self.export_report()?;
             }

@@ -2693,19 +2693,25 @@ fn imported_files_stay_out_of_the_system_prompt() {
 #[test]
 fn memory_snapshot_stays_stable_until_refresh() {
     let mut a = app_with_key();
-    let path = a.space.memory_path(&a.active_space.name);
-    std::fs::write(&path, "1. first fact\n").unwrap();
+    let space = a.active_space.id.clone();
+    crate::memory::add(
+        a.db.conn(),
+        &space,
+        "About you",
+        "first fact",
+        None,
+        Some(true),
+    )
+    .unwrap();
     a.refresh_memory_snapshot();
     let first_epoch = a.cache_epoch;
     assert!(a.system_prompt().contains("first fact"));
 
-    std::fs::write(&path, "1. newer fact\n").unwrap();
-    assert!(a.system_prompt().contains("first fact"));
+    crate::memory::add(a.db.conn(), &space, "About you", "newer fact", None, None).unwrap();
     assert!(!a.system_prompt().contains("newer fact"));
     assert_eq!(a.cache_epoch, first_epoch);
 
     a.refresh_memory_snapshot();
-    assert!(!a.system_prompt().contains("first fact"));
     assert!(a.system_prompt().contains("newer fact"));
     assert!(a.cache_epoch > first_epoch);
 }
@@ -3283,49 +3289,117 @@ async fn finish_stream_strips_inline_think_tags_into_reasoning() {
 }
 
 #[test]
-fn parse_memory_ops_reads_add_update_delete() {
-    let ops = parse_memory_ops(
-        r#"sure, here:
-        [{"op":"add","text":"likes rust"}, {"op":"update","id":2,"text":"deadline moved"}, {"op":"delete","id":5}, {"bogus":true}]"#,
-    );
-    assert_eq!(ops.len(), 3);
-    assert!(matches!(&ops[0], MemoryOp::Add(t) if t == "likes rust"));
-    assert!(matches!(&ops[1], MemoryOp::Update(2, t) if t == "deadline moved"));
-    assert!(matches!(&ops[2], MemoryOp::Delete(5)));
-    assert!(parse_memory_ops("no json here").is_empty());
-}
-
-#[test]
-fn memory_ops_apply_and_renumber() {
+fn legacy_memory_file_moves_into_the_book() {
     let mut a = app_with_key();
-    let space = a.active_space.name.clone();
-    std::fs::write(a_memory_path(&a), "1. likes rust\n2. old fact\n").unwrap();
-
-    let ops = vec![
-        MemoryOp::Delete(1),                        // drop "likes rust"
-        MemoryOp::Update(2, "updated fact".into()), // "old fact" -> "updated fact"
-        MemoryOp::Add("new fact".into()),
-    ];
-    a.on_memory_result(Some((space, ops)));
-
-    let saved = std::fs::read_to_string(a_memory_path(&a)).unwrap();
-    assert_eq!(saved, "1. updated fact\n2. new fact\n");
-}
-
-#[test]
-fn memory_ops_dropped_if_space_switched_meanwhile() {
-    let mut a = app_with_key();
-    std::fs::write(a_memory_path(&a), "1. keep me\n").unwrap();
-    a.on_memory_result(Some(("some-other-space".into(), vec![MemoryOp::Delete(1)])));
-    assert_eq!(
-        std::fs::read_to_string(a_memory_path(&a)).unwrap(),
-        "1. keep me\n"
-    );
-}
-
-fn a_memory_path(a: &App) -> std::path::PathBuf {
     a.space.ensure_space_dir(&a.active_space.name).unwrap();
-    a.space.memory_path(&a.active_space.name)
+    let path = a.space.memory_path(&a.active_space.name);
+    std::fs::write(&path, "1. likes rust\n2. uses vim\n").unwrap();
+    a.refresh_memory_snapshot();
+    assert!(!path.exists());
+    let prompt = a.system_prompt();
+    assert!(prompt.contains("### About you"));
+    assert!(prompt.contains("] likes rust"));
+}
+
+#[test]
+fn memory_hints_replay_as_a_stable_user_prefix() {
+    let mut a = app_with_key();
+    a.current_model = Some("a/one".into());
+    let space = a.active_space.id.clone();
+    crate::memory::add(
+        a.db.conn(),
+        &space,
+        "Release process",
+        "tag before publishing to crates.io",
+        None,
+        None,
+    )
+    .unwrap();
+    let question = "how should I release the next crate version?";
+    let hint = a.memory_hint(question).unwrap();
+    assert_eq!(hint.targets[0].label, "Release process");
+    a.messages.push(memory::note("recall", hint.to_row()));
+    a.messages.push(memory::note("user", question.into()));
+    // Already hinted in this session: not named again.
+    assert!(a.memory_hint(question).is_none());
+
+    let first = a.build_history();
+    let user = first.iter().rfind(|m| m.role == "user").unwrap();
+    assert!(
+        user.content
+            .starts_with("[memory: possibly relevant — \"Release process\"")
+    );
+    assert!(user.content.ends_with(question));
+    assert_eq!(first.iter().filter(|m| m.role == "user").count(), 1);
+    let again = a.build_history();
+    assert_eq!(
+        serde_json::to_string(&first).unwrap(),
+        serde_json::to_string(&again).unwrap()
+    );
+    a.incognito = true;
+    assert!(a.memory_hint(question).is_none());
+}
+
+#[test]
+fn tidy_preview_applies_and_undoes() {
+    let mut a = app_with_key();
+    a.current_model = Some("a/one".into());
+    let space = a.active_space.id.clone();
+    let vim = crate::memory::add(a.db.conn(), &space, "Tools", "uses vim", None, None)
+        .unwrap()
+        .fact;
+    crate::memory::add(a.db.conn(), &space, "Tools", "uses a mac", None, None).unwrap();
+    let plan = crate::memory::tidy::Plan {
+        space_id: space.clone(),
+        chapters: vec![crate::memory::tidy::ChapterPlan {
+            chapter_id: vim.chapter_id.clone(),
+            title: "Tools".into(),
+            description: Some("editor and machine".into()),
+            ops: vec![crate::memory::tidy::FactOp::Delete {
+                id: vim.id.clone(),
+                why: "stale".into(),
+            }],
+        }],
+        book: Vec::new(),
+    };
+    a.on_memory_result(Some(Ok(plan)));
+    let preview = a.messages.last().unwrap();
+    assert_eq!(preview.role, "memory_tidy");
+    assert!(preview.content.contains("- uses vim  (stale)"));
+    // The preview never reaches the model.
+    assert!(
+        a.build_history()
+            .iter()
+            .all(|m| !m.content.contains("uses vim  (stale)"))
+    );
+    assert_eq!(crate::memory::facts(a.db.conn(), &space).unwrap().len(), 2);
+
+    a.execute(AppCommand::Memory {
+        action: MemoryAction::Apply,
+    })
+    .unwrap();
+    let texts: Vec<String> = crate::memory::facts(a.db.conn(), &space)
+        .unwrap()
+        .into_iter()
+        .map(|f| f.text)
+        .collect();
+    assert_eq!(texts, ["uses a mac"]);
+    assert!(a.memory_plan.is_none());
+
+    a.execute(AppCommand::Memory {
+        action: MemoryAction::Undo,
+    })
+    .unwrap();
+    assert_eq!(crate::memory::facts(a.db.conn(), &space).unwrap().len(), 2);
+}
+
+#[test]
+fn memory_tool_is_offered_outside_incognito_only() {
+    let mut a = app_with_key();
+    let has_memory = |a: &App| a.toolbox.defs().iter().any(|d| d.name == "memory");
+    assert!(has_memory(&a));
+    a.execute(AppCommand::Incognito { on: true }).unwrap();
+    assert!(!has_memory(&a));
 }
 
 #[tokio::test]
@@ -3687,7 +3761,6 @@ fn swarm_progress_and_errors_are_visible_in_transcript() {
 #[tokio::test]
 async fn swarm_synthesis_triggers_post_reply_jobs_like_normal_chat() {
     let mut a = app_with_key();
-    a.memory_extraction = false; // isolate this test from memory extraction network work
     a.settings.compact_threshold = 0;
     a.current_model = Some("a/one".into());
     let space = a.active_space.id.clone();
@@ -5221,7 +5294,6 @@ async fn ui_repair_app(
     app.backends.set(BackendTag::OpenRouter, provider);
     app.interactive_ui = true;
     app.incognito = incognito;
-    app.memory_extraction = false;
     app.settings.compact_threshold = 0;
     // Repair must use the finished task's model, not a newly selected model.
     app.current_model = Some("b/two".into());

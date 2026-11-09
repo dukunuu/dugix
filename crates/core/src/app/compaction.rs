@@ -34,6 +34,8 @@ impl App {
             || m.role == "survey"
             || m.role == "gate_reply"
             || m.role == "session_link"
+            || m.role == "memory_tidy"
+            || m.role == "recall"
             || m.role == "error"
             || m.persona.is_some()
     }

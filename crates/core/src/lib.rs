@@ -32,6 +32,7 @@ pub mod host;
 pub mod interactive;
 pub mod jobs;
 pub mod markdown;
+pub mod memory;
 pub mod panels;
 pub mod prompts;
 pub mod provider;

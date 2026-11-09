@@ -194,7 +194,7 @@ bot challenges.
 
 **One model setting.** `/config` has a single model row, the *helper model*
 (`helper_model` over the host settings API). It runs every background job that
-needs a model: memory, compaction summaries, image descriptions, vision OCR and
+needs a model: `/memory tidy`, compaction summaries, image descriptions, vision OCR and
 the auto-approval judge. It starts on `auto` (Enter picks one, Backspace goes
 back to `auto`). Auto is a cheap model on the backend your session is using and
 never moves to another provider:
@@ -462,6 +462,12 @@ Chat search is available in chat and agent mode, never in research searcher tool
 - **Watches** (`/watch`): standing research jobs that re-run daily
 - **Spaces**: per-project context (instructions, memory, imported files,
   scripts, apps) with embeddings-backed semantic file search
+- **Memory**: a book per space — chapters of short facts the model saves with
+  its `memory` tool, behind a table of contents in every chat; pinned chapters
+  are listed in full, and matching chapters and docs are named on the message
+  they relate to. `/memory` edits it in `$EDITOR`, `/memory tidy` previews a
+  cleanup (`/memory apply`, `/memory discard`, `/memory undo`). It lives in
+  `nexus.db` and syncs; see `docs/memory.md`
 - **Skills**: Agent Skills-compatible instruction packs (`SKILL.md`) with
   progressive disclosure, project/user/global discovery, bundled resources,
   sandboxed Python virtualenvs, and chat installation
@@ -637,6 +643,7 @@ Type `/` in the composer for autocomplete. Aliases in parentheses.
 | `/skills` | manage skills (app + project/user/global Agent Skills) |
 | `/usage` (`analytics`, `costs`) | token/cache/cost analytics by backend & model (←/→ for 24h/7d/30d/all windows) |
 | `/compact` (`summarize`) | summarize old messages into a digest |
+| `/memory` (`remember`) | edit this space's memory in `$EDITOR`; `tidy` previews a cleanup, then `apply`, `discard` or `undo` |
 | `/config` (`settings`, `stats`) | settings, footer toggles, sampling params, the helper model |
 | `/export` (`save-report`) | write the research report + sources to a file |
 | `/incognito` | toggle no-persistence mode |

@@ -104,6 +104,9 @@ impl App {
                 created_at: None,
             });
         }
+        if let Some(hint) = self.memory_hint(&text) {
+            self.push_note(&session_id, "recall", hint.to_row())?;
+        }
         if !self.incognito {
             self.db.add_user_message(&session_id, &text)?;
         }
@@ -131,7 +134,7 @@ impl App {
     /// The active session's id, creating it (titled from `text`) when none is
     /// open. Refresh the memory snapshot here as well as in `/new` so edits
     /// made while no session was open are picked up.
-    fn ensure_session(&mut self, text: &str, model: String) -> Result<String> {
+    pub(super) fn ensure_session(&mut self, text: &str, model: String) -> Result<String> {
         if let Some(session) = &self.session {
             return Ok(session.id.clone());
         }
@@ -653,8 +656,16 @@ impl App {
             .then(|| self.toolbox.space_files_dir())
             .flatten();
         let mut index = 0;
+        // A `recall` row is replayed as a prefix of the user message after it,
+        // byte-identical on every request so the cached prefix holds.
+        let mut recall: Option<String> = None;
         while index < effective.len() {
             let m = &effective[index];
+            if m.role == "recall" {
+                recall = crate::memory::recall::Recall::from_row(&m.content).map(|r| r.text);
+                index += 1;
+                continue;
+            }
             // Replay past tool calls as real assistant/tool message pairs so
             // the model remembers what it already tried (and got back) in
             // prior turns — dropping these caused it to repeat the same
@@ -694,6 +705,10 @@ impl App {
                         "The user invoked the skill '{name}'. Follow these instructions for the rest of this conversation:\n{body}"
                     ),
                 )
+            } else if m.role == "user"
+                && let Some(hint) = recall.take()
+            {
+                ChatMessage::text("user", format!("{hint}\n\n{}", m.content))
             } else {
                 ChatMessage::text(m.role.clone(), m.content.clone())
             };
@@ -1513,7 +1528,6 @@ impl App {
             // when the task's origin is the session currently being viewed.
             if !task.incognito {
                 self.maybe_generate_title();
-                self.maybe_extract_memory();
             }
             self.maybe_mask();
             if !task.incognito {

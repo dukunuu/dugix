@@ -74,8 +74,11 @@ pub use chat::{
     MERMAID_PREVIEW_EXAMPLES, code_blocks, human_size, pick_greeting, user_command_outcome,
     user_command_outcome_label,
 };
-pub use commands::{AppCommand, COMMANDS, Command, Match, command_score, fuzzy_score};
+pub use commands::{
+    AppCommand, COMMANDS, Command, Match, MemoryAction, command_score, fuzzy_score,
+};
 pub use files::OcrUpdate;
+pub use memory::MemoryTidyResult;
 pub use research::{PlanQuestion, ResearchUpdate};
 pub use sessions::session_score;
 pub use snapshot::{
@@ -87,8 +90,6 @@ pub use watches::due_watches;
 
 #[cfg(test)]
 use chat::split_inline_reasoning;
-#[cfg(test)]
-use memory::parse_memory_ops;
 use sessions::parse_topic;
 
 /// Non-interactive permissions for a disposable eval workspace.
@@ -823,14 +824,6 @@ const SPINNER_COLORS: [SpinnerColor; 3] = [
 
 type ModelsResult = std::result::Result<Vec<Model>, String>;
 
-/// One memory-extraction op, as emitted by the memory model.
-#[derive(Clone)]
-pub enum MemoryOp {
-    Add(String),
-    Update(usize, String),
-    Delete(usize),
-}
-
 /// One row in the `/image` popup: name, size in bytes, modified rfc3339.
 #[derive(Clone)]
 pub struct ImageMeta {
@@ -970,6 +963,12 @@ pub enum PendingEditor {
     /// An interactive `!` command (`!tty <cmd>`, `sudo`, `ssh`, …) that gets
     /// the real terminal; only its command and exit code are recorded.
     UserCommand(String),
+    /// `/memory edit`: a space's memory rendered to Markdown; the frontend
+    /// calls `App::finish_memory_edit` once the editor closes.
+    Memory {
+        space: String,
+        path: std::path::PathBuf,
+    },
 }
 
 /// Ensures a child stream spawned by `OpenRouter::stream_chat` is cancelled
@@ -1013,9 +1012,9 @@ pub enum AppEvent {
     Models(Option<ModelsResult>),
     /// A generated session topic: (session id, title, slug).
     Title(Option<(String, String, String)>),
-    /// Extracted memory ops for a space, tagged with the space name so a
-    /// meanwhile space-switch can discard stale results.
-    Memory(Option<(String, Vec<MemoryOp>)>),
+    /// A finished `/memory tidy` review (the plan carries its space id, so a
+    /// meanwhile space switch discards it).
+    Memory(Option<memory::MemoryTidyResult>),
     /// A compaction digest: (session id, digest, messages covered, pre-compaction %).
     Compact(Option<(String, String, i64, u64)>),
     /// Result of `/skills` install: skill name on success, error message on failure.
@@ -1068,15 +1067,15 @@ pub struct App {
     /// auto-approval judge. Empty = auto, a cheap model on the active
     /// backend (`App::helper_backend`); never switches backends silently.
     pub helper_model: String,
-    /// Whether finished replies feed background memory extraction. Always on
-    /// in the product (there is no setting for it; incognito turns, which
-    /// never reach it, are the opt-out). Tests that serve a scripted mock
-    /// backend turn it off so the helper call cannot consume their responses.
-    pub(crate) memory_extraction: bool,
-    /// Memory contents captured when the active session/cache epoch began.
-    /// Background extraction may update the space file without changing this
-    /// snapshot during the active run.
+    /// The memory table of contents captured when the active session/cache
+    /// epoch began; facts saved mid-session appear in the next one.
     pub(crate) memory_snapshot: String,
+    /// The space's docs as of that snapshot (also scored for hints).
+    pub(crate) memory_docs: Vec<crate::memory::book::DocEntry>,
+    /// Chapters over the tidy threshold, for the status bar.
+    pub(crate) memory_tidy_due: usize,
+    /// A `/memory tidy` plan waiting for `/memory apply` or `/memory discard`.
+    pub memory_plan: Option<crate::memory::tidy::Plan>,
     /// App-local prompt-cache epoch. Changes that alter the serialized prefix
     /// advance it so a provider gets a fresh cache lane.
     pub(crate) cache_epoch: u64,
@@ -1157,7 +1156,7 @@ pub struct App {
     /// Answer-length preference woven into the system prompt: "normal",
     /// "concise" (default), or "caveman".
     pub verbosity: String,
-    pub memory_rx: Option<mpsc::UnboundedReceiver<(String, Vec<MemoryOp>)>>,
+    pub memory_rx: Option<mpsc::UnboundedReceiver<memory::MemoryTidyResult>>,
     /// Finished UI repairs share a channel so switching sessions cannot lose a result.
     ui_repair_tx: mpsc::UnboundedSender<chat::UiRepairResult>,
     ui_repair_rx: mpsc::UnboundedReceiver<chat::UiRepairResult>,
@@ -1520,8 +1519,10 @@ impl App {
             harness: None,
             active_space,
             helper_model: String::new(),
-            memory_extraction: true,
             memory_snapshot: String::new(),
+            memory_docs: Vec::new(),
+            memory_tidy_due: 0,
+            memory_plan: None,
             cache_epoch: 0,
             context_warned: false,
             prompt_datetime: Utc::now().format("%Y-%m-%d %H:%M UTC, %A").to_string(),
@@ -1597,7 +1598,7 @@ impl App {
         };
         // Capture the first session snapshot before any request can be built.
         // Subsequent session switches/new chats refresh it explicitly.
-        app.memory_snapshot = app.read_memory();
+        app.refresh_memory_snapshot();
         app.pending_events.push_back(AppEvent::Status(status));
         app.load_prefs();
         app.load_settings();
@@ -2152,6 +2153,11 @@ impl App {
         toolbox.image_gen_backend = self.generation_backend(OpenRouter::default_image_gen_model);
         toolbox.video_gen_backend = self.generation_backend(OpenRouter::default_video_gen_model);
         toolbox.space_files_dir = self.space.files_dir(&self.active_space.name);
+        toolbox.memory =
+            (!self.incognito && self.eval_approver.is_none()).then(|| crate::tools::MemoryCtx {
+                db_path: self.space.db_path(),
+                space_id: self.active_space.id.clone(),
+            });
         toolbox.space_apps_dir = self.space.apps_dir(&self.active_space.name);
         toolbox.space_scripts_dir = self.space.scripts_dir(&self.active_space.name);
         toolbox.supports_images = self.current_model_supports_images();

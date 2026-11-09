@@ -939,6 +939,73 @@ pub(super) static RESEARCH_LOOKUP: ToolSpec = ToolSpec {
     ],
 };
 
+pub(super) static MEMORY: ToolSpec = ToolSpec {
+    name: "memory",
+    purpose: "Long-term memory for this space: chapters of short facts kept across chats. Save lasting preferences, decisions and facts the user states (never chat summaries) under a fitting chapter. Read a chapter before relying on it; fix or forget wrong facts.",
+    selector: Some("action"),
+    params: &[
+        Param {
+            name: "chapter",
+            kind: Kind::Str,
+            doc: "chapter title; for update, moves the fact",
+        },
+        Param {
+            name: "text",
+            kind: Kind::Str,
+            doc: "one short fact",
+        },
+        Param {
+            name: "id",
+            kind: Kind::Str,
+            doc: "fact id",
+        },
+        Param {
+            name: "description",
+            kind: Kind::Str,
+            doc: "one line on the chapter",
+        },
+        Param {
+            name: "pinned",
+            kind: Kind::Bool,
+            doc: "show the chapter in every chat (identity, standing preferences)",
+        },
+    ],
+    actions: &[
+        ActionSpec {
+            name: "read",
+            summary: "List chapters, or a chapter's facts",
+            required: &[],
+            optional: &["chapter"],
+            read_only: true,
+            internal: "memory_read",
+        },
+        ActionSpec {
+            name: "add",
+            summary: "Save a fact",
+            required: &["chapter", "text"],
+            optional: &["description", "pinned"],
+            read_only: false,
+            internal: "memory_add",
+        },
+        ActionSpec {
+            name: "update",
+            summary: "Rewrite or move a fact",
+            required: &["id"],
+            optional: &["text", "chapter"],
+            read_only: false,
+            internal: "memory_update",
+        },
+        ActionSpec {
+            name: "delete",
+            summary: "Forget a fact",
+            required: &["id"],
+            optional: &[],
+            read_only: false,
+            internal: "memory_delete",
+        },
+    ],
+};
+
 pub(super) static FILES: ToolSpec = ToolSpec {
     name: "files",
     purpose: "Work with imported space files.",
@@ -1539,6 +1606,7 @@ const TOOLS: &[&ToolSpec] = &[
     &PROC,
     &RESEARCH_LOOKUP,
     &FILES,
+    &MEMORY,
     &MEDIA,
 ];
 
@@ -1766,6 +1834,22 @@ mod tests {
             "list_citations",
         ),
         ("files", r#"{"action":"list"}"#, "list_files"),
+        ("memory", r#"{"action":"read"}"#, "memory_read"),
+        (
+            "memory",
+            r#"{"action":"add","chapter":"c","text":"t"}"#,
+            "memory_add",
+        ),
+        (
+            "memory",
+            r#"{"action":"update","id":"abcd"}"#,
+            "memory_update",
+        ),
+        (
+            "memory",
+            r#"{"action":"delete","id":"abcd"}"#,
+            "memory_delete",
+        ),
         (
             "files",
             r#"{"action":"search","query":"x"}"#,
@@ -1912,6 +1996,7 @@ mod tests {
             "search_sources",
             "list_citations",
             "list_files",
+            "memory_read",
             "search_files",
             "search_chats",
             "read_file",

@@ -66,7 +66,8 @@ The README has the full tree; the parts agents touch most:
 | `crates/core/src/app/research.rs` | research pipeline: survey → plan → searchers → synthesis → critic → verifier → writer |
 | `crates/core/src/app/swarm.rs`, `watches.rs` | roundtable / standing jobs |
 | `crates/core/src/app/usage.rs` | usage & cost analytics (`/usage`); Ctrl+G shows tool-definition context tokens and the session's total cost, requests and tokens; `nexus usage --session <id> [--json]` prints every request and the total |
-| `crates/core/src/app/sessions.rs`, `spaces.rs`, `models.rs`, `memory.rs` | state backends |
+| `crates/core/src/app/sessions.rs`, `spaces.rs`, `models.rs` | state backends |
+| `crates/core/src/app/memory.rs` | memory glue: the frozen `## Memory` table of contents, per-message `recall` hint rows, `$EDITOR` round trip, `/memory tidy` → preview → apply/discard/undo |
 | `crates/core/src/provider/openrouter.rs` | the single client for all OpenAI-wire backends — message shapes, tool-call wire format, events are in `provider/mod.rs` |
 | `crates/core/src/provider/serve.rs` | managed local-provider servers: per-runtime launch commands, endpoint liveness probes, process-tree memory, and the advisory budget behind `/local start\|stop\|status` |
 | `crates/core/src/provider/local.rs`, `harmony.rs` | opt-in local runtimes: config + installed-model discovery, and the Harmony channel splitter for `gpt-oss` servers that leave framing in `content` |
@@ -89,6 +90,7 @@ The README has the full tree; the parts agents touch most:
 | `crates/core/src/sync.rs` | Phase 3 merge engine: changeset types, per-table registry (cursor + apply rules), build/apply/ack, file blobs + zip bundles |
 | `crates/core/src/interactive/canvas.rs`, `crates/tui/src/interactive/canvas.rs` | nexus-ui `Canvas`: core holds the shapes and `Anim` keyframes, their limits, and `Session::canvas_frame` (shapes resolved at `Session::clock`); the TUI owns a braille dot rasterizer (`Dots`, also used by Chart line/area/scatter) and draws the frame. Each panel `Entry` sets the clock from when it was first shown; `Widgets::animating` makes `events.rs` redraw at ~15 fps while a moving canvas is visible and the window has focus |
 | `crates/tui/src/interactive/bold.rs`, `gallery_tests.rs` | the Bold panel look (`docs/interactive-ui-redesign.md`): label column, eighth-cell bars, pills, button kinds, tab geometry; chrome is `panel_chrome` in `interactive.rs`; `Theme::on` picks text for fills. `gallery_snapshots.txt` is the visual regression net (`NEXUS_UPDATE_SNAPSHOTS=1`). Layout containers (`Row`/`Grid`/`Stack`/`Spacer`) lay out in `components::container_regions`, shared by height, drawing and hit regions. Motion (glides, draw-in) is `Session` state in `crates/core/src/interactive/motion.rs`, off unless `Widgets::motion` (`/motion`, db setting `motion`) turns it on per frame in `Entry::advance_clock`. Live panels — `@Every` timers, `@Keys` bindings, clickable canvas shapes, local-only action checks — are `crates/core/src/interactive/play.rs`; the TUI ticks timers in `advance_clock` and saves panel state through the throttled `persist::flush_settled`. Number/Gauge/Heatmap/Md/Tree/Board/Diagram: core types and limits in `crates/core/src/interactive/extras.rs`, drawing in `crates/tui/src/interactive/extras.rs`; panel diagrams reach the image painter through `Widgets::diagram_placements` (painted after panels in `ui/history.rs`) |
+| `crates/core/src/memory/` | the memory book (`docs/memory.md`): `memory_chapters` + `memories` tables (uuid ids, `deleted_at` tombstones, LWW sync), `book.rs` table of contents and editor Markdown, `recall.rs` keyword hints, `tidy.rs` review prompts/plan/apply; the `memory` tool is `tools/memory_tool.rs` |
 | `crates/core/src/panels.rs` | durable nexus-ui panel storage: per-panel saved state (`panel_states`) and panels pinned as space mini-apps (`pinned_panels`), the `panel_app` tool's list/read/patch; both tables sync (`sync.rs`). Records are `interactive::PanelSnapshot` (versioned, ≤48 KiB). Terminal half: `crates/tui/src/interactive/persist.rs` |
 | `crates/core/src/appserver.rs` | localhost static server for model-created apps (port 8642) |
 | `crates/core/src/host/` | `nexus host` HTTP/SSE API, OpenAI-wire gateway, sync/worker routes, Cloudflare setup, tunnel and sleep guard |
@@ -179,7 +181,7 @@ reports that in the result header when a filter was requested.
   token ceiling. Never in research searcher toolboxes.
 - **One model setting, the rest automatic**: `/config` has one model row,
   `helper_model` (blank = auto). `App::helper_backend` is where every background
-  job (memory, compaction, image descriptions, vision OCR, the `LlmDecider`)
+  job (`/memory tidy`, compaction, image descriptions, vision OCR, the `LlmDecider`)
   gets its model: the pick, else `OpenRouter::default_helper_for(tag)` on the
   session's backend, else the session's own model there (local runtimes, or a
   catalog that dropped the default); it never crosses backends. Embeddings

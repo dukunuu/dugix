@@ -349,6 +349,42 @@
     }
   },
   {
+    "name": "memory",
+    "description": "Long-term memory for this space: chapters of short facts kept across chats. Save lasting preferences, decisions and facts the user states (never chat summaries) under a fitting chapter. Read a chapter before relying on it; fix or forget wrong facts.\n- action=read\n- action=add (needs chapter, text)\n- action=update (needs id)\n- action=delete (needs id)",
+    "parameters": {
+      "properties": {
+        "action": {
+          "enum": [
+            "read",
+            "add",
+            "update",
+            "delete"
+          ],
+          "type": "string"
+        },
+        "chapter": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "pinned": {
+          "type": "boolean"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "name": "media",
     "description": "Generate images/video; transform video locally with ffmpeg; save named image references for video consistency.\n- action=generate_image (needs prompt)\n- action=generate_video (needs prompt)\n- action=edit (needs video_id)\n- action=extract_frame (needs video_id)\n- action=stitch (needs video_ids)\n- action=save_reference (needs name, image_id, description)\n- action=list_references\n- action=delete_reference (needs name)",
     "parameters": {
