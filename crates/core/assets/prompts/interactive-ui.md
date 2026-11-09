@@ -73,6 +73,9 @@ Built-ins work in expressions/text: `@Count @First @Last @Sum @Avg @Min @Max`
 `@Filter(array, "field.path", "==", value)` accepts == != > < >= <= contains.
 `@Sort(array, "field.path", "desc")` is stable; default ascending. Empty field
 means each element itself. Numeric built-ins coerce numeric strings.
+Lists in state change with `@Append(array, value)`, `@Remove(array, index)`,
+`@Replace(array, index, value)`, `@Slice(array, start, end?)` (negative indexes
+count from the end): `@Set($todos, @Append($todos, $draft))`.
 `@Each(array, "row", Text(row.name))` returns a reactive list; use it as a list
 argument or within one. The variable is template-local;
 no index variable. ≤200 iterations; ordinary node/item caps still apply.
@@ -93,6 +96,14 @@ A Button takes an explicit action:
 - `Action([@Set($saved, true), @ToAssistant("Saved")])`: bounded sequential,
   transactional steps. At most one message per action. Named action references
   are allowed. There are no arbitrary event handlers or function definitions.
+
+Live panels (games, timers, simulations) use top-level statements:
+`tick = @Every(0.5, @Set($t, $t + 1))` runs an action on an interval (≥0.1 s,
+≤4 timers) while the panel is on screen; `keys = @Keys({left: @Set($x, $x - 1),
+space: @Reset($x)})` binds left/right/up/down/space/a–z/0–9 while the panel is
+focused (typing in fields is never captured). Timer and key actions may only
+@Set/@Reset state; sending needs a real button. A Canvas shape's trailing action
+argument makes it a clickable control.
 
 New elements appear progressively but remain inert until the fence closes and
 this reply finishes. Older local panels still work during generation. No model

@@ -94,6 +94,9 @@ pub enum Shape {
         /// Keyframe animations.
         #[serde(default)]
         animate: Vec<Anim>,
+        /// Action run when the shape is clicked or chosen.
+        #[serde(default)]
+        action: Option<String>,
     },
     /// An axis-aligned rectangle from its top-left corner.
     Rect {
@@ -114,6 +117,9 @@ pub enum Shape {
         /// Keyframe animations.
         #[serde(default)]
         animate: Vec<Anim>,
+        /// Action run when the shape is clicked or chosen.
+        #[serde(default)]
+        action: Option<String>,
     },
     /// A segment between two points.
     Line {
@@ -131,6 +137,9 @@ pub enum Shape {
         /// Keyframe animations.
         #[serde(default)]
         animate: Vec<Anim>,
+        /// Action run when the shape is clicked or chosen.
+        #[serde(default)]
+        action: Option<String>,
     },
     /// A segment from a point at an angle — clock hands, spokes, needles.
     Ray {
@@ -148,6 +157,9 @@ pub enum Shape {
         /// Keyframe animations.
         #[serde(default)]
         animate: Vec<Anim>,
+        /// Action run when the shape is clicked or chosen.
+        #[serde(default)]
+        action: Option<String>,
     },
     /// A single point.
     Dot {
@@ -161,6 +173,9 @@ pub enum Shape {
         /// Keyframe animations.
         #[serde(default)]
         animate: Vec<Anim>,
+        /// Action run when the shape is clicked or chosen.
+        #[serde(default)]
+        action: Option<String>,
     },
     /// A closed polygon through `[x, y]` vertices.
     Poly {
@@ -175,6 +190,9 @@ pub enum Shape {
         /// Keyframe animations (`dx`, `dy`, `on`).
         #[serde(default)]
         animate: Vec<Anim>,
+        /// Action run when the shape is clicked or chosen.
+        #[serde(default)]
+        action: Option<String>,
     },
     /// Text centred on `x`,`y`.
     Label {
@@ -190,6 +208,9 @@ pub enum Shape {
         /// Keyframe animations.
         #[serde(default)]
         animate: Vec<Anim>,
+        /// Action run when the shape is clicked or chosen.
+        #[serde(default)]
+        action: Option<String>,
     },
 }
 
@@ -281,6 +302,19 @@ impl Shape {
             | Self::Label { tone, .. } => *tone,
         }
     }
+    /// The action this shape runs when clicked, if it is clickable.
+    #[must_use]
+    pub fn action(&self) -> Option<&str> {
+        match self {
+            Self::Circle { action, .. }
+            | Self::Rect { action, .. }
+            | Self::Line { action, .. }
+            | Self::Ray { action, .. }
+            | Self::Dot { action, .. }
+            | Self::Poly { action, .. }
+            | Self::Label { action, .. } => action.as_deref(),
+        }
+    }
     fn animations(&self) -> &[Anim] {
         match self {
             Self::Circle { animate, .. }
@@ -356,14 +390,16 @@ impl Session {
             self.clock = seconds.max(0.0);
         }
     }
-    /// Shapes at the current clock, in drawing order, with their tones.
-    /// Shapes switched off (`on` below one half) are omitted; a shape whose
-    /// numbers fail to evaluate is skipped rather than blanking the canvas.
+    /// Shapes at the current clock, in drawing order, with their index in
+    /// `shapes` and their tones. Shapes switched off (`on` below one half) are
+    /// omitted; a shape whose numbers fail to evaluate is skipped rather than
+    /// blanking the canvas.
     #[must_use]
-    pub fn canvas_frame(&self, shapes: &[Shape]) -> Vec<(Drawn, Tone)> {
+    pub fn canvas_frame(&self, shapes: &[Shape]) -> Vec<(usize, Drawn, Tone)> {
         shapes
             .iter()
-            .filter_map(|shape| Some((self.resolve(shape)?, shape.tone())))
+            .enumerate()
+            .filter_map(|(index, shape)| Some((index, self.resolve(shape)?, shape.tone())))
             .collect()
     }
     fn resolve(&self, shape: &Shape) -> Option<Drawn> {
@@ -471,6 +507,12 @@ impl Document {
         line_ok(alt, 120)?;
         for shape in shapes {
             spend(budget)?;
+            if let Some(action) = shape.action() {
+                ensure!(
+                    self.actions.contains_key(action),
+                    "unknown shape action: {action}"
+                );
+            }
             for (_, value) in shape.fields() {
                 self.numeric_ok(value, budget)?;
             }
@@ -581,7 +623,7 @@ art = Canvas([
             session
                 .canvas_frame(canvas(session))
                 .into_iter()
-                .map(|(drawn, _)| drawn)
+                .map(|(_, drawn, _)| drawn)
                 .collect::<Vec<_>>()
         };
         let start = frame(&session);
@@ -620,7 +662,7 @@ art = Canvas([
         session.set_clock(5.0);
         assert!(!session.animating());
         assert!(matches!(
-            session.canvas_frame(canvas(&session))[0].0,
+            session.canvas_frame(canvas(&session))[0].1,
             Drawn::Rect { w, .. } if (w - 100.0).abs() < 1e-9
         ));
         let still = Document::parse(r#"root = Panel("Still", [Canvas([Line(0, 0, 100, 100)])])"#)

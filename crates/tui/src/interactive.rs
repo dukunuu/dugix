@@ -29,7 +29,7 @@ mod inputs;
 pub(crate) mod live;
 mod persist;
 mod practice;
-pub(crate) use persist::{flush, open_pinned, pin_focused, sync_saved};
+pub(crate) use persist::{flush, flush_settled, open_pinned, pin_focused, sync_saved};
 
 /// How long a pressed control stays inverted.
 const PRESS_FLASH_MS: u64 = 140;
@@ -113,7 +113,30 @@ enum Control {
     Choice(usize, usize),
     Quiz(usize),
     Reveal(usize),
+    /// A clickable canvas shape: canvas node, shape index.
+    Shape(usize, usize),
     Load,
+}
+/// Why a control that would send can't yet.
+const SEND_BLOCKED: &str = "Finish the reply and clear your draft before reviewing a UI response.";
+/// Whether a canvas shape's action sends a message (and so waits for the
+/// reply to finish, like a sending button).
+fn shape_sends(session: &Session, node: usize, shape: usize) -> bool {
+    matches!(session.document().node(node), Some(Node::Canvas { shapes, .. })
+        if shapes.get(shape).and_then(nexus_core::interactive::Shape::action)
+            .is_some_and(|action| session.document().sends(action)))
+}
+/// The `@Keys` name of a key: arrows, space, a–z, 0–9.
+fn binding_name(code: KeyCode) -> Option<String> {
+    Some(match code {
+        KeyCode::Left => "left".into(),
+        KeyCode::Right => "right".into(),
+        KeyCode::Up => "up".into(),
+        KeyCode::Down => "down".into(),
+        KeyCode::Char(' ') => "space".into(),
+        KeyCode::Char(ch) if ch.is_ascii_alphanumeric() => ch.to_ascii_lowercase().to_string(),
+        _ => return None,
+    })
 }
 /// No modifier other than Shift: the key may drive panel shortcuts.
 fn plain(key: &KeyEvent) -> bool {
@@ -151,16 +174,25 @@ impl Entry {
     /// Move the animation clock to now; whether anything is still moving.
     /// With motion off the clock stays put: canvases hold their first frame,
     /// values snap and charts draw whole.
-    fn advance_clock(&mut self, motion: bool) -> bool {
+    fn advance_clock(&mut self, motion: bool, timers: bool) -> bool {
         let elapsed = self.born.elapsed().as_secs_f64();
         let pressing = motion && self.press_flash().is_some();
-        self.session.as_mut().is_ok_and(|session| {
+        let mut failure = None;
+        let moving = self.session.as_mut().is_ok_and(|session| {
             session.set_motion(motion);
             if motion {
                 session.set_clock(elapsed);
             }
-            session.animating()
-        }) || pressing
+            // Timers run on wall time whether or not motion is on.
+            if timers && let Err(error) = session.tick(elapsed) {
+                failure = Some(error.to_string());
+            }
+            session.animating() || (timers && session.has_timers())
+        });
+        if let Some(error) = failure {
+            self.error = error;
+        }
+        moving || pressing
     }
     /// The control whose press is still flashing.
     fn press_flash(&self) -> Option<usize> {
@@ -229,6 +261,12 @@ impl Entry {
                             .map(|option| Control::Choice(index, option))
                             .collect(),
                         Node::Quiz { .. } => vec![Control::Quiz(index), Control::Reveal(index)],
+                        Node::Canvas { shapes, .. } => shapes
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, shape)| shape.action().is_some())
+                            .map(|(shape, _)| Control::Shape(index, shape))
+                            .collect(),
                         _ => Vec::new(),
                     })
                     .chain(session.needs_data_load().then_some(Control::Load))
@@ -284,9 +322,7 @@ impl Entry {
                         return None;
                     }
                 } else if session.document().sends(action) && !can_send {
-                    self.error =
-                        "Finish the reply and clear your draft before reviewing a UI response."
-                            .into();
+                    self.error = SEND_BLOCKED.into();
                     return None;
                 }
                 session.activate_button(node, item)
@@ -309,9 +345,7 @@ impl Entry {
                     return None;
                 };
                 if session.document().sends(action) && !can_send {
-                    self.error =
-                        "Finish the reply and clear your draft before reviewing a UI response."
-                            .into();
+                    self.error = SEND_BLOCKED.into();
                     return None;
                 }
                 session.submit_form(node)
@@ -343,6 +377,13 @@ impl Entry {
                     .map(|()| None)
             }
             Control::Reveal(node) => session.reveal(node).map(|()| None),
+            Control::Shape(node, shape) => {
+                if !can_send && shape_sends(session, node, shape) {
+                    self.error = SEND_BLOCKED.into();
+                    return None;
+                }
+                session.activate_shape(node, shape)
+            }
             Control::Input(_) | Control::Stepper(_) | Control::Table(..) | Control::Slider(_) => {
                 return None;
             }
@@ -2619,6 +2660,8 @@ pub struct Widgets {
     window_unfocused: bool,
     /// A canvas drawn this frame is still animating.
     animating: bool,
+    /// The last key or click the panels saw; timers idle after 30 minutes.
+    last_input: Option<std::time::Instant>,
     /// Motion in panels (`/motion on|off`): glides, draw-in, press flash and
     /// canvas animation. Off by default so tests render final frames; the
     /// app turns it on from the `motion` setting.
@@ -2654,6 +2697,14 @@ impl Widgets {
         self.hits.clear();
         self.visible.clear();
         self.animating = false;
+    }
+    /// Timers run while the window has focus and someone used it recently;
+    /// a panel left alone for half an hour stops ticking.
+    fn timers_live(&self) -> bool {
+        !self.window_unfocused
+            && self
+                .last_input
+                .is_none_or(|at| at.elapsed() < std::time::Duration::from_mins(30))
     }
     /// Whether the last frame drew a moving canvas, so the event loop should
     /// keep redrawing. Off while the terminal window is unfocused.
@@ -2858,6 +2909,7 @@ impl Widgets {
         active: bool,
     ) {
         self.reconcile_patches(placements);
+        let timers = self.timers_live();
         self.screen = Some(f.area());
         self.layout = Some((viewport, top, placements.to_vec()));
         self.previews.retain(|&(owner, ordinal), _| {
@@ -2913,7 +2965,7 @@ impl Widgets {
                     self.visible.push(key.clone());
                 }
                 entry.inputs.borrow_mut().vim = self.vim;
-                self.animating |= entry.advance_clock(self.motion);
+                self.animating |= entry.advance_clock(self.motion, timers);
                 entry.canvas(width, theme, focused, self.send_ready)
             } else {
                 let document = if placement.source.trim_start().starts_with('{') {
@@ -3012,6 +3064,7 @@ impl Widgets {
         }
     }
     fn click(&mut self, mouse: MouseEvent, screen: Rect, can_send: bool) -> (bool, Option<String>) {
+        self.last_input = Some(std::time::Instant::now());
         let result = self.handle_click(mouse, screen, can_send);
         self.open_trusted();
         result
@@ -3081,7 +3134,7 @@ impl Widgets {
                 .cloned()
                 .map(|control| (index, control))
         }) {
-            Some((index, Control::Action(_) | Control::Load)) => (
+            Some((index, Control::Action(_) | Control::Load | Control::Shape(..))) => (
                 true,
                 entry.activate(index, can_send, self.answer_blocked.is_none()),
             ),
@@ -3222,6 +3275,7 @@ impl Widgets {
         }
     }
     fn key(&mut self, key: KeyEvent, can_send: bool) -> (bool, Option<String>) {
+        self.last_input = Some(std::time::Instant::now());
         let result = self.handle_key(key, can_send);
         self.open_trusted();
         result
@@ -3297,6 +3351,23 @@ impl Widgets {
             return (false, None);
         }
         let searching = matches!(controls.get(entry.focus), Some(Control::Table(node, _)) if entry.session.as_ref().is_ok_and(|session| session.table_state(*node).searching));
+        // The panel's own key bindings win over shortcuts and navigation,
+        // except while typing (text fields, code, table search).
+        if !searching
+            && !matches!(
+                controls.get(entry.focus),
+                Some(Control::Input(_) | Control::Editor(_))
+            )
+            && let Some(name) = binding_name(key.code)
+            && let Ok(session) = &mut entry.session
+            && session.document().key_action(&name).is_some()
+        {
+            match session.press_key(&name) {
+                Ok(_) => entry.error.clear(),
+                Err(error) => entry.error = error.to_string(),
+            }
+            return (false, None);
+        }
         if key.code == KeyCode::Char('p')
             && !searching
             && !matches!(controls.get(entry.focus), Some(Control::Input(_)))
@@ -3381,11 +3452,12 @@ impl Widgets {
         let Some(key) = self.focused.clone() else {
             return;
         };
+        let timers = self.timers_live();
         let Some(entry) = self.entries.get_mut(&key) else {
             return;
         };
         entry.inputs.get_mut().vim = self.vim;
-        self.animating |= entry.advance_clock(self.motion);
+        self.animating |= entry.advance_clock(self.motion, timers);
         let (canvas, hits) = entry.canvas(area.width, app_theme, true, can_send);
         let caret = entry.input_caret(&canvas);
         let target = caret
@@ -3796,3 +3868,7 @@ mod gallery_tests;
 #[cfg(test)]
 #[path = "interactive/motion_tests.rs"]
 mod motion_tests;
+
+#[cfg(test)]
+#[path = "interactive/play_tests.rs"]
+mod play_tests;

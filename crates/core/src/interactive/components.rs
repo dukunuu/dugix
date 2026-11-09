@@ -256,6 +256,10 @@ impl Document {
             }
             Node::Canvas { shapes, rows, alt } => {
                 self.validate_canvas(shapes, *rows, alt, budget)?;
+                controls = shapes
+                    .iter()
+                    .filter(|shape| shape.action().is_some())
+                    .count();
             }
             Node::Row { items, gap } => {
                 item_count(items.len(), 2, 4)?;

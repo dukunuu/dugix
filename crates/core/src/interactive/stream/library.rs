@@ -58,13 +58,13 @@ const COMPONENTS: &[(&str, &str, &str)] = &[
     ("Stack", "stack", "items gap?"),
     ("Spacer", "spacer", "rows?"),
     ("Canvas", "canvas", "shapes rows? alt?"),
-    ("Circle", "circle", "x y r tone? fill? animate?"),
-    ("Rect", "rect", "x y w h tone? fill? animate?"),
-    ("Line", "line", "x1 y1 x2 y2 tone? animate?"),
-    ("Ray", "ray", "x y len angle tone? animate?"),
-    ("Dot", "dot", "x y tone? animate?"),
-    ("Poly", "poly", "points tone? fill? animate?"),
-    ("Label", "label", "text x y tone? animate?"),
+    ("Circle", "circle", "x y r tone? fill? animate? action?"),
+    ("Rect", "rect", "x y w h tone? fill? animate? action?"),
+    ("Line", "line", "x1 y1 x2 y2 tone? animate? action?"),
+    ("Ray", "ray", "x y len angle tone? animate? action?"),
+    ("Dot", "dot", "x y tone? animate? action?"),
+    ("Poly", "poly", "points tone? fill? animate? action?"),
+    ("Label", "label", "text x y tone? animate? action?"),
     ("Anim", "", "prop values seconds? repeat? ease? delay?"),
     ("Form", "form", "title fields submit_label action"),
     ("Timeline", "timeline", "items"),
@@ -189,6 +189,7 @@ pub(super) fn materialize(
         .lower(&root, 0)?
         .ok_or_else(|| anyhow::anyhow!("root is not available yet"))?;
     ensure!(value.get("view").is_some(), "root must be a Panel");
+    context.attach_play(&mut value, symbols, partial)?;
     value["version"] = 1.into();
     value["state"] = state.into();
     value["actions"] = context.actions.into();
@@ -621,22 +622,21 @@ impl Context<'_> {
                 }
                 return Ok(None);
             };
-            if matches!(name, "Button" | "Form") && key == "action" {
-                let steps = if value.get("op").is_some() {
-                    vec![value]
-                } else {
-                    value
-                        .as_array()
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "Button action must be @Set, @Answer, @ToAssistant or Action"
-                            )
-                        })?
-                        .clone()
-                };
-                let id = format!("action_{}", self.actions.len());
-                self.actions.insert(id.clone(), steps.into());
-                value = id.into();
+            if key == "action"
+                && matches!(
+                    name,
+                    "Button"
+                        | "Form"
+                        | "Circle"
+                        | "Rect"
+                        | "Line"
+                        | "Ray"
+                        | "Dot"
+                        | "Poly"
+                        | "Label"
+                )
+            {
+                value = self.register_action(value)?.into();
             }
             object.insert(key.into(), value);
         }
@@ -650,8 +650,82 @@ impl Context<'_> {
         }
         Ok(Some(object.into()))
     }
+    /// Store lowered steps (one step or an `Action` list) as a named action.
+    fn register_action(&mut self, value: Value) -> Result<String> {
+        let steps = if value.get("op").is_some() {
+            vec![value]
+        } else {
+            value
+                .as_array()
+                .ok_or_else(|| {
+                    anyhow::anyhow!("an action must be @Set, @Answer, @ToAssistant or Action")
+                })?
+                .clone()
+        };
+        let id = format!("action_{}", self.actions.len());
+        self.actions.insert(id.clone(), steps.into());
+        Ok(id)
+    }
+    /// Add timers and keys to a materialized panel; they stay inert (absent)
+    /// while it streams in.
+    fn attach_play(
+        &mut self,
+        value: &mut Value,
+        symbols: &BTreeMap<String, Expr>,
+        partial: bool,
+    ) -> Result<()> {
+        if !partial {
+            let (timers, keys) = self.play(symbols)?;
+            value["timers"] = timers;
+            value["keys"] = keys;
+        }
+        Ok(())
+    }
+    /// Timers and key bindings: top-level `@Every` / `@Keys` statements.
+    fn play(&mut self, symbols: &BTreeMap<String, Expr>) -> Result<(Value, Value)> {
+        let mut timers = Vec::new();
+        let mut keys = Map::new();
+        for (id, expression) in symbols {
+            let Expr::Call(kind, args) = expression else {
+                continue;
+            };
+            match kind.as_str() {
+                "@Every" => {
+                    ensure!(!id.starts_with('$'), "@Every needs a plain statement name");
+                    ensure!(args.len() == 2, "@Every expects (seconds, action)");
+                    let seconds = self.lower(&args[0], 0)?.unwrap_or(Value::Null);
+                    let seconds = crate::interactive::eval(&seconds, &self.state, &mut 4096)?;
+                    let action = self
+                        .lower(&args[1], 0)?
+                        .ok_or_else(|| anyhow::anyhow!("@Every needs an action"))?;
+                    let action = self.register_action(action)?;
+                    timers.push(json!({"seconds": seconds, "action": action}));
+                }
+                "@Keys" => {
+                    ensure!(!id.starts_with('$'), "@Keys needs a plain statement name");
+                    let [Expr::Object(fields)] = args.as_slice() else {
+                        bail!("@Keys expects one object of key: action");
+                    };
+                    for (key, expression) in fields {
+                        let action = self
+                            .lower(expression, 0)?
+                            .ok_or_else(|| anyhow::anyhow!("key {key} needs an action"))?;
+                        let action = self.register_action(action)?;
+                        keys.insert(key.clone(), action.into());
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok((timers.into(), keys.into()))
+    }
     #[allow(clippy::too_many_lines)]
     fn function(&mut self, name: &str, args: &[Expr], depth: usize) -> Result<Option<Value>> {
+        if matches!(name, "@Every" | "@Keys") {
+            bail!(
+                "{name} is a statement, not a value: name it at top level, e.g. tick = @Every(1, @Set($n, $n + 1))"
+            );
+        }
         if name == "@Each" {
             ensure!(args.len() == 3, "@Each expects 3 arguments");
             let array = self.lower(&args[0], depth + 1)?.unwrap_or(Value::Null);

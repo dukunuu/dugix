@@ -263,6 +263,18 @@ paragraph to the prompt at most.
   state lives on `Session` (`interactive/motion.rs`) and is off unless a
   frontend turns it on, so previews, exports and tests see final frames.
   Stats numbers don't glide; the text always shows the true value.
+- **Phase 6 landed** (2026-11-09): `@Every(seconds, action)` timers (≤4,
+  ≥0.1 s, wall time, one catch-up run after a gap, live only while the window
+  has focus and someone used it in the last 30 minutes), `@Keys({...})`
+  bindings (focused panel, never while typing), and a trailing `action` on
+  every Canvas shape (clickable, focusable, hit-tested on the cells it inks).
+  Timer and key actions may only `@Set`/`@Reset` (directly or via called
+  actions). Streaming previews drop timers and keys. The loop's panel save is
+  throttled to once a second so a fast timer doesn't hammer the db; session
+  switches and quitting still save immediately.
+- **State arrays were already there:** state holds bounded data values and
+  `@Each` re-renders from them, so phase 6 only added list editing:
+  `@Append`, `@Remove`, `@Replace`, `@Slice` (negative indexes from the end).
 - **Fix found on the way:** `Widgets::clear` (every viewport reset, such as a
   session switch) reset `/vim` to its default; it now keeps vim and motion.
 - **Deviation:** `Row` has no `align` argument. Children fill equal slots, so

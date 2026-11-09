@@ -87,7 +87,10 @@ fn a_pressed_pill_flashes_only_with_motion_on() {
     assert!(!pill(&entry).contains(Modifier::REVERSED));
     entry.session.as_mut().unwrap().set_motion(true);
     assert!(pill(&entry).contains(Modifier::REVERSED));
-    assert!(entry.advance_clock(true), "the flash keeps frames coming");
+    assert!(
+        entry.advance_clock(true, false),
+        "the flash keeps frames coming"
+    );
 }
 
 #[test]

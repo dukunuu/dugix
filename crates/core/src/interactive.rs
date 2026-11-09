@@ -10,7 +10,9 @@ use serde_json::{Map, Value, json};
 
 mod canvas;
 mod motion;
+mod play;
 pub use canvas::{Anim, Drawn, Ease, Repeat, Shape};
+pub use play::Timer;
 mod components;
 pub use components::{ChartKind, ChartSeries, Section, Tab, TableState, TimelineEvent};
 mod practice;
@@ -863,6 +865,10 @@ struct Definition {
     view: Vec<Node>,
     #[serde(default)]
     actions: BTreeMap<String, Vec<Step>>,
+    #[serde(default)]
+    timers: Vec<Timer>,
+    #[serde(default)]
+    keys: BTreeMap<String, String>,
 }
 
 /// A located problem in a model-authored UI document.
@@ -877,7 +883,7 @@ pub struct CheckError {
 /// Valid presentation node types, shared by validation and tool reports.
 pub const NODE_TYPES: &str = "hero, image, columns, cards, stats, steps, callout, quote, divider, text, buttons, input, kv, table, progress, bars, sparkline, checklist, select, stepper, toggle, tabs, accordion, row, grid, stack, spacer, chart, canvas, form, timeline, rating, code, badge, meter, slider, editor, choice, quiz";
 const ACTION_OPS: &str = "set, call, run, send, answer, reset, open_url, to_assistant";
-const EXPR_OPS: &str = "get, random, not, number, if, add, sub, mul, div, mod, eq, lt, gt, and, or, literal, object, array, field, index, count, first, last, sum, avg, min, max, filter, sort, round, abs, floor, ceil";
+const EXPR_OPS: &str = "get, random, not, number, if, add, sub, mul, div, mod, eq, lt, gt, and, or, literal, object, array, field, index, count, first, last, sum, avg, min, max, filter, sort, round, abs, floor, ceil, append, remove, replace, slice";
 const MAX_ERRORS: usize = 10;
 
 fn check_result(errors: &mut Vec<CheckError>, path: &str, result: Result<()>) {
@@ -954,7 +960,7 @@ fn check_shape(value: &Value, path: &str, shape: &str, errors: &mut Vec<CheckErr
     let (owner, fields) = match shape {
         "document" => (
             shape,
-            "version:u8 title:string frame:frame accent:accent state:state view:node[] actions:actions calls:value",
+            "version:u8 title:string frame:frame accent:accent state:state view:node[] actions:actions calls:value timers:value keys:value",
         ),
         "state" | "actions" => {
             for (key, value) in object {
@@ -1191,6 +1197,8 @@ pub struct Document {
     state: Map<String, Value>,
     view: Vec<Node>,
     actions: BTreeMap<String, Vec<Step>>,
+    timers: Vec<Timer>,
+    keys: BTreeMap<String, String>,
     sending: BTreeSet<String>,
     answering: BTreeSet<String>,
     program: Option<String>,
@@ -1355,6 +1363,8 @@ impl Document {
                         )
                     })
                     .collect(),
+                timers: serde_json::from_value(value["timers"].clone()).unwrap_or_default(),
+                keys: serde_json::from_value(value["keys"].clone()).unwrap_or_default(),
             });
         Self::check_definition(definition, errors)
     }
@@ -1373,6 +1383,8 @@ impl Document {
             state,
             view,
             actions,
+            timers,
+            keys,
         } = definition;
         let mut doc = Self {
             calls,
@@ -1383,6 +1395,8 @@ impl Document {
             state,
             view,
             actions,
+            timers,
+            keys,
             sending: BTreeSet::new(),
             answering: BTreeSet::new(),
             program: None,
@@ -1568,6 +1582,7 @@ impl Document {
                 doc.answering.insert(name.clone());
             }
         }
+        check_result(&mut errors, "timers", doc.validate_play());
         if errors.is_empty() {
             Ok(doc)
         } else {
@@ -1984,6 +1999,10 @@ impl Document {
                 | Node::Toggle { .. }
                 | Node::Editor { .. } => 1,
                 Node::Accordion { items } => items.len(),
+                Node::Canvas { shapes, .. } => shapes
+                    .iter()
+                    .filter(|shape| shape.action().is_some())
+                    .count(),
                 Node::Choice { options, .. } => options.len(),
                 Node::Quiz { .. } => 2,
                 Node::Table {
@@ -2061,6 +2080,8 @@ pub struct Session {
     clock: f64,
     /// Value glides and chart draw-in; see `motion.rs`.
     motion: motion::Motion,
+    /// Timer due times; see `play.rs`.
+    schedule: play::Schedule,
 }
 
 #[derive(Default)]
@@ -2096,6 +2117,7 @@ impl Session {
             revision: 0,
             clock: 0.0,
             motion: motion::Motion::default(),
+            schedule: play::Schedule::default(),
         };
         let mut state = session.state.clone();
         session.bindings_ok(&mut state)?;
@@ -3138,7 +3160,7 @@ fn validate_expr(
             }
         }
         "count" | "first" | "last" | "sum" | "avg" | "min" | "max" | "filter" | "sort"
-        | "round" | "abs" | "floor" | "ceil" => {
+        | "round" | "abs" | "floor" | "ceil" | "append" | "remove" | "replace" | "slice" => {
             let args = arg
                 .as_array()
                 .ok_or_else(|| anyhow::anyhow!("builtin needs arguments"))?;
@@ -3220,7 +3242,7 @@ fn eval(value: &Value, state: &Map<String, Value>, budget: &mut usize) -> Result
             });
         }
         "count" | "first" | "last" | "sum" | "avg" | "min" | "max" | "filter" | "sort"
-        | "round" | "abs" | "floor" | "ceil" => {
+        | "round" | "abs" | "floor" | "ceil" | "append" | "remove" | "replace" | "slice" => {
             let args = arg
                 .as_array()
                 .ok_or_else(|| anyhow::anyhow!("invalid builtin arguments"))?
@@ -3385,3 +3407,7 @@ mod stepper_tests;
 #[cfg(test)]
 #[path = "interactive/containers_tests.rs"]
 mod containers_tests;
+
+#[cfg(test)]
+#[path = "interactive/play_tests.rs"]
+mod play_tests;

@@ -52,6 +52,8 @@ pub(super) struct Store {
     /// Replaces the OS opener (tests).
     opener: Option<Opener>,
     pub(super) pending_pin: bool,
+    /// When the event loop last saved; see `flush_settled`.
+    last_flush: Option<std::time::Instant>,
 }
 
 impl Store {
@@ -300,6 +302,21 @@ pub(crate) fn sync_saved(app: &mut AppView) {
     };
     app.interactive.store.session_id = current;
     app.interactive.store.records = records;
+}
+
+/// The event loop's save: at most once a second, so a panel timer changing
+/// state ten times a second doesn't write the database ten times a second.
+/// Session switches and shutdown call `flush` directly and lose nothing.
+pub(crate) fn flush_settled(app: &mut AppView) {
+    let store = &mut app.interactive.store;
+    if store
+        .last_flush
+        .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(1))
+    {
+        return;
+    }
+    store.last_flush = Some(std::time::Instant::now());
+    flush(app);
 }
 
 /// Store every panel whose state changed since the last flush.

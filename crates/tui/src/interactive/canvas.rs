@@ -21,6 +21,8 @@ pub(super) struct Dots {
     cols: u16,
     rows: u16,
     cells: Vec<(u8, Option<Color>)>,
+    /// Cells raised since the last `take_touched`: left, top, right, bottom.
+    touched: Option<(u16, u16, u16, u16)>,
 }
 
 impl Dots {
@@ -29,7 +31,19 @@ impl Dots {
             cols,
             rows,
             cells: vec![(0, None); usize::from(cols) * usize::from(rows)],
+            touched: None,
         }
+    }
+    /// The cell box raised since the last call, as a rect inside `area`.
+    pub(super) fn take_touched(&mut self, area: Rect) -> Option<Rect> {
+        self.touched.take().map(|(left, top, right, bottom)| {
+            Rect::new(
+                area.x + left,
+                area.y + top,
+                right - left + 1,
+                bottom - top + 1,
+            )
+        })
     }
     /// Width in dots.
     pub(super) fn width(&self) -> f64 {
@@ -47,6 +61,13 @@ impl Dots {
             return;
         }
         let (x, y) = (x as usize, y as usize);
+        let (col, row) = (
+            u16::try_from(x / 2).unwrap_or(u16::MAX),
+            u16::try_from(y / 4).unwrap_or(u16::MAX),
+        );
+        self.touched = Some(self.touched.map_or((col, row, col, row), |(l, t, r, b)| {
+            (l.min(col), t.min(row), r.max(col), b.max(row))
+        }));
         let cell = &mut self.cells[(y / 4) * usize::from(self.cols) + x / 2];
         cell.0 |= BITS[y % 4][x % 2];
         cell.1 = Some(color);
@@ -222,16 +243,18 @@ fn inside(points: &[(f64, f64)], x: f64, y: f64) -> bool {
     result
 }
 
-/// Draw a canvas's shapes at the session's clock into `area`.
+/// Draw a canvas's shapes at the session's clock into `area`; returns the
+/// cell box each clickable shape inked, by shape index, for hit testing.
 pub(super) fn draw(
     shapes: &[Shape],
     session: &Session,
     area: Rect,
     theme: &Theme,
     buffer: &mut Buffer,
-) {
+) -> Vec<(usize, Rect)> {
+    let mut targets = Vec::new();
     if area.width == 0 || area.height == 0 {
-        return;
+        return targets;
     }
     let mut dots = Dots::new(area.width, area.height);
     // 0–100 canvas units onto dot centres; radii and ray lengths use the
@@ -241,8 +264,10 @@ pub(super) fn draw(
     let at = |x: f64, y: f64| (x * sx, y * sy);
     let frame = session.canvas_frame(shapes);
     let mut labels = Vec::new();
-    for (drawn, tone) in frame {
+    for (index, drawn, tone) in frame {
         let color = super::components::color(tone, session, theme);
+        let clickable = shapes[index].action().is_some();
+        dots.take_touched(area);
         match drawn {
             Drawn::Circle { x, y, r, fill } => dots.circle(at(x, y), r * sy, fill, color),
             Drawn::Rect { x, y, w, h, fill } => dots.rect(at(x, y), (w * sx, h * sy), fill, color),
@@ -265,14 +290,19 @@ pub(super) fn draw(
                 let points: Vec<_> = points.into_iter().map(|(x, y)| at(x, y)).collect();
                 dots.poly(&points, fill, color);
             }
-            Drawn::Label { text, x, y } => labels.push((safe(&text), at(x, y), color)),
+            Drawn::Label { text, x, y } => {
+                labels.push((index, clickable, safe(&text), at(x, y), color));
+            }
+        }
+        if clickable && let Some(rect) = dots.take_touched(area) {
+            targets.push((index, rect));
         }
     }
     // Draw in left to right the first time the panel shows.
     let shown = super::bold::revealed(area.width, session);
     dots.render(Rect::new(area.x, area.y, shown, area.height), buffer);
     // Text sits over the dots, centred on its point.
-    for (text, (x, y), color) in labels {
+    for (index, clickable, text, (x, y), color) in labels {
         let row = (y / 4.0).floor();
         let width = text.width();
         #[allow(clippy::cast_precision_loss)]
@@ -289,7 +319,15 @@ pub(super) fn draw(
             usize::from(area.width - col),
             Style::default().fg(color),
         );
+        if clickable {
+            let width = u16::try_from(text.width())
+                .unwrap_or(u16::MAX)
+                .min(area.width - col);
+            targets.push((index, Rect::new(area.x + col, area.y + row, width, 1)));
+        }
     }
+    targets.sort_by_key(|(index, _)| *index);
+    targets
 }
 
 #[cfg(test)]

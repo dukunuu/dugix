@@ -108,7 +108,7 @@ async fn run_loop(
     let mut theme_poll = tokio::time::interval(std::time::Duration::from_secs(2));
     let mut jobs_poll = tokio::time::interval(std::time::Duration::from_secs(60));
     loop {
-        crate::interactive::flush(app);
+        crate::interactive::flush_settled(app);
         app.sync_approval_popup();
         take_proposed_command(app);
         // Locally-queued UI feedback (status lines, composer restore,
@@ -119,6 +119,8 @@ async fn run_loop(
         }
         terminal.draw(|f| ui::render(f, app))?;
         if app.should_quit {
+            // Save anything the throttled loop flush hasn't yet.
+            crate::interactive::flush(app);
             break;
         }
 

@@ -31,6 +31,10 @@ pub(super) fn control_count(node: &Node) -> usize {
         | Node::Code { .. }
         | Node::Editor { .. } => 1,
         Node::Choice { options, .. } => options.len(),
+        Node::Canvas { shapes, .. } => shapes
+            .iter()
+            .filter(|shape| shape.action().is_some())
+            .count(),
         Node::Quiz { .. } => 2,
         Node::Table {
             select,
@@ -370,7 +374,18 @@ pub(super) fn render(
             labels,
             ..
         } => chart(*kind, series, labels, session, area, theme, buffer),
-        Node::Canvas { shapes, .. } => super::canvas::draw(shapes, session, area, theme, buffer),
+        Node::Canvas { shapes, .. } => {
+            // Clickable shapes are controls, in shape order.
+            for (rank, (_, rect)) in super::canvas::draw(shapes, session, area, theme, buffer)
+                .into_iter()
+                .enumerate()
+            {
+                if focus == Some(control + rank) {
+                    buffer.set_style(rect, Style::default().bg(theme.selection));
+                }
+                hits.push((rect, control + rank));
+            }
+        }
         Node::Row { items, .. } | Node::Grid { items, .. } | Node::Stack { items, .. } => {
             let regions = container_regions(node, session, area);
             hits.extend(Entry::branch(
