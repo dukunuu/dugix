@@ -244,6 +244,16 @@ paragraph to the prompt at most.
   and limits live in `crates/core/src/interactive/`. Glyphs, fonts, fills and
   easing live in `crates/tui/src/interactive/`.
 
+## Status
+
+- **Phases 1–3 landed together** (2026-11-09) as one restyle commit: they
+  rewrote the same component renders, so splitting them would have rewritten
+  each test snapshot three times. A scratch PNG renderer, kept out of the
+  tree, was used to review the look in dark and light themes.
+- **Deviation:** table columns keep equal widths, not content sizing, so
+  sorting clicks keep mapping columns the same way; the header fill and zebra
+  rows give the structure instead.
+
 ## Resolved questions (decided 2026-11-09)
 
 - **Static display layouts** get the Bold title bar too. `frame: "plain"`

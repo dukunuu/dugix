@@ -1,0 +1,144 @@
+▐ RUST VS GO FOR A CLI                                                 ▌
+
+  Rust or Go for your next CLI?  ▐ COMPARISON ▌
+  Both ship single binaries; they differ in build speed and footprint.
+
+  2.1 MB         38 s          0.4 s
+  Rust binary    Rust build    Go build
+  ▼ 40%          ▲ 5x
+
+  RUST                               GO
+  ✓ Tiny binaries                    ✓ Fast builds
+  ✗ Slow compiles                    ✗ GC pauses
+
+  ▎                                  ▎
+  ▎  Ship fast              ▐ GO ▌   ▎  Ship small           ▐ RUST ▌
+  ▎                                  ▎
+  ▎  Go gets you to v1 this week.    ▎  Rust when size and latency
+  ▎                                  ▎  matter.
+  ▎                                  ▎
+
+  ▌ Takeaway
+  ▌ Go to ship this week; Rust when size matters.
+
+────────────────────────────────────────────────────────────────────────
+
+▐ TRIP PLANNER                                                       ⤢ ▌
+
+▸ DAYS          ◀ 5 ▶
+
+  ● Beach (2 days)
+  ○ Hiking (3 days)
+
+  PLANNED DAYS  ██████████████████▊░░░░░░░░░░░░░░░░░░░░░░░░░░░░  2 / 5
+
+  ▐ Reset ▌                                            ▐ Save plan ↵ ▌
+
+─────────────────────────────────── Tab next · Enter press · Esc done ──
+
+▐ SIGN UP                                                            ⤢ ▌
+
+  Your details
+  ╭ Name * ──────────────────────────────────────────────────────────╮
+  │  Ada Lovelace                                                    │
+  ╰──────────────────────────────────────────────────────────────────╯
+  Required
+
+  ╭ About you ───────────────────────────────────────────────────────╮
+  │  A sentence or two                                               │
+  │                                                                  │
+  │                                                                  │
+  ╰──────────────────────────────────────────────────────────────────╯
+
+  PLAN        ◀ Pro ▶
+
+  ● Newsletter
+
+  EXPERIENCE  ★★★☆☆
+
+  VOLUME      ████████████████████▊░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  40
+  ▐ Create account ↵ ▌
+
+───────────────────────────────────────────────────────── F2 keyboard ──
+
+▐ TEAM DASHBOARD                                                     ⤢ ▌
+
+  ▐ People ▌   Trend     Notes
+   Name                  Role                  Status
+  ▸Ada                   Eng                   Active
+   Bob                   Design                Away
+   Cy                    PM                    Active
+
+
+
+───────────────────────────────────────────────────────── F2 keyboard ──
+
+▐ RELEASE OVERVIEW                                                     ▌
+
+  █ █ ▀▀█    █▀█ █▀█   █▀▀     ▀█    ▀▀█
+  ▀▀█ █▀▀    ▀▀█ █▀█   ▀▀█      █    █▀▀
+    ▀ ▀▀▀    ▀▀▀ ▀▀▀ ▀ ▀▀▀%    ▀▀▀ ▀ ▀▀▀k
+  builds     uptime            users
+  ▲ 6
+
+  ● Design — Locked   ◉ Build — In review   ○ Ship
+
+  ● Mon Kickoff
+  │ Scope agreed
+  ● Wed Beta
+
+  Owner Ada
+  Due   Friday
+
+  CPU   █████████████████████████████████████████░░░░░░░░░░░░░░░░  72%
+
+  ▐ BETA ▌
+
+  Rust  ██████████████████████████████████████████████████████████  42
+  Go    █████████████████████████████████████████▍░░░░░░░░░░░░░░░░  30
+  Zig   ███████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   8
+
+     ▄ █▂
+  ▂█▄█▆██
+
+────────────────────────────────────────────────────────────────────────
+
+▐ PYTHON INTERVIEW                                                   ⤢ ▌
+
+  ‹ Question 1 of 2 ›                                    ▐ 0/1 right ▌
+  Which structure gives O(1) lookup?
+
+  PICK ONE
+  ○ Hash map
+  ○ List
+  ○ Tree
+
+  ▐ Show answer ▌
+
+
+
+───────────────────────────────────────────────────────── F2 keyboard ──
+
+▐ PICK A DESTINATION                                                 ⤢ ▌
+
+  Where to next?
+  Three quick picks for a long weekend
+
+   1  Lisbon                                                         →
+   2  Kyoto                                                          →
+   3  Oaxaca                                                         →
+
+────────────────────────────────────────────── 1–3 pick · F2 keyboard ──
+
+▐ ORBIT                                                                ▌
+
+                                  noon
+                               ⣠⠔⠉⠁ ⡇⠈⠉⠢⣄
+                              ⡔⠁    ⡇   ⠈⢢
+                             ⢰⠁   ⢠⣶⣷⡄   ⠈⡆
+                             ⠸⡀   ⠘⠿⠿⠃   ⢀⠇
+                              ⠣⡀        ⢀⠜
+                               ⠙⠢⣀⡀  ⢀⣀⠔⠋
+                                  ⠈⠉⠉⠁
+
+────────────────────────────────────────────────────────────────────────

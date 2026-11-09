@@ -7,7 +7,7 @@ Compose native calls with positional arguments:
 - Image(src, alt?, rows?): 4-12 rows, default 6
 - Columns([Column(title, [Item(text, mark?), ...]), ...]): 2-3 columns, <=8 items each, responsive
 - Cards([Card(title, text, badge?, tone?, image?, alt?), ...]): 1-6, responsive grid
-- Stats([Stat(value, label, delta?, tone?), ...]): 1-6; delta is a signed string like "+12%"
+- Stats([Stat(value, label, delta?, tone?), ...], big?): 1-6; delta is a signed string like "+12%"; big=true draws values in large numerals (5 rows instead of 3) for 1-3 headline numbers that start with digits, e.g. "98.5%", "1.2k"
 - Steps([Step(title, text?, state?), ...]): 1-8; state done|current|todo
 - Callout(tone, text, title?): tone info|tip|warning|danger
 - Quote(text, by?); Divider(label?)
@@ -15,7 +15,7 @@ Mix with Text, Kv, Table, Progress, Bars, Sparkline, Chart, Canvas, Timeline, Ba
 - Canvas([shape, ...], rows?, alt?): a simple diagram, 3-16 rows (default 8), always with alt. 0-100 on both axes, origin top-left, y down; shapes draw in order: Circle(x, y, r, tone?, fill?), Rect(x, y, w, h, tone?, fill?), Line(x1, y1, x2, y2, tone?), Dot(x, y, tone?), Poly([[x, y], ...], tone?, fill?), Label(text, x, y, tone?) (centred). r is in height units, so circles stay round.
 Images: use search mode "images" or a picture URL in a tool result; copy it character for character into image/src (plain https, no templates). Never invent URLs; images load asynchronously in the renderer. Always give alt text. Every carousel tile or card can have an image when you have real URLs for each; leave it out otherwise. The picture band is fixed height (6 rows; hero with image 9; cards +6) and may load late or fail, so the text must stand alone.
 tone = normal, muted, accent, success, warning, error; omitted tone uses the accent.
-Limits: 16 nodes, 45 declared rows total (columns: items+1 per column; cards 4 each; steps 2 each; hero and stats 3 (hero with image 9; cards with any image +6); callout and quote 2; divider 1); source 16 KiB.
+Limits: 16 nodes, 45 declared rows total (columns: items+1 per column; cards 4 each; steps 2 each; hero and stats 3 (hero with image 9; big stats 5; cards with any image +6); callout and quote 2; divider 1); source 16 KiB.
 
 ```nexus-ui
 root = Panel("Rust vs Go for a CLI", [comparison, takeaway])

@@ -116,7 +116,7 @@ accent2 (default), success, warning, error, muted. These are theme roles, not co
 Tone: normal, muted, accent, success, warning, error. Mark: ok, no, dot, none.
 Step state: done, current, todo. Callout tone: info, tip, warning, danger.
 
-Use Hero for hierarchy, Stats for key numbers, Cards for 1–6 summaries, Columns
+Use Hero for hierarchy, Stats for key numbers (big=true for 1–3 headline figures), Cards for 1–6 summaries, Columns
 for 2–3 comparisons, Steps for timelines, and Callout for one useful takeaway.
 A Button may include body lines for 3–8 carousel choices: artwork, title, detail.
 Image/src arguments must be real HTTPS URLs copied exactly from search mode

@@ -17,7 +17,7 @@ const COMPONENTS: &[(&str, &str, &str)] = &[
     ("Item", "", "text mark?"),
     ("Cards", "cards", "items"),
     ("Card", "", "title text badge? tone? image? alt?"),
-    ("Stats", "stats", "items"),
+    ("Stats", "stats", "items big?"),
     ("Stat", "", "value label delta? tone?"),
     ("Steps", "steps", "items"),
     ("Step", "", "title text? state?"),

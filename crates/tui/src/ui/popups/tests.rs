@@ -812,7 +812,7 @@ fn model_authored_ui_is_inline_and_focusable_without_game_commands() {
     let screen = render_to_string(100, 40, |f| crate::ui::render(f, &mut app));
     for label in [
         "Before",
-        "Counter",
+        "COUNTER",
         "Count: 0",
         "Add one",
         "Name",

@@ -133,9 +133,13 @@ pub(super) fn render(
             options,
             answer,
         } => {
-            Paragraph::new(display(session, label))
-                .style(Style::default().fg(theme.fg_dim))
-                .render(Rect::new(area.x, area.y, area.width, 1), buffer);
+            super::bold::label(
+                buffer,
+                Rect::new(area.x, area.y, area.width, 1),
+                &display(session, label),
+                false,
+                theme,
+            );
             let picked = session.value(key);
             let mut hits = Vec::new();
             for (option, text) in options.iter().enumerate() {
@@ -201,10 +205,21 @@ fn quiz(
     .style(control_style(theme, focus == Some(control)).add_modifier(Modifier::BOLD))
     .render(header, buffer);
     if let Some((right, total)) = session.quiz_score(index) {
-        Paragraph::new(format!("{right}/{total} right"))
-            .style(Style::default().fg(theme.fg_dim))
-            .right_aligned()
-            .render(header, buffer);
+        let score = format!("{right}/{total} right");
+        let width = super::bold::pill_width(&score).min(header.width);
+        let fill = if right == total && total > 0 {
+            theme.success
+        } else {
+            theme.control
+        };
+        super::bold::pill(
+            buffer,
+            (header.right().saturating_sub(width), header.y),
+            width,
+            &score,
+            (fill, theme.on(fill)),
+            true,
+        );
     }
     let mut hits = vec![(header, control)];
     let Some(item) = items.get(current) else {
@@ -226,15 +241,16 @@ fn quiz(
         y = view_area.bottom();
     }
     if item.has_answer() {
-        let reveal = Rect::new(area.x, y + 1, area.width, 1);
         let shown = session.revealed(index);
-        Paragraph::new(if shown {
-            "[ Hide answer ]"
-        } else {
-            "[ Show answer ]"
-        })
-        .style(control_style(theme, focus == Some(control + 1)))
-        .render(reveal, buffer);
+        let reveal = super::bold::button(
+            buffer,
+            (area.x, y + 1),
+            area.width,
+            if shown { "Hide answer" } else { "Show answer" },
+            (super::bold::Kind::Secondary, focus == Some(control + 1)),
+            super::accent_color(session.document(), theme),
+            theme,
+        );
         hits.push((reveal, control + 1));
         if shown {
             let rows = u16::try_from(answer.len()).unwrap_or(0);

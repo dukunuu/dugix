@@ -68,6 +68,16 @@ pub mod glyph {
     pub const SECTION: &str = "▍";
     /// A card's left rail.
     pub const RAIL: &str = "▎";
+    /// The rounded left end of a filled bar or pill.
+    pub const CAP_LEFT: &str = "▐";
+    /// The rounded right end of a filled bar or pill.
+    pub const CAP_RIGHT: &str = "▌";
+    /// The unfilled part of a bar.
+    pub const TRACK: &str = "░";
+    /// Left-anchored partial cells, one to seven eighths wide.
+    pub const EIGHTHS: [&str; 7] = ["▏", "▎", "▍", "▌", "▋", "▊", "▉"];
+    /// Bottom-anchored partial cells, one to eight eighths tall.
+    pub const LEVELS: [&str; 8] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
     /// A favorite.
     pub const FAVORITE: &str = "★";
     /// Accepts images.
@@ -75,6 +85,59 @@ pub mod glyph {
     /// Previous / next item in a viewer.
     pub const PREV: &str = "‹";
     pub const NEXT: &str = "›";
+}
+
+/// Big numerals: three rows of half blocks per glyph. Covers digits and the
+/// punctuation numbers carry; `display_font` returns `None` for anything
+/// else, and callers fall back to ordinary text.
+const DISPLAY_FONT: [(char, [&str; 3]); 15] = [
+    ('0', ["█▀█", "█ █", "▀▀▀"]),
+    ('1', ["▀█ ", " █ ", "▀▀▀"]),
+    ('2', ["▀▀█", "█▀▀", "▀▀▀"]),
+    ('3', ["▀▀█", " ▀█", "▀▀▀"]),
+    ('4', ["█ █", "▀▀█", "  ▀"]),
+    ('5', ["█▀▀", "▀▀█", "▀▀▀"]),
+    ('6', ["█▀▀", "█▀█", "▀▀▀"]),
+    ('7', ["▀▀█", "  █", "  ▀"]),
+    ('8', ["█▀█", "█▀█", "▀▀▀"]),
+    ('9', ["█▀█", "▀▀█", "▀▀▀"]),
+    ('.', [" ", " ", "▀"]),
+    (',', [" ", " ", "▀"]),
+    ('-', ["   ", "▀▀▀", "   "]),
+    ('+', [" ▄ ", "▀█▀", "   "]),
+    (' ', [" ", " ", " "]),
+];
+
+/// `text` in the three-row display font, one column between glyphs.
+#[must_use]
+pub fn display_font(text: &str) -> Option<[String; 3]> {
+    let mut rows = [String::new(), String::new(), String::new()];
+    for (index, ch) in text.chars().enumerate() {
+        let glyph = DISPLAY_FONT.iter().find(|(key, _)| *key == ch)?.1;
+        for (row, part) in rows.iter_mut().zip(glyph) {
+            if index > 0 {
+                row.push(' ');
+            }
+            row.push_str(part);
+        }
+    }
+    (!text.is_empty()).then_some(rows)
+}
+
+/// Split a stat like "2.1 MB" or "-40%" into the leading number the display
+/// font can draw and the unit that follows in ordinary text.
+#[must_use]
+pub fn display_split(text: &str) -> (&str, &str) {
+    let end = text
+        .char_indices()
+        .find(|&(_, ch)| !(ch.is_ascii_digit() || matches!(ch, '.' | ',' | '-' | '+')))
+        .map_or(text.len(), |(index, _)| index);
+    let (number, unit) = text.split_at(end);
+    if number.chars().any(|ch| ch.is_ascii_digit()) {
+        (number, unit)
+    } else {
+        ("", text)
+    }
 }
 
 /// The one separator between inline fields.
@@ -291,6 +354,18 @@ mod tests {
             "emoji in UI strings:\n{}",
             offenders.join("\n")
         );
+    }
+
+    #[test]
+    fn display_font_draws_numbers_and_splits_units() {
+        let [top, middle, bottom] = display_font("2.5").unwrap();
+        assert_eq!(top, "▀▀█   █▀▀");
+        assert_eq!(middle, "█▀▀   ▀▀█");
+        assert_eq!(bottom, "▀▀▀ ▀ ▀▀▀");
+        assert!(display_font("12%").is_none());
+        assert_eq!(display_split("2.1 MB"), ("2.1", " MB"));
+        assert_eq!(display_split("-40%"), ("-40", "%"));
+        assert_eq!(display_split("n/a"), ("", "n/a"));
     }
 
     #[test]

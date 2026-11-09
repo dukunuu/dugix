@@ -41,14 +41,15 @@ fn tabs() -> Value {
 #[test]
 fn tabs_two_state_snapshots_keep_the_same_height_and_hit_identity() {
     let mut entry = entry(tabs(), json!({"tab":0}));
-    assert_eq!(content(&entry, 24).0, " A         B\nOne");
+    // The active tab is a filled pill; tabs sit at their content widths.
+    assert_eq!(content(&entry, 24).0, "▐ A ▌   B\nOne");
     let height = entry
         .canvas(24, &Theme::default(), true, true)
         .0
         .area
         .height;
     assert!(entry.navigate(KeyCode::Right));
-    assert_eq!(content(&entry, 24).0, " A         B\nTwo");
+    assert_eq!(content(&entry, 24).0, "  A   ▐ B ▌\nTwo");
     assert_eq!(
         entry
             .canvas(24, &Theme::default(), true, true)
@@ -58,8 +59,10 @@ fn tabs_two_state_snapshots_keep_the_same_height_and_hit_identity() {
         height
     );
     assert_eq!(entry.session.as_ref().unwrap().value("tab"), "1");
+    // The focused strip fills its active tab with your accent.
     let (_, buffer) = content(&entry, 24);
-    assert_eq!(buffer[(13, 2)].fg, Theme::default().accent);
+    assert_eq!(buffer[(10, 2)].symbol(), "B");
+    assert_eq!(buffer[(10, 2)].bg, Theme::default().accent);
 }
 
 #[test]
@@ -170,7 +173,7 @@ fn form_submit_snapshots_and_actions_respect_required_values_and_send_readiness(
     assert_eq!(
         content(&entry, 36).0,
         format!(
-            "Profile\n{top}\n│{}│\n{bottom}\nRequired\n[ Save ↵ ]",
+            "Profile\n{top}\n│{}│\n{bottom}\nRequired\n▐▸Save ↵ ▌",
             " ".repeat(30)
         )
     );
@@ -181,7 +184,7 @@ fn form_submit_snapshots_and_actions_respect_required_values_and_send_readiness(
     assert_eq!(
         content(&entry, 36).0,
         format!(
-            "Profile\n{top}\n│ Ada{}│\n{bottom}\n\n[ Save ↵ ]",
+            "Profile\n{top}\n│ Ada{}│\n{bottom}\n\n▐ Save ↵ ▌",
             " ".repeat(26)
         )
     );
@@ -207,30 +210,32 @@ fn timeline_rating_badge_meter_slider_and_highlighted_code_snapshots() {
         json!({"type":"rating","key":"score","label":"Score"}),
         json!({"score":2}),
     );
-    assert_eq!(content(&rating, 36).0, "Score: ★★○○○");
+    assert_eq!(content(&rating, 36).0, "SCORE  ★★☆☆☆");
     let badge = entry(
         json!({"type":"badge","text":"Ready","tone":"success"}),
         json!({}),
     );
-    assert_eq!(content(&badge, 36).0, "[Ready]");
+    assert_eq!(content(&badge, 36).0, "▐ Ready ▌");
     let meter = entry(
         json!({"type":"meter","label":"Done","value":2,"max":4,"tone":"warning"}),
         json!({}),
     );
     let (text, buffer) = content(&meter, 24);
-    assert_eq!(text, "██████Done 2/4");
-    assert_eq!(buffer[(2, 2)].fg, Theme::default().warning);
+    assert_eq!(text, "DONE  ███▌░░░  2 / 4");
+    assert_eq!(buffer[(2, 2)].fg, Theme::default().fg_dim);
+    assert_eq!(buffer[(8, 2)].fg, Theme::default().warning);
     let slider = entry(
         json!({"type":"slider","key":"n","label":"N","min":0,"max":4,"step":1}),
         json!({"n":2}),
     );
-    assert_eq!(content(&slider, 24).0, "N: 2   ──────●──────");
+    assert_eq!(content(&slider, 24).0, "N     █████▌░░░░░  2");
     let mut code = entry(
         json!({"type":"code","source":"let x = 1;","lang":"rust"}),
         json!({}),
     );
     let (text, buffer) = content(&code, 36);
-    assert_eq!(text, "rust  [Copy]\nlet x = 1;");
+    // Rendered focused, so the Copy pill carries the focus mark.
+    assert_eq!(text, format!("{:<24}▐▸Copy ▌\nlet x = 1;", "RUST"));
     assert_ne!(
         buffer[(2, 3)].fg,
         buffer[(10, 3)].fg,
@@ -323,7 +328,8 @@ fn tabs_accordion_rating_and_slider_route_mouse_and_keyboard() {
         json!({"n":0}),
     );
     draw(&mut widgets, &src);
-    click(&mut widgets, 0, 9, 0);
+    // The hit area is the stars themselves: the third star sets 3.
+    click(&mut widgets, 0, 2, 0);
     assert_eq!(session(&widgets).value("n"), "3");
     widgets.key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), true);
     assert_eq!(session(&widgets).value("n"), "4");

@@ -307,6 +307,9 @@ pub enum Node {
     Stats {
         /// Display metrics.
         items: Vec<Stat>,
+        /// Draw values in big display numerals (two extra rows).
+        #[serde(default)]
+        big: bool,
     },
     /// One to eight steps in a row or connected timeline.
     Steps {
@@ -694,7 +697,7 @@ impl Node {
                     3
                 }
             }
-            Self::Stats { .. } => 3,
+            Self::Stats { big, .. } => 3 + 2 * u16::from(*big),
             Self::Input { rows, .. } => rows.saturating_add(2),
             Self::Kv { items } => u16::try_from(items.len()).unwrap_or(u16::MAX),
             Self::Table {
@@ -931,7 +934,7 @@ fn check_shape(value: &Value, path: &str, shape: &str, errors: &mut Vec<CheckErr
                 ("node", "image") => "src:string alt:?string rows:u16",
                 ("node", "columns") => "items:column[]",
                 ("node", "cards") => "items:card[]",
-                ("node", "stats") => "items:stat[]",
+                ("node", "stats") => "items:stat[] big:bool",
                 ("node", "steps") => "items:display_step[]",
                 ("node", "callout") => "tone:callout_tone title:?string text:string",
                 ("node", "quote") => "text:string by:?string",
@@ -1695,7 +1698,7 @@ impl Document {
                     }
                 }
             }
-            Node::Stats { items } => {
+            Node::Stats { items, .. } => {
                 item_count(items.len(), 1, 6)?;
                 for item in items {
                     Self::template_ok(&item.value)?;
@@ -2084,7 +2087,7 @@ impl Session {
                         }))
                 })
                 .collect(),
-            Node::Stats { items } => items
+            Node::Stats { items, .. } => items
                 .iter()
                 .map(|item| {
                     let delta = item

@@ -2,7 +2,7 @@
 //! local navigation never moves following transcript content.
 
 use super::{
-    Control, Entry, accent_color, branch_regions, clipped, control_style, display, glyph,
+    Control, Entry, accent_color, bold, branch_regions, clipped, control_style, display, glyph,
     tone_color,
 };
 use crate::theme::Theme;
@@ -171,26 +171,35 @@ pub(super) fn render(
     let mut hits = Vec::new();
     match node {
         Node::Tabs { items, .. } => {
-            let count = u16::try_from(items.len()).unwrap_or(1);
-            for (tab, item) in items.iter().enumerate() {
-                let tab = u16::try_from(tab).unwrap_or(0);
-                let start = area.width * tab / count;
-                let end = area.width * (tab + 1) / count;
-                let selected = session.tab(index) == usize::from(tab);
-                Paragraph::new(clipped(
-                    &format!(" {} ", display(session, &item.label)),
-                    end - start,
-                ))
-                .style(
-                    control_style(theme, focus == Some(control))
-                        .fg(if selected { theme.accent } else { theme.fg_dim })
-                        .add_modifier(if selected {
-                            Modifier::UNDERLINED
-                        } else {
-                            Modifier::empty()
-                        }),
-                )
-                .render(Rect::new(area.x + start, area.y, end - start, 1), buffer);
+            let labels: Vec<_> = items
+                .iter()
+                .map(|item| display(session, &item.label))
+                .collect();
+            let focused = focus == Some(control);
+            let active = session.tab(index);
+            for (tab, rect) in bold::tab_rects(&labels, row(area, 0))
+                .into_iter()
+                .enumerate()
+            {
+                if tab == active {
+                    let fill = if focused {
+                        theme.accent
+                    } else {
+                        accent_color(session.document(), theme)
+                    };
+                    bold::pill(
+                        buffer,
+                        (rect.x, rect.y),
+                        rect.width,
+                        &labels[tab],
+                        (fill, theme.on(fill)),
+                        true,
+                    );
+                } else {
+                    Paragraph::new(clipped(&format!("  {}", labels[tab]), rect.width))
+                        .style(Style::default().fg(theme.fg_dim))
+                        .render(rect, buffer);
+                }
             }
             hits.push((row(area, 0), control));
             if let Some(item) = items.get(session.tab(index)) {
@@ -252,23 +261,29 @@ pub(super) fn render(
             let submit = row(area, area.height.saturating_sub(1));
             let enabled =
                 session.form_valid(index) && (can_send || !session.document().sends(action));
-            Paragraph::new(format!(
-                "[ {}{} ]",
+            let label = format!(
+                "{}{}",
                 display(session, submit_label),
                 if session.document().sends(action) {
                     " ↵"
                 } else {
                     ""
                 }
-            ))
-            .style(if enabled {
-                control_style(theme, focus == Some(control))
+            );
+            let kind = if enabled {
+                bold::Kind::Primary
             } else {
-                Style::default()
-                    .fg(theme.fg_dim)
-                    .add_modifier(Modifier::DIM)
-            })
-            .render(submit, buffer);
+                bold::Kind::Disabled
+            };
+            let submit = bold::button(
+                buffer,
+                (submit.x, submit.y),
+                submit.width,
+                &label,
+                (kind, focus == Some(control)),
+                accent_color(session.document(), theme),
+                theme,
+            );
             hits.push((submit, control));
         }
         Node::Chart {
@@ -300,25 +315,38 @@ pub(super) fn render(
         }
         Node::Rating { key, label, max } => {
             let value = session.selected_row(key);
-            let stars = (0..*max)
-                .map(|star| {
-                    if usize::from(star) < value {
-                        glyph::FAVORITE
-                    } else {
-                        glyph::RING
-                    }
-                })
-                .collect::<String>();
-            Paragraph::new(format!("{}: {stars}", display(session, label)))
-                .style(control_style(theme, focus == Some(control)))
-                .render(area, buffer);
-            hits.push((area, control));
+            let stars = rating_rect(label, *max, session, area);
+            bold::label(
+                buffer,
+                Rect::new(area.x, area.y, stars.x - area.x, 1),
+                &display(session, label),
+                focus == Some(control),
+                theme,
+            );
+            for star in 0..stars.width {
+                let lit = usize::from(star) < value;
+                buffer.set_string(
+                    stars.x + star,
+                    stars.y,
+                    if lit { glyph::FAVORITE } else { "☆" },
+                    Style::default().fg(if lit { theme.warning } else { theme.fg_dim }),
+                );
+            }
+            hits.push((stars, control));
         }
         Node::Code { source, lang } => {
             let lang = lang.as_deref().unwrap_or("plain");
-            Paragraph::new(format!("{lang}  [Copy]"))
-                .style(control_style(theme, focus == Some(control)))
-                .render(row(area, 0), buffer);
+            bold::label(buffer, row(area, 0), lang, false, theme);
+            let copy = bold::pill_width("Copy");
+            bold::button(
+                buffer,
+                (area.right().saturating_sub(copy), area.y),
+                copy,
+                "Copy",
+                (bold::Kind::Secondary, focus == Some(control)),
+                accent_color(session.document(), theme),
+                theme,
+            );
             let fence = "`".repeat(
                 source
                     .split(|ch| ch != '`')
@@ -370,13 +398,14 @@ pub(super) fn render(
             hits.push((row(area, 0), control));
         }
         Node::Badge { text, tone } => {
-            Paragraph::new(format!("[{}]", display(session, text)))
-                .style(
-                    Style::default()
-                        .fg(color(*tone, session, theme))
-                        .add_modifier(Modifier::BOLD),
-                )
-                .render(area, buffer);
+            bold::pill(
+                buffer,
+                (area.x, area.y),
+                area.width,
+                &display(session, text),
+                bold::tone_fill(*tone, session, theme),
+                true,
+            );
         }
         Node::Meter {
             label,
@@ -385,16 +414,25 @@ pub(super) fn render(
             tone,
         } => {
             let (value, max) = session.progress(value, max).unwrap_or_default();
-            let label = format!("{} {value}/{max}", display(session, label));
-            ratatui::widgets::Gauge::default()
-                .ratio(if max > 0.0 { value / max } else { 0.0 })
-                .label(label)
-                .gauge_style(
-                    Style::default()
-                        .fg(color(*tone, session, theme))
-                        .bg(theme.raised),
-                )
-                .render(area, buffer);
+            let text = super::ratio_text(value, max);
+            let fill = match tone {
+                Tone::Normal => super::accent_color(session.document(), theme),
+                tone => color(*tone, session, theme),
+            };
+            super::render_bar(
+                &super::BarRow {
+                    label: &display(session, label),
+                    caps: true,
+                    value: &text,
+                    value_width: u16::try_from(text.width()).unwrap_or(0),
+                    ratio: if max > 0.0 { value / max } else { 0.0 },
+                    fill,
+                },
+                session,
+                area,
+                theme,
+                buffer,
+            );
         }
         Node::Slider {
             key,
@@ -405,34 +443,61 @@ pub(super) fn render(
         } => {
             let value = session.value(key);
             let ratio = (value.parse::<f64>().unwrap_or(*min) - min) / (max - min);
-            let label_width = slider_offset(label, session, area.width);
-            Paragraph::new(clipped(
-                &format!("{}: {value}", display(session, label)),
-                label_width,
-            ))
-            .style(control_style(theme, focus == Some(control)))
-            .render(Rect::new(area.x, area.y, label_width, 1), buffer);
-            let track = area.width.saturating_sub(label_width);
-            for x in 0..track {
-                let thumb =
-                    (f64::from(x) - ratio * f64::from(track.saturating_sub(1))).abs() <= 0.5;
-                buffer.set_string(
-                    area.x + label_width + x,
-                    area.y,
-                    if thumb { glyph::DOT } else { "─" },
-                    control_style(theme, focus == Some(control)),
-                );
-            }
-            hits.push((Rect::new(area.x + label_width, area.y, track, 1), control));
+            let focused = focus == Some(control);
+            let track = slider_track(label, &value, session, area);
+            bold::label(
+                buffer,
+                Rect::new(area.x, area.y, track.x - area.x, 1),
+                &display(session, label),
+                focused,
+                theme,
+            );
+            let fill = if focused {
+                theme.accent
+            } else {
+                accent_color(session.document(), theme)
+            };
+            bold::bar(buffer, track, ratio, fill, theme);
+            bold::value(
+                buffer,
+                Rect::new(track.right(), area.y, area.right() - track.right(), 1),
+                &value,
+                theme,
+            );
+            hits.push((track, control));
         }
         _ => return None,
     }
     Some((next - control, hits))
 }
-fn slider_offset(label: &str, session: &Session, width: u16) -> u16 {
-    u16::try_from(display(session, label).width() + 6)
-        .unwrap_or(u16::MAX)
-        .min(width / 2)
+/// The slider's bar, between the label column and its value.
+fn slider_track(label: &str, value: &str, session: &Session, area: Rect) -> Rect {
+    let column = if display(session, label).is_empty() {
+        0
+    } else {
+        bold::label_column(session, area.width)
+    };
+    let value_width = u16::try_from(value.width()).unwrap_or(0).saturating_add(2);
+    Rect::new(
+        area.x + column,
+        area.y,
+        area.width.saturating_sub(column + value_width),
+        1,
+    )
+}
+/// The stars of a rating, after the label column.
+fn rating_rect(label: &str, max: u16, session: &Session, area: Rect) -> Rect {
+    let column = if display(session, label).is_empty() {
+        0
+    } else {
+        bold::label_column(session, area.width)
+    };
+    Rect::new(
+        area.x + column.min(area.width),
+        area.y,
+        max.min(area.width.saturating_sub(column)),
+        1,
+    )
 }
 
 pub(super) fn click(entry: &mut Entry, control: &Control, pos: Position, area: Rect) -> bool {
@@ -444,19 +509,23 @@ pub(super) fn click(entry: &mut Entry, control: &Control, pos: Position, area: R
             let Some(Node::Tabs { items, .. }) = session.document().node(*node) else {
                 return true;
             };
-            let tab = usize::from(pos.x - area.x) * items.len() / usize::from(area.width.max(1));
+            let labels: Vec<_> = items
+                .iter()
+                .map(|item| display(session, &item.label))
+                .collect();
+            let rects = bold::tab_rects(&labels, area);
+            let tab = rects
+                .iter()
+                .position(|rect| pos.x < rect.right())
+                .unwrap_or(rects.len().saturating_sub(1));
             session.select_tab(*node, tab)
         }
         Control::Rating(node) => {
-            let Some(Node::Rating { label, max, .. }) = session.document().node(*node) else {
+            let Some(Node::Rating { max, .. }) = session.document().node(*node) else {
                 return true;
             };
-            let offset = u16::try_from(display(session, label).width() + 2).unwrap_or(u16::MAX);
-            let value = pos
-                .x
-                .saturating_sub(area.x + offset)
-                .saturating_add(1)
-                .min(*max);
+            // `area` is the stars' own hit rect.
+            let value = pos.x.saturating_sub(area.x).saturating_add(1).min(*max);
             session.rate(*node, value)
         }
         Control::Slider(node) => session.slide(

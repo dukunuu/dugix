@@ -165,8 +165,10 @@ fn measured_reservations_match_the_drawn_card_at_actual_widths() {
                         .collect::<String>()
                 })
                 .collect();
-            assert!(rows.last().unwrap().starts_with('╰'));
-            assert!(rows.last().unwrap().ends_with('╯'));
+            // Bold chrome: a title bar on top, a full-width rule at the bottom.
+            assert!(rows[0].starts_with('▐') && rows[0].ends_with('▌'));
+            assert!(rows.last().unwrap().starts_with('─'));
+            assert!(rows.last().unwrap().ends_with('─'));
             if source.contains("supporting content") {
                 assert!(rows.iter().filter(|row| row.contains("supporting")).count() > 1);
             }
@@ -280,7 +282,7 @@ fn pinned_card_keeps_state_hits_and_composer_clear_until_escape_or_session_reset
     let viewport = app.interactive.layout.as_ref().unwrap().0;
     assert_eq!(
         terminal.backend().buffer()[(viewport.x + 2, viewport.y)].symbol(),
-        "╭"
+        "▐"
     );
     let pinned = text(&terminal);
     assert!(pinned.contains("pinned · Esc to unpin"), "{pinned}");
@@ -373,7 +375,8 @@ fn arbitrary_game_artwork_and_controls_use_the_same_renderer() {
     let p = placement(source, 0);
     let screen = text(&draw(&mut widgets, &[p], 0));
     for label in [
-        "Rock · Paper · Scissors",
+        // The title bar sets the panel title in capitals.
+        "ROCK · PAPER · SCISSORS",
         "Wins 0",
         "Losses 0",
         "Draws 0",

@@ -143,24 +143,20 @@ fn refined_cards_and_badges_use_theme_surfaces_not_hardcoded_colors() {
     let theme = Theme::default();
     let entry = Entry::new(Ok(session));
     let (buffer, _) = entry.canvas(80, &theme, false, true);
+    assert!(buffer.content.iter().any(|cell| cell.symbol() == "N"
+        && cell.bg == theme.accent2
+        && cell.fg == theme.on(theme.accent2)));
     assert!(
-        buffer
-            .content
-            .iter()
-            .any(|cell| cell.symbol() == "N" && cell.bg == theme.accent2 && cell.fg == theme.bg)
-    );
-    assert!(
-        buffer
-            .content
-            .iter()
-            .any(|cell| cell.symbol() == "T" && cell.bg == theme.accent2 && cell.fg == theme.bg),
+        buffer.content.iter().any(|cell| cell.symbol() == "T"
+            && cell.bg == theme.accent2
+            && cell.fg == theme.on(theme.accent2)),
         "card badges keep their own foreground/background inside the grid"
     );
     assert!(
         buffer
             .content
             .iter()
-            .any(|cell| cell.symbol() == "╭" && cell.bg == theme.raised)
+            .any(|cell| cell.symbol() == "▎" && cell.bg == theme.raised)
     );
     assert!(
         buffer

@@ -212,6 +212,38 @@ impl Theme {
     pub fn background_style(&self) -> Style {
         Style::default().bg(self.surface)
     }
+
+    /// Readable text on a filled `fill`: the theme's background or
+    /// foreground, whichever contrasts more. Bold panel chrome and pills use
+    /// it so light and dark themes both stay legible.
+    #[must_use]
+    pub fn on(&self, fill: Color) -> Color {
+        let fill = luminance(fill);
+        let contrast = |color: Color| {
+            let other = luminance(color);
+            (fill.max(other) + 0.05) / (fill.min(other) + 0.05)
+        };
+        if contrast(self.bg) >= contrast(self.fg) {
+            self.bg
+        } else {
+            self.fg
+        }
+    }
+}
+
+/// WCAG relative luminance of a terminal color, resolving named and indexed
+/// colors through the standard palette.
+fn luminance(color: Color) -> f64 {
+    let hex = color_hex(color);
+    let channel = |range: std::ops::Range<usize>| {
+        let value = f64::from(u8::from_str_radix(&hex[range], 16).unwrap_or(0)) / 255.0;
+        if value <= 0.039_28 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(1..3) + 0.7152 * channel(3..5) + 0.0722 * channel(5..7)
 }
 
 fn color_hex(color: Color) -> String {
@@ -246,6 +278,20 @@ pub fn load() -> Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_on_fills_picks_the_more_readable_theme_color() {
+        let dark = Theme::default();
+        assert_eq!(dark.on(Color::Cyan), Color::Black);
+        assert_eq!(dark.on(Color::Indexed(236)), Color::White);
+        let light = Theme {
+            bg: Color::Rgb(250, 250, 250),
+            fg: Color::Rgb(30, 30, 30),
+            ..Theme::default()
+        };
+        assert_eq!(light.on(Color::Rgb(20, 60, 140)), Color::Rgb(250, 250, 250));
+        assert_eq!(light.on(Color::Rgb(250, 220, 90)), Color::Rgb(30, 30, 30));
+    }
 
     #[test]
     fn diff_backgrounds_follow_rgb_palettes_with_ansi_fallbacks() {
