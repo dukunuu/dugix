@@ -31,6 +31,9 @@ mod persist;
 mod practice;
 pub(crate) use persist::{flush, open_pinned, pin_focused, sync_saved};
 
+/// How long a pressed control stays inverted.
+const PRESS_FLASH_MS: u64 = 140;
+
 /// Fixed image reservation with a visible, centered failure placeholder.
 pub(crate) fn image_lines(
     url: &str,
@@ -130,6 +133,8 @@ struct Entry {
     inputs: std::cell::RefCell<inputs::Inputs>,
     /// When this panel was first shown; canvas animations count from here.
     born: std::time::Instant,
+    /// The control last pressed and when, for the brief press flash.
+    pressed: Option<(usize, std::time::Instant)>,
 }
 impl Entry {
     fn new(session: Result<Session, String>) -> Self {
@@ -140,15 +145,28 @@ impl Entry {
             scroll: 0,
             inputs: std::cell::RefCell::default(),
             born: std::time::Instant::now(),
+            pressed: None,
         }
     }
-    /// Move the animation clock to now; whether a canvas is still moving.
-    fn advance_clock(&mut self) -> bool {
+    /// Move the animation clock to now; whether anything is still moving.
+    /// With motion off the clock stays put: canvases hold their first frame,
+    /// values snap and charts draw whole.
+    fn advance_clock(&mut self, motion: bool) -> bool {
         let elapsed = self.born.elapsed().as_secs_f64();
+        let pressing = motion && self.press_flash().is_some();
         self.session.as_mut().is_ok_and(|session| {
-            session.set_clock(elapsed);
+            session.set_motion(motion);
+            if motion {
+                session.set_clock(elapsed);
+            }
             session.animating()
-        })
+        }) || pressing
+    }
+    /// The control whose press is still flashing.
+    fn press_flash(&self) -> Option<usize> {
+        self.pressed
+            .filter(|(_, at)| at.elapsed() < std::time::Duration::from_millis(PRESS_FLASH_MS))
+            .map(|(control, _)| control)
     }
     /// The focused text field, as its node index in the document.
     fn focused_input(&self) -> Option<usize> {
@@ -249,6 +267,7 @@ impl Entry {
     }
     fn activate(&mut self, control: usize, can_send: bool, can_answer: bool) -> Option<String> {
         self.focus = control;
+        self.pressed = Some((control, std::time::Instant::now()));
         let control = self.controls().get(control).cloned()?;
         let Ok(session) = &mut self.session else {
             return None;
@@ -627,6 +646,13 @@ impl Entry {
                 glyph::SELECTED,
                 Style::default().fg(theme.accent),
             );
+        }
+        // A just-pressed control flashes inverted for a moment.
+        if let Some(control) = self.press_flash()
+            && session.motion()
+            && let Some((rect, _)) = hits.iter().find(|(_, hit)| *hit == control)
+        {
+            buffer.set_style(*rect, Style::default().add_modifier(Modifier::REVERSED));
         }
         if focused && let Some(node) = self.focused_input() {
             self.inputs
@@ -2406,7 +2432,7 @@ fn ratio_text(value: f64, max: f64) -> String {
 }
 /// Bars on one shared scale, in the label column layout.
 fn render_bars(
-    items: &[nexus_core::interactive::BarItem],
+    (node, items): (usize, &[nexus_core::interactive::BarItem]),
     session: &Session,
     area: Rect,
     theme: &Theme,
@@ -2429,7 +2455,7 @@ fn render_bars(
                 caps: false,
                 value: &value.to_string(),
                 value_width: u16::try_from(value_width).unwrap_or(0),
-                ratio: if max > 0.0 { value / max } else { 0.0 },
+                ratio: session.eased((node, index), if max > 0.0 { value / max } else { 0.0 }),
                 fill: accent_color(session.document(), theme),
             },
             session,
@@ -2477,7 +2503,10 @@ fn render_data(node: &Node, session: &Session, area: Rect, theme: &Theme, buffer
                     caps: true,
                     value: &text,
                     value_width: u16::try_from(text.width()).unwrap_or(0),
-                    ratio: if max > 0.0 { value / max } else { 0.0 },
+                    ratio: session.eased(
+                        (session.document().node_index(node), 0),
+                        if max > 0.0 { value / max } else { 0.0 },
+                    ),
                     fill: accent_color(session.document(), theme),
                 },
                 session,
@@ -2486,12 +2515,25 @@ fn render_data(node: &Node, session: &Session, area: Rect, theme: &Theme, buffer
                 buffer,
             );
         }
-        Node::Bars { items } => render_bars(items, session, area, theme, buffer),
+        Node::Bars { items } => render_bars(
+            (session.document().node_index(node), items),
+            session,
+            area,
+            theme,
+            buffer,
+        ),
         Node::Sparkline { values, .. } => {
             let values: Vec<_> = values
                 .iter()
                 .map(|value| session.number(value).unwrap_or(0.0).max(0.0))
                 .collect();
+            // Draw in left to right the first time the panel shows.
+            let area = Rect::new(
+                area.x,
+                area.y,
+                bold::revealed(area.width, session),
+                area.height,
+            );
             let max = values.iter().copied().fold(0.0, f64::max);
             // Normalize before integer conversion to preserve even tiny fractional samples.
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -2577,6 +2619,10 @@ pub struct Widgets {
     window_unfocused: bool,
     /// A canvas drawn this frame is still animating.
     animating: bool,
+    /// Motion in panels (`/motion on|off`): glides, draw-in, press flash and
+    /// canvas animation. Off by default so tests render final frames; the
+    /// app turns it on from the `motion` setting.
+    pub(crate) motion: bool,
     /// Saved-state bookkeeping and pinned apps; see `persist`.
     store: persist::Store,
     /// Vim keys in text fields and code editors (the app's `/vim` setting).
@@ -2589,11 +2635,16 @@ impl Widgets {
         let data_running = self.data_running.take();
         let window_unfocused = self.window_unfocused;
         let store = std::mem::take(&mut self.store).retained();
+        // Settings outlive a viewport reset: without this a session switch
+        // silently turned vim keys and motion back to their defaults.
+        let (vim, motion) = (self.vim, self.motion);
         *self = Self {
             data_calls: calls,
             data_running,
             window_unfocused,
             store,
+            vim,
+            motion,
             ..Self::default()
         };
     }
@@ -2862,7 +2913,7 @@ impl Widgets {
                     self.visible.push(key.clone());
                 }
                 entry.inputs.borrow_mut().vim = self.vim;
-                self.animating |= entry.advance_clock();
+                self.animating |= entry.advance_clock(self.motion);
                 entry.canvas(width, theme, focused, self.send_ready)
             } else {
                 let document = if placement.source.trim_start().starts_with('{') {
@@ -3334,7 +3385,7 @@ impl Widgets {
             return;
         };
         entry.inputs.get_mut().vim = self.vim;
-        self.animating |= entry.advance_clock();
+        self.animating |= entry.advance_clock(self.motion);
         let (canvas, hits) = entry.canvas(area.width, app_theme, true, can_send);
         let caret = entry.input_caret(&canvas);
         let target = caret
@@ -3741,3 +3792,7 @@ mod containers_tests;
 #[cfg(test)]
 #[path = "interactive/gallery_tests.rs"]
 mod gallery_tests;
+
+#[cfg(test)]
+#[path = "interactive/motion_tests.rs"]
+mod motion_tests;

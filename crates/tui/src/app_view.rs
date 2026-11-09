@@ -478,6 +478,17 @@ impl DerefMut for AppView {
     }
 }
 
+/// The db setting behind `/motion`; motion is on unless it says `off`.
+pub(crate) const MOTION_SETTING: &str = "motion";
+
+pub(crate) fn load_motion_enabled(core: &App) -> bool {
+    core.db.load_settings().ok().is_none_or(|settings| {
+        settings
+            .iter()
+            .all(|(key, value)| key != MOTION_SETTING || value != "off")
+    })
+}
+
 fn load_vim_enabled(core: &App) -> bool {
     core.db.load_settings().ok().is_none_or(|settings| {
         settings
@@ -530,6 +541,13 @@ impl AppView {
         theme.set_background_mode(background_mode);
         let mut interactive = crate::interactive::Widgets::default();
         interactive.vim = vim_enabled;
+        interactive.motion = load_motion_enabled(&core);
+        // Tests stay deterministic: motion follows the wall clock, so app
+        // tests render final frames unless they turn it on.
+        #[cfg(test)]
+        {
+            interactive.motion = false;
+        }
         Self {
             core,
             input: crate::composer::new_textarea(),
@@ -786,6 +804,23 @@ impl AppView {
         self.interactive.vim = enabled;
         self.vim.reset();
         self.push_status(format!("vim keys: {}", if enabled { "on" } else { "off" }));
+        Ok(())
+    }
+
+    /// Turn panel motion on or off and persist the choice. With no argument,
+    /// toggles.
+    pub fn set_motion(&mut self, requested: &str) -> Result<()> {
+        let enabled = match requested.trim() {
+            "" => !self.interactive.motion,
+            "on" => true,
+            "off" => false,
+            other => bail!("unknown motion setting {other:?} — use /motion on or /motion off"),
+        };
+        self.core
+            .db
+            .set_setting(MOTION_SETTING, if enabled { "on" } else { "off" })?;
+        self.interactive.motion = enabled;
+        self.push_status(format!("motion: {}", if enabled { "on" } else { "off" }));
         Ok(())
     }
 

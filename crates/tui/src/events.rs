@@ -2314,6 +2314,29 @@ mod tests {
     }
 
     #[test]
+    fn motion_command_toggles_panel_motion_and_persists() {
+        let mut app = test_app();
+        assert!(
+            crate::app_view::load_motion_enabled(&app.core),
+            "motion is on unless the setting says off"
+        );
+        app.set_motion("on").unwrap();
+        assert!(app.interactive.motion);
+        app.set_motion("off").unwrap();
+        assert!(!crate::app_view::load_motion_enabled(&app.core));
+        assert!(!app.interactive.motion);
+        let saved = app.core.db.load_settings().unwrap();
+        assert!(
+            saved
+                .iter()
+                .any(|(key, value)| key == "motion" && value == "off")
+        );
+        app.set_motion("").unwrap();
+        assert!(app.interactive.motion, "no argument toggles");
+        assert!(app.set_motion("sometimes").is_err());
+    }
+
+    #[test]
     fn vim_keys_edit_panel_fields_and_code_editors() {
         let mut app = test_app();
         let source = "root = Panel('Form', [Input($name, 'Name'), Editor($code, 'Solution', 'python', 3)])\n$name = 'Ada'\n$code = 'x = 1'";

@@ -257,6 +257,14 @@ paragraph to the prompt at most.
   `Stack(items, gap?)`, `Spacer(rows?)`. Rows stack below 20 columns per child,
   grids drop columns below 18. Containers and spacers don't count toward the
   16-node cap (their children do).
+- **Phase 5 landed** (2026-11-09): glides (Progress, Meter, Bars, Slider;
+  0.25 s ease-out), draw-in (Chart, Sparkline, Canvas; 0.4 s), a 140 ms press
+  flash, and `/motion on|off` (db setting `motion`, on unless `off`). Motion
+  state lives on `Session` (`interactive/motion.rs`) and is off unless a
+  frontend turns it on, so previews, exports and tests see final frames.
+  Stats numbers don't glide; the text always shows the true value.
+- **Fix found on the way:** `Widgets::clear` (every viewport reset, such as a
+  session switch) reset `/vim` to its default; it now keeps vim and motion.
 - **Deviation:** `Row` has no `align` argument. Children fill equal slots, so
   alignment would only matter with natural widths, which no component reports
   yet; add it if a real layout needs it.

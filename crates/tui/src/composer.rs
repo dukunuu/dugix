@@ -1016,6 +1016,7 @@ impl AppView {
             AppCommand::OpenSettings => self.open_settings(),
             AppCommand::SetTheme { mode } => self.set_background_mode(&mode)?,
             AppCommand::SetKeymap { mode } => self.set_keymap(&mode)?,
+            AppCommand::SetMotion { mode } => self.set_motion(&mode)?,
             AppCommand::OpenCopyMenu => self.open_copy_menu(),
             AppCommand::OpenSkills => self.open_skills_popup(),
             AppCommand::OpenFiles { tab } => {

@@ -268,14 +268,16 @@ pub(super) fn draw(
             Drawn::Label { text, x, y } => labels.push((safe(&text), at(x, y), color)),
         }
     }
-    dots.render(area, buffer);
+    // Draw in left to right the first time the panel shows.
+    let shown = super::bold::revealed(area.width, session);
+    dots.render(Rect::new(area.x, area.y, shown, area.height), buffer);
     // Text sits over the dots, centred on its point.
     for (text, (x, y), color) in labels {
         let row = (y / 4.0).floor();
         let width = text.width();
         #[allow(clippy::cast_precision_loss)]
         let col = (x / 2.0 - width as f64 / 2.0).round().max(0.0);
-        if !(0.0..f64::from(area.height)).contains(&row) || col >= f64::from(area.width) {
+        if !(0.0..f64::from(area.height)).contains(&row) || col >= f64::from(shown) {
             continue;
         }
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]

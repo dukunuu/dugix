@@ -3873,6 +3873,10 @@ fn parse_command_maps_the_slash_catalog_into_the_seam() {
         AppCommand::SetKeymap { mode: "off".into() }
     );
     assert_eq!(
+        a.parse_command("motion off").unwrap(),
+        AppCommand::SetMotion { mode: "off".into() }
+    );
+    assert_eq!(
         a.parse_command("research! rust async").unwrap(),
         AppCommand::RunResearch {
             topic: "rust async".into(),

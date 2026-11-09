@@ -525,6 +525,10 @@ dots on a 0–100 grid, and `Anim` keyframes move them: a spinning clock hand, a
 bouncing ball, an orbit diagram. Animations run at about 15 frames a second
 only while the canvas is on screen and the terminal has focus; shapes can also
 follow panel state, so a slider can drive a drawing.
+Panels are laid out with `Row`, `Grid` and `Stack`, which stack on narrow
+terminals. Bars and meters glide to new values, and charts draw in the first
+time a panel appears; `/motion off` turns all panel motion off (canvases then
+hold their first frame) and `/motion on` brings it back.
 Click controls directly, or press `F2` to focus the newest visible panel and use
 Tab/arrows + Enter (inside a text field, arrows move the caret). `Esc` returns to chat without changing your draft; `Ctrl+C`
 copies a field's selected text, or returns to chat when nothing is selected.

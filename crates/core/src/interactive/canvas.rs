@@ -446,15 +446,15 @@ impl Session {
     /// frontend knows to keep redrawing. A finished `once` animation is still.
     #[must_use]
     pub fn animating(&self) -> bool {
-        self.visible_nodes().into_iter().any(|(_, node)| {
-            let Node::Canvas { shapes, .. } = node else {
-                return false;
-            };
-            shapes
-                .iter()
-                .flat_map(Shape::animations)
-                .any(|anim| anim.repeat != Repeat::Once || self.clock < anim.delay + anim.seconds)
-        })
+        self.settling()
+            || self.visible_nodes().into_iter().any(|(_, node)| {
+                let Node::Canvas { shapes, .. } = node else {
+                    return false;
+                };
+                shapes.iter().flat_map(Shape::animations).any(|anim| {
+                    anim.repeat != Repeat::Once || self.clock < anim.delay + anim.seconds
+                })
+            })
     }
 }
 

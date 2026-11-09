@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 mod canvas;
+mod motion;
 pub use canvas::{Anim, Drawn, Ease, Repeat, Shape};
 mod components;
 pub use components::{ChartKind, ChartSeries, Section, Tab, TableState, TimelineEvent};
@@ -2058,6 +2059,8 @@ pub struct Session {
     revision: u64,
     /// Seconds of animation time; see [`Session::clock`].
     clock: f64,
+    /// Value glides and chart draw-in; see `motion.rs`.
+    motion: motion::Motion,
 }
 
 #[derive(Default)]
@@ -2092,6 +2095,7 @@ impl Session {
             held: Map::new(),
             revision: 0,
             clock: 0.0,
+            motion: motion::Motion::default(),
         };
         let mut state = session.state.clone();
         session.bindings_ok(&mut state)?;

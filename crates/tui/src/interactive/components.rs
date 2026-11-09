@@ -510,7 +510,7 @@ pub(super) fn render(
                     caps: true,
                     value: &text,
                     value_width: u16::try_from(text.width()).unwrap_or(0),
-                    ratio: if max > 0.0 { value / max } else { 0.0 },
+                    ratio: session.eased((index, 0), if max > 0.0 { value / max } else { 0.0 }),
                     fill,
                 },
                 session,
@@ -542,7 +542,7 @@ pub(super) fn render(
             } else {
                 accent_color(session.document(), theme)
             };
-            bold::bar(buffer, track, ratio, fill, theme);
+            bold::bar(buffer, track, session.eased((index, 0), ratio), fill, theme);
             bold::value(
                 buffer,
                 Rect::new(track.right(), area.y, area.right() - track.right(), 1),
@@ -792,7 +792,7 @@ fn chart(
                 }
                 continue;
             }
-            for x in 0..plot.width {
+            for x in 0..bold::revealed(plot.width, session) {
                 let sample = f64::from(x)
                     * f64::from(u16::try_from(samples.saturating_sub(1)).unwrap_or(0))
                     / f64::from(plot.width.saturating_sub(1).max(1));
@@ -823,7 +823,16 @@ fn chart(
                 }
             }
         }
-        dots.render(plot, buffer);
+        // Draw in left to right the first time the panel shows.
+        dots.render(
+            Rect::new(
+                plot.x,
+                plot.y,
+                bold::revealed(plot.width, session),
+                plot.height,
+            ),
+            buffer,
+        );
     }
     let first = labels
         .first()

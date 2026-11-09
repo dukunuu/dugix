@@ -124,6 +124,11 @@ pub const COMMANDS: &[Command] = &[
         aliases: &["keymap"],
     },
     Command {
+        name: "motion",
+        desc: "animation in panels: /motion on|off",
+        aliases: &["animations"],
+    },
+    Command {
         name: "skills",
         desc: "manage skills",
         aliases: &["addskill"],
@@ -372,6 +377,9 @@ pub enum AppCommand {
     SetTheme { mode: String },
     /// `/vim [on|off]` — vim keys in text inputs (TUI-only).
     SetKeymap { mode: String },
+    /// `/motion [on|off]` — glides, draw-in and canvas animation in panels
+    /// (TUI-only).
+    SetMotion { mode: String },
     /// `/retry` — regenerate the last reply.
     Retry,
     /// `/undo` — restore the files the last agent turn changed.
@@ -562,6 +570,9 @@ impl App {
             "vim" => Ok(AppCommand::SetKeymap {
                 mode: rest(cmd, token),
             }),
+            "motion" => Ok(AppCommand::SetMotion {
+                mode: rest(cmd, token),
+            }),
             "retry" => Ok(AppCommand::Retry),
             "undo" => Ok(AppCommand::Undo),
             "copy" => Ok(AppCommand::OpenCopyMenu),
@@ -666,6 +677,7 @@ impl App {
             | AppCommand::OpenSettings
             | AppCommand::SetTheme { .. }
             | AppCommand::SetKeymap { .. }
+            | AppCommand::SetMotion { .. }
             | AppCommand::OpenCopyMenu
             | AppCommand::OpenSkills
             | AppCommand::OpenFiles { .. }

@@ -125,6 +125,14 @@ pub(super) fn pill(
     inner_width + 2
 }
 
+/// Columns of a `width`-wide plot drawn so far while it draws in.
+pub(super) fn revealed(width: u16, session: &Session) -> u16 {
+    let shown = (f64::from(width) * session.drawn_fraction()).ceil();
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let shown = shown as u16;
+    shown.min(width)
+}
+
 /// Width `pill` will take for `text`.
 pub(super) fn pill_width(text: &str) -> u16 {
     u16::try_from(text.width())
