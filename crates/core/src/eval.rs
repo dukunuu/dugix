@@ -24,9 +24,6 @@ pub struct EvalTask {
     pub workspace: Option<PathBuf>,
     /// Shell command prefixes permitted in a disposable workspace.
     pub allow_shell: Vec<String>,
-    /// Enable search-first web mode for this task.
-    #[serde(default)]
-    pub web: bool,
     /// Deterministic expectations for the answer and tool calls.
     #[serde(default)]
     pub check: EvalChecks,
@@ -42,8 +39,6 @@ struct TaskInput {
     workspace: Option<PathBuf>,
     #[serde(default)]
     allow_shell: Vec<String>,
-    #[serde(default)]
-    web: bool,
     #[serde(default)]
     check: EvalChecks,
 }
@@ -63,7 +58,6 @@ impl TryFrom<TaskInput> for EvalTask {
             turns,
             workspace: input.workspace,
             allow_shell: input.allow_shell,
-            web: input.web,
             check: input.check,
         })
     }
@@ -495,7 +489,7 @@ mod tests {
         let dir = TempDir::new();
         fs::write(
             dir.0.join("a.toml"),
-            "name = 'zulu'\nprompt = 'Hello'\nweb = true\n[check]\nmax_tool_calls = 0\n",
+            "name = 'zulu'\nprompt = 'Hello'\n[check]\nmax_tool_calls = 0\n",
         )
         .unwrap();
         fs::write(
@@ -508,10 +502,8 @@ mod tests {
         assert_eq!(tasks.len(), 2);
         assert_eq!(tasks[0].name, "bravo");
         assert_eq!(tasks[0].prompt, "Hi");
-        assert!(!tasks[0].web);
         assert_eq!(tasks[0].check.answer_contains, ["hi"]);
         assert_eq!(tasks[1].name, "zulu");
-        assert!(tasks[1].web);
         assert_eq!(tasks[1].check.max_tool_calls, Some(0));
     }
 

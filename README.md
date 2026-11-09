@@ -31,12 +31,12 @@ the same local state the TUI reads, so you can mix both freely:
 
 ```sh
 nexus ask "summarize the EU AI Act in 5 bullets"      # one-shot chat, streams to stdout
-nexus ask --model deepseek/deepseek-v3 --web "..."    # pick a model, search-grounded
+nexus ask --model deepseek/deepseek-v3 "..."          # pick a model
 cat brief.md | nexus ask "summarize this"             # prompt from stdin
 nexus ask --space new:research "..."                  # create-and-use a space
 nexus ask --json --quiet "..."                        # structured output for scripting
 nexus clip                                             # explain text currently in the OS clipboard
-nexus clip --web --copy "Explain this and list surprising facts" # browser-text shortcut
+nexus clip --copy "Explain this and list surprising facts" # browser-text shortcut
 nexus chat                                             # bare REPL, one session
 nexus research "impact of EU AI Act on startups"       # deep research (survey + plan gates)
 nexus research --approve "..."                        # skip the gates, run unattended
@@ -638,7 +638,6 @@ Type `/` in the composer for autocomplete. Aliases in parentheses.
 | `/usage` (`analytics`, `costs`) | token/cache/cost analytics by backend & model (←/→ for 24h/7d/30d/all windows) |
 | `/compact` (`summarize`) | summarize old messages into a digest |
 | `/config` (`settings`, `stats`) | settings, footer toggles, sampling params, the helper model |
-| `/web` | toggle search-first cited answering |
 | `/export` (`save-report`) | write the research report + sources to a file |
 | `/incognito` | toggle no-persistence mode |
 | `/help` (`keys`, `shortcuts`; also `F1`) | keybinding + command reference |

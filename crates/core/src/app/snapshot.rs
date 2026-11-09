@@ -27,7 +27,6 @@ pub struct SessionSnapshot {
     pub slug: Option<String>,
     pub model: String,
     pub kind: String,
-    pub web_mode: bool,
     pub created_at: String,
 }
 
@@ -68,7 +67,6 @@ pub struct SettingsSnapshot {
     pub hide_hints: bool,
     pub model: Option<String>,
     pub verbosity: String,
-    pub web_mode: bool,
     pub incognito: bool,
     /// Sanitized `SearXNG` endpoint (credentials/query strings are removed).
     pub searxng_url: String,
@@ -168,7 +166,6 @@ impl App {
                     slug: s.slug.clone(),
                     model: s.model.clone(),
                     kind: s.kind.clone(),
-                    web_mode: s.web_mode,
                     created_at: s.created_at.clone(),
                 })
                 .collect(),
@@ -188,7 +185,6 @@ impl App {
                 hide_hints: self.settings.hide_hints,
                 model: self.current_model.clone(),
                 verbosity: self.verbosity.clone(),
-                web_mode: self.web_mode,
                 incognito: self.incognito,
                 searxng_url: sanitized_endpoint(&self.searxng_url),
                 langsearch_configured: !self.langsearch_key.trim().is_empty(),
@@ -242,7 +238,6 @@ mod tests {
                 slug: Some("hello".into()),
                 model: "openrouter:anthropic/claude-sonnet-4".into(),
                 kind: "chat".into(),
-                web_mode: false,
                 created_at: "2025-01-01T00:00:00Z".into(),
             }],
             models: vec![ModelSnapshot {
@@ -257,7 +252,6 @@ mod tests {
                 hide_hints: false,
                 model: Some("openrouter:anthropic/claude-sonnet-4".into()),
                 verbosity: "high".into(),
-                web_mode: false,
                 incognito: false,
                 searxng_url: String::new(),
                 langsearch_configured: false,
@@ -283,7 +277,7 @@ mod tests {
         let json = serde_json::to_string(&snap).expect("snapshot serializes");
         assert_eq!(
             json,
-            r#"{"active_session_id":"s1","active_space_id":"sp1","active_space_name":"Default","sessions":[{"id":"s1","title":"hello","slug":"hello","model":"openrouter:anthropic/claude-sonnet-4","kind":"chat","web_mode":false,"created_at":"2025-01-01T00:00:00Z"}],"models":[{"id":"openrouter:anthropic/claude-sonnet-4","name":"Claude Sonnet 4","context_length":200000,"favorite":true}],"settings":{"show_stats":false,"show_reasoning":false,"hide_hints":false,"model":"openrouter:anthropic/claude-sonnet-4","verbosity":"high","web_mode":false,"incognito":false,"searxng_url":"","langsearch_configured":false,"search_provider":"searxng","temperature":0.7,"top_p":null,"max_tokens":null,"compact_threshold":60,"helper_model":"","blocked_domains":[]},"tasks":[{"id":1,"session_id":"s1","session_title":"hello","model":"openrouter:anthropic/claude-sonnet-4","backend":"OpenRouter","status":"streaming","buffer_chars":12,"buffer":""}]}"#
+            r#"{"active_session_id":"s1","active_space_id":"sp1","active_space_name":"Default","sessions":[{"id":"s1","title":"hello","slug":"hello","model":"openrouter:anthropic/claude-sonnet-4","kind":"chat","created_at":"2025-01-01T00:00:00Z"}],"models":[{"id":"openrouter:anthropic/claude-sonnet-4","name":"Claude Sonnet 4","context_length":200000,"favorite":true}],"settings":{"show_stats":false,"show_reasoning":false,"hide_hints":false,"model":"openrouter:anthropic/claude-sonnet-4","verbosity":"high","incognito":false,"searxng_url":"","langsearch_configured":false,"search_provider":"searxng","temperature":0.7,"top_p":null,"max_tokens":null,"compact_threshold":60,"helper_model":"","blocked_domains":[]},"tasks":[{"id":1,"session_id":"s1","session_title":"hello","model":"openrouter:anthropic/claude-sonnet-4","backend":"OpenRouter","status":"streaming","buffer_chars":12,"buffer":""}]}"#
         );
         // The golden string must also parse back into the same shape.
         let back: CoreSnapshot = serde_json::from_str(&json).expect("golden parses");

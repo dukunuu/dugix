@@ -95,7 +95,6 @@ impl App {
         self.notifications.retain(|n| n.session_id != s.id);
         self.push_status(format!("switched to: {}", s.title));
         self.current_model = Some(s.model.clone());
-        self.web_mode = s.web_mode;
         self.session = Some(s);
         self.restore_work_mode();
         self.refresh_memory_snapshot();

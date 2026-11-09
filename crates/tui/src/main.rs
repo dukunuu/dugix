@@ -86,7 +86,6 @@ async fn main() -> Result<()> {
     if let Some(prompt) = selection_prompt {
         // Selection mode is a real TUI launch: submit the protected prompt to
         // the same event loop so the answer streams into the open chat.
-        app.execute(nexus_core::app::AppCommand::ToggleWeb)?;
         app.execute(nexus_core::app::AppCommand::Send { text: prompt })?;
         cli::clear_primary_selection();
     } else if continue_session || selection_chat {

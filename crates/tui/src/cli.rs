@@ -62,9 +62,6 @@ pub enum Command {
         /// creates the space on the fly.
         #[arg(long)]
         space: Option<String>,
-        /// Web mode: search-first, inline-cited answers.
-        #[arg(long)]
-        web: bool,
         /// Emit the answer as JSON (answer, session, usage) instead of
         /// streaming it.
         #[arg(long)]
@@ -129,9 +126,6 @@ pub enum Command {
         /// creates the space on the fly.
         #[arg(long)]
         space: Option<String>,
-        /// Web mode: search-first, inline-cited answers.
-        #[arg(long)]
-        web: bool,
         /// Copy the final answer back to the OS clipboard.
         #[arg(long)]
         copy: bool,
@@ -574,10 +568,9 @@ pub async fn run(cmd: Command) -> Result<()> {
             prompt,
             model,
             space,
-            web,
             json,
             quiet,
-        } => ask(prompt, model, space, web, json, quiet).await,
+        } => ask(prompt, model, space, json, quiet).await,
         Command::Eval {
             dir,
             model,
@@ -604,14 +597,13 @@ pub async fn run(cmd: Command) -> Result<()> {
             instruction_option,
             model,
             space,
-            web,
             copy,
             json,
             quiet,
         } => {
             clipboard(
                 instruction.or(instruction_option),
-                ask_options(model, space, web, json, quiet),
+                ask_options(model, space, json, quiet),
                 copy,
             )
             .await
@@ -1051,7 +1043,6 @@ fn ensure_space(name: &str) -> Result<()> {
 struct AskOptions {
     model: Option<String>,
     space_name: Option<String>,
-    web: bool,
     json: bool,
     quiet: bool,
 }
@@ -1059,14 +1050,12 @@ struct AskOptions {
 fn ask_options(
     model: Option<String>,
     space_name: Option<String>,
-    web: bool,
     json: bool,
     quiet: bool,
 ) -> AskOptions {
     AskOptions {
         model,
         space_name,
-        web,
         json,
         quiet,
     }
@@ -1076,7 +1065,6 @@ async fn ask(
     prompt: Option<String>,
     model: Option<String>,
     space_name: Option<String>,
-    web: bool,
     json: bool,
     quiet: bool,
 ) -> Result<()> {
@@ -1090,7 +1078,6 @@ async fn ask(
     let options = AskOptions {
         model,
         space_name,
-        web,
         json,
         quiet,
     };
@@ -1111,10 +1098,6 @@ async fn ask_prompt(prompt: String, options: AskOptions) -> Result<app::headless
         n => n,
     };
     let mut app = build_app(options.model.as_deref(), space_name.as_deref()).await?;
-    if options.web {
-        // Boot always starts with web mode off, so the toggle is absolute here.
-        app.execute(nexus_core::app::AppCommand::ToggleWeb)?;
-    }
     app.ask_headless(
         prompt,
         app::headless::TurnOpts {
@@ -1221,9 +1204,6 @@ async fn run_eval_task(
         let mut app = build_app(model, None).await?;
         apply_eval_settings(&mut app.experiments, settings)?;
         app.execute(app::AppCommand::Incognito { on: true })?;
-        if task.web {
-            app.execute(app::AppCommand::ToggleWeb)?;
-        }
         let workspace = task
             .workspace
             .as_deref()
@@ -4121,13 +4101,11 @@ mod tests {
     #[test]
     fn clip_command_parses_instruction_and_options() {
         let cli =
-            Cli::try_parse_from(["nexus", "clip", "explain this", "--web", "--copy", "--json"])
-                .unwrap();
+            Cli::try_parse_from(["nexus", "clip", "explain this", "--copy", "--json"]).unwrap();
         assert!(matches!(
             cli.command,
             Some(Command::Clip {
                 instruction: Some(_),
-                web: true,
                 copy: true,
                 json: true,
                 ..
@@ -4243,7 +4221,6 @@ mod tests {
             created_at: created.to_string(),
             compact_summary: None,
             compact_through: 0,
-            web_mode: false,
             swarm_mode: false,
             kind: "chat".to_string(),
             research_parent_id: None,

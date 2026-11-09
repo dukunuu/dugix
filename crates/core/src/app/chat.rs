@@ -147,21 +147,13 @@ impl App {
                 created_at: Utc::now().to_rfc3339(),
                 compact_summary: None,
                 compact_through: 0,
-                web_mode: self.web_mode,
                 swarm_mode: false,
                 kind: "chat".to_string(),
                 research_parent_id: None,
             }
         } else {
-            let mut s = self
-                .db
-                .create_session(&title, &model, &self.active_space.id, "chat")?;
-            // Carry a pre-session `/web` toggle onto the session it creates.
-            if self.web_mode {
-                s.web_mode = true;
-                let _ = self.db.set_session_web_mode(&s.id, true);
-            }
-            s
+            self.db
+                .create_session(&title, &model, &self.active_space.id, "chat")?
         };
         if !self.incognito && self.work_mode.is_agent() {
             self.db.set_session_workspace(
@@ -1987,23 +1979,6 @@ impl App {
             }
             Err(e) => self.push_status(format!("flag failed: {e}")),
         }
-    }
-
-    /// `/web`: flip web answer mode for the active (or about-to-be-created)
-    /// session. Persisted immediately if a session already exists; otherwise
-    /// applied to the session created by the next message.
-    pub fn toggle_web_mode(&mut self) {
-        self.web_mode = !self.web_mode;
-        self.bump_cache_epoch();
-        if let Some(session) = self.session.as_mut() {
-            session.web_mode = self.web_mode;
-            let _ = self.db.set_session_web_mode(&session.id, self.web_mode);
-        }
-        self.push_status(if self.web_mode {
-            "🌐 web mode on".to_string()
-        } else {
-            "web mode off".to_string()
-        });
     }
 
     pub fn toggle_incognito(&mut self) -> Result<()> {

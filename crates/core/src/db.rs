@@ -52,8 +52,6 @@ pub struct Session {
     /// folded into `compact_summary`. Messages after this point are still
     /// sent verbatim; 0 means nothing has been compacted yet.
     pub compact_through: i64,
-    /// `/web` answer mode: force search-first, inline-cited replies.
-    pub web_mode: bool,
     /// `/swarm` mode: turns replace a single reply with a multi-persona
     /// roundtable (see `swarm_personas`).
     pub swarm_mode: bool,
@@ -232,6 +230,8 @@ const LEGACY_COLUMN_ADDS: &[(&str, &str, &str)] = &[
         "compact_through",
         "ALTER TABLE sessions ADD COLUMN compact_through INTEGER NOT NULL DEFAULT 0",
     ),
+    // Retired `/web` flag. Nothing reads it; the column stays so sync rows
+    // from older peers (which require it) still apply both ways.
     (
         "sessions",
         "web_mode",
@@ -1389,7 +1389,6 @@ impl Db {
             created_at: now,
             compact_summary: None,
             compact_through: 0,
-            web_mode: false,
             swarm_mode: false,
             kind: kind.to_string(),
             research_parent_id: None,
@@ -1402,7 +1401,7 @@ impl Db {
         self.conn
             .query_row(
                 "SELECT id, title, model, slug, created_at, compact_summary, compact_through, \
-                 web_mode, swarm_mode, kind, research_parent_id
+                 swarm_mode, kind, research_parent_id
                  FROM sessions WHERE id = ?1",
                 [id],
                 |r| {
@@ -1414,10 +1413,9 @@ impl Db {
                         created_at: r.get(4)?,
                         compact_summary: r.get(5)?,
                         compact_through: r.get(6)?,
-                        web_mode: r.get::<_, i64>(7)? != 0,
-                        swarm_mode: r.get::<_, i64>(8)? != 0,
-                        kind: r.get(9)?,
-                        research_parent_id: r.get(10)?,
+                        swarm_mode: r.get::<_, i64>(7)? != 0,
+                        kind: r.get(8)?,
+                        research_parent_id: r.get(9)?,
                     })
                 },
             )
@@ -1429,7 +1427,7 @@ impl Db {
     pub fn list_sessions(&self, space_id: &str) -> Result<Vec<Session>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, title, model, slug, created_at, compact_summary, compact_through, \
-             web_mode, swarm_mode, kind, research_parent_id
+             swarm_mode, kind, research_parent_id
              FROM sessions WHERE space_id = ?1 ORDER BY updated_at DESC",
         )?;
         let rows = stmt.query_map([space_id], |r| {
@@ -1441,10 +1439,9 @@ impl Db {
                 created_at: r.get(4)?,
                 compact_summary: r.get(5)?,
                 compact_through: r.get(6)?,
-                web_mode: r.get::<_, i64>(7)? != 0,
-                swarm_mode: r.get::<_, i64>(8)? != 0,
-                kind: r.get(9)?,
-                research_parent_id: r.get(10)?,
+                swarm_mode: r.get::<_, i64>(7)? != 0,
+                kind: r.get(8)?,
+                research_parent_id: r.get(9)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -1456,7 +1453,7 @@ impl Db {
         self.conn
             .query_row(
                 "SELECT space_id, id, title, model, slug, created_at, compact_summary,
-                        compact_through, web_mode, swarm_mode, kind, research_parent_id
+                        compact_through, swarm_mode, kind, research_parent_id
                  FROM sessions
                  ORDER BY updated_at DESC, rowid DESC
                  LIMIT 1",
@@ -1472,10 +1469,9 @@ impl Db {
                             created_at: r.get(5)?,
                             compact_summary: r.get(6)?,
                             compact_through: r.get(7)?,
-                            web_mode: r.get::<_, i64>(8)? != 0,
-                            swarm_mode: r.get::<_, i64>(9)? != 0,
-                            kind: r.get(10)?,
-                            research_parent_id: r.get(11)?,
+                            swarm_mode: r.get::<_, i64>(8)? != 0,
+                            kind: r.get(9)?,
+                            research_parent_id: r.get(10)?,
                         },
                     ))
                 },
@@ -1491,15 +1487,6 @@ impl Db {
             "UPDATE sessions SET compact_summary = ?2, compact_through = ?3, updated_at = ?4
              WHERE id = ?1",
             (session_id, summary, through, Utc::now().to_rfc3339()),
-        )?;
-        Ok(())
-    }
-
-    /// Persist a session's `/web` answer-mode toggle.
-    pub fn set_session_web_mode(&self, session_id: &str, on: bool) -> Result<()> {
-        self.conn.execute(
-            "UPDATE sessions SET web_mode = ?2, updated_at = ?3 WHERE id = ?1",
-            (session_id, i64::from(on), Utc::now().to_rfc3339()),
         )?;
         Ok(())
     }
@@ -4624,16 +4611,6 @@ mod tests {
     }
 
     #[test]
-    fn web_mode_defaults_off_and_toggles() {
-        let db = Db::open_in_memory().unwrap();
-        let space = db.default_space_id().unwrap();
-        let s = db.create_session("t", "a/b", &space, "chat").unwrap();
-        assert!(!s.web_mode);
-        db.set_session_web_mode(&s.id, true).unwrap();
-        assert!(db.list_sessions(&space).unwrap()[0].web_mode);
-    }
-
-    #[test]
     fn swarm_mode_defaults_off_and_toggles() {
         let db = Db::open_in_memory().unwrap();
         let space = db.default_space_id().unwrap();
@@ -5579,9 +5556,8 @@ mod tests {
         };
 
         // sessions: every mutation path bumps.
-        let mutators: [Mutator<'_>; 6] = [
+        let mutators: [Mutator<'_>; 5] = [
             &|db: &Db| db.set_compaction(&sid, "sum", 3),
-            &|db: &Db| db.set_session_web_mode(&sid, true),
             &|db: &Db| db.set_session_swarm_mode(&sid, true),
             &|db: &Db| db.set_session_title(&sid, "new", Some("new-slug")),
             &|db: &Db| db.set_session_model(&sid, "m/x"),

@@ -172,7 +172,7 @@ pub const TABLES: &[TableSpec] = &[
             "space_id",
             "compact_summary",
             "compact_through",
-            "web_mode",
+            "web_mode", // retired; kept for older peers (see db.rs)
             "swarm_mode",
             "kind",
             "research_parent_id",

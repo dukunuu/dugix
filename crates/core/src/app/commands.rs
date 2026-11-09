@@ -217,11 +217,6 @@ pub const COMMANDS: &[Command] = &[
         aliases: &[],
     },
     Command {
-        name: "web",
-        desc: "toggle web answer mode (search-first, cited)",
-        aliases: &["websearch"],
-    },
-    Command {
         name: "agent",
         desc: "work in a directory: read, edit, run — /agent [path]",
         aliases: &[],
@@ -449,8 +444,6 @@ pub enum AppCommand {
     RunResearch { topic: String, gated: bool },
     /// `/export` — print the latest report + sources.
     Export,
-    /// `/web` — toggle web-answer mode.
-    ToggleWeb,
     /// `/auto` — toggle automatic approval while in an agent mode.
     ToggleAuto,
     /// `/agent [path]` or `/chat` — choose local workspace access.
@@ -605,7 +598,6 @@ impl App {
                 gated: true,
             }),
             "export" => Ok(AppCommand::Export),
-            "web" => Ok(AppCommand::ToggleWeb),
             "agent" => {
                 let root = rest(cmd, token);
                 Ok(AppCommand::SetWorkMode {
@@ -796,7 +788,6 @@ impl App {
             AppCommand::Export => {
                 self.export_report()?;
             }
-            AppCommand::ToggleWeb => self.toggle_web_mode(),
             AppCommand::ToggleAuto => {
                 if self.work_mode.is_agent() {
                     let mode = if self.work_mode == WorkMode::AgentAuto {

@@ -161,9 +161,9 @@ pub fn install_builtin(dir: &Path) {
     }
 }
 
-/// `web-search` used to be a bundled skill, but `/web` now injects those
-/// instructions directly into the system prompt. Remove only the exact bundled
-/// file; if the user edited/replaced it, leave it alone.
+/// `web-search` used to be a bundled skill; the model now searches on its own
+/// judgment. Remove only the exact bundled file; if the user edited/replaced
+/// it, leave it alone.
 fn remove_legacy_web_search_skill(dir: &Path) {
     let skill_dir = dir.join("web-search");
     let path = skill_dir.join("SKILL.md");

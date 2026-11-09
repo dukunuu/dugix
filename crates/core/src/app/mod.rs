@@ -1187,8 +1187,6 @@ pub struct App {
     connector_notes_rx: mpsc::UnboundedReceiver<String>,
     /// A skill armed by `/<skill-name>`, injected into the next message only.
     pub forced_skill: Option<String>,
-    /// `/web` answer mode for the active session (or the next one created).
-    pub web_mode: bool,
     /// Chat by default; agent mode exposes the bound workspace's tools.
     pub work_mode: WorkMode,
     /// Device capability, also used for the visible auto-mode fallback badge.
@@ -1474,7 +1472,6 @@ impl App {
             langsearch_key: String::new(),
             search_provider: "auto".to_string(),
             forced_skill: None,
-            web_mode: false,
             work_mode: WorkMode::Chat,
             auto_sandbox_available: crate::workspace::shell::write_confinement_available(),
             decision_context: Arc::default(),

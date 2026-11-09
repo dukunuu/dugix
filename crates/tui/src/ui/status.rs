@@ -127,9 +127,6 @@ pub(super) fn render_status(f: &mut Frame, app: &AppView, area: Rect) {
         };
         tags.push(format!("{} {mode} · {root}", glyph::TOOL));
     }
-    if app.web_mode {
-        tags.push(format!("{} web", glyph::WEB));
-    }
     if app.incognito {
         tags.push(format!("{} incognito", glyph::INCOGNITO));
     }

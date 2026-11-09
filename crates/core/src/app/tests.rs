@@ -3819,7 +3819,7 @@ fn scripted_terminal_app_command_is_removed_but_apps_remains_available() {
 fn parse_command_maps_the_slash_catalog_into_the_seam() {
     let a = app_with_key();
     assert_eq!(a.parse_command("new").unwrap(), AppCommand::NewSession);
-    assert_eq!(a.parse_command("web").unwrap(), AppCommand::ToggleWeb);
+    assert!(a.parse_command("web").is_err());
     assert_eq!(
         a.parse_command("theme opaque").unwrap(),
         AppCommand::SetTheme {
@@ -5234,7 +5234,6 @@ async fn ui_repair_app(
             created_at: chrono::Utc::now().to_rfc3339(),
             compact_summary: None,
             compact_through: 0,
-            web_mode: false,
             swarm_mode: false,
             kind: "chat".into(),
             research_parent_id: None,

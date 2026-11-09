@@ -4,7 +4,6 @@ export interface Session {
   slug: string | null;
   model: string;
   kind: string;
-  web_mode: boolean;
   created_at: string;
 }
 
@@ -21,7 +20,6 @@ export interface Settings {
   hide_hints?: boolean;
   model: string | null;
   verbosity: string;
-  web_mode: boolean;
   incognito: boolean;
   search_provider: string;
   langsearch_configured: boolean;

@@ -174,13 +174,7 @@ async fn run_loop(
             },
             request = next_selection_request(&mut selection_requests) => {
                 if let Some(prompt) = request {
-                    let sent = if app.web_mode {
-                        Ok(())
-                    } else {
-                        app.execute(nexus_core::app::AppCommand::ToggleWeb)
-                    }
-                    .and_then(|()| app.execute(nexus_core::app::AppCommand::Send { text: prompt }));
-                    if let Err(e) = sent {
+                    if let Err(e) = app.execute(nexus_core::app::AppCommand::Send { text: prompt }) {
                         app.push_status(format!("error: {e:#}"));
                     }
                 } else {

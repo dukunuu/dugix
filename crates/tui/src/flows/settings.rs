@@ -333,7 +333,7 @@ mod tests {
         assert_eq!(a.core.searxng_url, "http://localhost:8080"); // trailing slash trimmed
         // The toolbox sits behind the `ToolExecutor` seam — the URL wiring
         // itself is covered by tools::tests::new_wires_searxng_url_and_langsearch_key.
-        assert!(!a.skills.iter().any(|s| s.name == "web-search")); // /web injects prompt text directly
+        assert!(!a.skills.iter().any(|s| s.name == "web-search")); // retired bundled skill
 
         let reloaded = a.core.db.load_settings().unwrap();
         assert!(
