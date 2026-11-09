@@ -972,6 +972,14 @@ pub(super) static FILES: ToolSpec = ToolSpec {
     ],
     actions: &[
         ActionSpec {
+            name: "list",
+            summary: "List imported files with their sizes",
+            required: &[],
+            optional: &[],
+            read_only: true,
+            internal: "list_files",
+        },
+        ActionSpec {
             name: "search",
             summary: "Search imported files by semantic similarity or keywords",
             required: &["query"],
@@ -1757,6 +1765,7 @@ mod tests {
             r#"{"scope":"citations"}"#,
             "list_citations",
         ),
+        ("files", r#"{"action":"list"}"#, "list_files"),
         (
             "files",
             r#"{"action":"search","query":"x"}"#,
@@ -1902,6 +1911,7 @@ mod tests {
             "fetch_url",
             "search_sources",
             "list_citations",
+            "list_files",
             "search_files",
             "search_chats",
             "read_file",

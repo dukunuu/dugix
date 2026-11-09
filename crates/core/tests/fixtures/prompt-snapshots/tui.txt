@@ -360,4 +360,4 @@ followups = Buttons([Button("Plan a 5-day itinerary", @Answer()), Button("Best c
 - OS: <os> (<arch>)
 
 ## Now
-Current date/time: 2026-01-01 00:00 UTC, Thursday. Your training data has a cutoff well before this — trust this timestamp over any date assumption from training, and use `search` with mode=web for anything that may have changed since training (news, releases, prices, "latest" anything).
+Current date/time: 2026-01-01 00:00 UTC, Thursday. Your training data has a cutoff well before this — trust this timestamp over any date assumption from training.

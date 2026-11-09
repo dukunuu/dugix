@@ -1,7 +1,6 @@
 //! Pure parsing for report citations: the trailing `Sources:` (or
-//! `## Sources`) list research/web-mode replies end with (see
-//! `WRITER_PROMPT`/`SEARCHER_PROMPT` in `app/research.rs` and
-//! `web_mode_clause` in `app/chat.rs`), and the `[n]` inline markers that
+//! `## Sources`) list research replies end with (see
+//! `WRITER_PROMPT`/`SEARCHER_PROMPT` in `app/research.rs`), and the `[n]` inline markers that
 //! reference it. Parsing is data — it lives here in core. Styling the
 //! markers into terminal colors is rendering — it lives in the TUI crate
 //! (`ui/citations_style.rs`).

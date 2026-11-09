@@ -1212,41 +1212,6 @@ pub fn app_with_key() -> App {
 }
 
 #[test]
-fn web_mode_clause_instructs_search_first_and_cites_inline() {
-    let c = chat::web_mode_clause("2026-07-06");
-    assert!(c.contains("2026-07-06"));
-    assert!(c.contains("search with mode=web"));
-    assert!(c.contains("[n]"));
-    assert!(c.contains("Sources:"));
-    assert!(c.contains("Do not fabricate"));
-}
-
-#[tokio::test]
-async fn web_mode_toggles_persists_and_shows_in_system_prompt() {
-    let mut a = app_with_key();
-    a.current_model = Some("a/one".into());
-    assert!(!a.web_mode);
-    a.toggle_web_mode();
-    assert!(a.web_mode);
-    let (_, status) = a.drain_ui_events();
-    assert!(status.contains("web mode on"));
-
-    a.execute(AppCommand::Send {
-        text: "hi".to_string(),
-    })
-    .unwrap();
-    let sid = a.session.as_ref().unwrap().id.clone();
-    let sessions = a.db.list_sessions(&a.active_space.id).unwrap();
-    assert!(sessions.iter().find(|s| s.id == sid).unwrap().web_mode);
-    assert!(a.system_prompt().contains("Web answer mode is ON"));
-
-    a.toggle_web_mode(); // off, same session
-    assert!(!a.system_prompt().contains("Web answer mode is ON"));
-    let sessions = a.db.list_sessions(&a.active_space.id).unwrap();
-    assert!(!sessions.iter().find(|s| s.id == sid).unwrap().web_mode);
-}
-
-#[test]
 fn no_key_rejects_message_and_points_to_login_cmd() {
     let db = Db::open_in_memory().unwrap();
     let mut a = App::new(db, None, test_space());
@@ -2292,7 +2257,6 @@ fn system_prompt_is_static_first() {
         "Use examples.",
     );
     a.memory_snapshot = "The user prefers Rust.".into();
-    a.web_mode = true;
     a.interactive_ui = true;
 
     let prompt = a.system_prompt();
@@ -2306,17 +2270,17 @@ fn system_prompt_is_static_first() {
         "## Skills",
         "## Memory",
         "## Now",
-        "Web answer mode is ON",
     ]
     .map(|text| prompt.find(text).unwrap());
     assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    // The date is the very last thing the model reads.
+    assert!(!prompt[positions[positions.len() - 1]..].contains("\n\n## "));
 }
 
 #[test]
 fn two_epochs_share_the_whole_prefix_before_now() {
     let mut a = app_with_key();
     a.interactive_ui = true;
-    a.web_mode = true;
     a.prompt_datetime = "2026-07-06 12:00 UTC".into();
     let first = a.system_prompt();
     a.prompt_datetime = "2026-07-07 13:00 UTC".into();
@@ -2371,7 +2335,7 @@ fn prompt_mentions_only_tools_that_exist() {
             );
         }
     }
-    assert!(now.contains("use `search` with mode=web"));
+    assert!(now.starts_with("## Now"));
 }
 
 #[test]
@@ -2709,8 +2673,9 @@ fn compact_summary_view_and_edit_roundtrip() {
 }
 
 #[test]
-fn system_prompt_lists_files_but_not_their_content() {
+fn imported_files_stay_out_of_the_system_prompt() {
     let mut a = app_with_key();
+    let before = a.system_prompt();
     let dir = a.space.files_dir(&a.active_space.name);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("plan.md"), "SECRET-CONTENT-MARKER inside").unwrap();
@@ -2718,18 +2683,11 @@ fn system_prompt_lists_files_but_not_their_content() {
         a.rescan_files();
     });
 
-    let sp = a.system_prompt();
-    assert!(sp.contains("## Files"));
-    assert!(sp.contains("plan.md"));
-    assert!(sp.contains("files(action=search"));
-    assert!(!sp.contains("SECRET-CONTENT-MARKER")); // names only, never content
-
-    // No files → no section.
-    std::fs::remove_file(dir.join("plan.md")).unwrap();
-    tokio::runtime::Runtime::new().unwrap().block_on(async {
-        a.rescan_files();
-    });
-    assert!(!a.system_prompt().contains("## Files"));
+    // The model lists files with `files(action=list)`; importing one never
+    // changes the instructions before the date.
+    let prefix = |prompt: &str| prompt.split("## Now").next().unwrap().to_string();
+    assert_eq!(prefix(&a.system_prompt()), prefix(&before));
+    assert!(!a.system_prompt().contains("plan.md"));
 }
 
 #[test]

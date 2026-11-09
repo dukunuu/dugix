@@ -319,6 +319,27 @@ pub struct AppsCtx {
     pub session_id: String,
 }
 
+/// The space's imported files as JSON `{name, size}` rows, sorted by name.
+fn list_files_impl(ctx: &FilesCtx) -> String {
+    let rows = crate::db::open_conn(&ctx.db_path).and_then(|conn| -> anyhow::Result<Vec<_>> {
+        let mut stmt =
+            conn.prepare("SELECT name, size FROM files WHERE space_id = ?1 ORDER BY name")?;
+        let rows = stmt
+            .query_map([&ctx.space_id], |r| {
+                Ok(serde_json::json!({
+                    "name": r.get::<_, String>(0)?,
+                    "size": r.get::<_, i64>(1)?,
+                }))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    });
+    match rows {
+        Ok(rows) => serde_json::Value::Array(rows).to_string(),
+        Err(error) => format!("db error: {error}"),
+    }
+}
+
 fn tool_def(name: &str, description: &str, parameters: serde_json::Value) -> ToolDef {
     ToolDef {
         name: name.to_string(),
@@ -1326,12 +1347,12 @@ impl ToolBox {
             defs.push(def(&spec::RESEARCH_LOOKUP, &scopes));
         }
         if self.files_count() > 0 {
-            defs.push(def(&spec::FILES, &["search", "read", "pdf_page"]));
+            defs.push(def(&spec::FILES, &["list", "search", "read", "pdf_page"]));
         }
         if self.apps.is_some() {
             defs.push(tool_def(
                 "app",
-                "Build and manage locally served web apps. action=read returns stable hash-lines for safe editing and action=search greps non-ignored files; action=write replaces complete content, action=patch applies hash-line edits (include the line number when identical lines repeat), and action=diff previews a complete candidate without writing; action=list shows conversation/space images and action=copy_file/copy_images bring user data into an app (images go to _images/, text files to the app KV store); action=init scaffolds a React starter (framework astro = Astro + React islands, vite-react = Vite SPA; default astro) and action=build compiles the app — it installs missing deps from package.json, runs the framework's static build with --base=/<app-uuid>/ (so asset links resolve under the app's URL), and serves the result from dist/ (build errors come back here for you to fix; requires node/npm on this machine).",
+                "Build and manage locally served web apps. action=read returns stable hash-lines for safe editing and action=search greps non-ignored files; action=write replaces complete content, action=patch applies hash-line edits (include the line number when identical lines repeat), and action=diff previews a complete candidate without writing; action=list shows the space's apps (name, uuid, url) and the conversation/space images, and action=copy_file/copy_images bring user data into an app (images go to _images/, text files to the app KV store at <app_url>/_api/kv/_file:<name>); action=init scaffolds a React starter (framework astro = Astro + React islands, vite-react = Vite SPA; default astro) and action=build compiles the app — it installs missing deps from package.json, runs the framework's static build with --base=/<app-uuid>/ (so asset links resolve under the app's URL), and serves the result from dist/ (build errors come back here for you to fix; requires node/npm on this machine). App URLs are UUID-based: copy the UUID from a write or list result, never invent one. Persist app data in the per-app KV store, not localStorage: PUT/GET/DELETE <app_url>/_api/kv/<key> (body = raw text) and GET <app_url>/_api/kv lists keys; POST multipart/form-data to <app_url>/_api/upload stores a file and returns {name, url}.",
                 serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -1420,6 +1441,30 @@ impl ToolBox {
         };
         let app_dir = ctx.dir.join(&app_name);
         Ok((uuid, app_dir))
+    }
+
+    /// The space's apps as `{name, uuid, url}`, sorted by name. Apps the
+    /// registry has never assigned a UUID have neither field.
+    fn list_apps(&self, ctx: &AppsCtx) -> Vec<serde_json::Value> {
+        let mut names: Vec<String> = std::fs::read_dir(&ctx.dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|entry| entry.path().is_dir())
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .collect();
+        names.sort();
+        names
+            .into_iter()
+            .map(|name| match ctx.registry.resolve(&ctx.space_name, &name) {
+                Some(uuid) => {
+                    let link = self.app_link(&uuid);
+                    let url = link.strip_prefix("live at ").unwrap_or(&link).to_string();
+                    serde_json::json!({ "name": name, "uuid": uuid, "url": url })
+                }
+                None => serde_json::json!({ "name": name }),
+            })
+            .collect()
     }
 
     /// The live URL for an app (accepts a UUID).
@@ -2972,6 +3017,14 @@ impl ToolBox {
                     "Reading past chats".to_string(),
                 )
             }
+            "list_files" => {
+                let status = "Listing files…".to_string();
+                let result = match &self.files {
+                    None => "no files imported".to_string(),
+                    Some(ctx) => list_files_impl(ctx),
+                };
+                (result, status)
+            }
             "search_files" => {
                 let query = serde_json::from_str::<serde_json::Value>(args)
                     .ok()
@@ -3191,7 +3244,8 @@ impl ToolBox {
                             }) {
                                 images.extend(rows.filter_map(std::result::Result::ok));
                             }
-                        serde_json::to_string(&images).unwrap_or_else(|_| "[]".to_string())
+                        serde_json::json!({ "apps": self.list_apps(ctx), "images": images })
+                            .to_string()
                     }
                 };
                 (result, status)
@@ -11464,6 +11518,57 @@ mod tests {
             }),
         );
         (tb, dir)
+    }
+
+    #[tokio::test]
+    async fn files_list_names_imported_files() {
+        let (tb, _db, _) = files_toolbox();
+        let (out, _) = tb.run("files", r#"{"action":"list"}"#).await;
+        let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            rows,
+            serde_json::json!([{ "name": "report.md", "size": 1 }])
+        );
+    }
+
+    #[tokio::test]
+    async fn app_list_returns_apps_with_uuid_urls() {
+        let (_, db, space) = files_toolbox();
+        let dir = std::env::temp_dir().join(format!("nexus-apps-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("todo")).unwrap();
+        std::fs::create_dir_all(dir.join("draft")).unwrap();
+        let registry = crate::appserver::AppRegistry::load(&dir);
+        let uuid = registry.assign("default", "todo");
+        let tb = ToolBox::new(
+            PathBuf::new(),
+            None,
+            None,
+            "auto".to_string(),
+            Vec::new(),
+            None,
+            None,
+            Some(AppsCtx {
+                dir: dir.clone(),
+                server_port: 9999,
+                public_base: None,
+                registry,
+                space_name: "default".to_string(),
+                space_id: space,
+                space_db_path: PathBuf::from(db.raw().path().unwrap()),
+                files_dir: dir.clone(),
+                session_id: String::new(),
+            }),
+        );
+        let (out, _) = tb.run("app", r#"{"action":"list"}"#).await;
+        let listed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            listed["apps"],
+            serde_json::json!([
+                { "name": "draft" },
+                { "name": "todo", "uuid": uuid, "url": format!("http://127.0.0.1:9999/{uuid}/") },
+            ])
+        );
+        assert!(listed["images"].is_array());
     }
 
     #[test]

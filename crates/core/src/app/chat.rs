@@ -1792,8 +1792,10 @@ impl App {
 
     /// Instructions + the active session's memory snapshot, combined into one
     /// system message. Stable base, rendering and environment instructions
-    /// precede space context, user additions, skills and the frozen memory
-    /// snapshot. Volatile date and session-mode instructions come last.
+    /// precede space instructions, user additions, skills and the frozen
+    /// memory snapshot; the date comes last. Space files, apps and scripts are
+    /// not listed here — the model lists them with their tools, so importing a
+    /// file never changes the cached prefix.
     pub fn system_prompt(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
         let base = self.resolved_base_system_prompt();
@@ -1812,15 +1814,6 @@ impl App {
             parts.push(prompts::render(prompts::AGENT, &[]));
         }
         if !self.incognito {
-            if let Some(files) = self.files_section() {
-                parts.push(files);
-            }
-            if let Some(apps) = self.apps_section() {
-                parts.push(apps);
-            }
-            if let Some(scripts) = self.scripts_section() {
-                parts.push(scripts);
-            }
             let instructions =
                 std::fs::read_to_string(self.space.instructions_path(&self.active_space.name))
                     .ok()
@@ -1843,15 +1836,6 @@ impl App {
                 parts.push(format!("## Memory\n{memory}"));
             }
         }
-        parts.push(self.now_section());
-        if self.web_mode {
-            let today = self
-                .prompt_datetime
-                .split_whitespace()
-                .next()
-                .unwrap_or_default();
-            parts.push(web_mode_clause(today));
-        }
         if self.is_research_session() {
             parts.push(
                 "This session came from /research — prefer research_lookup with scope=session_sources over search with mode=web for \
@@ -1859,6 +1843,7 @@ impl App {
                     .to_string(),
             );
         }
+        parts.push(self.now_section());
         parts.join("\n\n")
     }
 
@@ -1922,18 +1907,10 @@ impl App {
     }
 
     pub(super) fn now_section(&self) -> String {
-        let mut section = format!(
-            "## Now\nCurrent date/time: {}. Your training data has a cutoff well before this — trust this timestamp over any date assumption from training",
+        format!(
+            "## Now\nCurrent date/time: {}. Your training data has a cutoff well before this — trust this timestamp over any date assumption from training.",
             self.prompt_datetime
-        );
-        if self.toolbox.defs().iter().any(|tool| tool.name == "search") {
-            section.push_str(
-                ", and use `search` with mode=web for anything that may have changed since training (news, releases, prices, \"latest\" anything).",
-            );
-        } else {
-            section.push('.');
-        }
-        section
+        )
     }
 
     /// Ctrl+O: navigate to the session linked in a `session_link` message
@@ -2091,119 +2068,6 @@ impl App {
             .to_string();
         for skill in &self.skills {
             let _ = writeln!(s, "- {}: {}", skill.name, skill.description);
-        }
-        Some(s.trim_end().to_string())
-    }
-
-    /// Scripts the model has written (or the user has placed) in the space,
-    /// listed so the model reuses them instead of rewriting from scratch.
-    fn scripts_section(&self) -> Option<String> {
-        if self.scripts_cache.is_empty() {
-            return None;
-        }
-        let mut s = "## Scripts\nThe user has reusable scripts in this space. \
-                      Call `scripts(action=read, path=...)` to see one, \
-                      `scripts(action=edit, path=..., edits=...)` to modify, or \
-                      `scripts(action=run, space=true, path=...)` to execute. \
-                      The `path` parameter is relative to the scripts dir — do NOT prefix `scripts/`.\n"
-            .to_string();
-        for script in &self.scripts_cache {
-            let _ = writeln!(s, "- {} ({})", script.name, human_size(script.size));
-        }
-        Some(s.trim_end().to_string())
-    }
-
-    /// Names/types/sizes of the space's imported files — content stays off the
-    /// wire until the model calls `files` with the appropriate action.
-    fn files_section(&self) -> Option<String> {
-        if self.files_cache.is_empty() {
-            return None;
-        }
-        let mut s = "## Files\nThe user has imported these files into this space. Do not guess \
-                     their contents: call `files(action=search, query=...)` to find relevant passages, or \
-                     `files(action=read, name=...)` to read one (200 lines per call, use offset to page). \
-                     Need several at once? Wrap them in one `batch` call.\n"
-            .to_string();
-        for f in &self.files_cache {
-            let kind = std::path::Path::new(&f.name)
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("file")
-                .to_lowercase();
-            let _ = writeln!(
-                s,
-                "- {} ({kind}, {}, {})",
-                f.name,
-                human_size(f.size.unsigned_abs()),
-                f.status
-            );
-        }
-        Some(s.trim_end().to_string())
-    }
-
-    /// How to build/edit locally served web apps, plus the space's existing
-    /// apps. Present whenever the app server is running. Hidden in incognito.
-    fn apps_section(&self) -> Option<String> {
-        if self.incognito {
-            return None;
-        }
-        self.app_server.as_ref()?;
-        let mut s = "## Apps\nYou can build apps served locally. \
-                     ALWAYS use the KV store for persistence (not LocalStorage), the upload endpoint for file \
-                     uploads, and the app tool to bring user data into the app.\n\n\
-                     **CRITICAL: URLs are UUID-based.** The UUID comes from `app(action=write)`'s result \
-                     (\"live at http://...\"). Copy it from there — never invent or guess a UUID. \
-                     If you don't have the result, call `app(action=read)` or `app(action=search)` on the app to \
-                     rediscover it.\n\n"
-            .to_string();
-
-        s.push_str("### Tools\n");
-        s.push_str("- `batch` — wrap several app operations into one round-trip (results come back labeled).\n");
-        s.push_str("- `app(action=write, app, path, content)` — create/replace a file. App can be a name or UUID; a new app gets a UUID.\n");
-        s.push_str("- `app(action=read, app, path)` / `app(action=patch, app, path, edits)` — read and edit by hashline.\n");
-        s.push_str("- `app(action=diff, app, path, content)` — preview a complete-file change without writing it.\n");
-        s.push_str("- `app(action=search, app, pattern)` — search non-ignored app files; respects `.gitignore`.\n");
-        s.push_str(
-            "- `scripts(action=install, app=..., packages=[...])` — npm-install into an app.\n",
-        );
-        s.push_str("- `app(action=list)` — list pasted conversation images.\n");
-        s.push_str("- `app(action=copy_images, image_ids, app)` — copy images into `_images/` for `<img src=\"...\">`.\n");
-        s.push_str("- `app(action=copy_file, file_name, app)` — copy a space file's text into the app's KV store.\n\n");
-
-        s.push_str("### KV Store (persistent key-value per app)\n");
-        s.push_str("Each app has a SQLite-backed KV store. Call these from frontend JS:\n");
-        s.push_str("- `PUT <app_url>/_api/kv/<key>` — upsert a value (body = raw text)\n");
-        s.push_str("- `GET <app_url>/_api/kv/<key>` — read a value\n");
-        s.push_str("- `DELETE <app_url>/_api/kv/<key>` — delete a value\n");
-        s.push_str("- `GET <app_url>/_api/kv` — list all keys (returns JSON array)\n\n");
-
-        s.push_str("### File Upload\n");
-        s.push_str("- `POST <app_url>/_api/upload` with `multipart/form-data` — upload a file. Returns `{\"name\", \"url\"}`. Files persist and are served via GET.\n\n");
-
-        s.push_str("### Using User Images\n");
-        s.push_str("1. `app(action=list)` to see conversation images.\n");
-        s.push_str("2. `app(action=copy_images, image_ids, app)` to copy them into `_images/`.\n");
-        s.push_str("3. Use returned URLs in `<img src=\"...\">` tags.\n\n");
-
-        s.push_str("### Using Space Files\n");
-        s.push_str("- `app(action=copy_file, file_name, app)` copies file text into KV under `_file:<name>`. Read it via `GET <app_url>/_api/kv/_file:<name>`.\n\n");
-
-        let apps = self.list_apps();
-        if apps.is_empty() {
-            s.push_str("No apps exist in this space yet.");
-        } else {
-            s.push_str("Existing apps:\n");
-            for a in &apps {
-                if let Some(uuid) = self
-                    .app_server
-                    .as_ref()
-                    .and_then(|s| s.registry().resolve(&self.active_space.name, a))
-                {
-                    let _ = writeln!(s, "- {a} (uuid {uuid})");
-                } else {
-                    let _ = writeln!(s, "- {a}");
-                }
-            }
         }
         Some(s.trim_end().to_string())
     }
@@ -2764,22 +2628,6 @@ pub fn pick_flavor() -> (usize, SpinnerColor) {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.subsec_nanos() as usize);
     (n % THINKING.len(), SPINNER_COLORS[n % SPINNER_COLORS.len()])
-}
-
-/// The instruction block appended to the system prompt when web mode is on:
-/// forces search-first, inline `[n]` citations, and a trailing Sources list.
-/// `today` keeps the model from hedging with stale training-data dates.
-pub fn web_mode_clause(today: &str) -> String {
-    format!(
-        "Web answer mode is ON for this session. Today's date is {today}. Before answering, you \
-         MUST call search with mode=web and a focused query (and fetch_url on the most promising results) — \
-         never answer from memory alone. You may search more than once with refined queries if the \
-         first results are insufficient. Each search result is numbered [1], [2], ... with title, \
-         URL, and snippet. Cite every claim inline immediately as [n]; do not bunch citations at \
-         the end of a paragraph. End your reply with a line starting exactly with 'Sources:' \
-         followed by every citation you used, one per line, as [n] title — url. Do not fabricate \
-         sources; if a claim is not backed by a search/fetched source, do not cite it."
-    )
 }
 
 pub fn title_from(text: &str) -> String {
