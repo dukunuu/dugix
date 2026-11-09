@@ -9,6 +9,8 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 mod canvas;
+mod extras;
+pub use extras::{Branch, DIAGRAM_ROWS, Lane, flatten as tree_branches};
 mod motion;
 mod play;
 pub use canvas::{Anim, Drawn, Ease, Repeat, Shape};
@@ -507,6 +509,70 @@ pub enum Node {
         #[serde(default = "one")]
         rows: u16,
     },
+    /// One big display numeral with a label and optional delta.
+    Number {
+        /// Value template; leading digits draw in the display font.
+        value: String,
+        /// Label template.
+        label: String,
+        /// Signed delta template.
+        delta: Option<String>,
+        /// Value emphasis; absent uses the document accent.
+        tone: Option<Tone>,
+    },
+    /// A half-ring gauge.
+    Gauge {
+        /// Label template.
+        label: String,
+        /// Numeric expression.
+        value: Value,
+        /// Numeric maximum.
+        #[serde(default = "unit")]
+        max: Value,
+        /// Theme role; normal uses the panel accent.
+        #[serde(default)]
+        tone: Tone,
+    },
+    /// Rows of shaded cells, darker for larger values.
+    Heatmap {
+        /// One to twelve rows of up to 53 numeric expressions.
+        values: Vec<Vec<Value>>,
+        /// Optional row labels.
+        #[serde(default)]
+        labels: Vec<String>,
+        /// Theme role; normal uses the panel accent.
+        #[serde(default)]
+        tone: Tone,
+    },
+    /// Markdown text clipped to a fixed number of rows.
+    Md {
+        /// Markdown template.
+        text: String,
+        /// Visible rows, one to sixteen.
+        #[serde(default = "six")]
+        rows: u16,
+    },
+    /// An expandable outline.
+    Tree {
+        /// Top-level branches; at most 24 in all, four levels deep.
+        items: Vec<Branch>,
+    },
+    /// Kanban lanes of short cards.
+    Board {
+        /// Two to five lanes.
+        items: Vec<Lane>,
+        /// Card rows per lane, two to ten.
+        #[serde(default = "six")]
+        rows: u16,
+    },
+    /// A Mermaid diagram, drawn as an image where the terminal allows.
+    Diagram {
+        /// Mermaid source.
+        source: String,
+        /// Plain-text description.
+        #[serde(default)]
+        alt: String,
+    },
     /// Shapes on a 0–100 grid with optional keyframe animation.
     Canvas {
         /// One to forty-eight shapes, drawn in order.
@@ -675,6 +741,31 @@ impl Node {
         })
     }
 
+    /// The tallest this node may be declared.
+    fn max_rows(&self) -> u16 {
+        match self {
+            Self::Columns { .. } => 27,
+            Self::Cards { .. } => 30,
+            Self::Image { .. }
+            | Self::Table { .. }
+            | Self::Chart { .. }
+            | Self::Heatmap { .. }
+            | Self::Board { .. }
+            | Self::Diagram { .. } => 12,
+            Self::Buttons { .. } => 14,
+            Self::Steps { .. } | Self::Timeline { .. } | Self::Canvas { .. } | Self::Md { .. } => {
+                16
+            }
+            Self::Tree { .. } => 24,
+            Self::Hero { .. } | Self::Code { .. } | Self::Choice { .. } => 9,
+            Self::Editor { .. } => 17,
+            // Up to eight text rows plus the field's two border rows.
+            Self::Input { .. } => 10,
+            node if node.is_container() => 45,
+            _ => 8,
+        }
+    }
+
     /// Whether this node lays out child views of its own.
     fn is_container(&self) -> bool {
         matches!(
@@ -703,6 +794,12 @@ impl Node {
                 | Self::Divider { .. }
                 | Self::Chart { .. }
                 | Self::Canvas { .. }
+                | Self::Number { .. }
+                | Self::Gauge { .. }
+                | Self::Heatmap { .. }
+                | Self::Md { .. }
+                | Self::Board { .. }
+                | Self::Diagram { .. }
                 | Self::Timeline { .. }
                 | Self::Code { .. }
                 | Self::Badge { .. }
@@ -748,7 +845,7 @@ impl Node {
                 }
             }
             Self::Stats { big, .. } => 3 + 2 * u16::from(*big),
-            Self::Input { rows, .. } => rows.saturating_add(2),
+            Self::Input { rows, .. } | Self::Board { rows, .. } => rows.saturating_add(2),
             Self::Kv { items } => u16::try_from(items.len()).unwrap_or(u16::MAX),
             Self::Table {
                 rows_data,
@@ -778,7 +875,14 @@ impl Node {
                 .saturating_add(bounded_rows(items.len().saturating_sub(1))),
             Self::Stack { items, gap } => components::view_rows(items)
                 .saturating_add(gap.saturating_mul(bounded_rows(items.len().saturating_sub(1)))),
-            Self::Chart { rows, .. } | Self::Canvas { rows, .. } | Self::Spacer { rows } => *rows,
+            Self::Chart { rows, .. }
+            | Self::Canvas { rows, .. }
+            | Self::Spacer { rows }
+            | Self::Md { rows, .. } => *rows,
+            Self::Number { .. } | Self::Gauge { .. } => 5,
+            Self::Heatmap { values, .. } => bounded_rows(values.len()),
+            Self::Tree { items } => bounded_rows(extras::flatten(items).len()),
+            Self::Diagram { .. } => DIAGRAM_ROWS,
             Self::Timeline { items } => bounded_rows(
                 items
                     .iter()
@@ -881,7 +985,7 @@ pub struct CheckError {
 }
 
 /// Valid presentation node types, shared by validation and tool reports.
-pub const NODE_TYPES: &str = "hero, image, columns, cards, stats, steps, callout, quote, divider, text, buttons, input, kv, table, progress, bars, sparkline, checklist, select, stepper, toggle, tabs, accordion, row, grid, stack, spacer, chart, canvas, form, timeline, rating, code, badge, meter, slider, editor, choice, quiz";
+pub const NODE_TYPES: &str = "hero, image, columns, cards, stats, steps, callout, quote, divider, text, buttons, input, kv, table, progress, bars, sparkline, checklist, select, stepper, toggle, tabs, accordion, row, grid, stack, spacer, chart, canvas, number, gauge, heatmap, md, tree, board, diagram, form, timeline, rating, code, badge, meter, slider, editor, choice, quiz";
 const ACTION_OPS: &str = "set, call, run, send, answer, reset, open_url, to_assistant";
 const EXPR_OPS: &str = "get, random, not, number, if, add, sub, mul, div, mod, eq, lt, gt, and, or, literal, object, array, field, index, count, first, last, sum, avg, min, max, filter, sort, round, abs, floor, ceil, append, remove, replace, slice";
 const MAX_ERRORS: usize = 10;
@@ -1022,6 +1126,12 @@ fn check_shape(value: &Value, path: &str, shape: &str, errors: &mut Vec<CheckErr
                 ("node", "chart") => "kind:chart_kind series:series[] labels:string[] rows:u16",
                 ("node", "canvas") => "shapes:value rows:u16 alt:string",
                 ("node", "row" | "stack") => "items:node[] gap:u16",
+                ("node", "number") => "value:string label:string delta:?string tone:?tone",
+                ("node", "heatmap") => "values:value labels:string[] tone:tone",
+                ("node", "md") => "text:string rows:u16",
+                ("node", "tree") => "items:value",
+                ("node", "board") => "items:value rows:u16",
+                ("node", "diagram") => "source:string alt:string",
                 ("node", "grid") => "items:node[] cols:u16",
                 ("node", "spacer") => "rows:u16",
                 ("node", "form") => "title:string fields:node[] submit_label:string action:string",
@@ -1029,7 +1139,7 @@ fn check_shape(value: &Value, path: &str, shape: &str, errors: &mut Vec<CheckErr
                 ("node", "rating") => "key:string label:string max:u16",
                 ("node", "code") => "source:string lang:?string",
                 ("node", "badge") => "text:string tone:tone",
-                ("node", "meter") => "label:string value:value max:value tone:tone",
+                ("node", "meter" | "gauge") => "label:string value:value max:value tone:tone",
                 ("node", "editor") => "key:string label:string lang:?string rows:u16",
                 ("node", "choice") => "key:string label:string options:string[] answer:?string",
                 ("node", "quiz") => "items:question[] key:?string",
@@ -1118,14 +1228,15 @@ fn check_shape(value: &Value, path: &str, shape: &str, errors: &mut Vec<CheckErr
             }
         }
         "columns" | "cards" | "stats" | "steps" | "buttons" | "kv" | "bars" | "checklist"
-        | "tabs" | "accordion" | "timeline" | "quiz" | "row" | "grid" | "stack" => "items",
+        | "tabs" | "accordion" | "timeline" | "quiz" | "row" | "grid" | "stack" | "tree"
+        | "board" => "items",
         "callout" => "tone text",
         "image" => "src",
-        "quote" | "text" | "column_item" | "send" | "badge" | "to_assistant" => "text",
+        "quote" | "text" | "column_item" | "send" | "badge" | "to_assistant" | "md" => "text",
         "input" | "toggle" | "check" | "rating" | "editor" => "key label",
         "table" => "columns rows_data",
-        "progress" | "bar" | "meter" => "label value",
-        "sparkline" => "values",
+        "progress" | "bar" | "meter" | "gauge" => "label value",
+        "sparkline" | "heatmap" => "values",
         "select" | "choice" => "key label options",
         "stepper" | "slider" => "key label min max step",
         "tab" => "label view",
@@ -1135,7 +1246,7 @@ fn check_shape(value: &Value, path: &str, shape: &str, errors: &mut Vec<CheckErr
         "series" => "name values",
         "event" => "time title",
         "form" => "title fields submit_label action",
-        "code" => "source",
+        "code" | "diagram" => "source",
         "set" => "key value",
         "call" => "action",
         "run" => "id",
@@ -1143,7 +1254,7 @@ fn check_shape(value: &Value, path: &str, shape: &str, errors: &mut Vec<CheckErr
         "open_url" => "url",
         "button" => "label action",
         "card" => "title text",
-        "stat" => "value label",
+        "stat" | "number" => "value label",
         "display_step" | "question" => "title",
         _ => "",
     };
@@ -1629,19 +1740,7 @@ impl Document {
     }
 
     fn validate_node(&self, node: &Node, budget: &mut usize) -> Result<usize> {
-        let max_rows = match node {
-            Node::Columns { .. } => 27,
-            Node::Cards { .. } => 30,
-            Node::Image { .. } | Node::Table { .. } | Node::Chart { .. } => 12,
-            Node::Buttons { .. } => 14,
-            Node::Steps { .. } | Node::Timeline { .. } | Node::Canvas { .. } => 16,
-            Node::Hero { .. } | Node::Code { .. } | Node::Choice { .. } => 9,
-            Node::Editor { .. } => 17,
-            // Up to eight text rows plus the field's two border rows.
-            Node::Input { .. } => 10,
-            node if node.is_container() => 45,
-            _ => 8,
-        };
+        let max_rows = node.max_rows();
         ensure!(
             (1..=max_rows).contains(&node.rows()),
             "node height exceeds its limit"
@@ -2003,6 +2102,10 @@ impl Document {
                     .iter()
                     .filter(|shape| shape.action().is_some())
                     .count(),
+                Node::Tree { items } => extras::flatten(items)
+                    .iter()
+                    .filter(|(_, branch)| !branch.items.is_empty())
+                    .count(),
                 Node::Choice { options, .. } => options.len(),
                 Node::Quiz { .. } => 2,
                 Node::Table {
@@ -2210,7 +2313,9 @@ impl Session {
     fn plain_component(&self, node: &Node) -> Vec<String> {
         let text = |s: &str| self.text(s).unwrap_or_default();
         match node {
-            Node::Text { text: body, .. } | Node::Badge { text: body, .. } => vec![text(body)],
+            Node::Text { text: body, .. }
+            | Node::Badge { text: body, .. }
+            | Node::Md { text: body, .. } => vec![text(body)],
             Node::Buttons { items, .. } => items
                 .iter()
                 .flat_map(|item| {
@@ -2288,6 +2393,59 @@ impl Session {
                 .iter()
                 .flat_map(|node| self.plain_node(node))
                 .collect(),
+            Node::Number {
+                value,
+                label,
+                delta,
+                ..
+            } => vec![format!(
+                "{}: {}{}",
+                text(label),
+                text(value),
+                delta
+                    .as_ref()
+                    .map(|d| format!(" ({})", text(d)))
+                    .unwrap_or_default()
+            )],
+            Node::Gauge {
+                label, value, max, ..
+            } => {
+                let (value, max) = self.progress(value, max).unwrap_or_default();
+                vec![format!("{}: {value} / {max}", text(label))]
+            }
+            Node::Heatmap { values, labels, .. } => values
+                .iter()
+                .enumerate()
+                .map(|(row, values)| {
+                    let label = labels.get(row).map(|l| text(l) + ": ").unwrap_or_default();
+                    let values: Vec<_> = values
+                        .iter()
+                        .map(|v| self.number(v).unwrap_or_default().to_string())
+                        .collect();
+                    format!("{label}{}", values.join(", "))
+                })
+                .collect(),
+            Node::Tree { items } => extras::flatten(items)
+                .into_iter()
+                .map(|(depth, branch)| format!("{}- {}", "  ".repeat(depth), text(&branch.label)))
+                .collect(),
+            Node::Board { items, .. } => items
+                .iter()
+                .map(|lane| {
+                    let cards = self
+                        .evaluate(&lane.items)
+                        .ok()
+                        .and_then(|v| v.as_array().cloned())
+                        .unwrap_or_default();
+                    let cards: Vec<_> = cards.iter().map(scalar_text).collect();
+                    format!("{}: {}", text(&lane.title), cards.join(", "))
+                })
+                .collect(),
+            Node::Diagram { alt, .. } => vec![if alt.is_empty() {
+                "[diagram]".into()
+            } else {
+                format!("[diagram: {alt}]")
+            }],
             Node::Accordion { items } => items
                 .iter()
                 .flat_map(|item| {
@@ -3338,7 +3496,9 @@ fn boolean(value: &Value) -> Result<bool> {
         .as_bool()
         .ok_or_else(|| anyhow::anyhow!("expected boolean"))
 }
-fn scalar_text(value: &Value) -> String {
+/// How a scalar (or any data value) reads as text in a panel.
+#[must_use]
+pub fn scalar_text(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
         _ => value.to_string().trim_end_matches(".0").to_string(),

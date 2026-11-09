@@ -533,6 +533,10 @@ Panels can also run on their own: `@Every` timers, `@Keys` bindings for the
 arrows, space, letters and digits, and clickable canvas shapes make small
 games, timers and simulations possible. Timers and keys can only change the
 panel's own state; sending anything still takes a real button press.
+More components: `Number` (one big headline figure), `Gauge`, `Heatmap`,
+`Md` (Markdown text), `Tree` (an expandable outline), `Board` (kanban lanes
+that can follow a list in panel state) and `Diagram` (Mermaid, drawn as an
+image where the terminal supports it).
 Click controls directly, or press `F2` to focus the newest visible panel and use
 Tab/arrows + Enter (inside a text field, arrows move the caret). `Esc` returns to chat without changing your draft; `Ctrl+C`
 copies a field's selected text, or returns to chat when nothing is selected.

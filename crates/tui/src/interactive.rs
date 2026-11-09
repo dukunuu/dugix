@@ -25,6 +25,7 @@ use unicode_width::UnicodeWidthStr;
 mod bold;
 mod canvas;
 mod components;
+mod extras;
 mod inputs;
 pub(crate) mod live;
 mod persist;
@@ -266,6 +267,15 @@ impl Entry {
                             .enumerate()
                             .filter(|(_, shape)| shape.action().is_some())
                             .map(|(shape, _)| Control::Shape(index, shape))
+                            .collect(),
+                        // Visible expandable branches toggle like sections.
+                        Node::Tree { items } => nexus_core::interactive::tree_branches(items)
+                            .iter()
+                            .enumerate()
+                            .filter(|(branch, (_, item))| {
+                                !item.items.is_empty() && session.branch_visible(index, *branch)
+                            })
+                            .map(|(branch, _)| Control::Section(index, branch))
                             .collect(),
                         _ => Vec::new(),
                     })
@@ -1030,7 +1040,7 @@ fn session_controls(session: &Session) -> usize {
     session
         .visible_nodes()
         .iter()
-        .map(|(_, node)| components::control_count(node))
+        .map(|(_, node)| components::control_count(node, session))
         .sum::<usize>()
         + usize::from(session.needs_data_load())
 }
@@ -2698,6 +2708,40 @@ impl Widgets {
         self.visible.clear();
         self.animating = false;
     }
+    /// Where Diagram components in complete, on-transcript panels sit, as
+    /// transcript placements for the diagram painter. Only diagrams that
+    /// start at the content edge line up with its fixed inset; others (a
+    /// row's right column, a pinned panel) keep their text placeholder.
+    pub(crate) fn diagram_placements(
+        &self,
+        placements: &[Placement],
+        viewport_width: u16,
+    ) -> Vec<crate::diagrams::Placement> {
+        let mut out = Vec::new();
+        for placement in placements.iter().filter(|p| p.complete) {
+            let key = placement.key();
+            if self.pinned && self.focused.as_ref() == Some(&key) {
+                continue;
+            }
+            let Some(Ok(session)) = self.entries.get(&key).map(|entry| &entry.session) else {
+                continue;
+            };
+            let width = placement.width.min(viewport_width.saturating_sub(2));
+            for (node, region) in components::visible_regions(session, width) {
+                if let Node::Diagram { source, .. } = node
+                    && region.x == CONTENT_X
+                {
+                    out.push(crate::diagrams::Placement {
+                        row: placement.row + usize::from(region.y),
+                        width: region.width,
+                        source: source.clone(),
+                        complete: true,
+                    });
+                }
+            }
+        }
+        out
+    }
     /// Timers run while the window has focus and someone used it recently;
     /// a panel left alone for half an hour stops ticking.
     fn timers_live(&self) -> bool {
@@ -3869,6 +3913,9 @@ mod gallery_tests;
 #[path = "interactive/motion_tests.rs"]
 mod motion_tests;
 
+#[cfg(test)]
+#[path = "interactive/extras_tests.rs"]
+mod extras_tests;
 #[cfg(test)]
 #[path = "interactive/play_tests.rs"]
 mod play_tests;

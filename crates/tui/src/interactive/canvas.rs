@@ -149,6 +149,28 @@ impl Dots {
             }
         }
     }
+    /// `sweep` degrees of a circle's outline, clockwise from `start`
+    /// (degrees clockwise from twelve o'clock).
+    pub(super) fn arc(
+        &mut self,
+        (cx, cy): (f64, f64),
+        r: f64,
+        start: f64,
+        sweep: f64,
+        color: Color,
+    ) {
+        if r <= 0.0 || sweep.abs() < f64::EPSILON {
+            return;
+        }
+        // About one sample per dot along the curve.
+        let steps = (r * sweep.abs().to_radians()).ceil().max(1.0);
+        let mut step = 0.0;
+        while step <= steps {
+            let angle = (start + sweep * step / steps).to_radians();
+            self.set(cx + r * angle.sin(), cy - r * angle.cos(), color);
+            step += 1.0;
+        }
+    }
     pub(super) fn rect(
         &mut self,
         (x, y): (f64, f64),
@@ -282,6 +304,13 @@ pub(super) fn draw(
                     color,
                 );
             }
+            Drawn::Arc {
+                x,
+                y,
+                r,
+                start,
+                sweep,
+            } => dots.arc(at(x, y), r * sy, start, sweep, color),
             Drawn::Dot { x, y } => {
                 let (x, y) = at(x, y);
                 dots.set(x, y, color);

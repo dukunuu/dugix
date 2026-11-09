@@ -15,8 +15,19 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 use unicode_width::UnicodeWidthStr;
 
-pub(super) fn control_count(node: &Node) -> usize {
+pub(super) fn control_count(node: &Node, session: &Session) -> usize {
     match node {
+        // Visible expandable branches, in preorder.
+        Node::Tree { items } => {
+            let index = session.document().node_index(node);
+            nexus_core::interactive::tree_branches(items)
+                .iter()
+                .enumerate()
+                .filter(|(branch, (_, item))| {
+                    !item.items.is_empty() && session.branch_visible(index, *branch)
+                })
+                .count()
+        }
         Node::Buttons { items, .. } => items.len(),
         Node::Checklist { items } => items.len(),
         Node::Accordion { items } => items.len(),
@@ -53,6 +64,9 @@ fn branch_height(nodes: &[Node], session: &Session, width: u16) -> u16 {
 }
 pub(super) fn height(node: &Node, session: &Session, width: u16) -> Option<u16> {
     if let Some(height) = super::practice::height(node, session, width) {
+        return Some(height);
+    }
+    if let Some(height) = super::extras::height(node, session, width) {
         return Some(height);
     }
     Some(match node {
@@ -246,10 +260,14 @@ pub(super) fn render(
         (focus, control, can_send),
         buffer,
     ) {
-        return Some((control_count(node), hits));
+        return Some((control_count(node, session), hits));
+    }
+    if let Some(hits) = super::extras::render(node, session, area, theme, (focus, control), buffer)
+    {
+        return Some((control_count(node, session), hits));
     }
     let index = session.document().node_index(node);
-    let mut next = control + control_count(node);
+    let mut next = control + control_count(node, session);
     let mut hits = Vec::new();
     match node {
         Node::Tabs { items, .. } => {

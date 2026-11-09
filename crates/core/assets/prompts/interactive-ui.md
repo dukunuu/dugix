@@ -149,10 +149,18 @@ Grid(items, cols?): 2–12 components filling 2–4 columns. Stack(items, gap?):
 1–8 components vertically. Spacer(rows?): 1–4 blank rows. Items are components
 (Stats, Meter, Callout, Buttons…), never bare Card/Stat/Button items. Containers
 don't count toward the 16 nodes; their rows count as if stacked, plus one between.
+Number(value, label, delta?, tone?): one headline figure in big numerals.
+Gauge(label, value, max?, tone?): half-ring gauge. Heatmap(values, labels?, tone?):
+≤12 rows of ≤53 numbers shaded by size (calendars, matrices). Md(text, rows?):
+Markdown (bold, inline code, lists) in 1–16 rows. Tree([Branch(label, items?, open?)]):
+expandable outline, ≤24 branches, 4 levels. Board([Lane(title, items, tone?)], rows?):
+2–5 kanban lanes; items may be a $state list so buttons move cards with
+@Append/@Remove. Diagram(source, alt?): a Mermaid diagram, 12 rows.
 Canvas: a drawing of ≤48 shapes, drawn in order; 3–16 rows (default 8); always give
 alt. Coordinates run 0–100 on both axes, origin top-left, y down; the canvas is wider
 than tall. Circle r and Ray len are in height units, so circles stay round. Ray angle
-is degrees clockwise from 12 o'clock; Label is centred; Poly takes [[x, y], ...].
+is degrees clockwise from 12 o'clock; Arc draws sweep degrees from start (same
+convention); Label is centred; Poly takes [[x, y], ...].
 Numbers may use $state. animate is a list of Anim: one property through 2–12 absolute
 keyframes per pass; prop is a shape field, dx/dy (offset) or on (hidden below 0.5);
 repeat loop (default)|bounce|once; ease smooth (default)|linear (use linear for steady

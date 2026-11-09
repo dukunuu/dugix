@@ -57,11 +57,21 @@ const COMPONENTS: &[(&str, &str, &str)] = &[
     ("Grid", "grid", "items cols?"),
     ("Stack", "stack", "items gap?"),
     ("Spacer", "spacer", "rows?"),
+    ("Number", "number", "value label delta? tone?"),
+    ("Gauge", "gauge", "label value max? tone?"),
+    ("Heatmap", "heatmap", "values labels? tone?"),
+    ("Md", "md", "text rows?"),
+    ("Tree", "tree", "items"),
+    ("Branch", "", "label items? open?"),
+    ("Board", "board", "items rows?"),
+    ("Lane", "", "title items tone?"),
+    ("Diagram", "diagram", "source alt?"),
     ("Canvas", "canvas", "shapes rows? alt?"),
     ("Circle", "circle", "x y r tone? fill? animate? action?"),
     ("Rect", "rect", "x y w h tone? fill? animate? action?"),
     ("Line", "line", "x1 y1 x2 y2 tone? animate? action?"),
     ("Ray", "ray", "x y len angle tone? animate? action?"),
+    ("Arc", "arc", "x y r start sweep tone? animate? action?"),
     ("Dot", "dot", "x y tone? animate? action?"),
     ("Poly", "poly", "points tone? fill? animate? action?"),
     ("Label", "label", "text x y tone? animate? action?"),
@@ -606,8 +616,10 @@ impl Context<'_> {
                     | "explain"
                     | "placeholder"
                     | "hint"
-            ) || matches!((name, key), ("Stat", "value") | ("Question", "answer"))
-            {
+            ) || matches!(
+                (name, key),
+                ("Stat" | "Number", "value") | ("Question", "answer")
+            ) {
                 self.template(expression, depth + 1)?
             } else if key == "rules" {
                 self.lower(expression, depth + 1)?
@@ -631,6 +643,7 @@ impl Context<'_> {
                         | "Rect"
                         | "Line"
                         | "Ray"
+                        | "Arc"
                         | "Dot"
                         | "Poly"
                         | "Label"

@@ -161,6 +161,29 @@ pub enum Shape {
         #[serde(default)]
         action: Option<String>,
     },
+    /// Part of a circle's outline: `sweep` degrees clockwise from `start`
+    /// (degrees clockwise from twelve o'clock); `r` in height units.
+    Arc {
+        /// Centre x.
+        x: Value,
+        /// Centre y.
+        y: Value,
+        /// Radius in height units.
+        r: Value,
+        /// Start angle.
+        start: Value,
+        /// Clockwise extent.
+        sweep: Value,
+        /// Theme role.
+        #[serde(default = "accent")]
+        tone: Tone,
+        /// Keyframe animations.
+        #[serde(default)]
+        animate: Vec<Anim>,
+        /// Action run when the shape is clicked or chosen.
+        #[serde(default)]
+        action: Option<String>,
+    },
     /// A single point.
     Dot {
         /// X.
@@ -263,6 +286,19 @@ pub enum Drawn {
         /// Degrees clockwise from twelve o'clock.
         angle: f64,
     },
+    /// Arc of a circle; `r` in height units, angles clockwise from twelve.
+    Arc {
+        /// Centre.
+        x: f64,
+        /// Centre.
+        y: f64,
+        /// Radius in height units.
+        r: f64,
+        /// Start angle in degrees.
+        start: f64,
+        /// Clockwise extent in degrees.
+        sweep: f64,
+    },
     /// Point.
     Dot {
         /// X.
@@ -297,6 +333,7 @@ impl Shape {
             | Self::Rect { tone, .. }
             | Self::Line { tone, .. }
             | Self::Ray { tone, .. }
+            | Self::Arc { tone, .. }
             | Self::Dot { tone, .. }
             | Self::Poly { tone, .. }
             | Self::Label { tone, .. } => *tone,
@@ -310,6 +347,7 @@ impl Shape {
             | Self::Rect { action, .. }
             | Self::Line { action, .. }
             | Self::Ray { action, .. }
+            | Self::Arc { action, .. }
             | Self::Dot { action, .. }
             | Self::Poly { action, .. }
             | Self::Label { action, .. } => action.as_deref(),
@@ -321,6 +359,7 @@ impl Shape {
             | Self::Rect { animate, .. }
             | Self::Line { animate, .. }
             | Self::Ray { animate, .. }
+            | Self::Arc { animate, .. }
             | Self::Dot { animate, .. }
             | Self::Poly { animate, .. }
             | Self::Label { animate, .. } => animate,
@@ -337,6 +376,20 @@ impl Shape {
             Self::Ray {
                 x, y, len, angle, ..
             } => vec![("x", x), ("y", y), ("len", len), ("angle", angle)],
+            Self::Arc {
+                x,
+                y,
+                r,
+                start,
+                sweep,
+                ..
+            } => vec![
+                ("x", x),
+                ("y", y),
+                ("r", r),
+                ("start", start),
+                ("sweep", sweep),
+            ],
             Self::Dot { x, y, .. } | Self::Label { x, y, .. } => vec![("x", x), ("y", y)],
             Self::Poly { .. } => Vec::new(),
         }
@@ -459,6 +512,13 @@ impl Session {
                 y: field("y")? + dy,
                 len: field("len")?.max(0.0),
                 angle: field("angle")?,
+            },
+            Shape::Arc { .. } => Drawn::Arc {
+                x: field("x")? + dx,
+                y: field("y")? + dy,
+                r: field("r")?.max(0.0),
+                start: field("start")?,
+                sweep: field("sweep")?.clamp(-360.0, 360.0),
             },
             Shape::Dot { .. } => Drawn::Dot {
                 x: field("x")? + dx,

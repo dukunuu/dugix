@@ -275,6 +275,13 @@ paragraph to the prompt at most.
 - **State arrays were already there:** state holds bounded data values and
   `@Each` re-renders from them, so phase 6 only added list editing:
   `@Append`, `@Remove`, `@Replace`, `@Slice` (negative indexes from the end).
+- **Phase 7 landed** (2026-11-09): `Number`, `Gauge` (braille half-ring;
+  canvas gained `Arc`), `Heatmap`, `Md`, `Tree` (`Branch` items; expands
+  like Accordion sections, reserving its fully expanded height), `Board`
+  (`Lane` items may be a `$state` list, so buttons move cards with
+  `@Append`/`@Remove`), and `Diagram` (Mermaid, 12 rows, painted as an image
+  by the transcript's diagram painter when the diagram starts at the panel's
+  content edge; otherwise a text placeholder).
 - **Fix found on the way:** `Widgets::clear` (every viewport reset, such as a
   session switch) reset `/vim` to its default; it now keeps vim and motion.
 - **Deviation:** `Row` has no `align` argument. Children fill equal slots, so

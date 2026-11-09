@@ -314,7 +314,7 @@ impl Document {
                 self.numeric_ok(value, budget)?;
                 self.numeric_ok(max, budget)?;
             }
-            _ => return Ok(None),
+            _ => return self.validate_extra(node, budget),
         }
         for branch in children(node) {
             item_count(branch.len(), 0, 16)?;
@@ -430,8 +430,7 @@ impl Session {
             }
         }
         for &(node, section, open) in &view.open {
-            if matches!(self.document.node(node), Some(Node::Accordion { items }) if section < items.len())
-            {
+            if self.section_default(node, section).is_some() {
                 next.open.insert((node, section), open);
             }
         }
@@ -534,14 +533,29 @@ impl Session {
     /// Current section expansion state.
     #[must_use]
     pub fn section_open(&self, node: usize, section: usize) -> bool {
-        self.components.open.get(&(node, section)).copied().unwrap_or_else(|| matches!(self.document.node(node), Some(Node::Accordion { items }) if items.get(section).is_some_and(|s| s.open)))
+        self.components
+            .open
+            .get(&(node, section))
+            .copied()
+            .unwrap_or_else(|| self.section_default(node, section).unwrap_or(false))
+    }
+    /// A section's (or tree branch's) authored expansion; `None` when it
+    /// doesn't exist.
+    fn section_default(&self, node: usize, section: usize) -> Option<bool> {
+        match self.document.node(node)? {
+            Node::Accordion { items } => items.get(section).map(|item| item.open),
+            Node::Tree { items } => super::extras::flatten(items)
+                .get(section)
+                .map(|(_, branch)| branch.open),
+            _ => None,
+        }
     }
     /// Toggle a declared section.
     /// # Errors
     /// Rejects missing sections.
     pub fn expand_section(&mut self, node: usize, section: usize) -> Result<()> {
         ensure!(
-            matches!(self.document.node(node), Some(Node::Accordion { items }) if section < items.len()),
+            self.section_default(node, section).is_some(),
             "not a section"
         );
         self.components

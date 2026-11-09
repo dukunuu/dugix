@@ -381,6 +381,13 @@ pub(super) fn render_history(f: &mut Frame, app: &mut AppView, area: Rect) {
             nexus_core::app::Popup::None | nexus_core::app::Popup::InteractiveUi
         ),
     );
+    // Diagrams inside panels paint after the panels, over their placeholders.
+    if app.popup == nexus_core::app::Popup::None {
+        let placements = app.interactive.diagram_placements(&widgets, inner.width);
+        if !placements.is_empty() {
+            app.diagrams.paint(f, inner, top, &placements, app.theme.bg);
+        }
+    }
 
     // Scrollbar in the gutter, only when the conversation overflows. Hand-
     // drawn: ratatui's `Scrollbar` thumb jumps on every streamed line and

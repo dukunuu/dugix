@@ -54,6 +54,15 @@ $auto = true
 top = Row([Stats([Stat("99.9%", "uptime", "+0.1%", "success")], true), Stack([Meter("CPU", 0.72, 1, "warning"), Meter("Memory", 0.41, 1), Sparkline([3, 5, 4, 7, 6, 9, 8], 2)], 0)])
 grid = Grid([Callout("tip", "Healthy", "API"), Callout("warning", "Backlog 1.2k", "Queue"), Callout("tip", "Healthy", "DB"), Callout("info", "Cold start", "Cache")], 2)
 controls = Row([Slider($load, "Load", 0, 100, 1), Stack([Toggle($auto, "Autoscale"), Buttons([Button("Deploy", @ToAssistant("deploy"), true), Button("Roll back", @Set($load, 0))])])])"#,
+    r#"root = Panel("Team pulse", [top, heat, notes])
+top = Row([Number("128", "signups this week", "+12%", "success"), Gauge("Capacity", 0.68, 1, "warning")])
+heat = Heatmap([[0, 1, 3, 5, 2, 0, 1], [2, 4, 6, 8, 3, 1, 0], [1, 1, 2, 9, 7, 2, 1]], ["Mon", "Tue", "Wed"])
+notes = Md("**Ship** the `beta` today:\n- write release notes\n- tag v0.2", 4)"#,
+    r#"root = Panel("Planning", [outline, board, flow])
+$todo = ["Docs", "Tests", "Polish"]
+outline = Tree([Branch("crates", [Branch("core", [Branch("interactive.rs")]), Branch("tui")], true), Branch("docs")])
+board = Board([Lane("Todo", $todo), Lane("Doing", ["Specs"], "warning"), Lane("Done", ["Kickoff", "Design"], "success")], 3)
+flow = Diagram("flowchart LR\nA[Plan] --> B[Build] --> C[Ship]", "Plan to build to ship")"#,
     r#"root = Panel("Orbit", [art])
 art = Canvas([Circle(50, 50, 40, "muted"), Circle(50, 50, 8, "warning", true), Ray(50, 50, 38, 0, "accent", [Anim("angle", [0, 360], 6, "loop", "linear")]), Label("noon", 50, 0, "normal")], 8, "A sun with a sweeping hand")"#,
 ];
