@@ -92,6 +92,9 @@ fn children(node: &Node) -> Vec<&[Node]> {
         Node::Tabs { items, .. } => items.iter().map(|item| item.view.as_slice()).collect(),
         Node::Accordion { items } => items.iter().map(|item| item.view.as_slice()).collect(),
         Node::Form { fields, .. } => vec![fields],
+        Node::Row { items, .. } | Node::Grid { items, .. } | Node::Stack { items, .. } => {
+            vec![items]
+        }
         Node::Quiz { items, .. } => items.iter().map(|item| item.view.as_slice()).collect(),
         _ => Vec::new(),
     }
@@ -100,7 +103,13 @@ pub(super) fn max_visible(nodes: &[Node]) -> usize {
     nodes
         .iter()
         .map(|node| {
-            1 + match node {
+            // Layout containers and spacers are structure, not content: only
+            // what they hold counts toward the visible-node cap.
+            let own = usize::from(!matches!(
+                node,
+                Node::Row { .. } | Node::Grid { .. } | Node::Stack { .. } | Node::Spacer { .. }
+            ));
+            own + match node {
                 Node::Tabs { items, .. } => items
                     .iter()
                     .map(|item| max_visible(&item.view))
@@ -247,6 +256,21 @@ impl Document {
             }
             Node::Canvas { shapes, rows, alt } => {
                 self.validate_canvas(shapes, *rows, alt, budget)?;
+            }
+            Node::Row { items, gap } => {
+                item_count(items.len(), 2, 4)?;
+                ensure!(*gap <= 4, "row gap must be 0–4");
+            }
+            Node::Grid { items, cols } => {
+                item_count(items.len(), 2, 12)?;
+                ensure!((2..=4).contains(cols), "grid cols must be 2–4");
+            }
+            Node::Stack { items, gap } => {
+                item_count(items.len(), 1, 8)?;
+                ensure!(*gap <= 3, "stack gap must be 0–3");
+            }
+            Node::Spacer { rows } => {
+                ensure!((1..=4).contains(rows), "spacer rows must be 1–4");
             }
             Node::Timeline { items } => {
                 item_count(items.len(), 1, 8)?;
@@ -543,6 +567,9 @@ impl Session {
                         }
                     }
                     Node::Form { fields, .. } => visit(session, fields, out),
+                    Node::Row { items, .. }
+                    | Node::Grid { items, .. }
+                    | Node::Stack { items, .. } => visit(session, items, out),
                     Node::Quiz { items, .. } => {
                         if let Some(item) = items.get(session.question(index)) {
                             visit(session, &item.view, out);

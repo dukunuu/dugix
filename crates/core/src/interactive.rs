@@ -474,6 +474,36 @@ pub enum Node {
         #[serde(default = "six")]
         rows: u16,
     },
+    /// Two to four children side by side; stacks on narrow terminals.
+    Row {
+        /// Child nodes, left to right.
+        items: Vec<Node>,
+        /// Columns between children, zero to four.
+        #[serde(default = "two_cols")]
+        gap: u16,
+    },
+    /// Two to twelve children filling 2–4 columns row by row.
+    Grid {
+        /// Child nodes in reading order.
+        items: Vec<Node>,
+        /// Columns, two to four; fewer when the terminal is narrow.
+        #[serde(default = "two_cols")]
+        cols: u16,
+    },
+    /// One to eight children grouped vertically with their own spacing.
+    Stack {
+        /// Child nodes, top to bottom.
+        items: Vec<Node>,
+        /// Blank rows between children, zero to three.
+        #[serde(default = "one")]
+        gap: u16,
+    },
+    /// Blank vertical space.
+    Spacer {
+        /// Rows, one to four.
+        #[serde(default = "one")]
+        rows: u16,
+    },
     /// Shapes on a 0–100 grid with optional keyframe animation.
     Canvas {
         /// One to forty-eight shapes, drawn in order.
@@ -605,6 +635,9 @@ const fn six() -> u16 {
 const fn eight_rows() -> u16 {
     8
 }
+const fn two_cols() -> u16 {
+    2
+}
 
 fn image_ok(src: Option<&str>, alt: Option<&str>) -> Result<()> {
     if let Some(src) = src {
@@ -637,6 +670,20 @@ impl Node {
                 MAX_VALUE
             }
         })
+    }
+
+    /// Whether this node lays out child views of its own.
+    fn is_container(&self) -> bool {
+        matches!(
+            self,
+            Self::Tabs { .. }
+                | Self::Accordion { .. }
+                | Self::Form { .. }
+                | Self::Quiz { .. }
+                | Self::Row { .. }
+                | Self::Grid { .. }
+                | Self::Stack { .. }
+        )
     }
 
     fn is_display(&self) -> bool {
@@ -722,7 +769,13 @@ impl Node {
                 rows.saturating_add(components::view_rows(&item.view).saturating_add(1))
             }),
             Self::Form { fields, .. } => components::view_rows(fields).saturating_add(2),
-            Self::Chart { rows, .. } | Self::Canvas { rows, .. } => *rows,
+            // Containers budget their stacked worst case: a narrow terminal
+            // stacks a row's children, never exceeding what was validated.
+            Self::Row { items, .. } | Self::Grid { items, .. } => components::view_rows(items)
+                .saturating_add(bounded_rows(items.len().saturating_sub(1))),
+            Self::Stack { items, gap } => components::view_rows(items)
+                .saturating_add(gap.saturating_mul(bounded_rows(items.len().saturating_sub(1)))),
+            Self::Chart { rows, .. } | Self::Canvas { rows, .. } | Self::Spacer { rows } => *rows,
             Self::Timeline { items } => bounded_rows(
                 items
                     .iter()
@@ -821,7 +874,7 @@ pub struct CheckError {
 }
 
 /// Valid presentation node types, shared by validation and tool reports.
-pub const NODE_TYPES: &str = "hero, image, columns, cards, stats, steps, callout, quote, divider, text, buttons, input, kv, table, progress, bars, sparkline, checklist, select, stepper, toggle, tabs, accordion, chart, canvas, form, timeline, rating, code, badge, meter, slider, editor, choice, quiz";
+pub const NODE_TYPES: &str = "hero, image, columns, cards, stats, steps, callout, quote, divider, text, buttons, input, kv, table, progress, bars, sparkline, checklist, select, stepper, toggle, tabs, accordion, row, grid, stack, spacer, chart, canvas, form, timeline, rating, code, badge, meter, slider, editor, choice, quiz";
 const ACTION_OPS: &str = "set, call, run, send, answer, reset, open_url, to_assistant";
 const EXPR_OPS: &str = "get, random, not, number, if, add, sub, mul, div, mod, eq, lt, gt, and, or, literal, object, array, field, index, count, first, last, sum, avg, min, max, filter, sort, round, abs, floor, ceil";
 const MAX_ERRORS: usize = 10;
@@ -961,6 +1014,9 @@ fn check_shape(value: &Value, path: &str, shape: &str, errors: &mut Vec<CheckErr
                 ("node", "accordion") => "items:section[]",
                 ("node", "chart") => "kind:chart_kind series:series[] labels:string[] rows:u16",
                 ("node", "canvas") => "shapes:value rows:u16 alt:string",
+                ("node", "row" | "stack") => "items:node[] gap:u16",
+                ("node", "grid") => "items:node[] cols:u16",
+                ("node", "spacer") => "rows:u16",
                 ("node", "form") => "title:string fields:node[] submit_label:string action:string",
                 ("node", "timeline") => "items:event[]",
                 ("node", "rating") => "key:string label:string max:u16",
@@ -1055,7 +1111,7 @@ fn check_shape(value: &Value, path: &str, shape: &str, errors: &mut Vec<CheckErr
             }
         }
         "columns" | "cards" | "stats" | "steps" | "buttons" | "kv" | "bars" | "checklist"
-        | "tabs" | "accordion" | "timeline" | "quiz" => "items",
+        | "tabs" | "accordion" | "timeline" | "quiz" | "row" | "grid" | "stack" => "items",
         "callout" => "tone text",
         "image" => "src",
         "quote" | "text" | "column_item" | "send" | "badge" | "to_assistant" => "text",
@@ -1567,9 +1623,7 @@ impl Document {
             Node::Editor { .. } => 17,
             // Up to eight text rows plus the field's two border rows.
             Node::Input { .. } => 10,
-            Node::Tabs { .. } | Node::Accordion { .. } | Node::Form { .. } | Node::Quiz { .. } => {
-                45
-            }
+            node if node.is_container() => 45,
             _ => 8,
         };
         ensure!(
@@ -2203,6 +2257,10 @@ impl Session {
                     std::iter::once(text(&item.label))
                         .chain(item.view.iter().flat_map(|node| self.plain_node(node)))
                 })
+                .collect(),
+            Node::Row { items, .. } | Node::Grid { items, .. } | Node::Stack { items, .. } => items
+                .iter()
+                .flat_map(|node| self.plain_node(node))
                 .collect(),
             Node::Accordion { items } => items
                 .iter()
@@ -3319,3 +3377,7 @@ mod persist_tests;
 #[cfg(test)]
 #[path = "interactive/stepper_tests.rs"]
 mod stepper_tests;
+
+#[cfg(test)]
+#[path = "interactive/containers_tests.rs"]
+mod containers_tests;

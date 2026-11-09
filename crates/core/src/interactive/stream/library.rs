@@ -53,6 +53,10 @@ const COMPONENTS: &[(&str, &str, &str)] = &[
     ("Section", "", "title view open?"),
     ("Chart", "chart", "kind series labels? rows?"),
     ("Series", "", "name values tone?"),
+    ("Row", "row", "items gap?"),
+    ("Grid", "grid", "items cols?"),
+    ("Stack", "stack", "items gap?"),
+    ("Spacer", "spacer", "rows?"),
     ("Canvas", "canvas", "shapes rows? alt?"),
     ("Circle", "circle", "x y r tone? fill? animate?"),
     ("Rect", "rect", "x y w h tone? fill? animate?"),
@@ -220,6 +224,16 @@ fn retain_valid_nodes(value: &mut Value) {
 fn used_actions(view: &Value, actions: &Value) -> Value {
     let mut used = Map::new();
     for node in view.as_array().into_iter().flatten() {
+        // Layout containers hold nodes directly: their buttons' actions count.
+        if matches!(node["type"].as_str(), Some("row" | "grid" | "stack")) {
+            used.extend(
+                used_actions(&node["items"], actions)
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .map(|(k, v)| (k.clone(), v.clone())),
+            );
+        }
         for child in node["items"].as_array().into_iter().flatten() {
             used.extend(
                 used_actions(&child["view"], actions)

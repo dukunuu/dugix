@@ -253,6 +253,13 @@ paragraph to the prompt at most.
 - **Deviation:** table columns keep equal widths, not content sizing, so
   sorting clicks keep mapping columns the same way; the header fill and zebra
   rows give the structure instead.
+- **Phase 4 landed** (2026-11-09): `Row(items, gap?)`, `Grid(items, cols?)`,
+  `Stack(items, gap?)`, `Spacer(rows?)`. Rows stack below 20 columns per child,
+  grids drop columns below 18. Containers and spacers don't count toward the
+  16-node cap (their children do).
+- **Deviation:** `Row` has no `align` argument. Children fill equal slots, so
+  alignment would only matter with natural widths, which no component reports
+  yet; add it if a real layout needs it.
 
 ## Resolved questions (decided 2026-11-09)
 

@@ -64,7 +64,14 @@ pub(super) fn height(node: &Node, session: &Session, width: u16) -> Option<u16> 
             .map(|item| 1 + branch_height(&item.view, session, width))
             .sum(),
         Node::Form { fields, .. } => 2 + branch_height(fields, session, width),
-        Node::Chart { rows, .. } | Node::Canvas { rows, .. } => *rows,
+        Node::Chart { rows, .. } | Node::Canvas { rows, .. } | Node::Spacer { rows } => *rows,
+        Node::Row { .. } | Node::Grid { .. } | Node::Stack { .. } => {
+            container_regions(node, session, Rect::new(0, 0, width, u16::MAX))
+                .iter()
+                .map(|region| region.bottom())
+                .max()
+                .unwrap_or(0)
+        }
         Node::Timeline { .. }
         | Node::Code { .. }
         | Node::Badge { .. }
@@ -86,21 +93,18 @@ pub(super) fn visible_regions(session: &Session, width: u16) -> Vec<(&Node, Rect
     fn visit<'a>(
         session: &'a Session,
         nodes: &'a [Node],
-        area: Rect,
+        regions: Vec<Rect>,
         out: &mut Vec<(&'a Node, Rect)>,
     ) {
-        for (node, region) in nodes.iter().zip(branch_regions(session, nodes, area)) {
+        let stacked = |nodes: &[Node], area: Rect| branch_regions(session, nodes, area);
+        for (node, region) in nodes.iter().zip(regions) {
             out.push((node, region));
             let index = session.document().node_index(node);
             match node {
                 Node::Tabs { items, .. } => {
                     if let Some(item) = items.get(session.tab(index)) {
-                        visit(
-                            session,
-                            &item.view,
-                            body(region, 1, region.height.saturating_sub(1)),
-                            out,
-                        );
+                        let area = body(region, 1, region.height.saturating_sub(1));
+                        visit(session, &item.view, stacked(&item.view, area), out);
                     }
                 }
                 Node::Accordion { items } => {
@@ -108,20 +112,27 @@ pub(super) fn visible_regions(session: &Session, width: u16) -> Vec<(&Node, Rect
                     for (section, item) in items.iter().enumerate() {
                         let height = branch_height(&item.view, session, region.width);
                         if session.section_open(index, section) {
-                            visit(session, &item.view, body(region, offset + 1, height), out);
+                            let area = body(region, offset + 1, height);
+                            visit(session, &item.view, stacked(&item.view, area), out);
                         }
                         offset += 1 + height;
                     }
                 }
-                Node::Form { fields, .. } => visit(
-                    session,
-                    fields,
-                    body(region, 1, region.height.saturating_sub(2)),
-                    out,
-                ),
+                Node::Form { fields, .. } => {
+                    let area = body(region, 1, region.height.saturating_sub(2));
+                    visit(session, fields, stacked(fields, area), out);
+                }
+                Node::Row { items, .. } | Node::Grid { items, .. } | Node::Stack { items, .. } => {
+                    visit(
+                        session,
+                        items,
+                        container_regions(node, session, region),
+                        out,
+                    );
+                }
                 Node::Quiz { .. } => {
                     if let Some((view, area)) = super::practice::quiz_view(node, session, region) {
-                        visit(session, view, area, out);
+                        visit(session, view, stacked(view, area), out);
                     }
                 }
                 _ => {}
@@ -129,13 +140,80 @@ pub(super) fn visible_regions(session: &Session, width: u16) -> Vec<(&Node, Rect
         }
     }
     let mut out = Vec::new();
+    let nodes = session.document().nodes();
+    let area = Rect::new(2, 2, width.saturating_sub(4), u16::MAX);
     visit(
         session,
-        session.document().nodes(),
-        Rect::new(2, 2, width.saturating_sub(4), u16::MAX),
+        nodes,
+        branch_regions(session, nodes, area),
         &mut out,
     );
     out
+}
+/// Narrowest column a row child gets before the row stacks instead.
+const MIN_ROW_SLOT: u16 = 20;
+/// Narrowest grid cell before the grid drops a column.
+const MIN_GRID_SLOT: u16 = 18;
+/// One node's height at `width`, measured the way siblings are.
+fn measured(node: &Node, session: &Session, width: u16) -> u16 {
+    branch_regions(
+        session,
+        std::slice::from_ref(node),
+        Rect::new(0, 0, width, u16::MAX),
+    )
+    .first()
+    .map_or(0, |region| region.height)
+}
+/// Where a layout container's children sit inside `area`. Rows and grids
+/// fall back to stacking when a column would be too narrow to read.
+pub(super) fn container_regions(node: &Node, session: &Session, area: Rect) -> Vec<Rect> {
+    let columns = |items: &[Node], count: u16, gap: u16, row_gap: u16| {
+        let slot = area.width.saturating_sub(gap * (count - 1)) / count;
+        let mut regions = Vec::new();
+        let mut y = area.y;
+        for chunk in items.chunks(usize::from(count)) {
+            let mut bottom = y;
+            for (column, child) in chunk.iter().enumerate() {
+                let x = area.x + u16::try_from(column).unwrap_or(0) * (slot + gap);
+                let height = measured(child, session, slot);
+                regions.push(Rect::new(x, y, slot, height));
+                bottom = bottom.max(y.saturating_add(height));
+            }
+            y = bottom.saturating_add(row_gap);
+        }
+        regions
+    };
+    match node {
+        Node::Row { items, gap } => {
+            let count = u16::try_from(items.len()).unwrap_or(1).max(1);
+            let slot = area.width.saturating_sub(gap * (count - 1)) / count;
+            if slot < MIN_ROW_SLOT {
+                branch_regions(session, items, area)
+            } else {
+                columns(items, count, *gap, 0)
+            }
+        }
+        Node::Grid { items, cols } => {
+            let mut count = (*cols).clamp(1, 4);
+            while count > 1 && area.width.saturating_sub(2 * (count - 1)) / count < MIN_GRID_SLOT {
+                count -= 1;
+            }
+            columns(items, count, 2, 1)
+        }
+        Node::Stack { items, gap } => {
+            let mut y = area.y;
+            items
+                .iter()
+                .map(|child| {
+                    let height = measured(child, session, area.width);
+                    let region = Rect::new(area.x, y, area.width, height);
+                    y = y.saturating_add(height).saturating_add(*gap);
+                    region
+                })
+                .collect()
+        }
+        _ => Vec::new(),
+    }
 }
 fn row(area: Rect, offset: u16) -> Rect {
     Rect::new(area.x, area.y + offset, area.width, 1)
@@ -293,6 +371,13 @@ pub(super) fn render(
             ..
         } => chart(*kind, series, labels, session, area, theme, buffer),
         Node::Canvas { shapes, .. } => super::canvas::draw(shapes, session, area, theme, buffer),
+        Node::Row { items, .. } | Node::Grid { items, .. } | Node::Stack { items, .. } => {
+            let regions = container_regions(node, session, area);
+            hits.extend(Entry::branch(
+                items, session, &regions, theme, focus, can_send, buffer, &mut next,
+            ));
+        }
+        Node::Spacer { .. } => {}
         Node::Timeline { items } => {
             let mut y = 0;
             for item in items {

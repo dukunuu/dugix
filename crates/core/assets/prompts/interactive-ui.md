@@ -133,6 +133,11 @@ Rating: numeric stars; arrows/click edit.
 Code: literal source, optional language, Copy button.
 Badge: compact themed text. Meter: themed gauge.
 Slider: numeric range; arrows/click adjust by step.
+Row(items, gap?): 2–4 components side by side; stacks on narrow terminals.
+Grid(items, cols?): 2–12 components filling 2–4 columns. Stack(items, gap?): groups
+1–8 components vertically. Spacer(rows?): 1–4 blank rows. Items are components
+(Stats, Meter, Callout, Buttons…), never bare Card/Stat/Button items. Containers
+don't count toward the 16 nodes; their rows count as if stacked, plus one between.
 Canvas: a drawing of ≤48 shapes, drawn in order; 3–16 rows (default 8); always give
 alt. Coordinates run 0–100 on both axes, origin top-left, y down; the canvas is wider
 than tall. Circle r and Ray len are in height units, so circles stay round. Ray angle

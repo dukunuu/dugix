@@ -3736,5 +3736,8 @@ mod practice_tests;
 mod input_tests;
 
 #[cfg(test)]
+#[path = "interactive/containers_tests.rs"]
+mod containers_tests;
+#[cfg(test)]
 #[path = "interactive/gallery_tests.rs"]
 mod gallery_tests;

@@ -48,6 +48,12 @@ quiz = Quiz([Question("Which structure gives O(1) lookup?", [Choice($pick, "Pick
     r#"root = Panel("Pick a destination", [hero, picks])
 hero = Hero("Where to next?", "Three quick picks for a long weekend")
 picks = Buttons([Button("Lisbon", @Answer()), Button("Kyoto", @Answer()), Button("Oaxaca", @Answer())])"#,
+    r#"root = Panel("Ops dashboard", [top, Spacer(), grid, controls])
+$load = 64
+$auto = true
+top = Row([Stats([Stat("99.9%", "uptime", "+0.1%", "success")], true), Stack([Meter("CPU", 0.72, 1, "warning"), Meter("Memory", 0.41, 1), Sparkline([3, 5, 4, 7, 6, 9, 8], 2)], 0)])
+grid = Grid([Callout("tip", "Healthy", "API"), Callout("warning", "Backlog 1.2k", "Queue"), Callout("tip", "Healthy", "DB"), Callout("info", "Cold start", "Cache")], 2)
+controls = Row([Slider($load, "Load", 0, 100, 1), Stack([Toggle($auto, "Autoscale"), Buttons([Button("Deploy", @ToAssistant("deploy"), true), Button("Roll back", @Set($load, 0))])])])"#,
     r#"root = Panel("Orbit", [art])
 art = Canvas([Circle(50, 50, 40, "muted"), Circle(50, 50, 8, "warning", true), Ray(50, 50, 38, 0, "accent", [Anim("angle", [0, 360], 6, "loop", "linear")]), Label("noon", 50, 0, "normal")], 8, "A sun with a sweeping hand")"#,
 ];
