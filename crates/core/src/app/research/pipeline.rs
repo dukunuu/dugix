@@ -346,6 +346,131 @@ struct SearcherBatch<'a> {
     batch: &'a str,
 }
 
+/// What every stage of one research run shares.
+struct Run<'a> {
+    provider: &'a OpenRouter,
+    model: &'a str,
+    toolbox: &'a Arc<dyn ToolExecutor>,
+    usage: &'a Arc<ResearchUsage>,
+    tx: &'a mpsc::UnboundedSender<ResearchMsg>,
+    ids: &'a (String, String, String),
+    db_path: &'a std::path::Path,
+    topic: &'a str,
+}
+
+impl Run<'_> {
+    /// Send a stage update for this run.
+    fn stage(&self, label: impl Into<String>, detail: impl Into<String>) {
+        send_stage(self.tx, self.ids, label, detail);
+    }
+
+    /// Run an agent and terminalize its activity row on failure.
+    async fn agent(&self, messages: Vec<ChatMessage>, label: &str) -> Result<String, String> {
+        complete_agent(
+            self.provider,
+            self.model,
+            messages,
+            self.usage,
+            self.tx,
+            self.ids,
+            label,
+        )
+        .await
+    }
+
+    /// Run a searcher batch and persist its sources.
+    async fn search(&self, batch: &str, items: &[(String, String)]) -> Vec<String> {
+        let found = run_searchers(
+            SearcherBatch {
+                provider: self.provider,
+                model: self.model,
+                toolbox: self.toolbox,
+                usage: self.usage,
+                tx: self.tx,
+                ids: self.ids,
+                batch,
+            },
+            items,
+        )
+        .await;
+        persist_session_sources(self.db_path, &self.ids.0, &found);
+        found
+    }
+
+    // One stage row per drained steer, keyed by a job-global sequence number
+    // (`steer #N` — N = the steer's 1-based queue position, which equals its
+    // drain order). The stage upsert matches rows by label, so the key must
+    // never be user text: duplicate, prefix-of-each-other, or LIKE-wildcard
+    // (`%`/`_`) steer text would collapse or hijack rows and leave picked-up
+    // steers looking queued (the live popup derives picked-up from the same
+    // numbered keys).
+    /// Drain queued steers and search them with distinct stage rows.
+    async fn steer(
+        &self,
+        steer_rx: &mut mpsc::UnboundedReceiver<String>,
+        seq: &mut usize,
+        batch: &str,
+    ) -> Vec<String> {
+        let steers = drain_steers(steer_rx);
+        if steers.is_empty() {
+            return Vec::new();
+        }
+        let items: Vec<(String, String)> = steers.iter().map(|s| (s.clone(), s.clone())).collect();
+        for s in &steers {
+            *seq += 1;
+            self.stage(format!("steer #{seq}"), s.clone());
+        }
+        self.search(batch, &items).await
+    }
+
+    /// Critique a draft and report its coverage and contradiction verdict.
+    async fn critic(&self, draft: &str, second: bool) -> Result<Critique, String> {
+        let (label, working) = if second {
+            ("critic r2", "working — reviewing the revised draft")
+        } else {
+            ("critic", "working — checking coverage and contradictions")
+        };
+        self.stage(label, working);
+        let critique = parse_critique(
+            &self
+                .agent(critic_messages(self.topic, draft), label)
+                .await?,
+        );
+        let detail = match &critique {
+            Critique::Satisfied => if second {
+                "done — revised draft is complete"
+            } else {
+                "done — draft is sufficiently complete"
+            }
+            .to_string(),
+            // Surface the actual gap questions, not just a count — the
+            // follow-up searchers are about to investigate exactly these.
+            Critique::Gaps(gaps) => {
+                let list = gaps
+                    .iter()
+                    .enumerate()
+                    .map(|(i, g)| format!("{}. {g}", i + 1))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                // Same shape as round 1: the remaining gap questions, not a count.
+                if second {
+                    format!("done — {} gaps remain:\n{list}", gaps.len())
+                } else {
+                    format!("done — found {} coverage gaps:\n{list}", gaps.len())
+                }
+            }
+            Critique::Contradiction(_) => if second {
+                "done — contradiction remains"
+            } else {
+                "done — found a source contradiction"
+            }
+            .to_string(),
+        };
+        self.stage(label, detail);
+        Ok(critique)
+    }
+}
+
 /// Fan out one Searcher per question in parallel, sending a running
 /// `{done}/{total}` stage update as each finishes (in addition to each
 /// searcher's own live per-tool-call feed). Order of the returned findings
@@ -698,6 +823,16 @@ async fn run_research_inner(opts: &mut ResearchOptions) -> Result<String, String
         space_id: ids.1.clone(),
         backend: research_provider.backend_tag().name(),
     });
+    let run = Run {
+        provider: research_provider,
+        model: research_model,
+        toolbox,
+        usage: &usage,
+        tx,
+        ids,
+        db_path,
+        topic,
+    };
     // Gather the planning context (local chunks + a web landscape survey)
     // concurrently with the conversational survey — the user answers while
     // the ground truth arrives, so the plan targets real gaps. The two
@@ -777,7 +912,7 @@ async fn run_research_inner(opts: &mut ResearchOptions) -> Result<String, String
         )
         .await
         .map_err(|e| {
-            send_stage(tx, ids, "survey", format!("error — {e}"));
+            run.stage("survey", format!("error — {e}"));
             e
         })?
     } else {
@@ -797,24 +932,15 @@ async fn run_research_inner(opts: &mut ResearchOptions) -> Result<String, String
     let mut planning_context = known;
     if !web_survey.is_empty() && !web_survey.starts_with('[') {
         planning_context.push(format!("Preliminary web survey:\n{web_survey}"));
-        send_stage(
-            tx,
-            ids,
-            "web survey",
-            "done — landscape mapped for planning",
-        );
+        run.stage("web survey", "done — landscape mapped for planning");
     } else {
-        send_stage(
-            tx,
-            ids,
+        run.stage(
             "web survey",
             "error — survey failed; planning from local context only",
         );
     }
 
-    send_stage(
-        tx,
-        ids,
+    run.stage(
         "planner",
         "working — decomposing the surveyed landscape into focused questions",
     );
@@ -830,13 +956,11 @@ async fn run_research_inner(opts: &mut ResearchOptions) -> Result<String, String
     {
         Ok(questions) => questions,
         Err(e) => {
-            send_stage(tx, ids, "planner", format!("error — {e}"));
+            run.stage("planner", format!("error — {e}"));
             return Err(e);
         }
     };
-    send_stage(
-        tx,
-        ids,
+    run.stage(
         "planner",
         format!("done — proposed {} questions", questions.len()),
     );
@@ -881,163 +1005,38 @@ async fn run_research_inner(opts: &mut ResearchOptions) -> Result<String, String
         .iter()
         .map(|q| (q.prompt(topic), q.question.clone()))
         .collect();
-    findings.extend(
-        run_searchers(
-            SearcherBatch {
-                provider: research_provider,
-                model: research_model,
-                toolbox,
-                usage: &usage,
-                tx,
-                ids,
-                batch: "round 1",
-            },
-            &searcher_items,
-        )
-        .await,
-    );
-    persist_session_sources(db_path, &ids.0, &findings);
+    findings.extend(run.search("round 1", &searcher_items).await);
 
-    // One stage row per drained steer, keyed by a job-global sequence number
-    // (`steer #N` — N = the steer's 1-based queue position, which equals its
-    // drain order). The stage upsert matches rows by label, so the key must
-    // never be user text: duplicate, prefix-of-each-other, or LIKE-wildcard
-    // (`%`/`_`) steer text would collapse or hijack rows and leave picked-up
-    // steers looking queued (the live popup derives picked-up from the same
-    // numbered keys).
     let mut steer_seq: usize = 0;
-    let steers = drain_steers(steer_rx);
-    if !steers.is_empty() {
-        let steer_items: Vec<(String, String)> =
-            steers.iter().map(|s| (s.clone(), s.clone())).collect();
-        for s in &steers {
-            steer_seq += 1;
-            send_stage(tx, ids, format!("steer #{steer_seq}"), s.clone());
-        }
-        let steered = run_searchers(
-            SearcherBatch {
-                provider: research_provider,
-                model: research_model,
-                toolbox,
-                usage: &usage,
-                tx,
-                ids,
-                batch: "round 1 steer",
-            },
-            &steer_items,
-        )
-        .await;
-        persist_session_sources(db_path, &ids.0, &steered);
-        findings.extend(steered);
-    }
+    findings.extend(run.steer(steer_rx, &mut steer_seq, "round 1 steer").await);
 
-    send_stage(
-        tx,
-        ids,
+    run.stage(
         "synthesizer",
         format!("working — combining {} agent findings", findings.len()),
     );
     let mut synthesizer_history =
         synthesizer_messages(topic, &crate::tools::dedup_source_lines(&findings), &pinned);
-    let mut draft = complete_agent(
-        research_provider,
-        research_model,
-        synthesizer_history.clone(),
-        &usage,
-        tx,
-        ids,
-        "synthesizer",
-    )
-    .await?;
-    send_stage(tx, ids, "synthesizer", "done — draft assembled");
+    let mut draft = run
+        .agent(synthesizer_history.clone(), "synthesizer")
+        .await?;
+    run.stage("synthesizer", "done — draft assembled");
 
-    send_stage(
-        tx,
-        ids,
-        "critic",
-        "working — checking coverage and contradictions",
-    );
-    let mut critique = parse_critique(
-        &complete_agent(
-            research_provider,
-            research_model,
-            critic_messages(topic, &draft),
-            &usage,
-            tx,
-            ids,
-            "critic",
-        )
-        .await?,
-    );
-    let critic_detail = match &critique {
-        Critique::Satisfied => "done — draft is sufficiently complete".to_string(),
-        // Surface the actual gap questions, not just a count — the
-        // follow-up searchers are about to investigate exactly these.
-        Critique::Gaps(gaps) => {
-            let list = gaps
-                .iter()
-                .enumerate()
-                .map(|(i, g)| format!("{}. {g}", i + 1))
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!("done — found {} coverage gaps:\n{list}", gaps.len())
-        }
-        Critique::Contradiction(_) => "done — found a source contradiction".to_string(),
-    };
-    send_stage(tx, ids, "critic", critic_detail);
+    let mut critique = run.critic(&draft, false).await?;
 
     if let Critique::Gaps(gaps) = &critique {
-        let more = run_searchers(
-            SearcherBatch {
-                provider: research_provider,
-                model: research_model,
-                toolbox,
-                usage: &usage,
-                tx,
-                ids,
-                batch: "round 2",
-            },
-            &gaps
-                .iter()
-                .map(|g| (g.clone(), g.clone()))
-                .collect::<Vec<_>>(),
-        )
-        .await;
-        persist_session_sources(db_path, &ids.0, &more);
-        let mut follow_up_findings = more;
-
-        let steers = drain_steers(steer_rx);
-        if !steers.is_empty() {
-            let steer_items: Vec<(String, String)> =
-                steers.iter().map(|s| (s.clone(), s.clone())).collect();
-            for s in &steers {
-                steer_seq += 1;
-                send_stage(tx, ids, format!("steer #{steer_seq}"), s.clone());
-            }
-            let steered = run_searchers(
-                SearcherBatch {
-                    provider: research_provider,
-                    model: research_model,
-                    toolbox,
-                    usage: &usage,
-                    tx,
-                    ids,
-                    batch: "round 2 steer",
-                },
-                &steer_items,
+        let mut follow_up_findings = run
+            .search(
+                "round 2",
+                &gaps
+                    .iter()
+                    .map(|g| (g.clone(), g.clone()))
+                    .collect::<Vec<_>>(),
             )
             .await;
-            persist_session_sources(db_path, &ids.0, &steered);
-            follow_up_findings.extend(steered);
-        }
+        follow_up_findings.extend(run.steer(steer_rx, &mut steer_seq, "round 2 steer").await);
         findings.extend(follow_up_findings.clone());
 
-        send_stage(
-            tx,
-            ids,
-            "synthesizer r2",
-            "working — merging follow-up findings",
-        );
+        run.stage("synthesizer r2", "working — merging follow-up findings");
         // Continue the original synthesis conversation instead of
         // rebuilding one giant user message. The earlier request remains an
         // exact prefix and only the new findings are appended.
@@ -1049,77 +1048,30 @@ async fn run_research_inner(opts: &mut ResearchOptions) -> Result<String, String
                 crate::tools::dedup_source_lines(&follow_up_findings).join("\n\n")
             ),
         ));
-        draft = complete_agent(
-            research_provider,
-            research_model,
-            synthesizer_history.clone(),
-            &usage,
-            tx,
-            ids,
-            "synthesizer r2",
-        )
-        .await?;
-        send_stage(tx, ids, "synthesizer r2", "done — revised draft assembled");
-        send_stage(
-            tx,
-            ids,
-            "critic r2",
-            "working — reviewing the revised draft",
-        );
-        critique = parse_critique(
-            &complete_agent(
-                research_provider,
-                research_model,
-                critic_messages(topic, &draft),
-                &usage,
-                tx,
-                ids,
-                "critic r2",
-            )
-            .await?,
-        );
-        let detail = match &critique {
-            Critique::Satisfied => "done — revised draft is complete".to_string(),
-            // Same shape as round 1: the remaining gap questions, not a count.
-            Critique::Gaps(gaps) => {
-                let list = gaps
-                    .iter()
-                    .enumerate()
-                    .map(|(i, g)| format!("{}. {g}", i + 1))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                format!("done — {} gaps remain:\n{list}", gaps.len())
-            }
-            Critique::Contradiction(_) => "done — contradiction remains".to_string(),
-        };
-        send_stage(tx, ids, "critic r2", detail);
+        draft = run
+            .agent(synthesizer_history.clone(), "synthesizer r2")
+            .await?;
+        run.stage("synthesizer r2", "done — revised draft assembled");
+        critique = run.critic(&draft, true).await?;
     }
 
     if let Critique::Contradiction(desc) = &critique {
-        send_stage(
-            tx,
-            ids,
+        run.stage(
             "resolver",
             "working — reconciling conflicting source claims",
         );
-        let resolution = complete_agent(
-            research_provider,
-            research_model,
-            resolver_messages(topic, &draft, &findings, desc),
-            &usage,
-            tx,
-            ids,
-            "resolver",
-        )
-        .await?;
+        let resolution = run
+            .agent(
+                resolver_messages(topic, &draft, &findings, desc),
+                "resolver",
+            )
+            .await?;
         draft.push_str("\n\n");
         draft.push_str(&resolution);
-        send_stage(tx, ids, "resolver", "done — contradiction reconciled");
+        run.stage("resolver", "done — contradiction reconciled");
     }
 
-    send_stage(
-        tx,
-        ids,
+    run.stage(
         "verifier",
         "working — checking claims, citations, and direct quotes",
     );
@@ -1149,12 +1101,7 @@ async fn run_research_inner(opts: &mut ResearchOptions) -> Result<String, String
         verified_raw
     };
 
-    send_stage(
-        tx,
-        ids,
-        "writer",
-        "working — polishing structure and citations",
-    );
+    run.stage("writer", "working — polishing structure and citations");
     match complete_text(
         research_provider,
         research_model,
@@ -1165,11 +1112,11 @@ async fn run_research_inner(opts: &mut ResearchOptions) -> Result<String, String
     .await
     {
         Ok(report) => {
-            send_stage(tx, ids, "writer", "done — final report ready");
+            run.stage("writer", "done — final report ready");
             Ok(report)
         }
         Err(e) => {
-            send_stage(tx, ids, "writer", format!("error — {e}"));
+            run.stage("writer", format!("error — {e}"));
             Err(e)
         }
     }
