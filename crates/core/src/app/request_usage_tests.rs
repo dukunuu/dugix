@@ -191,11 +191,7 @@ fn sync_roundtrips_usage_metadata_and_convention_without_content() {
 #[tokio::test]
 async fn background_calls_log_their_kind_and_captured_session_except_incognito() {
     for incognito in [false, true] {
-        for kind in ["title", "compaction", "memory", "judge", "research:topic"] {
-            // Memory is off in incognito: `/memory tidy` makes no call there.
-            if kind == "memory" && incognito {
-                continue;
-            }
+        for kind in ["title", "compaction", "judge", "research:topic"] {
             let mut fixture = Fixture::new();
             let app = &mut fixture.app;
             let session = app.session.as_ref().unwrap().id.clone();
@@ -224,21 +220,6 @@ async fn background_calls_log_their_kind_and_captured_session_except_incognito()
                     let result = tokio::time::timeout(
                         Duration::from_secs(5),
                         app.compact_rx.as_mut().unwrap().recv(),
-                    )
-                    .await
-                    .unwrap();
-                    assert!(result.is_some());
-                }
-                "memory" => {
-                    let space = app.active_space.id.clone();
-                    for text in ["uses vim", "editor is vim"] {
-                        crate::memory::add(app.db.conn(), &space, "Tools", text, None, None)
-                            .unwrap();
-                    }
-                    app.memory_tidy();
-                    let result = tokio::time::timeout(
-                        Duration::from_secs(5),
-                        app.memory_rx.as_mut().unwrap().recv(),
                     )
                     .await
                     .unwrap();

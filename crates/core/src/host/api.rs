@@ -2294,7 +2294,6 @@ fn apply_domain_event(app: &mut App, event: AppEvent) {
         }
         AppEvent::Models(result) => app.on_models_result(result),
         AppEvent::Title(result) => app.on_title_result(result),
-        AppEvent::Memory(result) => app.on_memory_result(result),
         AppEvent::Compact(result) => app.on_compact_result(result),
         AppEvent::SkillInstall(result) => app.on_skill_install_result(result),
         AppEvent::Ocr(result) => app.on_ocr_done(result),
@@ -2320,7 +2319,6 @@ fn clear_closed_source(app: &mut App, event: &AppEvent) {
     match event {
         AppEvent::Models(None) => app.models_rx = None,
         AppEvent::Title(None) => app.title_rx = None,
-        AppEvent::Memory(None) => app.memory_rx = None,
         AppEvent::Compact(None) => app.compact_rx = None,
         AppEvent::SkillInstall(None) => app.skills_rx = None,
         AppEvent::Ocr(None) => app.ocr_rx = None,

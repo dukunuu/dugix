@@ -10,15 +10,10 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
-use tokio::sync::mpsc;
 
 use super::App;
 use crate::db::Message;
-use crate::memory::{self, book, recall, tidy};
-use crate::provider::{ChatMessage, ChatParams};
-
-/// A finished `/memory tidy` review, or why it could not run.
-pub type MemoryTidyResult = std::result::Result<tidy::Plan, String>;
+use crate::memory::{self, book, recall};
 
 /// A transcript row the app writes itself (no model, tokens or cost).
 pub(super) fn note(role: &str, content: String) -> Message {
@@ -232,179 +227,12 @@ impl App {
         Ok(summary)
     }
 
-    /// `/memory tidy`: review every changed chapter with the helper model,
-    /// then the chapter titles. The plan arrives as `AppEvent::Memory` and
-    /// changes nothing until `/memory apply`.
-    pub fn memory_tidy(&mut self) {
+    /// `/memory tidy`: ask the session model to tidy memory in the conversation.
+    pub fn memory_tidy(&mut self) -> Result<()> {
         if self.incognito {
             self.push_status("memory is off in incognito");
-            return;
-        }
-        if self.memory_rx.is_some() {
-            self.push_status("memory tidy is already running");
-            return;
-        }
-        let Some((provider, model)) = self.helper_backend() else {
-            self.push_status("memory tidy needs a signed-in backend · /login");
-            return;
-        };
-        let conn = self.db.conn();
-        let space = self.active_space.id.clone();
-        let (Ok(chapters), Ok(facts)) =
-            (memory::chapters(conn, &space), memory::facts(conn, &space))
-        else {
-            self.push_status("memory could not be read");
-            return;
-        };
-        let changed: Vec<memory::Chapter> = tidy::changed(&chapters, &facts)
-            .into_iter()
-            .cloned()
-            .collect();
-        if changed.is_empty() && chapters.len() < 2 {
-            self.push_status("memory is tidy · nothing changed since the last review");
-            return;
-        }
-        let provider = provider.usage_kind("memory");
-        let (tx, rx) = mpsc::unbounded_channel();
-        self.memory_rx = Some(rx);
-        self.push_status(format!(
-            "tidying memory · {} chapter{} to review",
-            changed.len(),
-            if changed.len() == 1 { "" } else { "s" }
-        ));
-        tokio::spawn(async move {
-            let ask = |prompt: String| {
-                let provider = provider.clone();
-                let model = model.clone();
-                async move {
-                    provider
-                        .complete_with_params(
-                            &model,
-                            vec![ChatMessage::text("user", prompt)],
-                            &ChatParams::default(),
-                        )
-                        .await
-                        .map(|completion| completion.text)
-                }
-            };
-            let reviews = futures_util::future::join_all(
-                changed
-                    .iter()
-                    .map(|chapter| ask(tidy::chapter_prompt(chapter, &facts))),
-            )
-            .await;
-            let mut plan = tidy::Plan {
-                space_id: space,
-                ..tidy::Plan::default()
-            };
-            for (chapter, review) in changed.iter().zip(reviews) {
-                match review {
-                    Ok(reply) => plan
-                        .chapters
-                        .push(tidy::parse_chapter(&reply, chapter, &facts)),
-                    Err(error) => {
-                        let _ = tx.send(Err(format!("memory tidy failed: {error}")));
-                        return;
-                    }
-                }
-            }
-            if chapters.len() >= 2 {
-                match ask(tidy::book_prompt(&chapters, &facts)).await {
-                    Ok(reply) => plan.book = tidy::parse_book(&reply, &chapters),
-                    Err(error) => {
-                        let _ = tx.send(Err(format!("memory tidy failed: {error}")));
-                        return;
-                    }
-                }
-            }
-            let _ = tx.send(Ok(plan));
-        });
-    }
-
-    /// A tidy review landed: show its preview in the open session (one is
-    /// started when none is open) and hold the plan for `/memory apply`.
-    pub fn on_memory_result(&mut self, result: Option<MemoryTidyResult>) {
-        self.memory_rx = None;
-        let plan = match result {
-            Some(Ok(plan)) => plan,
-            Some(Err(error)) => {
-                self.push_status(error);
-                return;
-            }
-            None => return,
-        };
-        if plan.space_id != self.active_space.id {
-            self.push_status("memory tidy discarded · the space changed");
-            return;
-        }
-        if plan.is_empty() {
-            self.push_status("memory is tidy · nothing to change");
-            return;
-        }
-        let facts = memory::facts(self.db.conn(), &plan.space_id).unwrap_or_default();
-        let preview = tidy::preview(&plan, &facts);
-        let model = self.current_model.clone().unwrap_or_default();
-        let shown = self
-            .ensure_session("memory tidy", model)
-            .and_then(|session| self.push_note(&session, "memory_tidy", preview));
-        if let Err(error) = shown {
-            self.push_status(format!("memory tidy preview failed: {error}"));
-            return;
-        }
-        self.memory_plan = Some(plan);
-        self.push_history_invalidated();
-        self.push_status("review the memory changes · /memory apply · /memory discard");
-    }
-
-    /// `/memory apply`: save an undo point, then apply the pending plan.
-    pub fn memory_apply(&mut self) -> Result<()> {
-        let Some(plan) = self.memory_plan.take() else {
-            self.push_status("no memory changes to apply · run /memory tidy first");
-            return Ok(());
-        };
-        if plan.space_id != self.active_space.id {
-            self.push_status("memory changes discarded · the space changed");
             return Ok(());
         }
-        let snapshot = memory::snapshot(self.db.conn(), &plan.space_id)?;
-        self.space.ensure_space_dir(&self.active_space.name)?;
-        std::fs::write(self.memory_undo_path(), serde_json::to_vec(&snapshot)?)?;
-        let applied = tidy::apply(self.db.conn(), &plan)?;
-        self.refresh_memory_snapshot();
-        self.refresh_toolbox();
-        self.push_status(applied.to_string());
-        Ok(())
-    }
-
-    /// `/memory discard`: drop the pending plan.
-    pub fn memory_discard(&mut self) {
-        let message = if self.memory_plan.take().is_some() {
-            "memory changes discarded"
-        } else {
-            "no memory changes pending"
-        };
-        self.push_status(message);
-    }
-
-    /// `/memory undo`: restore memory to just before the last applied tidy.
-    pub fn memory_undo(&mut self) -> Result<()> {
-        let path = self.memory_undo_path();
-        let Ok(bytes) = std::fs::read(&path) else {
-            self.push_status("nothing to undo · no tidy applied in this space");
-            return Ok(());
-        };
-        let snapshot: memory::Snapshot = serde_json::from_slice(&bytes)?;
-        memory::restore(self.db.conn(), &snapshot)?;
-        std::fs::remove_file(&path)?;
-        self.refresh_memory_snapshot();
-        self.refresh_toolbox();
-        self.push_status("memory restored to before the last tidy");
-        Ok(())
-    }
-
-    fn memory_undo_path(&self) -> PathBuf {
-        self.space
-            .space_dir(&self.active_space.name)
-            .join("memory-undo.json")
+        self.send_message(crate::prompts::render(crate::prompts::MEMORY_TIDY, &[]))
     }
 }

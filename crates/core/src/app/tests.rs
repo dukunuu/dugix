@@ -3340,57 +3340,58 @@ fn memory_hints_replay_as_a_stable_user_prefix() {
     assert!(a.memory_hint(question).is_none());
 }
 
-#[test]
-fn tidy_preview_applies_and_undoes() {
+#[tokio::test]
+async fn memory_tidy_sends_the_request_as_a_chat_turn() {
     let mut a = app_with_key();
     a.current_model = Some("a/one".into());
-    let space = a.active_space.id.clone();
-    let vim = crate::memory::add(a.db.conn(), &space, "Tools", "uses vim", None, None)
-        .unwrap()
-        .fact;
-    crate::memory::add(a.db.conn(), &space, "Tools", "uses a mac", None, None).unwrap();
-    let plan = crate::memory::tidy::Plan {
-        space_id: space.clone(),
-        chapters: vec![crate::memory::tidy::ChapterPlan {
-            chapter_id: vim.chapter_id.clone(),
-            title: "Tools".into(),
-            description: Some("editor and machine".into()),
-            ops: vec![crate::memory::tidy::FactOp::Delete {
-                id: vim.id.clone(),
-                why: "stale".into(),
-            }],
-        }],
-        book: Vec::new(),
-    };
-    a.on_memory_result(Some(Ok(plan)));
-    let preview = a.messages.last().unwrap();
-    assert_eq!(preview.role, "memory_tidy");
-    assert!(preview.content.contains("- uses vim  (stale)"));
-    // The preview never reaches the model.
-    assert!(
-        a.build_history()
-            .iter()
-            .all(|m| !m.content.contains("uses vim  (stale)"))
-    );
-    assert_eq!(crate::memory::facts(a.db.conn(), &space).unwrap().len(), 2);
-
     a.execute(AppCommand::Memory {
-        action: MemoryAction::Apply,
+        action: MemoryAction::Tidy,
     })
     .unwrap();
-    let texts: Vec<String> = crate::memory::facts(a.db.conn(), &space)
-        .unwrap()
-        .into_iter()
-        .map(|f| f.text)
-        .collect();
-    assert_eq!(texts, ["uses a mac"]);
-    assert!(a.memory_plan.is_none());
+    let request = crate::prompts::render(crate::prompts::MEMORY_TIDY, &[]);
+    let user = a.messages.iter().find(|m| m.role == "user").unwrap();
+    assert_eq!(user.content, request);
+    let persisted = a.db.load_messages(&a.session.as_ref().unwrap().id).unwrap();
+    assert_eq!(persisted.len(), 1);
+    assert_eq!(persisted[0].role, "user");
+    assert_eq!(persisted[0].content, request);
+}
 
+#[test]
+fn memory_tidy_is_off_in_incognito() {
+    let mut a = app_with_key();
+    a.current_model = Some("a/one".into());
+    a.execute(AppCommand::Incognito { on: true }).unwrap();
     a.execute(AppCommand::Memory {
-        action: MemoryAction::Undo,
+        action: MemoryAction::Tidy,
     })
     .unwrap();
-    assert_eq!(crate::memory::facts(a.db.conn(), &space).unwrap().len(), 2);
+    assert!(a.messages.is_empty());
+    assert!(a.session.is_none());
+    assert_eq!(a.last_status(), "memory is off in incognito");
+}
+
+#[test]
+fn memory_parser_accepts_edit_and_tidy_only() {
+    let a = app_with_key();
+    for (command, action) in [
+        ("memory", MemoryAction::Edit),
+        ("memory edit", MemoryAction::Edit),
+        ("memory tidy", MemoryAction::Tidy),
+    ] {
+        assert_eq!(a.parse_command(command), Ok(AppCommand::Memory { action }));
+    }
+    for command in [
+        "memory apply",
+        "memory discard",
+        "memory undo",
+        "memory invalid",
+    ] {
+        assert_eq!(
+            a.parse_command(command),
+            Err("usage: /memory [edit|tidy]".to_string())
+        );
+    }
 }
 
 #[test]

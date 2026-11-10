@@ -188,7 +188,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "memory",
-        desc: "what nexus remembers — /memory [edit|tidy|apply|discard|undo]",
+        desc: "what nexus remembers — /memory [edit|tidy]",
         aliases: &["remember"],
     },
     Command {
@@ -338,14 +338,8 @@ pub fn command_score(c: &Command, needle: &str) -> Option<i32> {
 pub enum MemoryAction {
     /// Open the book in `$EDITOR` (terminal UI only).
     Edit,
-    /// Review changed chapters with the helper model; preview only.
+    /// Ask the session model to tidy memory in the conversation.
     Tidy,
-    /// Apply the reviewed plan.
-    Apply,
-    /// Drop the reviewed plan.
-    Discard,
-    /// Restore memory to before the last applied tidy.
-    Undo,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -464,7 +458,7 @@ pub enum AppCommand {
     RunResearch { topic: String, gated: bool },
     /// `/export` — print the latest report + sources.
     Export,
-    /// `/memory [edit|tidy|apply|discard|undo]`.
+    /// `/memory [edit|tidy]`.
     Memory { action: MemoryAction },
     /// `/auto` — toggle automatic approval while in an agent mode.
     ToggleAuto,
@@ -627,16 +621,7 @@ impl App {
                 "tidy" => Ok(AppCommand::Memory {
                     action: MemoryAction::Tidy,
                 }),
-                "apply" => Ok(AppCommand::Memory {
-                    action: MemoryAction::Apply,
-                }),
-                "discard" => Ok(AppCommand::Memory {
-                    action: MemoryAction::Discard,
-                }),
-                "undo" => Ok(AppCommand::Memory {
-                    action: MemoryAction::Undo,
-                }),
-                _ => Err("usage: /memory [edit|tidy|apply|discard|undo]".to_string()),
+                _ => Err("usage: /memory [edit|tidy]".to_string()),
             },
             "agent" => {
                 let root = rest(cmd, token);
@@ -830,10 +815,7 @@ impl App {
                 MemoryAction::Edit => self.push_status(
                     "edit memory in the terminal UI with /memory, or run nexus memory --edit",
                 ),
-                MemoryAction::Tidy => self.memory_tidy(),
-                MemoryAction::Apply => self.memory_apply()?,
-                MemoryAction::Discard => self.memory_discard(),
-                MemoryAction::Undo => self.memory_undo()?,
+                MemoryAction::Tidy => self.memory_tidy()?,
             },
             AppCommand::Export => {
                 self.export_report()?;

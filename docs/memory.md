@@ -26,7 +26,7 @@ when they matter.
 | Table of contents | Generated at session start: pinned chapters in full, other chapters as `title (count) — description`, docs as title + headings | Cached prefix |
 | `memory` tool | `read` / `add` / `update` / `delete` / `chapter`; the chat model files each fact under a chapter | One tool round on cached context |
 | Hints | Before a message is sent, a keyword match against chapters and docs; up to 3 names are attached to the message ("possibly relevant: …") | ~10–30 tokens, persisted |
-| Tidy | `/memory tidy`: one helper call per changed chapter + one over chapter titles; preview, then `/memory apply` or `/memory discard`; `/memory undo` restores | Only when asked |
+| Tidy | `/memory tidy` asks the chat model to review and clean the memory with its own tool, in the conversation | Only when asked |
 | Editing | `/memory edit` (TUI: Ctrl+K in the space picker), `nexus memory --edit`, host document: the book as Markdown, saved back as a diff | — |
 
 ### Store
@@ -38,8 +38,8 @@ memories(id, space_id, chapter_id, text, created_at, updated_at, deleted_at)
 ```
 
 Both are durable and registered in `sync.rs` as `updated_at` LWW tables. A
-delete sets `deleted_at` (and bumps `updated_at`), so it syncs like any edit
-and tidy can be undone. The legacy `spaces/<name>/memory.md` is imported once
+delete sets `deleted_at` (and bumps `updated_at`), so it syncs like any edit.
+The legacy `spaces/<name>/memory.md` is imported once
 into a pinned "About you" chapter and renamed to `memory.md.imported`.
 
 ### Table of contents (system prompt)
@@ -60,12 +60,8 @@ as a prefix of that user message, so later requests stay byte-identical.
 
 ### Tidy
 
-Per changed chapter (`max(updated_at) > tidied_at`), the helper model gets the
-facts with short ids and returns a new description plus `delete` / `update` /
-`merge` / `conflict` ops. One more call sees only chapter titles, counts and
-descriptions and returns `merge` / `rename` ops. Conflicts are shown, never
-resolved automatically. Before applying, every memory row of the space is
-saved to `spaces/<name>/memory-undo.json`; `/memory undo` restores them.
+`/memory tidy` asks the chat model to review and clean the memory with its own
+tool, in the conversation.
 
 ## Not doing
 

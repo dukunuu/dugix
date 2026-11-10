@@ -35,10 +35,8 @@ pub const OCR: &str = include_str!("../assets/prompts/ocr.md");
 pub const COMPACTION: &str = include_str!("../assets/prompts/compaction.md");
 /// Experimental item-preserving conversation compaction instructions.
 pub const COMPACTION_ITEMIZED: &str = include_str!("../assets/prompts/compaction-itemized.md");
-/// `/memory tidy`: review one chapter's facts.
+/// `/memory tidy`: the request sent to the session model.
 pub const MEMORY_TIDY: &str = include_str!("../assets/prompts/memory-tidy.md");
-/// `/memory tidy`: merge or rename chapters by title.
-pub const MEMORY_BOOK: &str = include_str!("../assets/prompts/memory-book.md");
 /// Session title and slug instructions.
 pub const TITLE: &str = include_str!("../assets/prompts/title.md");
 /// Swarm persona system instructions.
@@ -99,8 +97,7 @@ mod tests {
         (RESEARCH_TOPIC_FROM_CHAT, &["conversation"]),
         (OCR, &[]),
         (COMPACTION, &[]),
-        (MEMORY_TIDY, &["title", "description", "facts"]),
-        (MEMORY_BOOK, &["chapters"]),
+        (MEMORY_TIDY, &[]),
         (TITLE, &["conversation"]),
         (SWARM_PERSONA, &["name", "blurb"]),
         (SWARM_REPLY_TURN, &["transcript", "round", "name"]),

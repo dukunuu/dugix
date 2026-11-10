@@ -266,7 +266,6 @@ async fn run_loop(
                         }
                     }
                     AppEvent::Title(t) => app.on_title_result(t),
-                    AppEvent::Memory(m) => app.on_memory_result(m),
                     AppEvent::Compact(c) => app.on_compact_result(c),
                     AppEvent::SkillInstall(r) => app.on_skill_install_result(r),
                     AppEvent::Ocr(r) => app.on_ocr_done(r),

@@ -230,35 +230,6 @@ pub(super) fn push_recall(
     out.push(style::event_head(glyph::DIGEST, dim, label, dim));
 }
 
-/// A `/memory tidy` preview: what would change, and how to apply it.
-pub(super) fn push_memory_tidy(
-    out: &mut Vec<Line<'static>>,
-    content: &str,
-    width: usize,
-    theme: &crate::theme::Theme,
-) {
-    let agent = Style::default().fg(theme.accent2);
-    let dim = Style::default().fg(theme.fg_dim);
-    let mut lines = content.lines();
-    let head = lines.next().unwrap_or("memory tidy").to_string();
-    out.push(style::event_head(
-        glyph::DIGEST,
-        agent,
-        head,
-        agent.add_modifier(Modifier::BOLD),
-    ));
-    for line in lines {
-        for wrapped in wrap_plain(line, width.saturating_sub(2)) {
-            out.push(style::event_body(&wrapped, dim));
-        }
-    }
-    out.push(style::event_body(
-        &format!("/memory apply{}/memory discard", style::SEP),
-        Style::default().fg(theme.accent),
-    ));
-    out.push(Line::from(""));
-}
-
 /// A user-invoked skill: show its name and scope, never its instruction body.
 pub(super) fn push_skill(
     out: &mut Vec<Line<'static>>,

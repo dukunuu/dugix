@@ -465,9 +465,9 @@ Chat search is available in chat and agent mode, never in research searcher tool
 - **Memory**: a book per space — chapters of short facts the model saves with
   its `memory` tool, behind a table of contents in every chat; pinned chapters
   are listed in full, and matching chapters and docs are named on the message
-  they relate to. `/memory` edits it in `$EDITOR`, `/memory tidy` previews a
-  cleanup (`/memory apply`, `/memory discard`, `/memory undo`). It lives in
-  `nexus.db` and syncs; see `docs/memory.md`
+  they relate to. `/memory` edits it in `$EDITOR`, `/memory tidy` asks the chat
+  model to review and clean the memory with its own tool, in the conversation.
+  It lives in `nexus.db` and syncs; see `docs/memory.md`
 - **Skills**: Agent Skills-compatible instruction packs (`SKILL.md`) with
   progressive disclosure, project/user/global discovery, bundled resources,
   sandboxed Python virtualenvs, and chat installation
@@ -643,7 +643,7 @@ Type `/` in the composer for autocomplete. Aliases in parentheses.
 | `/skills` | manage skills (app + project/user/global Agent Skills) |
 | `/usage` (`analytics`, `costs`) | token/cache/cost analytics by backend & model (←/→ for 24h/7d/30d/all windows) |
 | `/compact` (`summarize`) | summarize old messages into a digest |
-| `/memory` (`remember`) | edit this space's memory in `$EDITOR`; `tidy` previews a cleanup, then `apply`, `discard` or `undo` |
+| `/memory` (`remember`) | edit this space's memory in `$EDITOR`; `/memory tidy` asks the chat model to review and clean the memory with its own tool, in the conversation |
 | `/config` (`settings`, `stats`) | settings, footer toggles, sampling params, the helper model |
 | `/export` (`save-report`) | write the research report + sources to a file |
 | `/incognito` | toggle no-persistence mode |

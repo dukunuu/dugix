@@ -3,13 +3,12 @@
 //!
 //! Both tables live in the durable `nexus.db` and sync as last-writer-wins
 //! rows (`sync.rs`). A delete sets `deleted_at` and bumps `updated_at`, so it
-//! travels like any edit and a tidy can be undone. Functions take a plain
+//! travels like any edit. Functions take a plain
 //! connection so the TUI, the CLI, the host and per-call tool connections
 //! share one implementation.
 
 pub mod book;
 pub mod recall;
-pub mod tidy;
 
 use anyhow::{Result, bail, ensure};
 use chrono::Utc;
@@ -46,7 +45,7 @@ pub struct Chapter {
     pub description: String,
     /// Pinned chapters are listed in full in every prompt.
     pub pinned: bool,
-    /// When `/memory tidy` last reviewed this chapter.
+    /// Unused since `/memory tidy` became a chat turn; kept so sync with older peers still applies.
     pub tidied_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,

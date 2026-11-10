@@ -61,9 +61,6 @@ pub enum WireEvent {
     Models(Option<WireModelsResult>),
     /// A generated session topic: (session id, title, slug).
     Title(Option<(String, String, String)>),
-    /// A finished `/memory tidy` review: how many chapters it covered, or
-    /// why it failed. The plan itself stays in the app.
-    Memory(Option<Result<String, String>>),
     /// A compaction digest: (session id, digest, messages covered,
     /// pre-compaction %).
     Compact(Option<(String, String, i64, u64)>),
@@ -335,9 +332,6 @@ impl From<AppEvent> for WireEvent {
                 m.map(|r| r.map(|models| models.into_iter().map(WireModel::from).collect())),
             ),
             AppEvent::Title(t) => Self::Title(t),
-            AppEvent::Memory(m) => Self::Memory(m.map(|result| {
-                result.map(|plan| format!("{} chapters reviewed", plan.chapters.len()))
-            })),
             AppEvent::Compact(c) => Self::Compact(c),
             AppEvent::SkillInstall(s) => Self::SkillInstall(s),
             AppEvent::Ocr(o) => Self::Ocr(
@@ -648,7 +642,6 @@ mod tests {
             WireEvent::Models(Some(Err("no backend configured".into()))),
             WireEvent::Models(None),
             WireEvent::Title(Some(("s1".into(), "Hello".into(), "hello".into()))),
-            WireEvent::Memory(Some(Ok("2 chapters reviewed".into()))),
             WireEvent::Compact(Some(("s1".into(), "digest".into(), 12, 40))),
             WireEvent::SkillInstall(Some(Ok("python".into()))),
             WireEvent::SkillInstall(Some(Err("no model".into()))),
@@ -772,7 +765,6 @@ mod tests {
             AppEvent::Stream(None),
             AppEvent::Models(None),
             AppEvent::Title(None),
-            AppEvent::Memory(None),
             AppEvent::Compact(None),
             AppEvent::SkillInstall(None),
             AppEvent::Ocr(None),
@@ -902,15 +894,9 @@ mod tests {
         );
     }
 
-    /// Memory and `OCR` payloads map every op/update shape.
+    /// `OCR` payloads map every update shape.
     #[test]
-    fn from_app_event_maps_memory_and_ocr() {
-        let app = AppEvent::Memory(Some(Ok(crate::memory::tidy::Plan::default())));
-        assert_eq!(
-            WireEvent::from(app),
-            WireEvent::Memory(Some(Ok("0 chapters reviewed".into())))
-        );
-
+    fn from_app_event_maps_ocr() {
         let app = AppEvent::Ocr(Some((
             "f1".into(),
             "s1".into(),

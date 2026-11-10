@@ -78,7 +78,6 @@ pub use commands::{
     AppCommand, COMMANDS, Command, Match, MemoryAction, command_score, fuzzy_score,
 };
 pub use files::OcrUpdate;
-pub use memory::MemoryTidyResult;
 pub use research::{PlanQuestion, ResearchUpdate};
 pub use sessions::session_score;
 pub use snapshot::{
@@ -1012,9 +1011,6 @@ pub enum AppEvent {
     Models(Option<ModelsResult>),
     /// A generated session topic: (session id, title, slug).
     Title(Option<(String, String, String)>),
-    /// A finished `/memory tidy` review (the plan carries its space id, so a
-    /// meanwhile space switch discards it).
-    Memory(Option<memory::MemoryTidyResult>),
     /// A compaction digest: (session id, digest, messages covered, pre-compaction %).
     Compact(Option<(String, String, i64, u64)>),
     /// Result of `/skills` install: skill name on success, error message on failure.
@@ -1074,8 +1070,6 @@ pub struct App {
     pub(crate) memory_docs: Vec<crate::memory::book::DocEntry>,
     /// Chapters over the tidy threshold, for the status bar.
     pub(crate) memory_tidy_due: usize,
-    /// A `/memory tidy` plan waiting for `/memory apply` or `/memory discard`.
-    pub memory_plan: Option<crate::memory::tidy::Plan>,
     /// App-local prompt-cache epoch. Changes that alter the serialized prefix
     /// advance it so a provider gets a fresh cache lane.
     pub(crate) cache_epoch: u64,
@@ -1156,7 +1150,6 @@ pub struct App {
     /// Answer-length preference woven into the system prompt: "normal",
     /// "concise" (default), or "caveman".
     pub verbosity: String,
-    pub memory_rx: Option<mpsc::UnboundedReceiver<memory::MemoryTidyResult>>,
     /// Finished UI repairs share a channel so switching sessions cannot lose a result.
     ui_repair_tx: mpsc::UnboundedSender<chat::UiRepairResult>,
     ui_repair_rx: mpsc::UnboundedReceiver<chat::UiRepairResult>,
@@ -1522,7 +1515,6 @@ impl App {
             memory_snapshot: String::new(),
             memory_docs: Vec::new(),
             memory_tidy_due: 0,
-            memory_plan: None,
             cache_epoch: 0,
             context_warned: false,
             prompt_datetime: Utc::now().format("%Y-%m-%d %H:%M UTC, %A").to_string(),
@@ -1558,7 +1550,6 @@ impl App {
             user_command_context: None,
             user_command_epoch: 0,
             verbosity: "concise".to_string(),
-            memory_rx: None,
             ui_repair_tx,
             ui_repair_rx,
             ui_repair_messages: HashMap::new(),
@@ -2572,12 +2563,6 @@ impl App {
                     None => std::future::pending().await,
                 }
             } => AppEvent::Title(t),
-            m = async {
-                match self.memory_rx.as_mut() {
-                    Some(rx) => rx.recv().await,
-                    None => std::future::pending().await,
-                }
-            } => AppEvent::Memory(m),
             c = async {
                 match self.compact_rx.as_mut() {
                     Some(rx) => rx.recv().await,
