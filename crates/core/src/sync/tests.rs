@@ -1,0 +1,1302 @@
+use super::*;
+use crate::db::Db;
+use std::io::Write as _;
+
+/// A fresh device pair: in-memory dbs (with their attached in-memory
+/// caches) plus temp roots standing in for the spaces layout.
+struct Pair {
+    a: Db,
+    b: Db,
+    a_root: PathBuf,
+    b_root: PathBuf,
+    dir: PathBuf,
+}
+
+impl Pair {
+    fn new() -> Self {
+        let dir = std::env::temp_dir().join(format!("nexus-sync-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        Self {
+            a: Db::open_in_memory().unwrap(),
+            b: Db::open_in_memory().unwrap(),
+            a_root: dir.join("a"),
+            b_root: dir.join("b"),
+            dir,
+        }
+    }
+
+    fn space_a(&self) -> Space {
+        Space {
+            root: self.a_root.clone(),
+        }
+    }
+
+    fn space_b(&self) -> Space {
+        Space {
+            root: self.b_root.clone(),
+        }
+    }
+
+    /// One full A→B exchange: A exports (+ blobs into the channel), B
+    /// applies (pulling blobs), B replies with its own export + blobs
+    /// + ack, A applies.
+    fn exchange_ab(&self) -> (ApplySummary, ApplySummary) {
+        let a_space = self.space_a();
+        let b_space = self.space_b();
+        let cs = build_changeset(&self.a, None, "a").unwrap();
+        export_blobs(&self.a, &a_space, &cs, &self.dir).unwrap();
+        let (sa, cursors) = apply_changeset(&self.b, &b_space, &cs, Some(&self.dir)).unwrap();
+        let mut reply = build_changeset(&self.b, Some(&cs.device_id), "b").unwrap();
+        reply.ack = Some(cursors);
+        export_blobs(&self.b, &b_space, &reply, &self.dir).unwrap();
+        let (sb, _) = apply_changeset(&self.a, &a_space, &reply, Some(&self.dir)).unwrap();
+        (sa, sb)
+    }
+
+    /// The mirror image: B→A.
+    fn exchange_ba(&self) -> (ApplySummary, ApplySummary) {
+        let a_space = self.space_a();
+        let b_space = self.space_b();
+        let cs = build_changeset(&self.b, None, "b").unwrap();
+        export_blobs(&self.b, &b_space, &cs, &self.dir).unwrap();
+        let (sb, cursors) = apply_changeset(&self.a, &a_space, &cs, Some(&self.dir)).unwrap();
+        let mut reply = build_changeset(&self.a, Some(&cs.device_id), "a").unwrap();
+        reply.ack = Some(cursors);
+        export_blobs(&self.a, &a_space, &reply, &self.dir).unwrap();
+        let (sa, _) = apply_changeset(&self.b, &b_space, &reply, Some(&self.dir)).unwrap();
+        (sb, sa)
+    }
+
+    /// Both directions.
+    fn exchange(&self) -> (ApplySummary, ApplySummary) {
+        let (_, _) = self.exchange_ab();
+        self.exchange_ba()
+    }
+}
+
+impl Drop for Pair {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// Every syncable row on a device, as (table, pk, json) — the
+/// convergence oracle: two devices are converged iff their dumps are
+/// equal (tombstones included). The default space is excluded: its
+/// `updated_at` is NULL so it never exports, and its `created_at` is
+/// device-local (cosmetic).
+fn dump(db: &Db) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    for spec in TABLES {
+        if spec.cursor == Cursor::None {
+            continue;
+        }
+        let rows = select_rows(db, spec, None).unwrap();
+        for row in rows {
+            let pk = spec
+                .pk
+                .iter()
+                .map(|c| {
+                    row.get(*c)
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_string()
+                })
+                .collect::<Vec<_>>()
+                .join(":");
+            out.push((spec.name.to_string(), pk, row.to_string()));
+        }
+    }
+    let mut stmt = db
+        .conn()
+        .prepare("SELECT table_name, row_id, deleted_at FROM sync_tombstones ORDER BY row_id")
+        .unwrap();
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    for (t, rid, _) in rows {
+        out.push(("tombstone".to_string(), format!("{t}:{rid}"), String::new()));
+    }
+    out.sort();
+    out
+}
+
+fn space(db: &Db, name: &str) -> String {
+    db.list_spaces()
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name == name)
+        .unwrap()
+        .id
+}
+
+fn session(db: &Db, title: &str) -> String {
+    let sid = space(db, "default");
+    let s = db.create_session(title, "m", &sid, "chat").unwrap();
+    s.id
+}
+
+fn set_updated(db: &Db, table: &str, id: &str, at: &str) {
+    db.conn()
+        .execute(
+            &format!("UPDATE {table} SET updated_at = ?1 WHERE id = ?2"),
+            (at, id),
+        )
+        .unwrap();
+}
+
+fn session_updated(db: &Db, id: &str) -> String {
+    db.conn()
+        .query_row("SELECT updated_at FROM sessions WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
+        .unwrap()
+}
+
+fn minus_one_second(rfc3339: &str) -> String {
+    let dt = chrono::DateTime::parse_from_rfc3339(rfc3339).unwrap();
+    (dt - chrono::Duration::seconds(1)).to_rfc3339()
+}
+
+fn write_blob(space: &Space, space_name: &str, name: &str, bytes: &[u8]) {
+    let dir = space.files_dir(space_name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(name), bytes).unwrap();
+}
+
+fn add_session_sources(db: &Db, session_id: &str, url_norms: &[String]) {
+    crate::db::add_session_sources(db.conn(), session_id, url_norms).unwrap();
+}
+
+fn db_state(db: &Db) -> Vec<crate::db::SyncState> {
+    db.load_sync_state().unwrap()
+}
+
+// ── types / registry ──
+
+#[test]
+fn changeset_serde_roundtrip() {
+    let cs = Changeset {
+        device_id: "dev-1".to_string(),
+        device_name: "laptop".to_string(),
+        ack: Some(vec![PeerCursor {
+            peer_id: "dev-2".to_string(),
+            table_name: "sessions".to_string(),
+            cursor: "2026-01-01T00:00:00Z|id".to_string(),
+        }]),
+        rows: vec![RowChange {
+            table: "sessions".to_string(),
+            row: serde_json::json!({"id": "s1", "title": "t"}),
+        }],
+        tombstones: vec![Tombstone {
+            origin_id: 3,
+            table_name: "sessions".to_string(),
+            row_id: "s1".to_string(),
+            deleted_at: "2026-01-02T00:00:00Z".to_string(),
+        }],
+        files: vec![FileChange {
+            space_id: "sp".to_string(),
+            name: "f.txt".to_string(),
+            hash: "abc".to_string(),
+            size: 3,
+        }],
+        generated_at: "2026-01-03T00:00:00Z".to_string(),
+    };
+    let json = serde_json::to_string(&cs).unwrap();
+    let back: Changeset = serde_json::from_str(&json).unwrap();
+    assert_eq!(cs, back);
+}
+
+#[test]
+fn cursor_positions_compare_table_aware() {
+    // AUTOINCREMENT cursors are numeric: "10" > "9" as ids.
+    assert!(position_gt("citations", "10", "9"));
+    assert!(position_gt("sync_tombstones", "10", "9"));
+    // RFC3339 cursors compare lexically.
+    assert!(position_gt(
+        "sessions",
+        "2026-02-01T00:00:00Z",
+        "2026-01-01T00:00:00Z"
+    ));
+    assert!(!position_gt(
+        "sessions",
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:00:00Z"
+    ));
+}
+
+#[test]
+fn unsafe_components_are_rejected() {
+    assert!(valid_component("notes.txt"));
+    assert!(!valid_component(""));
+    assert!(!valid_component("."));
+    assert!(!valid_component(".."));
+    assert!(!valid_component("a/b"));
+    assert!(!valid_component("a\\b"));
+    assert!(!valid_component("a\0b"));
+}
+
+#[test]
+fn warned_rows_do_not_advance_their_table_cursor() {
+    let pair = Pair::new();
+    let changeset = Changeset {
+        device_id: "peer".to_string(),
+        device_name: "peer".to_string(),
+        ack: None,
+        rows: vec![RowChange {
+            table: "files".to_string(),
+            row: serde_json::json!({
+                "id": "file-1",
+                "space_id": "default",
+                "name": "../escape.txt",
+                "hash": "hash",
+                "size": 4,
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z"
+            }),
+        }],
+        tombstones: Vec::new(),
+        files: Vec::new(),
+        generated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+    let (summary, cursors) = apply_changeset(&pair.b, &pair.space_b(), &changeset, None).unwrap();
+    assert!(!summary.warnings.is_empty());
+    assert!(!cursors.iter().any(|cursor| cursor.table_name == "files"));
+}
+
+// ── export / cursor rules ──
+
+#[test]
+fn cold_start_full_export_covers_every_table() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let s = session(a, "hello");
+    a.add_user_message(&s, "hi").unwrap();
+    a.log_usage(
+        "openrouter",
+        "m",
+        1,
+        2,
+        0,
+        0,
+        Default::default(),
+        Some(0.1),
+        true,
+        Some(&s),
+        None,
+    )
+    .unwrap();
+    a.add_citations(&space(a, "default"), "r.md", &[("https://x".into(), None)])
+        .unwrap();
+    add_session_sources(a, &s, &["https://x".to_string()]);
+    a.create_watch(&space(a, "default"), "topic", 24, &s)
+        .unwrap();
+    a.set_reasoning("m", Some("high")).unwrap();
+    a.set_setting("theme", "dark").unwrap();
+    // A real space (with a version) — the default space has no
+    // `updated_at`, so it never exports; its id/name are deterministic
+    // on every device instead.
+    a.create_space("work").unwrap();
+    let persona = crate::db::Persona {
+        name: "p".to_string(),
+        model: "m".to_string(),
+        blurb: "b".to_string(),
+    };
+    a.save_swarm_personas(&s, &[persona]).unwrap();
+    a.upsert_file(&space(a, "default"), "f.txt", "deadbeef", 3, "ok")
+        .unwrap();
+
+    let cs = build_changeset(a, None, "a").unwrap();
+    let tables: HashSet<&str> = cs.rows.iter().map(|r| r.table.as_str()).collect();
+    for expected in [
+        "sessions",
+        "swarm_personas",
+        "model_prefs",
+        "spaces",
+        "files",
+        "watches",
+        "app_settings",
+        "session_sources",
+        "messages",
+        "usage_log",
+        "citations",
+    ] {
+        assert!(tables.contains(expected), "missing {expected}");
+    }
+    // The file manifest matches the exported file row.
+    assert_eq!(cs.files.len(), 1);
+    assert_eq!(cs.files[0].space_id, space(a, "default"));
+    assert_eq!(cs.files[0].name, "f.txt");
+    assert_eq!(cs.files[0].hash, "deadbeef");
+    assert_eq!(cs.files[0].size, 3);
+    // The persona rides attached to its session.
+    let personas: Vec<_> = cs
+        .rows
+        .iter()
+        .filter(|r| r.table == "swarm_personas")
+        .collect();
+    assert_eq!(personas.len(), 1);
+    assert_eq!(personas[0].row["session_id"], s);
+    assert_eq!(personas[0].row["name"], "p");
+    assert!(cs.ack.is_none());
+    // Nothing local-scope leaks out.
+    assert!(
+        !cs.rows
+            .iter()
+            .any(|r| r.table == "app_settings" && r.row["scope"] == "local")
+    );
+}
+
+#[test]
+fn export_resumes_past_acked_cursor_only() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let s1 = session(a, "one");
+    let cs1 = build_changeset(a, None, "a").unwrap();
+    assert!(!cs1.rows.is_empty());
+
+    // No ack yet: the same rows re-export (the idempotent backstop).
+    let cs_again = build_changeset(a, Some("peer-x"), "a").unwrap();
+    assert_eq!(cs_again.rows.len(), cs1.rows.len());
+
+    // A "peer-x" ack of the current position silences the resends.
+    let sess_pos = cs1
+        .rows
+        .iter()
+        .find(|r| r.table == "sessions" && r.row["id"] == s1)
+        .map(|r| row_position(spec_for("sessions").unwrap(), &r.row))
+        .unwrap();
+    a.set_sync_state("peer-x", "sessions", None, Some(&sess_pos))
+        .unwrap();
+    let cs2 = build_changeset(a, Some("peer-x"), "a").unwrap();
+    assert!(!cs2.rows.iter().any(|r| r.table == "sessions"));
+    // Newer rows still flow.
+    let _s2 = session(a, "two");
+    let cs3 = build_changeset(a, Some("peer-x"), "a").unwrap();
+    assert!(
+        cs3.rows
+            .iter()
+            .any(|r| r.table == "sessions" && r.row["title"] == "two")
+    );
+    let _ = s1;
+}
+
+#[test]
+fn updated_cursor_keeps_rows_sharing_a_timestamp() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let first = session(a, "first");
+    let second = session(a, "second");
+    let timestamp = "2026-02-01T00:00:00Z";
+    set_session_updated(a, &first, timestamp);
+    set_session_updated(a, &second, timestamp);
+
+    let full = build_changeset(a, None, "a").unwrap();
+    let sessions: Vec<&RowChange> = full
+        .rows
+        .iter()
+        .filter(|row| row.table == "sessions")
+        .collect();
+    assert!(sessions.iter().any(|row| row.row["id"] == first));
+    assert!(sessions.iter().any(|row| row.row["id"] == second));
+
+    // Ack only the first ordered row. A timestamp-only cursor would skip
+    // the second row; the composite cursor must resume at its primary key.
+    let first_row = sessions.first().expect("session export is non-empty");
+    let cursor = row_position(spec_for("sessions").unwrap(), &first_row.row);
+    a.set_sync_state("peer-x", "sessions", None, Some(&cursor))
+        .unwrap();
+    let resumed = build_changeset(a, Some("peer-x"), "a").unwrap();
+    let resumed_ids: Vec<&str> = resumed
+        .rows
+        .iter()
+        .filter(|row| row.table == "sessions")
+        .map(|row| row.row["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(resumed_ids.len(), 1);
+    assert_ne!(resumed_ids[0], first_row.row["id"].as_str().unwrap());
+}
+
+// ── LWW ──
+
+#[test]
+fn lww_newer_wins_older_loses() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let b = &pair.b;
+    let sa = session(a, "from a");
+    let sb = session(b, "from b");
+    // Same logical session on both devices — same id, so the merge is
+    // a same-row LWW; A's version is newer.
+    b.conn()
+        .execute("UPDATE sessions SET id = ?1 WHERE id = ?2", (&sa, &sb))
+        .unwrap();
+    set_session_updated(a, &sa, "2026-02-01T00:00:00Z");
+    set_session_updated(b, &sa, "2026-01-01T00:00:00Z");
+    pair.exchange_ab();
+    let title = |db: &Db| db.get_session(&sa).unwrap().unwrap().title.clone();
+    assert_eq!(title(a), "from a");
+    assert_eq!(title(b), "from a");
+    // The older row arriving later changes nothing.
+    let cs = build_changeset(b, None, "b").unwrap();
+    let _ = apply_changeset(&pair.b, &pair.space_b(), &cs, None).unwrap();
+    assert_eq!(title(a), "from a");
+}
+
+fn set_session_updated(db: &Db, id: &str, at: &str) {
+    set_updated(db, "sessions", id, at);
+}
+
+#[test]
+fn equal_timestamp_keeps_local_and_is_stable() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let b = &pair.b;
+    let sa = session(a, "a's title");
+    let sb = session(b, "b's title");
+    let sid = sa.clone();
+    b.conn()
+        .execute("UPDATE sessions SET id = ?1 WHERE id = ?2", (&sid, &sb))
+        .unwrap();
+    // Same row, same nanosecond, different content — the clock-skew
+    // residual. Both sides keep their own copy, and re-imports never
+    // flip-flop.
+    set_session_updated(a, &sid, "2026-01-01T00:00:00Z");
+    set_session_updated(b, &sid, "2026-01-01T00:00:00Z");
+    let title_a = a.get_session(&sid).unwrap().unwrap().title.clone();
+    let title_b = b.get_session(&sid).unwrap().unwrap().title.clone();
+    pair.exchange();
+    assert_eq!(a.get_session(&sid).unwrap().unwrap().title, title_a);
+    assert_eq!(b.get_session(&sid).unwrap().unwrap().title, title_b);
+    pair.exchange();
+    assert_eq!(a.get_session(&sid).unwrap().unwrap().title, title_a);
+    assert_eq!(b.get_session(&sid).unwrap().unwrap().title, title_b);
+}
+
+#[test]
+fn clock_skew_loser_converges() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let b = &pair.b;
+    let sa = session(a, "fast clock");
+    let sb = session(b, "slow clock");
+    let sid = sa.clone();
+    b.conn()
+        .execute("UPDATE sessions SET id = ?1 WHERE id = ?2", (&sid, &sb))
+        .unwrap();
+    // B's clock is behind: its version of the row is the loser.
+    set_session_updated(a, &sid, "2026-02-01T00:00:00Z");
+    set_session_updated(b, &sid, "2026-01-01T00:00:00Z");
+    pair.exchange();
+    assert_eq!(a.get_session(&sid).unwrap().unwrap().title, "fast clock");
+    assert_eq!(b.get_session(&sid).unwrap().unwrap().title, "fast clock");
+}
+
+#[test]
+fn scope_local_setting_never_syncs_or_applies() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    a.set_setting("searxng_url", "http://localhost:8888")
+        .unwrap();
+    a.set_setting("theme", "dark").unwrap();
+    let cs = build_changeset(a, None, "a").unwrap();
+    let keys: Vec<&str> = cs
+        .rows
+        .iter()
+        .filter(|r| r.table == "app_settings")
+        .map(|r| r.row["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(keys, vec!["theme"]);
+    // A smuggled local-scope row is refused on apply.
+    let mut evil = cs.clone();
+    evil.rows.push(RowChange {
+        table: "app_settings".to_string(),
+        row: serde_json::json!({
+            "key": "searxng_url", "value": "http://evil", "scope": "local",
+            "updated_at": "2099-01-01T00:00:00Z",
+        }),
+    });
+    let (summary, _) = apply_changeset(&pair.b, &pair.space_b(), &evil, None).unwrap();
+    assert!(summary.rows_skipped >= 1);
+    let settings = pair.b.load_settings().unwrap();
+    assert!(!settings.iter().any(|(k, _)| k == "searxng_url"));
+}
+
+// ── append-only union + dedupe ──
+
+#[test]
+fn messages_union_dedupes_by_id() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let b = &pair.b;
+    let sa = session(a, "shared");
+    // B gets the same session via sync.
+    let cs = build_changeset(a, None, "a").unwrap();
+    let _ = apply_changeset(b, &pair.space_b(), &cs, None).unwrap();
+    a.add_user_message(&sa, "from a").unwrap();
+    let sb = b.get_session(&sa).unwrap().unwrap().id;
+    b.add_user_message(&sb, "from b").unwrap();
+    pair.exchange();
+    let count = |db: &Db| db.load_messages(&sa).unwrap().len();
+    assert_eq!(count(a), 2);
+    assert_eq!(count(b), 2);
+    // Re-exchange: nothing new moves.
+    let (sa2, _) = pair.exchange_ab();
+    assert_eq!(count(a), 2);
+    assert_eq!(count(b), 2);
+    assert_eq!(sa2.rows_applied, 0);
+}
+
+#[test]
+fn usage_and_citations_dedupe_by_sync_id() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let b = &pair.b;
+    let s = session(a, "shared");
+    a.log_usage(
+        "openrouter",
+        "m",
+        1,
+        2,
+        0,
+        0,
+        Default::default(),
+        None,
+        false,
+        Some(&s),
+        None,
+    )
+    .unwrap();
+    let cs = build_changeset(a, None, "a").unwrap();
+    let _ = apply_changeset(b, &pair.space_b(), &cs, None).unwrap();
+    b.log_usage(
+        "openrouter",
+        "m",
+        3,
+        4,
+        0,
+        0,
+        Default::default(),
+        None,
+        false,
+        Some(&s),
+        None,
+    )
+    .unwrap();
+    a.add_citations(&space(a, "default"), "r.md", &[("https://a".into(), None)])
+        .unwrap();
+    let cs2 = build_changeset(a, None, "a").unwrap();
+    let _ = apply_changeset(b, &pair.space_b(), &cs2, None).unwrap();
+    b.add_citations(&space(b, "default"), "r2.md", &[("https://b".into(), None)])
+        .unwrap();
+    pair.exchange();
+    let usage = |db: &Db| {
+        db.conn()
+            .query_row("SELECT COUNT(*) FROM usage_log", [], |r| r.get::<_, i64>(0))
+            .unwrap()
+    };
+    let cites = |db: &Db| {
+        db.conn()
+            .query_row("SELECT COUNT(*) FROM citations", [], |r| r.get::<_, i64>(0))
+            .unwrap()
+    };
+    assert_eq!(usage(a), 2);
+    assert_eq!(usage(b), 2);
+    assert_eq!(cites(a), 2);
+    assert_eq!(cites(b), 2);
+    // sync_ids are unique on both sides.
+    for db in [a, b] {
+        let dupes: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM (SELECT sync_id FROM usage_log UNION ALL \
+                 SELECT sync_id FROM citations) GROUP BY sync_id HAVING COUNT(*) > 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        assert_eq!(dupes, 0);
+    }
+}
+
+// ── convergence ──
+
+#[test]
+fn two_way_convergence_and_then_silence() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let b = &pair.b;
+    // Independent work on both devices.
+    let sa = session(a, "a's chat");
+    a.add_user_message(&sa, "from a").unwrap();
+    a.set_setting("theme", "dark").unwrap();
+    a.set_reasoning("m1", Some("high")).unwrap();
+    a.log_usage(
+        "openrouter",
+        "m1",
+        1,
+        2,
+        0,
+        0,
+        Default::default(),
+        None,
+        false,
+        Some(&sa),
+        None,
+    )
+    .unwrap();
+    let sb = session(b, "b's chat");
+    b.add_user_message(&sb, "from b").unwrap();
+    b.add_user_message(&sb, "and another").unwrap();
+    b.create_watch(&space(b, "default"), "topic", 24, &sb)
+        .unwrap();
+
+    pair.exchange();
+    assert_eq!(dump(a), dump(b), "devices must converge");
+
+    // A second round with no new work moves nothing.
+    let (sa2, sb2) = pair.exchange_ab();
+    assert_eq!(sa2.rows_applied, 0);
+    assert_eq!(sb2.rows_applied, 0);
+    assert_eq!(dump(a), dump(b));
+}
+
+#[test]
+fn idempotent_reimport_is_a_noop() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let b = &pair.b;
+    let s = session(a, "hello");
+    a.add_user_message(&s, "hi").unwrap();
+    a.log_usage(
+        "openrouter",
+        "m",
+        1,
+        2,
+        0,
+        0,
+        Default::default(),
+        None,
+        false,
+        Some(&s),
+        None,
+    )
+    .unwrap();
+    let cs = build_changeset(a, None, "a").unwrap();
+    let (first, _) = apply_changeset(b, &pair.space_b(), &cs, None).unwrap();
+    assert!(first.rows_applied > 0);
+    let (again, _) = apply_changeset(b, &pair.space_b(), &cs, None).unwrap();
+    assert_eq!(again.rows_applied, 0);
+    assert_eq!(again.tombstones_applied, 0);
+    assert!(again.warnings.is_empty());
+}
+
+#[test]
+fn session_sources_lww_flag_propagates() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let b = &pair.b;
+    let s = session(a, "s");
+    add_session_sources(a, &s, &["https://x".to_string()]);
+    let cs = build_changeset(a, None, "a").unwrap();
+    let _ = apply_changeset(b, &pair.space_b(), &cs, None).unwrap();
+    a.set_source_flag(&s, "https://x", Some("pinned")).unwrap();
+    pair.exchange_ab();
+    let flags: Vec<(String, String)> = b
+        .conn()
+        .prepare("SELECT session_id, flag FROM session_sources")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(flags, vec![(s, "pinned".to_string())]);
+}
+
+// ── tombstones ──
+
+#[test]
+fn session_tombstone_cascades_messages_and_sources() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let b = &pair.b;
+    let s = session(a, "doomed");
+    a.add_user_message(&s, "one").unwrap();
+    add_session_sources(a, &s, &["https://x".to_string()]);
+    pair.exchange_ab();
+    assert_eq!(dump(a), dump(b));
+    a.delete_session(&s).unwrap();
+    pair.exchange_ab();
+    assert_eq!(dump(a), dump(b));
+    let sessions = b.list_sessions(&space(b, "default")).unwrap();
+    assert!(sessions.iter().all(|s| s.title != "doomed"));
+    let messages: i64 = b
+        .conn()
+        .query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(messages, 0);
+    let sources: i64 = b
+        .conn()
+        .query_row("SELECT COUNT(*) FROM session_sources", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(sources, 0);
+}
+
+#[test]
+fn space_tombstone_removes_row_and_dir() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let b = &pair.b;
+    let sp = a.create_space("work").unwrap();
+    pair.space_a().ensure_space_dir("work").unwrap();
+    pair.space_b().ensure_space_dir("work").unwrap();
+    write_blob(&pair.space_b(), "work", "f.txt", b"content");
+    pair.exchange_ab();
+    assert!(pair.space_b().files_dir("work").join("f.txt").exists());
+    a.delete_space(&sp.id).unwrap();
+    pair.space_a().remove_space_dir("work").unwrap();
+    pair.exchange_ab();
+    assert!(b.list_spaces().unwrap().iter().all(|s| s.name != "work"));
+    assert!(!pair.space_b().space_dir("work").exists());
+}
+
+#[test]
+fn file_tombstone_removes_row_and_blob() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let b = &pair.b;
+    let sid = space(a, "default");
+    write_blob(&pair.space_a(), "default", "f.txt", b"content");
+    let hash = sha256_hex(b"content");
+    let fid = a.upsert_file(&sid, "f.txt", &hash, 7, "ok").unwrap();
+    pair.exchange_ab();
+    assert!(pair.space_b().files_dir("default").join("f.txt").exists());
+    a.delete_file(&fid).unwrap();
+    std::fs::remove_file(pair.space_a().files_dir("default").join("f.txt")).unwrap();
+    pair.exchange_ab();
+    assert_eq!(dump(a), dump(b));
+    let files = b.list_files(&sid).unwrap();
+    assert!(files.is_empty());
+    assert!(!pair.space_b().files_dir("default").join("f.txt").exists());
+}
+
+#[test]
+fn default_space_tombstone_is_ignored() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let mut evil = build_changeset(a, None, "a").unwrap();
+    evil.tombstones = vec![Tombstone {
+        origin_id: 1,
+        table_name: "spaces".to_string(),
+        row_id: DEFAULT_SPACE.to_string(),
+        deleted_at: "2026-01-01T00:00:00Z".to_string(),
+    }];
+    let (summary, _) = apply_changeset(&pair.b, &pair.space_b(), &evil, None).unwrap();
+    assert_eq!(summary.tombstones_applied, 0);
+    assert!(pair.b.default_space_id().is_ok());
+}
+
+#[test]
+fn newer_offline_write_survives_an_older_tombstone() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let b = &pair.b;
+    let session_id = session(a, "before delete");
+    pair.exchange_ab();
+
+    a.delete_session(&session_id).unwrap();
+    b.conn()
+        .execute(
+            "UPDATE sessions SET title = ?1, updated_at = ?2 WHERE id = ?3",
+            ("offline revival", "2099-01-01T00:00:00Z", &session_id),
+        )
+        .unwrap();
+
+    // A's delete arrives first. B must retain its newer write and send
+    // the row back, allowing A to converge on the revived session.
+    let delete = build_changeset(a, None, "a").unwrap();
+    let (_, cursors) = apply_changeset(b, &pair.space_b(), &delete, None).unwrap();
+    assert_eq!(
+        b.get_session(&session_id).unwrap().unwrap().title,
+        "offline revival"
+    );
+    let mut reply = build_changeset(b, Some(&delete.device_id), "b").unwrap();
+    reply.ack = Some(cursors);
+    apply_changeset(a, &pair.space_a(), &reply, None).unwrap();
+    assert_eq!(
+        a.get_session(&session_id).unwrap().unwrap().title,
+        "offline revival"
+    );
+}
+
+#[test]
+fn tombstone_cursor_advances_and_no_resends() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let b = &pair.b;
+    let s = session(a, "doomed");
+    pair.exchange_ab();
+    a.delete_session(&s).unwrap();
+    pair.exchange_ab();
+    // The tombstone is acked: nothing re-sends.
+    let cs = build_changeset(a, Some(&b.device_id().unwrap()), "a").unwrap();
+    assert!(cs.tombstones.is_empty());
+    // And B's pull cursor for tombstones advanced — its ack included it.
+    let state = db_state(b);
+    assert!(state.iter().any(|st| {
+        st.peer_id == a.device_id().unwrap()
+            && st.table_name == "sync_tombstones"
+            && st.pull_cursor.is_some()
+    }));
+}
+
+// ── swarm personas ──
+
+#[test]
+fn swarm_roster_follows_winning_session() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let b = &pair.b;
+    let s = session(a, "roundtable");
+    let p1 = crate::db::Persona {
+        name: "p1".to_string(),
+        model: "m".to_string(),
+        blurb: "b".to_string(),
+    };
+    a.save_swarm_personas(&s, &[p1]).unwrap();
+    // B gets everything (no acks yet — exports are full either way).
+    let cs = build_changeset(a, None, "a").unwrap();
+    let _ = apply_changeset(b, &pair.space_b(), &cs, None).unwrap();
+    // B's roster v2 is newer (t2).
+    let p2 = crate::db::Persona {
+        name: "p2".to_string(),
+        model: "m".to_string(),
+        blurb: "b".to_string(),
+    };
+    let p3 = crate::db::Persona {
+        name: "p3".to_string(),
+        model: "m".to_string(),
+        blurb: "b".to_string(),
+    };
+    b.save_swarm_personas(&s, &[p2, p3]).unwrap();
+    let t2 = session_updated(b, &s);
+    // A's stale roster v1b sits between: newer than v1, older than v2.
+    let p1b = crate::db::Persona {
+        name: "p1".to_string(),
+        model: "m".to_string(),
+        blurb: "b".to_string(),
+    };
+    a.save_swarm_personas(&s, &[p1b]).unwrap();
+    set_session_updated(a, &s, &minus_one_second(&t2));
+    // Full exchange: B's v2 wins everywhere; A's stale roster (and
+    // both sides' persona tombstones) can't clobber it.
+    let cs_a = build_changeset(a, None, "a").unwrap();
+    let (_, cursors) = apply_changeset(b, &pair.space_b(), &cs_a, None).unwrap();
+    let mut reply = build_changeset(b, Some(&cs_a.device_id), "b").unwrap();
+    reply.ack = Some(cursors);
+    let _ = apply_changeset(a, &pair.space_a(), &reply, None).unwrap();
+    let names = |db: &Db| -> Vec<String> {
+        db.list_swarm_personas(&s)
+            .unwrap()
+            .iter()
+            .map(|p| p.name.clone())
+            .collect()
+    };
+    assert_eq!(names(a), vec!["p2", "p3"]);
+    assert_eq!(names(b), vec!["p2", "p3"]);
+}
+
+// ── files / blobs ──
+
+#[test]
+fn file_blobs_transfer_keep_and_report_missing() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let sid = space(a, "default");
+    write_blob(&pair.space_a(), "default", "notes.txt", b"hello sync");
+    let hash = sha256_hex(b"hello sync");
+    a.upsert_file(&sid, "notes.txt", &hash, 11, "ok").unwrap();
+
+    // Import with no blob channel: the row lands, the blob is reported
+    // missing.
+    let cs = build_changeset(a, None, "a").unwrap();
+    let (summary, _) = apply_changeset(&pair.b, &pair.space_b(), &cs, None).unwrap();
+    assert_eq!(summary.files_missing.len(), 1);
+    assert_eq!(summary.files_missing[0].name, "notes.txt");
+    assert!(
+        !pair
+            .space_b()
+            .files_dir("default")
+            .join("notes.txt")
+            .exists()
+    );
+
+    // The same changeset re-imported with a channel retries the missing
+    // blob even though the metadata row is now an idempotent LWW skip.
+    export_blobs(a, &pair.space_a(), &cs, &pair.dir).unwrap();
+    let (summary2, _) = apply_changeset(&pair.b, &pair.space_b(), &cs, Some(&pair.dir)).unwrap();
+    assert_eq!(summary2.files_pulled, 1);
+    assert!(summary2.files_missing.is_empty());
+    assert_eq!(
+        std::fs::read(pair.space_b().files_dir("default").join("notes.txt")).unwrap(),
+        b"hello sync"
+    );
+
+    // A newer version of the file re-wins the row and pulls its blob,
+    // hash-verified.
+    write_blob(&pair.space_a(), "default", "notes.txt", b"hello sync v2");
+    let hash2 = sha256_hex(b"hello sync v2");
+    a.upsert_file(&sid, "notes.txt", &hash2, 13, "ok").unwrap();
+    let cs2 = build_changeset(a, None, "a").unwrap();
+    export_blobs(a, &pair.space_a(), &cs2, &pair.dir).unwrap();
+    let (summary3, _) = apply_changeset(&pair.b, &pair.space_b(), &cs2, Some(&pair.dir)).unwrap();
+    assert_eq!(summary3.files_pulled, 1);
+    assert!(summary3.files_missing.is_empty());
+    assert_eq!(
+        std::fs::read(pair.space_b().files_dir("default").join("notes.txt")).unwrap(),
+        b"hello sync v2"
+    );
+}
+
+#[test]
+fn stale_blob_in_channel_is_never_applied() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let sid = space(a, "default");
+    write_blob(&pair.space_a(), "default", "f.txt", b"real");
+    let hash = sha256_hex(b"real");
+    a.upsert_file(&sid, "f.txt", &hash, 4, "ok").unwrap();
+    let cs = build_changeset(a, None, "a").unwrap();
+    // A stale payload with the right name but wrong content.
+    let blob_dir = pair.dir.join("blobs").join(&sid);
+    std::fs::create_dir_all(&blob_dir).unwrap();
+    std::fs::write(blob_dir.join("f.txt"), b"stale").unwrap();
+    let (summary, _) = apply_changeset(&pair.b, &pair.space_b(), &cs, Some(&pair.dir)).unwrap();
+    assert_eq!(summary.files_pulled, 0);
+    assert_eq!(summary.files_missing.len(), 1);
+    assert!(!pair.space_b().files_dir("default").join("f.txt").exists());
+}
+
+#[test]
+fn content_addressed_blob_survives_mailbox_name_collision() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let b = &pair.b;
+    let sid = space(a, "default");
+    write_blob(&pair.space_a(), "default", "same.txt", b"from-a");
+    write_blob(&pair.space_b(), "default", "same.txt", b"from-b");
+    let hash_a = sha256_hex(b"from-a");
+    let hash_b = sha256_hex(b"from-b");
+    a.upsert_file(&sid, "same.txt", &hash_a, 6, "ok").unwrap();
+    b.upsert_file(&sid, "same.txt", &hash_b, 6, "ok").unwrap();
+    set_updated(
+        a,
+        "files",
+        &a.list_files(&sid).unwrap()[0].id,
+        "2099-01-01T00:00:00Z",
+    );
+    set_updated(
+        b,
+        "files",
+        &b.list_files(&sid).unwrap()[0].id,
+        "2020-01-01T00:00:00Z",
+    );
+
+    let changeset_a = build_changeset(a, None, "a").unwrap();
+    let changeset_b = build_changeset(b, None, "b").unwrap();
+    // Both senders use the same legacy name path; the second export wins
+    // there, but each content hash gets its own immutable mailbox path.
+    export_blobs(a, &pair.space_a(), &changeset_a, &pair.dir).unwrap();
+    export_blobs(b, &pair.space_b(), &changeset_b, &pair.dir).unwrap();
+    let (summary, _) = apply_changeset(b, &pair.space_b(), &changeset_a, Some(&pair.dir)).unwrap();
+    assert_eq!(summary.files_pulled, 1);
+    assert_eq!(
+        std::fs::read(pair.space_b().files_dir("default").join("same.txt")).unwrap(),
+        b"from-a"
+    );
+    assert_eq!(hash_a.len(), 64);
+    assert_ne!(hash_a, hash_b);
+}
+
+#[test]
+fn unsafe_blob_names_cannot_escape() {
+    let pair = Pair::new();
+    let b = &pair.b;
+    let mut cs = build_changeset(b, None, "b").unwrap();
+    cs.rows.push(RowChange {
+        table: "files".to_string(),
+        row: serde_json::json!({
+            "id": "f1", "space_id": "sp", "name": "../escape.txt",
+            "hash": "x", "size": 1,
+            "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+        }),
+    });
+    cs.files.push(FileChange {
+        space_id: "sp".to_string(),
+        name: "../escape.txt".to_string(),
+        hash: "x".to_string(),
+        size: 1,
+    });
+    let (summary, _) = apply_changeset(&pair.a, &pair.space_a(), &cs, Some(&pair.dir)).unwrap();
+    assert!(summary.warnings.iter().any(|w| w.contains("unsafe")));
+    assert!(!pair.dir.join("blobs").join("sp").join("..").exists());
+    assert!(!pair.a_root.join("escape.txt").exists());
+}
+
+// ── spaces ──
+
+#[test]
+fn default_space_is_the_same_row_on_both_devices() {
+    let pair = Pair::new();
+    assert_eq!(pair.a.default_space_id().unwrap(), DEFAULT_SPACE);
+    assert_eq!(pair.b.default_space_id().unwrap(), DEFAULT_SPACE);
+    pair.exchange_ab();
+    let spaces = pair.b.list_spaces().unwrap();
+    assert_eq!(spaces.len(), 1, "no name collision for the default space");
+}
+
+#[test]
+fn space_name_collision_renames_loser_deterministically() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let b = &pair.b;
+    let wa = a.create_space("work").unwrap();
+    let wb = b.create_space("work").unwrap();
+    // Make the loser deterministic: B's space is older.
+    set_updated(a, "spaces", &wa.id, "2026-02-01T00:00:00Z");
+    set_updated(b, "spaces", &wb.id, "2026-01-01T00:00:00Z");
+    pair.exchange();
+    // Both devices end with the same two rows: the winner keeps "work",
+    // the loser is renamed from its own id — identically on both sides.
+    let names_a: Vec<String> = a
+        .list_spaces()
+        .unwrap()
+        .iter()
+        .map(|s| s.name.clone())
+        .collect();
+    let names_b: Vec<String> = b
+        .list_spaces()
+        .unwrap()
+        .iter()
+        .map(|s| s.name.clone())
+        .collect();
+    let expected = format!("work-{}", short_id(&wb.id));
+    assert!(names_a.contains(&"work".to_string()));
+    assert!(names_a.contains(&expected));
+    assert_eq!(names_a, names_b);
+    assert_eq!(dump(a), dump(b));
+    // A later sync doesn't churn the names.
+    pair.exchange();
+    let names_a2: Vec<String> = a
+        .list_spaces()
+        .unwrap()
+        .iter()
+        .map(|s| s.name.clone())
+        .collect();
+    assert_eq!(names_a2, names_a);
+}
+
+#[test]
+fn space_rename_moves_the_dir() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let sp = a.create_space("work").unwrap();
+    pair.space_a().ensure_space_dir("work").unwrap();
+    pair.space_b().ensure_space_dir("work").unwrap();
+    write_blob(&pair.space_b(), "work", "f.txt", b"content");
+    pair.exchange_ab();
+    assert!(pair.space_b().files_dir("work").join("f.txt").exists());
+    a.rename_space(&sp.id, "work-2").unwrap();
+    pair.space_a().rename_space_dir("work", "work-2").unwrap();
+    pair.exchange_ab();
+    assert!(
+        pair.b
+            .list_spaces()
+            .unwrap()
+            .iter()
+            .any(|s| s.name == "work-2")
+    );
+    assert!(pair.space_b().files_dir("work-2").join("f.txt").exists());
+    assert!(!pair.space_b().space_dir("work").exists());
+}
+
+// ── bundles ──
+
+#[test]
+fn bundle_roundtrip_carries_changeset_and_blobs() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let sid = space(a, "default");
+    write_blob(&pair.space_a(), "default", "f.txt", b"payload");
+    let hash = sha256_hex(b"payload");
+    a.upsert_file(&sid, "f.txt", &hash, 7, "ok").unwrap();
+    let cs = build_changeset(a, None, "a").unwrap();
+    let dest = pair.dir.join("out.bundle");
+    let blobs = write_bundle(
+        a,
+        &pair.space_a(),
+        &cs,
+        std::fs::File::create(&dest).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(blobs, 1);
+    let unpacked = pair.dir.join("unpacked");
+    let back = unpack_bundle(&dest, &unpacked).unwrap();
+    assert_eq!(back.device_id, cs.device_id);
+    assert_eq!(back.rows.len(), cs.rows.len());
+    assert_eq!(
+        std::fs::read(unpacked.join("blobs").join(&sid).join("f.txt")).unwrap(),
+        b"payload"
+    );
+}
+
+#[test]
+fn bundle_rejects_escaping_paths() {
+    let pair = Pair::new();
+    let dest = pair.dir.join("evil.bundle");
+    let file = std::fs::File::create(&dest).unwrap();
+    let mut zip = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default();
+    zip.start_file("changeset.json", opts).unwrap();
+    serde_json::to_writer(
+        &mut zip,
+        &Changeset {
+            device_id: "x".to_string(),
+            device_name: "x".to_string(),
+            ack: None,
+            rows: Vec::new(),
+            tombstones: Vec::new(),
+            files: Vec::new(),
+            generated_at: "t".to_string(),
+        },
+    )
+    .unwrap();
+    zip.start_file("blobs/../escape.txt", opts).unwrap();
+    zip.write_all(b"nope").unwrap();
+    zip.finish().unwrap();
+    let unpacked = pair.dir.join("evil-out");
+    assert!(unpack_bundle(&dest, &unpacked).is_err());
+    assert!(!pair.dir.join("escape.txt").exists());
+}
+
+// ── ack plumbing ──
+
+#[test]
+fn ack_built_from_pull_cursors_advances_peer_push() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let b = &pair.b;
+    let _s = session(a, "s");
+    let cs = build_changeset(a, None, "a").unwrap();
+    let (_, cursors) = apply_changeset(b, &pair.space_b(), &cs, None).unwrap();
+    // B's reply is its export + the ack from the apply.
+    let mut reply = build_changeset(b, Some(&cs.device_id), "b").unwrap();
+    reply.ack = Some(cursors);
+    let _ = apply_changeset(a, &pair.space_a(), &reply, None).unwrap();
+    // A's next export carries `build_ack` for B (the ssh transport's
+    // shape) — B applies it and its push cursors advance.
+    let bid = b.device_id().unwrap();
+    let mut next = build_changeset(a, Some(&bid), "a").unwrap();
+    next.ack = Some(build_ack(a, &bid).unwrap());
+    let (summary, _) = apply_changeset(b, &pair.space_b(), &next, None).unwrap();
+    assert!(summary.acks_applied >= 1);
+    // B's export for A is now silent.
+    let after = build_changeset(b, Some(&a.device_id().unwrap()), "b").unwrap();
+    assert!(after.rows.is_empty());
+}
+
+#[test]
+fn acks_are_only_honored_for_this_device() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let b = &pair.b;
+    let _s = session(a, "s");
+    pair.exchange_ab();
+    // B's reply acked A; A's push cursor for B is set.
+    let state = db_state(a);
+    assert!(state.iter().any(|st| {
+        st.peer_id == b.device_id().unwrap()
+            && st.table_name == "sessions"
+            && st.push_cursor.is_some()
+    }));
+    // A forged ack addressed to someone else is ignored.
+    let forged = Changeset {
+        device_id: b.device_id().unwrap(),
+        device_name: "b".to_string(),
+        ack: Some(vec![PeerCursor {
+            peer_id: "someone-else".to_string(),
+            table_name: "sessions".to_string(),
+            cursor: "2099-01-01T00:00:00Z".to_string(),
+        }]),
+        rows: Vec::new(),
+        tombstones: Vec::new(),
+        files: Vec::new(),
+        generated_at: "t".to_string(),
+    };
+    let (summary, _) = apply_changeset(a, &pair.space_a(), &forged, None).unwrap();
+    assert_eq!(summary.acks_applied, 0);
+}
+
+#[test]
+fn malformed_ack_does_not_poison_peer_cursor() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let b = &pair.b;
+    let forged = Changeset {
+        device_id: b.device_id().unwrap(),
+        device_name: "b".to_string(),
+        ack: Some(vec![PeerCursor {
+            peer_id: a.device_id().unwrap(),
+            table_name: "sessions".to_string(),
+            cursor: "[\"missing-key-tuple\"]".to_string(),
+        }]),
+        rows: Vec::new(),
+        tombstones: Vec::new(),
+        files: Vec::new(),
+        generated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+    let (summary, _) = apply_changeset(a, &pair.space_a(), &forged, None).unwrap();
+    assert_eq!(summary.acks_applied, 0);
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("invalid cursor"))
+    );
+    assert!(
+        !db_state(a).iter().any(|state| {
+            state.peer_id == b.device_id().unwrap() && state.push_cursor.is_some()
+        })
+    );
+}
+
+#[test]
+fn push_cursor_advances_only_on_ack() {
+    let pair = Pair::new();
+    let a = &pair.a;
+    let b = &pair.b;
+    let _s = session(a, "s");
+    let bid = b.device_id().unwrap();
+    // Export alone advances nothing.
+    let _ = build_changeset(a, Some(&bid), "a").unwrap();
+    let after_export = db_state(a);
+    assert!(after_export.iter().all(|st| st.peer_id != bid));
+    // B imports and acks; only then does A's push cursor move.
+    let cs = build_changeset(a, None, "a").unwrap();
+    let (_, cursors) = apply_changeset(b, &pair.space_b(), &cs, None).unwrap();
+    let mut reply = build_changeset(b, Some(&cs.device_id), "b").unwrap();
+    reply.ack = Some(cursors);
+    let _ = apply_changeset(a, &pair.space_a(), &reply, None).unwrap();
+    let state = db_state(a);
+    assert!(state.iter().any(|st| {
+        st.peer_id == bid && st.table_name == "sessions" && st.push_cursor.is_some()
+    }));
+}
