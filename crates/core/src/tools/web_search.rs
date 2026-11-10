@@ -1,7 +1,11 @@
 //! Keyless web search and failover. Endpoints and the Exa budget are shared
 //! by toolbox copies so a parallel research run cannot fan out unboundedly.
 
-use super::*;
+use super::{
+    DUCKDUCKGO_HTML, DiscussionHit, Duration, OpenRouter, SearchHit, ToolBox, brave_search,
+    duckduckgo_search, format_web_results, langsearch_search, rewrite_query_with_domains,
+    searxng_search,
+};
 use crate::provider::BackendTag;
 use serde_json::Value;
 
