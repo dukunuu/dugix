@@ -51,6 +51,12 @@ fn add_files_facts_under_chapters_and_skips_duplicates() {
 }
 
 #[test]
+fn model_facts_keep_the_300_cap() {
+    let conn = conn();
+    assert!(add(&conn, SPACE, "Tools", &"x".repeat(301), None, None).is_err());
+}
+
+#[test]
 fn short_ids_resolve_update_move_and_delete() {
     let conn = conn();
     let fact = add(&conn, SPACE, "Tools", "uses vim", None, None)
@@ -163,6 +169,26 @@ fn editor_round_trip_applies_a_diff() {
 }
 
 #[test]
+fn editor_keeps_long_facts_whole() {
+    let conn = conn();
+    let text = "x".repeat(1_000);
+    let fact = add_note(&conn, SPACE, ABOUT_YOU, &text, None, Some(true))
+        .unwrap()
+        .fact;
+    let rendered = book::render_edit(
+        &chapters(&conn, SPACE).unwrap(),
+        &facts(&conn, SPACE).unwrap(),
+    );
+    let summary = book::apply_edit(&conn, SPACE, &book::parse_edit(&rendered)).unwrap();
+    assert_eq!(summary.added, 0);
+    assert_eq!(summary.removed, 0);
+    let saved = facts(&conn, SPACE).unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].id, fact.id);
+    assert_eq!(saved[0].text, text);
+}
+
+#[test]
 fn parse_edit_skips_comments_and_files_loose_lines() {
     let parsed = book::parse_edit(
         "<!-- header\n spanning lines -->\nloose fact\n## Tools [pinned]\n> one\n> two\n* starred\n",
@@ -192,6 +218,21 @@ fn legacy_memory_file_is_imported_once() {
     assert_eq!(import_legacy(&conn, SPACE, &path).unwrap(), 0);
     let about = find_chapter(&conn, SPACE, ABOUT_YOU).unwrap().unwrap();
     assert!(about.pinned);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn legacy_import_keeps_long_lines_whole() {
+    let conn = conn();
+    let dir = std::env::temp_dir().join(format!("nexus-memory-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("memory.md");
+    let text = "x".repeat(1_000);
+    std::fs::write(&path, format!("1. {text}\n")).unwrap();
+    assert_eq!(import_legacy(&conn, SPACE, &path).unwrap(), 1);
+    let saved = facts(&conn, SPACE).unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].text, text);
     std::fs::remove_dir_all(dir).unwrap();
 }
 

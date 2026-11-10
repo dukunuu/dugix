@@ -328,7 +328,7 @@ pub fn apply_edit(conn: &Connection, space: &str, edited: &[EditedChapter]) -> R
         };
         keep_chapters.insert(chapter.id.clone());
         for text in &edited_chapter.facts {
-            let text: String = text.chars().take(super::MAX_FACT_CHARS).collect();
+            let text: String = text.chars().take(super::MAX_NOTE_CHARS).collect();
             let existing = super::facts(conn, space)?
                 .into_iter()
                 .find(|f| f.text.eq_ignore_ascii_case(text.trim()));
@@ -344,7 +344,7 @@ pub fn apply_edit(conn: &Connection, space: &str, edited: &[EditedChapter]) -> R
                 // The same text twice in the edit: keep one.
                 Some(_) => {}
                 None => {
-                    let added = super::add(conn, space, &chapter.title, &text, None, None)?;
+                    let added = super::add_note(conn, space, &chapter.title, &text, None, None)?;
                     keep_facts.insert(added.fact.id);
                     summary.added += 1;
                 }

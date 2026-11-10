@@ -19,6 +19,9 @@ use uuid::Uuid;
 
 /// Longest fact, in characters.
 pub const MAX_FACT_CHARS: usize = 300;
+/// Longest fact the user writes themselves (the editor, a legacy
+/// `memory.md`); the model's own facts stay under `MAX_FACT_CHARS`.
+pub const MAX_NOTE_CHARS: usize = 2_000;
 /// Longest chapter title, in characters.
 pub const MAX_TITLE_CHARS: usize = 60;
 /// Longest chapter description, in characters.
@@ -288,7 +291,47 @@ pub fn add(
     description: Option<&str>,
     pinned: Option<bool>,
 ) -> Result<Added> {
-    let text = clean(text, MAX_FACT_CHARS, "fact")?;
+    add_capped(
+        conn,
+        space,
+        chapter_title,
+        text,
+        description,
+        pinned,
+        MAX_FACT_CHARS,
+    )
+}
+
+/// [`add`] for text the user wrote (editor, legacy import): up to [`MAX_NOTE_CHARS`].
+pub fn add_note(
+    conn: &Connection,
+    space: &str,
+    chapter_title: &str,
+    text: &str,
+    description: Option<&str>,
+    pinned: Option<bool>,
+) -> Result<Added> {
+    add_capped(
+        conn,
+        space,
+        chapter_title,
+        text,
+        description,
+        pinned,
+        MAX_NOTE_CHARS,
+    )
+}
+
+fn add_capped(
+    conn: &Connection,
+    space: &str,
+    chapter_title: &str,
+    text: &str,
+    description: Option<&str>,
+    pinned: Option<bool>,
+    max: usize,
+) -> Result<Added> {
+    let text = clean(text, max, "fact")?;
     let chapter = ensure_chapter(conn, space, chapter_title, description, pinned)?;
     let existing = facts(conn, space)?
         .into_iter()
@@ -591,8 +634,8 @@ pub fn import_legacy(conn: &Connection, space: &str, path: &std::path::Path) -> 
         if fact.is_empty() || fact.starts_with("<!--") {
             continue;
         }
-        let fact: String = fact.chars().take(MAX_FACT_CHARS).collect();
-        if add(conn, space, ABOUT_YOU, &fact, None, Some(true)).is_ok_and(|a| !a.duplicate) {
+        let fact: String = fact.chars().take(MAX_NOTE_CHARS).collect();
+        if add_note(conn, space, ABOUT_YOU, &fact, None, Some(true)).is_ok_and(|a| !a.duplicate) {
             saved += 1;
         }
     }

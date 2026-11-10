@@ -2,6 +2,10 @@
 //! in the system prompt, per-message hints, editing, and `/memory tidy`.
 //! Storage and text forms live in `crate::memory`.
 
+#[cfg(test)]
+#[path = "memory_tests.rs"]
+mod tests;
+
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -54,19 +58,40 @@ impl App {
         self.bump_cache_epoch();
     }
 
-    /// Move a pre-db `memory.md` of the active space into the book, once.
+    /// Move every space's pre-db `memory.md` into the book, once.
     fn import_legacy_memory(&mut self) {
-        let path = self.space.memory_path(&self.active_space.name);
-        if !path.exists() {
+        let Ok(spaces) = self.db.list_spaces() else {
             return;
+        };
+        let mut total = 0;
+        let mut imported_spaces = 0;
+        for space in spaces {
+            let path = self.space.memory_path(&space.name);
+            if !path.exists() {
+                continue;
+            }
+            match memory::import_legacy(self.db.conn(), &space.id, &path) {
+                Ok(0) => {}
+                Ok(n) => {
+                    total += n;
+                    imported_spaces += 1;
+                }
+                Err(error) => {
+                    self.push_status(format!("memory import failed for {}: {error}", space.name));
+                }
+            }
         }
-        match memory::import_legacy(self.db.conn(), &self.active_space.id, &path) {
-            Ok(0) => {}
-            Ok(n) => self.push_status(format!(
-                "memory moved into the database · {n} facts in \"{}\"",
-                memory::ABOUT_YOU
-            )),
-            Err(error) => self.push_status(format!("memory import failed: {error}")),
+        if total > 0 {
+            self.push_status(if imported_spaces == 1 {
+                format!(
+                    "memory moved into the database · {total} facts in \"{}\"",
+                    memory::ABOUT_YOU
+                )
+            } else {
+                format!(
+                    "memory moved into the database · {total} facts across {imported_spaces} spaces"
+                )
+            });
         }
     }
 
