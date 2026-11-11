@@ -140,24 +140,12 @@ impl AppView {
     }
 
     /// Ctrl+O in /files: throw away the selected file's extracted text (and
-    /// vectors) and re-index it from disk with the current OCR engine — how a
-    /// tesseract-mangled book gets redone after configuring a VLM, without
-    /// re-importing.
+    /// vectors) and re-index it from disk without re-importing.
     pub fn reextract_selected_file(&mut self) {
         let Some(f) = self.core.files_cache.get(self.files_selected).cloned() else {
             return;
         };
         self.core.reextract_file(&f.name);
-    }
-
-    /// Force OCR on the selected file, bypassing text extraction entirely.
-    /// Useful when `pdf_extract` gives unreliable text and you want VLM OCR
-    /// output instead.
-    pub fn reocr_selected_file(&mut self) {
-        let Some(f) = self.core.files_cache.get(self.files_selected).cloned() else {
-            return;
-        };
-        self.core.reocr_file(&f.name);
     }
 
     /// Delete the highlighted file: disk copy and index rows both go.

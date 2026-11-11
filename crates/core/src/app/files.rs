@@ -20,10 +20,10 @@ use sha2::{Digest, Sha256};
 
 use super::App;
 
-/// A message from the background OCR batch about one file.
+/// A message from the background converter batch about one file.
 #[derive(Clone)]
 pub enum OcrUpdate {
-    /// A human-readable phase ("rendering pages…") shown while nothing is
+    /// A human-readable phase ("convert: pandoc") shown while nothing is
     /// countable yet.
     Stage(String),
     /// (pages done, total pages, pages failed so far).
@@ -31,52 +31,6 @@ pub enum OcrUpdate {
     /// Final outcome: (extracted text, per-page errors as (index, reason)),
     /// or a whole-document error message.
     Done(std::result::Result<(String, Vec<(usize, String)>), String>),
-}
-
-/// Which service transcribes a rendered page image.
-#[derive(Clone)]
-pub enum OcrBackend {
-    /// A router-backed vision model: the session model, for scanned PDFs
-    /// (when tesseract is not installed) and for image files.
-    Router(crate::provider::openrouter::OpenRouter, String),
-}
-
-impl OcrBackend {
-    async fn transcribe(&self, png: &[u8]) -> anyhow::Result<String> {
-        self.transcribe_image(png, "image/png").await
-    }
-
-    /// Describe an image (not OCR — uses a description prompt so another model
-    /// can reason about the image content). For standalone space-file images.
-    async fn describe(&self, bytes: &[u8], mime: &str) -> anyhow::Result<String> {
-        match self {
-            Self::Router(provider, model) => {
-                use base64::Engine;
-                let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
-                let url = format!("data:{mime};base64,{b64}");
-                provider.describe_image(model, &url).await
-            }
-        }
-    }
-
-    /// Transcribe an image file with the given MIME type. For standalone images
-    /// (not PDF pages) that may be JPEG, PNG, etc.
-    async fn transcribe_image(&self, bytes: &[u8], mime: &str) -> anyhow::Result<String> {
-        match self {
-            Self::Router(provider, model) => {
-                use base64::Engine;
-                let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
-                let url = format!("data:{mime};base64,{b64}");
-                provider.ocr_page(model, &url).await
-            }
-        }
-    }
-}
-
-/// Scanned PDFs go through local tesseract when it is installed (free,
-/// private, no tokens); otherwise through the session model's vision.
-fn pdf_ocr_backend(tesseract_installed: bool, session: Option<OcrBackend>) -> Option<OcrBackend> {
-    if tesseract_installed { None } else { session }
 }
 
 /// A stem that looks like a UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).
@@ -128,215 +82,13 @@ fn restored_status(status: &str) -> String {
         .map_or_else(|| "ok".to_string(), str::to_string)
 }
 
-/// How a finished OCR / conversion job read the file, for the status
-/// ("pdf (ocr)", "image (caption)", the converter's name).
-fn read_label(previous_status: &str, name: &str) -> String {
-    if let Some(via) = previous_status.strip_prefix("convert: ") {
-        return via.trim_end_matches('…').trim().to_string();
-    }
-    let ext = std::path::Path::new(name)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    if ext == "pdf" {
-        "pdf (ocr)".to_string()
-    } else if previous_status.contains("caption") {
-        "image (caption)".to_string()
-    } else if crate::extract::is_image_ext(&ext) {
-        "image (ocr)".to_string()
-    } else {
-        "ocr".to_string()
-    }
-}
-
-/// OCR a scanned PDF through a vision backend: render pages at 300 DPI color,
-/// transcribe up to 16 pages concurrently (one retry each), and join with
-/// `[page N]` markers — a page that fails twice becomes a `[page N: ocr
-/// failed]` marker instead of sinking the document.
-/// Rendered page PNGs are saved permanently to `<files_dir>/<pdf_stem>/` so
-/// the model can fetch them later via `files(action=pdf_page)`.
-async fn ocr_pdf_vlm(
-    backend: &OcrBackend,
-    path: &Path,
-    tx: &tokio::sync::mpsc::UnboundedSender<(String, String, OcrUpdate)>,
-    space_id: &str,
-    name: &str,
-    files_dir: &Path,
-) -> std::result::Result<(String, Vec<(usize, String)>), String> {
-    let stem = std::path::Path::new(name)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(name);
-    let page_dir = files_dir.join(stem);
-    if let Err(e) = std::fs::create_dir_all(&page_dir) {
-        return Err(format!("error: ocr: {e}"));
-    }
-    ocr_pdf_vlm_in(backend, path, &page_dir, tx, space_id, name).await
-}
-
-async fn ocr_pdf_vlm_in(
-    backend: &OcrBackend,
-    path: &Path,
-    page_dir: &Path,
-    tx: &tokio::sync::mpsc::UnboundedSender<(String, String, OcrUpdate)>,
-    space_id: &str,
-    name: &str,
-) -> std::result::Result<(String, Vec<(usize, String)>), String> {
-    let _ = tx.send((
-        space_id.to_string(),
-        name.to_string(),
-        OcrUpdate::Stage("rendering pages (300 dpi)…".to_string()),
-    ));
-    let (pdf, dir) = (path.to_path_buf(), page_dir.to_path_buf());
-    let pages = tokio::task::spawn_blocking(move || {
-        crate::extract::render_pdf_pages("pdftoppm", &pdf, &dir, 300, false)
-    })
-    .await
-    .map_err(|e| format!("error: ocr: {e}"))?
-    .map_err(|e| match e {
-        crate::extract::OcrError::MissingTools => {
-            "scanned pdf — install poppler (pdftoppm) for ocr".to_string()
-        }
-        crate::extract::OcrError::Failed(m) => format!("error: ocr: {m}"),
-    })?;
-
-    let total = pages.len();
-    // Show "0/N pages" immediately — on CPU the first page can take minutes,
-    // and a frozen "ocr…" reads as stuck.
-    let _ = tx.send((
-        space_id.to_string(),
-        name.to_string(),
-        OcrUpdate::Progress(0, total, 0),
-    ));
-    let mut results: Vec<std::result::Result<String, String>> =
-        vec![Err("not transcribed".to_string()); total];
-    let mut set = tokio::task::JoinSet::new();
-    let spawn_page =
-        |set: &mut tokio::task::JoinSet<(usize, std::result::Result<String, String>)>, i: usize| {
-            let (backend, png) = (backend.clone(), pages[i].clone());
-            set.spawn(async move {
-                let Ok(bytes) = std::fs::read(&png) else {
-                    return (i, Err("page image unreadable".to_string()));
-                };
-                let mut last = String::new();
-                for _ in 0..2 {
-                    match backend.transcribe(&bytes).await {
-                        Ok(text) => return (i, Ok(text)),
-                        Err(e) => last = e.to_string(),
-                    }
-                }
-                (i, Err(last))
-            });
-        };
-
-    // ponytail: 16 concurrent pages — the bottleneck is API latency, not
-    // local CPU, so a wider window reduces wall-clock time significantly.
-    // Tune this down if the backend rate-limits you.
-    let window = (16_usize).min(total);
-    let mut next = 0;
-    while next < window {
-        spawn_page(&mut set, next);
-        next += 1;
-    }
-    let mut done = 0;
-    let mut failed = 0;
-    while let Some(joined) = set.join_next().await {
-        let (i, r) = joined.unwrap_or_else(|_| (usize::MAX, Err("page task panicked".to_string())));
-        if r.is_err() {
-            failed += 1;
-        }
-        if let Some(slot) = results.get_mut(i) {
-            *slot = r;
-        }
-        done += 1;
-        let _ = tx.send((
-            space_id.to_string(),
-            name.to_string(),
-            OcrUpdate::Progress(done, total, failed),
-        ));
-        if next < total {
-            spawn_page(&mut set, next);
-            next += 1;
-        }
-    }
-    // Rename pdftoppm output to stable page-<N>.png names
-    let _ = std::fs::create_dir_all(page_dir);
-    for (i, p) in pages.iter().enumerate() {
-        let stable = page_dir.join(format!("page-{}.png", i + 1));
-        let _ = std::fs::rename(p, &stable);
-    }
-    let errors: Vec<(usize, String)> = results
-        .iter()
-        .enumerate()
-        .filter_map(|(i, r)| r.as_ref().err().map(|e| (i, e.clone())))
-        .collect();
-    Ok((crate::extract::join_pages(&results), errors))
-}
-
-/// Describe a standalone image through a vision backend (a caption that also
-/// carries any visible text verbatim).
-async fn caption_image(
-    backend: &OcrBackend,
-    path: &Path,
-    name: &str,
-) -> std::result::Result<String, String> {
-    let Ok(bytes) = std::fs::read(path) else {
-        return Err(format!("cannot read {name}"));
-    };
-    let mime = crate::extract::vision_mime(&bytes).unwrap_or("image/png");
-    backend
-        .describe(&bytes, mime)
-        .await
-        .map_err(|e| format!("error: ocr: {e}"))
-}
-
-/// Read an image: tesseract first (free and local), then a vision-model
-/// caption from the session model when OCR found little or nothing. Never
-/// blocks indexing: the file is already searchable by name.
-async fn ocr_image_flow(
-    backend: Option<&OcrBackend>,
-    path: &Path,
-    tx: &tokio::sync::mpsc::UnboundedSender<(String, String, OcrUpdate)>,
-    space_id: &str,
-    name: &str,
-) -> std::result::Result<(String, Vec<(usize, String)>), String> {
-    let send = |u: OcrUpdate| {
-        let _ = tx.send((space_id.to_string(), name.to_string(), u));
-    };
-    let mut local = String::new();
-    let mut local_missing = false;
-    send(OcrUpdate::Stage("tesseract".to_string()));
-    let p = path.to_path_buf();
-    match tokio::task::spawn_blocking(move || crate::extract::ocr_image(&p)).await {
-        Ok(Ok(text)) => local = text,
-        Ok(Err(crate::extract::OcrError::MissingTools)) => local_missing = true,
-        Ok(Err(crate::extract::OcrError::Failed(e))) => {
-            if backend.is_none() {
-                return Err(format!("error: ocr: {e}"));
-            }
-        }
-        Err(e) => return Err(format!("error: ocr: {e}")),
-    }
-    let enough = local.chars().filter(|c| !c.is_whitespace()).count() >= 40;
-    match backend {
-        Some(b) if !enough => {
-            send(OcrUpdate::Stage("captioning image…".to_string()));
-            send(OcrUpdate::Progress(0, 1, 0));
-            let caption = caption_image(b, path, name).await?;
-            send(OcrUpdate::Progress(1, 1, 0));
-            let text = if local.trim().is_empty() {
-                caption
-            } else {
-                format!("{}\n\n[ocr text]\n{}", caption.trim(), local.trim())
-            };
-            Ok((text, Vec::new()))
-        }
-        None if local_missing => {
-            Err("image: install tesseract for ocr, or pick a session model that accepts images so it can describe it".to_string())
-        }
-        _ => Ok((local, Vec::new())),
-    }
+/// How a finished conversion job read the file, for the status.
+fn read_label(previous_status: &str) -> String {
+    previous_status
+        .trim_start_matches("convert: ")
+        .trim_end_matches('…')
+        .trim()
+        .to_string()
 }
 
 /// Run a file's background converter (pandoc, `LibreOffice`, ffprobe/whisper or
@@ -364,33 +116,6 @@ async fn convert_flow(
         }
         Err(e) => Err(format!("conversion failed: {}", clip_err(&e))),
     }
-}
-
-/// OCR a scanned PDF with local tesseract + poppler on a blocking thread.
-async fn ocr_pdf_tesseract(
-    path: std::path::PathBuf,
-    tx: tokio::sync::mpsc::UnboundedSender<(String, String, OcrUpdate)>,
-    space_id: String,
-    name: String,
-) -> std::result::Result<(String, Vec<(usize, String)>), String> {
-    tokio::task::spawn_blocking(move || {
-        let progress = move |done: usize, total: usize| {
-            let _ = tx.send((
-                space_id.clone(),
-                name.clone(),
-                OcrUpdate::Progress(done, total, 0),
-            ));
-        };
-        match crate::extract::ocr_pdf(&path, &progress) {
-            Ok(text) => Ok((text, Vec::new())),
-            Err(crate::extract::OcrError::MissingTools) => {
-                Err("scanned pdf — install tesseract + poppler for ocr".to_string())
-            }
-            Err(crate::extract::OcrError::Failed(e)) => Err(format!("error: ocr: {e}")),
-        }
-    })
-    .await
-    .unwrap_or_else(|e| Err(format!("error: ocr: {e}")))
 }
 
 /// SHA-256 of a file as lowercase hex, plus its bytes when small enough to
@@ -471,20 +196,14 @@ impl App {
                 .map_or(0, |d| d.as_secs() as i64);
             let disk_size = entry.metadata().map_or(0, |m| m.len() as i64);
             let existing = known.iter().find(|f| f.name == name);
-            let skip_image_ocr =
-                !self.automatic_image_ocr() && crate::extract::detect_path(&path).is_ocr_image();
-            let resume_image_ocr = !skip_image_ocr
-                && existing.is_some_and(|f| f.status.contains("image (direct embeddings)"));
             // Unchanged by stat: skip entirely — no read, no hash. This is what
             // keeps /files and space switches snappy with big filesets.
             if let Some(f) = existing
                 && f.size == disk_size
                 && f.mtime == mtime
                 && mtime != 0
-                && !resume_image_ocr
-                && !(skip_image_ocr && crate::extract::status_is_queued(&f.status))
             {
-                // Stale "ocr…"/"convert: …" (app quit mid-job) re-queues once
+                // Stale "convert: …" (app quit mid-job) re-queues once
                 // no batch is in flight.  Do not let the stat fast path hide a
                 // file imported by an older build that has no chunks yet, or
                 // one indexed by an older extractor.
@@ -505,8 +224,6 @@ impl App {
                 && f.extractor >= version
                 && self.db.file_indexed(&f.id).unwrap_or(false)
                 && self.db.file_has_chunks(&f.id).unwrap_or(false)
-                && !resume_image_ocr
-                && !(skip_image_ocr && crate::extract::status_is_queued(&f.status))
             {
                 // Content unchanged (touched, or indexed before mtimes were
                 // tracked): just record the stat for next time.
@@ -524,35 +241,7 @@ impl App {
                 Some(b) => crate::extract::to_text_bytes(b, &name, cfg),
                 None => crate::extract::to_text_with(&path, cfg),
             };
-            // An older extractor re-reads files whose content is unchanged,
-            // but never re-OCRs one that already has text: that is a paid
-            // call for the same pages.
-            if let Some(f) = existing.filter(|f| f.hash == hash)
-                && matches!(extracted.outcome, crate::extract::Outcome::NeedsOcr)
-                && !resume_image_ocr
-                && !skip_image_ocr
-                && {
-                    let settled = if f.status.starts_with(EMBEDDING_STATUS) {
-                        restored_status(&f.status)
-                    } else {
-                        f.status.clone()
-                    };
-                    crate::extract::status_is_ok(&settled) || settled.starts_with("no text")
-                }
-                && self.db.file_has_chunks(&f.id).unwrap_or(false)
-            {
-                let _ = self.db.set_file_mtime(&f.id, mtime);
-                let _ = self.db.set_file_extractor(&f.id, version);
-                continue;
-            }
-            let (status, chunks) = if skip_image_ocr {
-                (
-                    "ok · image (direct embeddings)".to_string(),
-                    crate::extract::metadata_chunks(&name),
-                )
-            } else {
-                extracted.index(&name, size.unsigned_abs())
-            };
+            let (status, chunks) = extracted.index(&name, size.unsigned_abs());
             match self
                 .db
                 .upsert_file(&self.active_space.id, &name, &hash, size, &status)
@@ -563,7 +252,7 @@ impl App {
                     let _ = self.db.set_file_extractor(&id, version);
                     // Only queue a file whose row exists: without one the
                     // result can't be recorded, and the batch-done rescan
-                    // would queue the same file again — a paid call loop.
+                    // would queue the same file again.
                     if crate::extract::status_is_queued(&status) {
                         ocr_jobs.push((self.active_space.id.clone(), name.clone(), path.clone()));
                     }
@@ -584,59 +273,23 @@ impl App {
             .unwrap_or_default();
     }
 
-    /// OCR queued scanned PDFs and images sequentially off the UI thread. One batch at a
-    /// time: jobs arriving while a batch runs stay at "ocr…" and re-queue on a
-    /// later rescan.
+    /// Run queued converters sequentially off the UI thread. One batch at a
+    /// time: jobs arriving while a batch runs stay at "convert: …" and
+    /// re-queue on a later rescan.
     pub fn start_ocr(&mut self, jobs: Vec<(String, String, std::path::PathBuf)>) {
         if jobs.is_empty() || self.ocr_rx.is_some() {
             return;
         }
-        let pdf_backend = self.ocr_backend();
-        let image_backend = self.image_backend();
-        let files_dir = self.space.files_dir(&self.active_space.name);
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         self.ocr_rx = Some(rx);
         tokio::spawn(async move {
             for (space_id, name, path) in jobs {
-                let kind = crate::extract::detect_path(&path);
-                let result = if kind.is_ocr_image() {
-                    ocr_image_flow(image_backend.as_ref(), &path, &tx, &space_id, &name).await
-                } else if kind == crate::extract::Kind::Pdf {
-                    match &pdf_backend {
-                        Some(backend) => {
-                            ocr_pdf_vlm(backend, &path, &tx, &space_id, &name, &files_dir).await
-                        }
-                        None => {
-                            ocr_pdf_tesseract(path, tx.clone(), space_id.clone(), name.clone())
-                                .await
-                        }
-                    }
-                } else {
-                    convert_flow(path, &tx, &space_id, &name).await
-                };
+                let result = convert_flow(path, &tx, &space_id, &name).await;
                 if tx.send((space_id, name, OcrUpdate::Done(result))).is_err() {
                     return;
                 }
             }
         });
-    }
-
-    /// The session model, when it accepts images.
-    pub fn image_backend(&self) -> Option<OcrBackend> {
-        if !self.current_model_supports_images() {
-            return None;
-        }
-        self.session_backend()
-            .map(|(p, raw_model)| OcrBackend::Router(p, raw_model))
-    }
-
-    /// The vision backend scanned PDFs OCR through, or None for tesseract:
-    /// tesseract (with poppler) when installed, else the session model's vision.
-    pub fn ocr_backend(&self) -> Option<OcrBackend> {
-        pdf_ocr_backend(
-            crate::extract::ExtractConfig::load().ocr_tools_installed(),
-            self.image_backend(),
-        )
     }
 
     /// Zero a file's chunks and hash/size so the next rescan re-indexes it
@@ -653,30 +306,6 @@ impl App {
             .upsert_file(&self.active_space.id, &f.name, "", 0, "re-extracting");
         self.push_status(format!("re-extracting: {}", f.name));
         self.rescan_files();
-    }
-
-    /// Force an OCR pass on one file, bypassing text extraction entirely.
-    /// Useful when `pdf_extract` gives unreliable text and you want VLM OCR
-    /// output instead.
-    pub fn reocr_file(&mut self, name: &str) {
-        let Some(f) = self.files_cache.iter().find(|f| f.name == name).cloned() else {
-            return;
-        };
-        let path = self.space.files_dir(&self.active_space.name).join(&f.name);
-        let kind = crate::extract::detect_path(&path);
-        if kind != crate::extract::Kind::Pdf && !kind.is_ocr_image() {
-            self.push_status(format!("only PDFs and images support OCR: {}", f.name));
-            return;
-        }
-        // Force-cancel any in-progress OCR batch so our job isn't silently dropped
-        self.ocr_rx = None;
-        let _ = self.db.set_file_status(&f.id, "ocr…");
-        self.start_ocr(vec![(self.active_space.id.clone(), f.name.clone(), path)]);
-        self.files_cache = self
-            .db
-            .list_files(&self.active_space.id)
-            .unwrap_or_default();
-        self.push_status(format!("ocr queued: {}", f.name));
     }
 
     /// Embed the next imported file whose chunks lack vectors, one file per
@@ -741,10 +370,10 @@ impl App {
             }
             return;
         };
-        // OCR owns files in this state.  They remain in the database work
-        // queue, but must not receive a placeholder chunk while OCR is still
-        // running.  The ready-file filter above prevents an OCR row from
-        // blocking all other files.
+        // Converters own files in this state. They remain in the database
+        // work queue, but must not receive a placeholder chunk while running.
+        // The ready-file filter above prevents a converter row from blocking
+        // all other files.
         let file_id = file.id.clone();
         let Ok(mut chunks) = self.db.file_chunk_texts(&file_id) else {
             return;
@@ -767,7 +396,7 @@ impl App {
         let Ok(handle) = tokio::runtime::Handle::try_current() else {
             return;
         };
-        // Keep extraction/OCR status text for metadata-only and failed files;
+        // Keep extraction status text for metadata-only and failed files;
         // the transient embedding marker is only safe to replace with "ok"
         // when the original index status was already "ok".
         let show_embedding_status =
@@ -786,7 +415,7 @@ impl App {
             .files_dir(&self.active_space.name)
             .join(&file_name);
         let is_image =
-            embedder.supports_images() && crate::extract::detect_path(&image_path).is_ocr_image();
+            embedder.supports_images() && crate::extract::detect_path(&image_path).is_image_file();
         let text = chunks
             .iter()
             .map(|(_, text)| text.as_str())
@@ -941,13 +570,13 @@ impl App {
         }
     }
 
-    /// A finished OCR job: persist chunks/status, refresh the cache only if the
+    /// A finished converter job: persist chunks/status, refresh the cache only if the
     /// file's space is still active. `None` = batch done (channel closed).
     #[allow(clippy::too_many_lines)]
     pub fn on_ocr_done(&mut self, r: Option<(String, String, OcrUpdate)>) {
         let Some((space_id, name, update)) = r else {
             self.ocr_rx = None;
-            // PDFs imported mid-batch sat at "ocr…" unqueued; this rescan
+            // Files imported mid-batch sat at "convert: …" unqueued; this rescan
             // chains them into a fresh batch instead of stalling until the
             // user reopens /files.
             self.rescan_files();
@@ -957,7 +586,7 @@ impl App {
             return;
         };
         let Some(f) = files.iter().find(|f| f.name == name) else {
-            return; // deleted mid-OCR
+            return; // deleted mid-conversion
         };
         if !crate::extract::status_is_queued(&f.status) {
             return; // re-imported mid-job — this result is for stale content
@@ -965,16 +594,16 @@ impl App {
         let completed = matches!(update, OcrUpdate::Done(_));
         match update {
             OcrUpdate::Stage(s) => {
-                // Keep the "ocr" / "convert:" prefix — the stale-check above
+                // Keep the "convert:" prefix — the stale-check above
                 // depends on it.
                 let shown = if s.starts_with("convert:") {
                     s.clone()
                 } else {
-                    format!("ocr: {s}")
+                    format!("convert: {s}")
                 };
                 let _ = self.db.set_file_status(&f.id, &shown);
                 if space_id == self.active_space.id {
-                    self.push_status(format!("ocr {name}: {s}"));
+                    self.push_status(format!("convert {name}: {s}"));
                 }
             }
             OcrUpdate::Progress(done, total, failed) => {
@@ -985,9 +614,9 @@ impl App {
                 };
                 let _ = self
                     .db
-                    .set_file_status(&f.id, &format!("ocr {done}/{total}{tail}"));
+                    .set_file_status(&f.id, &format!("convert: {done}/{total}{tail}"));
                 if space_id == self.active_space.id {
-                    self.push_status(format!("ocr {name}: {done}/{total} pages{tail}"));
+                    self.push_status(format!("convert {name}: {done}/{total} pages{tail}"));
                 }
             }
             OcrUpdate::Done(Ok((text, errors))) if text.trim().is_empty() => {
@@ -1001,14 +630,11 @@ impl App {
                     Some((i, e)) => {
                         format!("all pages failed (p{}: {})", i + 1, clip_err(e))
                     }
-                    None if f.status.starts_with("convert:") => {
-                        "no text (converter found nothing)".to_string()
-                    }
-                    None => "no text (ocr found nothing)".to_string(),
+                    None => "no text (converter found nothing)".to_string(),
                 };
                 let _ = self.db.set_file_status(&f.id, &status);
                 if space_id == self.active_space.id {
-                    self.push_status(format!("ocr {name}: {status}"));
+                    self.push_status(format!("convert {name}: {status}"));
                 }
             }
             OcrUpdate::Done(Ok((text, errors))) => {
@@ -1020,7 +646,7 @@ impl App {
                 };
                 let _ = self.db.set_file_chunks(&f.id, &chunks);
                 let status = match errors.first() {
-                    None => format!("ok · {}", read_label(&f.status, &name)),
+                    None => format!("ok · {}", read_label(&f.status)),
                     Some((i, e)) => format!(
                         "ok — {} page{} failed (p{}: {})",
                         errors.len(),
@@ -1042,19 +668,19 @@ impl App {
                             .db
                             .replace_file_ref_in_messages(&space_id, &f.name, &new_name);
                         if space_id == self.active_space.id {
-                            self.push_status(format!("ocr done: {new_name}"));
+                            self.push_status(format!("conversion done: {new_name}"));
                         }
                         // f.name needs the updated name for the message below.
                     } else if space_id == self.active_space.id {
-                        self.push_status(format!("ocr done: {name}"));
+                        self.push_status(format!("conversion done: {name}"));
                     }
                 } else if space_id == self.active_space.id {
-                    self.push_status(format!("ocr done: {name}"));
+                    self.push_status(format!("conversion done: {name}"));
                 }
             }
             OcrUpdate::Done(Err(msg)) => {
-                // A failed first OCR pass has no chunks to embed. Preserve old
-                // extracted text when re-OCRing an already indexed file, but
+                // A failed first conversion has no chunks to embed. Preserve old
+                // extracted text when converting an already indexed file, but
                 // create metadata for a file that has never been indexed.
                 if self
                     .db
@@ -1068,7 +694,7 @@ impl App {
                 }
                 let _ = self.db.set_file_status(&f.id, &msg);
                 if space_id == self.active_space.id {
-                    self.push_status(format!("ocr {name}: {msg}"));
+                    self.push_status(format!("convert {name}: {msg}"));
                 }
             }
         }
@@ -1135,21 +761,21 @@ impl App {
     }
 
     /// If `f` is a pasted image (UUID.ext), generate a descriptive name
-    /// `uuid-<slug>.ext` from OCR text. Returns None for non-pasted files.
-    fn descriptive_paste_name(f: &FileRow, ocr_text: &str) -> Option<String> {
+    /// `uuid-<slug>.ext` from converted text. Returns None for non-pasted files.
+    fn descriptive_paste_name(f: &FileRow, text: &str) -> Option<String> {
         let stem = std::path::Path::new(&f.name).file_stem()?.to_str()?;
         let ext = std::path::Path::new(&f.name).extension()?.to_str()?;
         // Only rename files whose stem is a UUID (pasted images).
         if !is_uuid_like(stem) {
             return None;
         }
-        let slug = Self::slug_from_ocr(ocr_text)?;
+        let slug = Self::slug_from_text(text)?;
         Some(format!("{stem}-{slug}.{ext}"))
     }
 
-    /// Generate a `snake_case` name from OCR text. Takes first N meaningful words
-    /// and slugifies them. Returns None if text is empty or has no words.
-    fn slug_from_ocr(text: &str) -> Option<String> {
+    /// Generate a `snake_case` name from converted text. Takes first N meaningful
+    /// words and slugifies them. Returns None if text is empty or has no words.
+    fn slug_from_text(text: &str) -> Option<String> {
         let words: Vec<&str> = text
             .split_whitespace()
             .filter(|w| {
@@ -1185,31 +811,6 @@ mod tests {
         std::fs::create_dir_all(root.join("spaces")).unwrap();
         let space = Space { root };
         App::new(db, Some("k"), space)
-    }
-
-    /// An app whose only backend is `OpenRouter` (the bare key in
-    /// `test_app` is guessed to be an `OpenAI` one).
-    fn openrouter_app() -> App {
-        let root = std::env::temp_dir().join(format!("nexus-files-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(root.join("spaces")).unwrap();
-        let mut app = App::new(
-            Db::open_in_memory().unwrap(),
-            Some("sk-or-test"),
-            Space { root },
-        );
-        app.current_model = Some("vision/model".into());
-        app.models = vec![crate::provider::Model {
-            id: "vision/model".into(),
-            name: "Vision model".into(),
-            reasoning_efforts: Vec::new(),
-            context_length: None,
-            supports_images: true,
-            supports_image_generation: false,
-            supports_video_generation: false,
-            backend: crate::provider::BackendTag::OpenRouter,
-            pricing: None,
-        }];
-        app
     }
 
     #[tokio::test]
@@ -1362,128 +963,6 @@ mod tests {
     }
 
     #[test]
-    fn scanned_pdfs_use_tesseract_when_installed_else_the_session_model() {
-        let session = || {
-            Some(OcrBackend::Router(
-                crate::provider::openrouter::OpenRouter::openrouter_flavor("k".into()),
-                "session/model".into(),
-            ))
-        };
-        assert!(pdf_ocr_backend(true, session()).is_none(), "tesseract wins");
-        assert!(matches!(
-            pdf_ocr_backend(false, session()),
-            Some(OcrBackend::Router(_, model)) if model == "session/model"
-        ));
-        assert!(
-            pdf_ocr_backend(false, None).is_none(),
-            "no backend: the tesseract path reports the missing tools"
-        );
-    }
-
-    /// Tests never see the machine's tools (`ExtractConfig::load` is empty
-    /// under `cargo test`), so tesseract counts as missing and the automatic
-    /// choice is the session model's vision.
-    #[test]
-    fn ocr_backend_is_the_session_model_when_tesseract_is_missing() {
-        let mut a = openrouter_app();
-        match a.ocr_backend() {
-            Some(OcrBackend::Router(_, model)) => assert_eq!(model, "vision/model"),
-            _ => panic!("expected the session model"),
-        }
-        a.models[0].supports_images = false;
-        assert!(a.ocr_backend().is_none());
-        a.models[0].supports_images = true;
-        // No signed-in backend: nothing to read with.
-        a.backends = crate::app::Backends::default();
-        assert!(a.ocr_backend().is_none());
-        assert!(a.image_backend().is_none());
-    }
-
-    /// Image files are described only by a session model that accepts images.
-    #[test]
-    fn image_backend_is_the_session_model_when_it_accepts_images() {
-        let mut a = openrouter_app();
-        match a.image_backend() {
-            Some(OcrBackend::Router(provider, model)) => {
-                assert_eq!(
-                    provider.backend_tag(),
-                    crate::provider::BackendTag::OpenRouter
-                );
-                assert_eq!(model, "vision/model");
-            }
-            _ => panic!("expected the session model"),
-        }
-        a.models[0].supports_images = false;
-        assert!(a.image_backend().is_none());
-        a.models[0].supports_images = true;
-        a.current_model = None;
-        assert!(a.image_backend().is_none());
-    }
-
-    #[test]
-    fn ocr_statuses_surface_stages_failures_and_reasons() {
-        let mut a = test_app();
-        let space = a.active_space.id.clone();
-        let id =
-            a.db.upsert_file(&space, "scan.pdf", "h", 1, "ocr…")
-                .unwrap();
-
-        // Stage → visible phase, still "ocr"-prefixed (stale-check depends on it).
-        a.on_ocr_done(Some((
-            space.clone(),
-            "scan.pdf".into(),
-            OcrUpdate::Stage("rendering pages (300 dpi)…".into()),
-        )));
-        let status = a.db.list_files(&space).unwrap()[0].status.clone();
-        assert_eq!(status, "ocr: rendering pages (300 dpi)…");
-
-        // Progress with failures shows the count.
-        a.on_ocr_done(Some((
-            space.clone(),
-            "scan.pdf".into(),
-            OcrUpdate::Progress(5, 10, 2),
-        )));
-        assert_eq!(
-            a.db.list_files(&space).unwrap()[0].status,
-            "ocr 5/10 (2 failed)"
-        );
-        assert!(a.last_status().contains("5/10 pages (2 failed)"));
-
-        // Partial success keeps the first failure's reason in the status.
-        a.on_ocr_done(Some((
-            space.clone(),
-            "scan.pdf".into(),
-            OcrUpdate::Done(Ok((
-                "[page 1]\ntext".to_string(),
-                vec![
-                    (2, "timeout after 600s".to_string()),
-                    (4, "boom".to_string()),
-                ],
-            ))),
-        )));
-        let status = a.db.list_files(&space).unwrap()[0].status.clone();
-        assert_eq!(status, "ok — 2 pages failed (p3: timeout after 600s)");
-
-        // All pages failed → the reason, not a bland "no text".
-        let _ = a.db.set_file_status(&id, "ocr…");
-        a.on_ocr_done(Some((
-            space.clone(),
-            "scan.pdf".into(),
-            OcrUpdate::Done(Ok((
-                String::new(),
-                vec![(0, "cannot reach ollama at 127.0.0.1:11434 — is it running? (systemctl start ollama)".to_string())],
-            ))),
-        )));
-        let status = a.db.list_files(&space).unwrap()[0].status.clone();
-        assert!(
-            status.starts_with("all pages failed (p1: cannot reach ollama"),
-            "{status}"
-        );
-        // Must NOT start with "ocr" — that prefix means "queued" to the rescan.
-        assert!(!status.starts_with("ocr"), "{status}");
-    }
-
-    #[test]
     fn reextract_clears_stale_chunks_and_reindexes_from_disk() {
         let mut a = test_app();
         let dir = a.space.files_dir(&a.active_space.name);
@@ -1492,7 +971,7 @@ mod tests {
         a.rescan_files();
         let id = a.files_cache[0].id.clone();
 
-        // Simulate a bad old extraction (e.g. tesseract-mangled OCR).
+        // Simulate a bad old extraction.
         a.db.set_file_chunks(&id, &[("p1".into(), "garbage".into())])
             .unwrap();
 
@@ -1614,155 +1093,36 @@ mod tests {
         assert_eq!(a.files_cache.len(), 1);
     }
 
-    #[tokio::test]
-    async fn rescan_marks_empty_pdf_ocr_and_spawns_batch() {
+    #[test]
+    fn importing_an_image_indexes_metadata_without_queueing() {
         let mut a = test_app();
-        let dir = a.space.files_dir(&a.active_space.name);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("scan.pdf"), crate::extract::minimal_pdf(None)).unwrap();
-
+        a.embedding_model.clear();
+        let src = std::env::temp_dir().join(format!("nexus-image-{}.png", uuid::Uuid::new_v4()));
+        image::RgbImage::new(2, 2).save(&src).unwrap();
+        let name = a.import_file(&src).unwrap();
+        assert_eq!(a.files_cache[0].status, "ok · image");
+        assert!(a.ocr_rx.is_none());
+        let chunks = a.db.file_chunk_texts(&a.files_cache[0].id).unwrap();
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].1.contains(&format!("uploaded file: {name}")));
         a.rescan_files();
-        assert_eq!(a.files_cache[0].status, "ocr…");
-        assert!(a.ocr_rx.is_some(), "an ocr batch should be in flight");
-
-        // A second rescan while the batch is in flight does not re-queue.
-        a.rescan_files();
-        assert_eq!(a.files_cache[0].status, "ocr…");
-    }
-
-    #[tokio::test]
-    async fn rescan_requeues_stale_ocr_status_when_idle() {
-        let mut a = test_app();
-        let dir = a.space.files_dir(&a.active_space.name);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("scan.pdf"), crate::extract::minimal_pdf(None)).unwrap();
-        a.rescan_files();
-
-        // Simulate an app restart mid-OCR: status stuck at "ocr…", no batch in flight.
-        a.ocr_rx = None;
-        a.rescan_files();
-        assert!(a.ocr_rx.is_some(), "stale ocr… should re-queue");
+        assert_eq!(a.files_cache[0].status, "ok · image");
+        assert!(a.ocr_rx.is_none());
+        let _ = std::fs::remove_file(src);
     }
 
     #[test]
-    fn on_ocr_done_ok_indexes_and_marks_ok() {
+    fn scanned_pdf_is_searchable_by_name_without_queueing() {
         let mut a = test_app();
-        let id =
-            a.db.upsert_file(&a.active_space.id, "scan.pdf", "h", 9, "ocr…")
-                .unwrap();
-        let _ = id;
-        a.on_ocr_done(Some((
-            a.active_space.id.clone(),
-            "scan.pdf".to_string(),
-            OcrUpdate::Done(Ok((
-                "[page 1]\nquarterly revenue table".to_string(),
-                Vec::new(),
-            ))),
-        )));
-        assert_eq!(a.files_cache[0].status, "ok · pdf (ocr)");
-        let hits = crate::db::search_chunks(a.db.conn_for_test(), &a.active_space.id, "revenue", 8)
-            .unwrap();
-        assert_eq!(hits.len(), 1);
-    }
-
-    #[test]
-    fn on_ocr_progress_updates_status_and_status_line() {
-        let mut a = test_app();
-        a.db.upsert_file(&a.active_space.id, "scan.pdf", "h", 9, "ocr…")
-            .unwrap();
-        a.on_ocr_done(Some((
-            a.active_space.id.clone(),
-            "scan.pdf".to_string(),
-            OcrUpdate::Progress(3, 10, 0),
-        )));
-        assert_eq!(a.files_cache[0].status, "ocr 3/10");
-        assert!(a.last_status().contains("3/10"), "{}", a.last_status());
-
-        // Progress for a file mid-way is still non-terminal: a Done after it applies.
-        a.on_ocr_done(Some((
-            a.active_space.id.clone(),
-            "scan.pdf".to_string(),
-            OcrUpdate::Done(Ok(("[page 1]\nfound".to_string(), Vec::new()))),
-        )));
-        assert_eq!(a.files_cache[0].status, "ok · pdf (ocr)");
-    }
-
-    #[test]
-    fn on_ocr_done_empty_and_err_statuses() {
-        let mut a = test_app();
-        a.db.upsert_file(&a.active_space.id, "blank.pdf", "h1", 9, "ocr…")
-            .unwrap();
-        a.db.upsert_file(&a.active_space.id, "bad.pdf", "h2", 9, "ocr…")
-            .unwrap();
-
-        a.on_ocr_done(Some((
-            a.active_space.id.clone(),
-            "blank.pdf".to_string(),
-            OcrUpdate::Done(Ok((String::new(), Vec::new()))),
-        )));
-        a.on_ocr_done(Some((
-            a.active_space.id.clone(),
-            "bad.pdf".to_string(),
-            OcrUpdate::Done(Err(
-                "scanned pdf — install tesseract + poppler for ocr".to_string()
-            )),
-        )));
-
-        let by_name = |a: &App, n: &str| {
-            a.files_cache
-                .iter()
-                .find(|f| f.name == n)
-                .unwrap()
-                .status
-                .clone()
-        };
-        assert_eq!(by_name(&a, "blank.pdf"), "no text (ocr found nothing)");
-        assert_eq!(
-            by_name(&a, "bad.pdf"),
-            "scanned pdf — install tesseract + poppler for ocr"
-        );
-    }
-
-    #[test]
-    fn on_ocr_done_for_inactive_space_writes_db_but_not_cache() {
-        let mut a = test_app();
-        let other = a.db.create_space("other").unwrap();
-        a.db.upsert_file(&other.id, "scan.pdf", "h", 9, "ocr…")
-            .unwrap();
-
-        a.on_ocr_done(Some((
-            other.id.clone(),
-            "scan.pdf".to_string(),
-            OcrUpdate::Done(Ok(("found text".to_string(), Vec::new()))),
-        )));
-
-        assert!(
-            a.files_cache.is_empty(),
-            "active-space cache must not show other space's file"
-        );
-        let rows = a.db.list_files(&other.id).unwrap();
-        assert_eq!(rows[0].status, "ok · pdf (ocr)");
-
-        // Deleted-mid-OCR: result for a row that no longer exists is a no-op.
-        a.on_ocr_done(Some((
-            other.id.clone(),
-            "gone.pdf".to_string(),
-            OcrUpdate::Done(Ok(("x".to_string(), Vec::new()))),
-        )));
-    }
-
-    #[tokio::test]
-    async fn on_ocr_done_none_clears_channel_and_requeues_stragglers() {
-        let mut a = test_app();
-        let dir = a.space.files_dir(&a.active_space.name);
-        std::fs::create_dir_all(&dir).unwrap();
-        // A scanned PDF stuck at "ocr…" (imported while a batch was running).
+        a.embedding_model.clear();
+        let dir = files_dir_of(&a);
         std::fs::write(dir.join("scan.pdf"), crate::extract::minimal_pdf(None)).unwrap();
         a.rescan_files();
-        assert!(a.ocr_rx.is_some());
-        // Batch finishes: channel clears, and the straggler chains into a new batch.
-        a.on_ocr_done(None);
-        assert!(a.ocr_rx.is_some(), "straggler should re-queue on batch end");
+        assert_eq!(a.files_cache[0].status, "ok · scanned pdf (no text layer)");
+        assert!(a.ocr_rx.is_none());
+        let chunks = a.db.file_chunk_texts(&a.files_cache[0].id).unwrap();
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].1.contains("uploaded file: scan.pdf"));
     }
 
     fn files_dir_of(a: &App) -> std::path::PathBuf {
@@ -1882,39 +1242,6 @@ mod tests {
         assert_eq!(a.db.file_chunk_texts(&id).unwrap()[0].1, "sentinel");
     }
 
-    #[tokio::test]
-    async fn a_version_bump_never_re_ocrs_a_pdf_that_already_has_text() {
-        let mut a = test_app();
-        a.embedding_model.clear();
-        let dir = files_dir_of(&a);
-        std::fs::write(dir.join("scan.pdf"), crate::extract::minimal_pdf(None)).unwrap();
-        a.rescan_files();
-        a.on_ocr_done(Some((
-            a.active_space.id.clone(),
-            "scan.pdf".to_string(),
-            OcrUpdate::Done(Ok(("[page 1]\npaid for text".to_string(), Vec::new()))),
-        )));
-        a.ocr_rx = None;
-        let id = a.files_cache[0].id.clone();
-        a.db.set_file_extractor(&id, 0).unwrap();
-
-        a.rescan_files();
-        assert!(
-            a.ocr_rx.is_none(),
-            "no new OCR batch: {}",
-            status_of(&a, "scan.pdf")
-        );
-        assert_eq!(status_of(&a, "scan.pdf"), "ok · pdf (ocr)");
-        assert_eq!(
-            a.db.file_chunk_texts(&id).unwrap()[0].1,
-            "[page 1]\npaid for text"
-        );
-        assert_eq!(
-            a.files_cache[0].extractor,
-            crate::extract::EXTRACTOR_VERSION
-        );
-    }
-
     #[test]
     fn embedding_status_carries_the_read_status_and_restores_it() {
         assert_eq!(embedding_status("ok"), "embedding…");
@@ -2013,32 +1340,7 @@ mod tests {
 
     #[test]
     fn read_labels_say_how_a_job_read_the_file() {
-        assert_eq!(read_label("ocr…", "scan.pdf"), "pdf (ocr)");
-        assert_eq!(read_label("ocr 3/10", "scan.PDF"), "pdf (ocr)");
-        assert_eq!(read_label("ocr: tesseract", "shot.png"), "image (ocr)");
-        assert_eq!(
-            read_label("ocr: captioning image…", "shot.png"),
-            "image (caption)"
-        );
-        assert_eq!(
-            read_label("convert: soffice → pdf", "old.xls"),
-            "soffice → pdf"
-        );
-        assert_eq!(read_label("convert: pandoc…", "a.rst"), "pandoc");
-    }
-
-    #[test]
-    fn reocr_only_applies_to_pdfs_and_images() {
-        let mut a = test_app();
-        let dir = files_dir_of(&a);
-        std::fs::write(dir.join("notes.txt"), "plain words").unwrap();
-        a.rescan_files();
-        a.reocr_file("notes.txt");
-        assert!(
-            a.last_status().contains("only PDFs and images support OCR"),
-            "{}",
-            a.last_status()
-        );
-        assert_eq!(status_of(&a, "notes.txt"), "ok");
+        assert_eq!(read_label("convert: soffice → pdf"), "soffice → pdf");
+        assert_eq!(read_label("convert: pandoc…"), "pandoc");
     }
 }

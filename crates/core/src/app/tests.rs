@@ -5968,8 +5968,9 @@ fn removed_model_settings_are_ignored_on_read_and_rejected_on_set() {
         ("memory_model", "x/mem"),
         ("transcriber_model", "x/vision"),
         ("ocr_model", "x/ocr"),
-        ("ocr_engine", "tesseract"),
+        ("ocr_engine", "auto"),
         ("local_ocr_model", "glm-ocr"),
+        ("ocr_images", "true"),
         ("embedding_model", ""),
         ("image_gen_model", "x/img"),
         ("video_gen_model", "x/vid"),
@@ -5998,6 +5999,13 @@ fn removed_model_settings_are_ignored_on_read_and_rejected_on_set() {
         assert!(is_removed_setting(key));
     }
     assert_eq!(a.db.setting("ocr_model").as_deref(), Some("x/ocr"));
+    assert_eq!(a.db.setting("ocr_images").as_deref(), Some("true"));
+    assert!(
+        a.set_setting("ocr_images", "false")
+            .unwrap_err()
+            .to_string()
+            .contains("images are embedded directly; there is no OCR")
+    );
     // Unknown keys are still just unknown.
     assert!(
         !a.set_setting("nonsense", "1")

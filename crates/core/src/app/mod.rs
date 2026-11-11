@@ -1009,7 +1009,7 @@ pub enum AppEvent {
     /// Result of `/skills` install: skill name on success, error message on failure.
     SkillInstall(Option<Result<String, String>>),
 
-    /// A per-page progress or final OCR result for one scanned PDF, or `None`
+    /// A progress or final converter result for one file, or `None`
     /// when the batch's channel closed.
     Ocr(Option<(String, String, files::OcrUpdate)>),
     /// One file's chunk-embedding job finished (or the channel closed).
@@ -1075,8 +1075,6 @@ pub struct App {
     pub embedding_backend: Option<crate::provider::embedding::Embedder>,
     /// Runtime health and indexing progress for frontends.
     pub embedding_status: String,
-    /// None preserves legacy OCR unless direct image embeddings are enabled.
-    pub ocr_images: Option<bool>,
     embedding_chunks: Vec<(String, String)>,
     embedding_chat_job: Option<chats::ChatEmbedJob>,
     next_chat_index: std::time::Instant,
@@ -1224,7 +1222,7 @@ pub struct App {
     /// Local static server for model-created apps (None if it failed to bind).
     pub app_server: Option<crate::appserver::AppServer>,
     pub skills_rx: Option<mpsc::UnboundedReceiver<Result<String, String>>>,
-    /// Background OCR updates: (`space_id`, file name, progress or final result).
+    /// Background converter updates: (`space_id`, file name, progress or final result).
     pub ocr_rx: Option<mpsc::UnboundedReceiver<(String, String, files::OcrUpdate)>>,
     /// One in-flight file/chat embedding job, or embedder capability probe.
     pub embed_rx: Option<mpsc::UnboundedReceiver<EmbedMsg>>,
@@ -1513,7 +1511,6 @@ impl App {
             next_chat_index: std::time::Instant::now() + std::time::Duration::from_secs(5),
             chat_index_status: String::new(),
             embedding_discovery: None,
-            ocr_images: None,
             base_system_prompt: config::BASE_SYSTEM_PROMPT.to_string(),
             system_prompt_overlay: String::new(),
             interactive_ui: false,
@@ -1952,13 +1949,6 @@ impl App {
             "temperature" => self.settings.temperature = v.parse().ok(),
             "top_p" => self.settings.top_p = v.parse().ok(),
             "max_tokens" => self.settings.max_tokens = v.parse().ok(),
-            "ocr_images" => {
-                self.ocr_images = match v {
-                    "true" => Some(true),
-                    "false" => Some(false),
-                    _ => None,
-                };
-            }
             "compact_threshold" => {
                 if let Ok(t) = v.parse() {
                     self.settings.compact_threshold = t;

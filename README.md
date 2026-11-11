@@ -142,8 +142,7 @@ agent on macOS and prints the activation command.
 - Rust 1.91+ (only needed to build/install — no runtime dependency)
 - A modern terminal (truecolor recommended)
 - Extra tooling, all optional:
-  - `tesseract` (with `poppler`) — local OCR for scanned PDFs and images; without
-    it the session model reads them if it accepts images
+  - `poppler` (`pdftoppm`) — render PDF pages for the model to view
   - `ffmpeg` — video transforms for `media`; with `ffprobe` and a local
     `whisper`, audio/video files get metadata and transcripts
   - `pandoc`, `libreoffice` (`soffice`), `antiword`/`catdoc` — richer reads of
@@ -191,10 +190,8 @@ are skipped. Exa has no recency filter: when requested, the result header says
 it was not applied. HTML scrapers remain last-resort fallbacks and may return
 bot challenges.
 
-Background jobs (titles, compaction, image descriptions, OCR, the approval
-judge, `/memory tidy`) run on the session's own model. Image descriptions and
-OCR need a session model that accepts images; otherwise they are skipped
-(tesseract still handles scanned PDFs when installed).
+Background jobs (titles, compaction, the approval judge, `/memory tidy`)
+run on the session's own model.
 
 ## Local inference (experimental)
 
@@ -385,14 +382,9 @@ directly (downscaled to at most 768 px, up to 20 MiB) and returned by
 `files search` as `image · name · score` hits the model can look at. Audio and
 video are not embedded yet.
 
-**OCR and captions are optional now.** While images are embedded directly,
-Nexus no longer queues OCR or a vision caption for new images just to make them
-searchable. `Ctrl+F` in `/files` still runs OCR on a chosen file, and the
-`ocr_images` host setting (`true`/`false`, blank for automatic) overrides the
-default. Text extraction for reading and keyword search is unchanged. When OCR
-does run, scanned PDFs use `tesseract` if it is installed and the session model's
-vision otherwise; images try `tesseract`, then the session model describes them
-if it accepts images.
+Images are embedded directly for search when the embedder accepts images;
+scanned PDFs are found by name. The model views any imported PDF page with
+`files(action=pdf_page)`, rendered on demand using poppler's `pdftoppm`.
 
 **Switching and updating.** Each vector records the model's identity: backend,
 model, weights digest, dimension, prefix scheme and preprocessing version.

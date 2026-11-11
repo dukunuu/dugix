@@ -1533,7 +1533,7 @@ async fn fs_read_shows_converted_text_for_documents_never_raw_bytes() {
     let (result, _) = toolbox.run("fs_read", r#"{"path":"pic"}"#).await;
     assert_eq!(
         result,
-        "png image (12 bytes) · not shown as text · import it into the space files to have it OCR'd or described"
+        "png image (12 bytes) · not text · import it into the space files to view or search it"
     );
     // Converted files cannot be edited through the anchors.
     let (result, _) = toolbox
@@ -2654,6 +2654,89 @@ fn files_toolbox() -> (ToolBox, crate::db::Db, String) {
         None,
     );
     (tb, db, space)
+}
+
+#[tokio::test]
+async fn files_pdf_page_renders_missing_images_on_demand() {
+    if std::process::Command::new("pdftoppm")
+        .arg("-v")
+        .output()
+        .is_err()
+    {
+        eprintln!("skipping files_pdf_page: pdftoppm not installed");
+        return;
+    }
+    let (mut tb, db, space) = files_toolbox();
+    tb.space_files_dir = tb
+        .files
+        .as_ref()
+        .unwrap()
+        .db_path
+        .parent()
+        .unwrap()
+        .join("files");
+    std::fs::create_dir_all(&tb.space_files_dir).unwrap();
+    for (name, text) in [("scan.pdf", None), ("text.pdf", Some("TEXT LAYER"))] {
+        let id = db.upsert_file(&space, name, "h", 1, "ok").unwrap();
+        db.set_file_chunks(&id, &crate::extract::metadata_chunks(name))
+            .unwrap();
+        std::fs::write(
+            tb.space_files_dir.join(name),
+            crate::extract::minimal_pdf(text),
+        )
+        .unwrap();
+        let stem = Path::new(name).file_stem().unwrap().to_str().unwrap();
+        let png = tb.space_files_dir.join(stem).join("page-1.png");
+        assert!(!png.exists());
+        let (out, _) = tb
+            .run(
+                "files",
+                &format!(r#"{{"action":"pdf_page","name":"{name}","page":1}}"#),
+            )
+            .await;
+        assert_eq!(out, format!("![page 1]({stem}/page-1.png)"));
+        let image = image::open(&png).unwrap();
+        assert_eq!((image.width(), image.height()), (834, 313));
+        let cached = files::read_pdf_page(
+            tb.files.as_ref().unwrap(),
+            &tb.space_files_dir,
+            name,
+            1,
+            "nexus-definitely-not-a-binary",
+        )
+        .await;
+        assert_eq!(cached, out);
+    }
+}
+
+#[tokio::test]
+async fn files_pdf_page_reports_missing_tools_and_checks_known_pdfs() {
+    let (tb, db, space) = files_toolbox();
+    db.upsert_file(
+        &space,
+        "scan.pdf",
+        "h",
+        1,
+        "ok · scanned pdf (no text layer)",
+    )
+    .unwrap();
+    let ctx = tb.files.as_ref().unwrap();
+    let dir = ctx.db_path.parent().unwrap().join("pages");
+    let result =
+        files::read_pdf_page(ctx, &dir, "scan.pdf", 1, "nexus-definitely-not-a-binary").await;
+    assert_eq!(
+        result,
+        "pdftoppm is not installed — install poppler to view PDF pages"
+    );
+    assert!(!dir.join("scan/page-1.png").exists());
+    assert_eq!(
+        files::read_pdf_page(ctx, &dir, "unknown.pdf", 1, "nexus-definitely-not-a-binary").await,
+        "unknown file: unknown.pdf"
+    );
+    assert_eq!(
+        files::read_pdf_page(ctx, &dir, "report.md", 1, "nexus-definitely-not-a-binary").await,
+        "not a PDF: report.md"
+    );
 }
 
 #[tokio::test]

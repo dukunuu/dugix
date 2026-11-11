@@ -67,7 +67,7 @@ pub enum WireEvent {
     /// `/skills` install outcome: skill name on success, error message on
     /// failure.
     SkillInstall(Option<Result<String, String>>),
-    /// A per-page progress or final `OCR` result for one scanned `PDF`, or
+    /// A progress or final converter result for one file, or
     /// `None` when the batch's channel closed.
     Ocr(Option<(String, String, WireOcrUpdate)>),
     /// One file's chunk-embedding job finished (or the channel closed).
@@ -159,7 +159,7 @@ pub enum WireSurveyPhase {
     Approve { rework: bool },
 }
 
-/// A message from the background `OCR` batch about one file.
+/// A message from the background converter batch about one file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum WireOcrUpdate {
     /// A human-readable phase ("rendering pages…") shown while nothing is

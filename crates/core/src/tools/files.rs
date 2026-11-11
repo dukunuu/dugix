@@ -84,45 +84,18 @@ impl ToolBox {
                     .and_then(|n| n.as_str())
                     .unwrap_or_default()
                     .to_string();
-                let page = v
-                    .get("page")
-                    .and_then(serde_json::Value::as_u64)
-                    .unwrap_or(1)
-                    .max(1);
+                let page = u32::try_from(
+                    v.get("page")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(1)
+                        .max(1),
+                )
+                .unwrap_or(u32::MAX);
                 let status = format!("Reading {name} page {page}…");
                 let result = match &self.files {
                     None => "no files imported".to_string(),
                     Some(ctx) => {
-                        // Verify the PDF is known via DB lookup
-                        let known = crate::db::open_attached(&ctx.db_path)
-                            .ok()
-                            .and_then(|conn| {
-                                crate::db::file_text(&conn, &ctx.space_id, &name)
-                                    .ok()
-                                    .flatten()
-                            })
-                            .is_some();
-                        if !known {
-                            format!("unknown file: {name}")
-                        } else if !name.to_lowercase().ends_with(".pdf") {
-                            format!("not a PDF: {name}")
-                        } else {
-                            let stem = std::path::Path::new(&name)
-                                .file_stem()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or(&name);
-                            let png_path = self
-                                .space_files_dir
-                                .join(stem)
-                                .join(format!("page-{page}.png"));
-                            if png_path.exists() {
-                                format!("![page {page}]({stem}/page-{page}.png)")
-                            } else {
-                                format!(
-                                    "page {page} image not available — the PDF was not imported through the vision OCR path. Use files with action=read to read its text content."
-                                )
-                            }
-                        }
+                        read_pdf_page(ctx, &self.space_files_dir, &name, page, "pdftoppm").await
                     }
                 };
                 (result, status)
@@ -133,6 +106,54 @@ impl ToolBox {
             ),
         }
     }
+}
+
+/// Read a cached PDF page, rendering it on demand when missing.
+pub(super) async fn read_pdf_page(
+    ctx: &FilesCtx,
+    files_dir: &Path,
+    name: &str,
+    page: u32,
+    pdftoppm: &str,
+) -> String {
+    let known = crate::db::open_attached(&ctx.db_path)
+        .and_then(|conn| crate::db::file_status(&conn, &ctx.space_id, name))
+        .ok()
+        .flatten()
+        .is_some();
+    if !known {
+        return format!("unknown file: {name}");
+    }
+    if !name.to_lowercase().ends_with(".pdf") {
+        return format!("not a PDF: {name}");
+    }
+    let stem = Path::new(name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(name);
+    let page_dir = files_dir.join(stem);
+    let png_path = page_dir.join(format!("page-{page}.png"));
+    if !png_path.exists() {
+        let pdf = files_dir.join(name);
+        let pdftoppm = pdftoppm.to_string();
+        let result = tokio::task::spawn_blocking(move || {
+            std::fs::create_dir_all(&page_dir)
+                .map_err(|e| crate::extract::ToolError::Failed(e.to_string()))?;
+            crate::extract::render_pdf_page(&pdftoppm, &pdf, page, 150, &png_path)
+        })
+        .await
+        .unwrap_or_else(|e| Err(crate::extract::ToolError::Failed(e.to_string())));
+        match result {
+            Ok(()) => {}
+            Err(crate::extract::ToolError::MissingTools) => {
+                return "pdftoppm is not installed — install poppler to view PDF pages".to_string();
+            }
+            Err(crate::extract::ToolError::Failed(error)) => {
+                return format!("cannot render page {page}: {error}");
+            }
+        }
+    }
+    format!("![page {page}]({stem}/page-{page}.png)")
 }
 
 /// The space's imported files as JSON `{name, size}` rows, sorted by name.

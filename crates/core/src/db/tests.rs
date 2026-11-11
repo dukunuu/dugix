@@ -1522,7 +1522,7 @@ fn legacy_db_migrates_cache_tables_and_seeds_file_index_state() {
 /// Legacy `files` rows carried a `status TEXT NOT NULL` column with no
 /// default. Once status moved to `cache.file_index_state`, inserts that
 /// omit it failed on those dbs — the rescan swallowed the error, so every
-/// new file stayed unindexed and was re-OCR'd on every rescan, forever.
+/// new file stayed unindexed and was reprocessed on every rescan, forever.
 #[test]
 fn legacy_files_status_column_no_longer_blocks_new_files() {
     let dir = std::env::temp_dir().join(format!("nexus-status-{}", uuid::Uuid::new_v4()));
@@ -1532,13 +1532,13 @@ fn legacy_files_status_column_no_longer_blocks_new_files() {
     let db = Db::open(&db_path).unwrap();
     assert!(!has_column(db.raw(), "files", "status").unwrap());
     let space = db.default_space_id().unwrap();
-    db.upsert_file(&space, "pasted.png", "h2", 5, "ocr…")
+    db.upsert_file(&space, "pasted.png", "h2", 5, "ok · image")
         .unwrap();
     let files = db.list_files(&space).unwrap();
     let legacy = files.iter().find(|f| f.name == "a.txt").unwrap();
     assert_eq!(legacy.status, "ok", "index state survived the drop");
     let new = files.iter().find(|f| f.name == "pasted.png").unwrap();
-    assert_eq!(new.status, "ocr…");
+    assert_eq!(new.status, "ok · image");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1895,7 +1895,6 @@ fn settings_scope_registry_classifies_keys_and_stores_scope() {
         "searxng_url",
         "langsearch_key",
         "search_provider",
-        "ocr_images",
         "usage_range",
         "ui_background",
         "column_width",
@@ -1919,7 +1918,7 @@ fn settings_scope_registry_classifies_keys_and_stores_scope() {
 
     let db = Db::open_in_memory().unwrap();
     db.set_setting("temperature", "0.7").unwrap();
-    db.set_setting("ocr_images", "true").unwrap();
+    db.set_setting("search_provider", "auto").unwrap();
     let scope = |key: &str| -> String {
         db.raw()
             .query_row(
@@ -1930,7 +1929,7 @@ fn settings_scope_registry_classifies_keys_and_stores_scope() {
             .unwrap()
     };
     assert_eq!(scope("temperature"), "sync");
-    assert_eq!(scope("ocr_images"), "local");
+    assert_eq!(scope("search_provider"), "local");
 }
 
 #[test]

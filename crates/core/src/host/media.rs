@@ -162,17 +162,6 @@ pub fn dispatch(
                         .ok_or_else(|| anyhow!("name is required"))?,
                     action.args.as_deref().unwrap_or(&[]),
                 )?)?),
-                "ocr" => {
-                    queue_ocr(
-                        app,
-                        &space_id,
-                        action
-                            .name
-                            .as_deref()
-                            .ok_or_else(|| anyhow!("name is required"))?,
-                    )?;
-                    Ok(serde_json::json!({ "queued": true }))
-                }
                 _ => bail!("invalid media action"),
             }
         }
@@ -516,17 +505,6 @@ pub fn prepare_script(app: &App, space_id: &str, name: &str, args: &[String]) ->
         cwd: root.to_string_lossy().into_owned(),
         space_id: space_id.to_string(),
     })
-}
-
-/// Queue the same OCR flow exposed by the TUI for an active-space file.
-pub fn queue_ocr(app: &mut App, space_id: &str, name: &str) -> Result<()> {
-    if space_id != app.active_space.id {
-        bail!("ocr can only run for the active space");
-    }
-    let (root, path) = target(app, space_id, "file", name)?;
-    checked_file(&path, &root)?;
-    app.reocr_file(name);
-    Ok(())
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-//! External converters, found at run time like tesseract and never required:
+//! External converters, found at run time and never required:
 //! `pandoc`, `antiword` / `catdoc`, `soffice` (`LibreOffice`), `ffprobe` /
 //! `ffmpeg` and a local `whisper` / `whisper-cli`, plus the user's own
 //! `[extract.converters]` hooks. Every tool is spawned from an argv array
@@ -109,12 +109,6 @@ impl ExtractConfig {
         self.hooks
             .iter()
             .find(|h| (!ext.is_empty() && h.key == ext) || h.key == mime)
-    }
-
-    /// Whether scanned PDFs can be OCR'd locally: `pdftoppm` (poppler) renders
-    /// the pages and `tesseract` reads them.
-    pub fn ocr_tools_installed(&self) -> bool {
-        self.find("tesseract").is_some() && self.find("pdftoppm").is_some()
     }
 
     fn has_any(&self, programs: &[&str]) -> bool {

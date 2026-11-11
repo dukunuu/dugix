@@ -12,7 +12,7 @@
 //! subtitles and PDF text. Slower or heavier conversions are *planned* here
 //! and run later in the background ([`external`]): pandoc, antiword/catdoc,
 //! `LibreOffice`, ffprobe/whisper, and the user's `[extract.converters]`
-//! hooks. Scanned PDFs and images are handed to the OCR pipeline.
+//! hooks. Scanned PDFs and images are indexed by filename for direct viewing.
 
 mod detect;
 pub mod embedding;
@@ -47,8 +47,10 @@ const MAX_DOCUMENT: u64 = 1024 * 1024 * 1024;
 pub enum Outcome {
     /// `Extracted::text` is the file's text (possibly empty = nothing in it).
     Text,
-    /// A scanned PDF or an image: the OCR / caption pipeline takes over.
-    NeedsOcr,
+    /// An image, or a PDF with no text layer: nothing to read as text. It is
+    /// embedded as an image when the embedder accepts images, and the model
+    /// looks at it directly.
+    Visual,
     /// A background converter (named) will run; `text` is what the built-in
     /// converter already produced, if anything.
     Pending(&'static str),
@@ -104,7 +106,14 @@ impl Extracted {
     pub fn index(&self, name: &str, size: u64) -> (String, Vec<(String, String)>) {
         let metadata = |reason: &str| metadata_chunk(name, self, size, reason);
         match &self.outcome {
-            Outcome::NeedsOcr => ("ocr…".to_string(), Vec::new()),
+            Outcome::Visual => (
+                if self.kind == Kind::Pdf {
+                    "ok · scanned pdf (no text layer)".to_string()
+                } else {
+                    "ok · image".to_string()
+                },
+                metadata_chunks(name),
+            ),
             Outcome::Failed(e) => (
                 format!("error: {e}"),
                 vec![metadata(&format!("error: {e}"))],
@@ -146,9 +155,9 @@ pub fn status_is_ok(status: &str) -> bool {
     status == "ok" || status.starts_with("ok ")
 }
 
-/// Whether a status marks background work in flight: OCR or a converter.
+/// Whether a status marks a background converter in flight.
 pub fn status_is_queued(status: &str) -> bool {
-    status.starts_with("ocr") || status.starts_with("convert:")
+    status.starts_with("convert:")
 }
 
 /// Read `path` and convert it to text, using the real environment's
@@ -249,7 +258,7 @@ pub fn to_text_bytes(bytes: &[u8], name: &str, cfg: &ExtractConfig) -> Extracted
     let mut ex = match kind {
         Kind::Pdf => match pdf_text(bytes) {
             Ok(text) if text.trim().is_empty() => Extracted {
-                outcome: Outcome::NeedsOcr,
+                outcome: Outcome::Visual,
                 ..Extracted::new(kind)
             },
             Ok(text) => Extracted::with_text(kind, text, None),
@@ -309,8 +318,8 @@ pub fn to_text_bytes(bytes: &[u8], name: &str, cfg: &ExtractConfig) -> Extracted
                 Err(e) => failed(kind, format!("{e:#}")),
             }
         }
-        k if k.is_ocr_image() => Extracted {
-            outcome: Outcome::NeedsOcr,
+        k if k.is_image_file() => Extracted {
+            outcome: Outcome::Visual,
             ..Extracted::new(kind)
         },
         Kind::Heic | Kind::Avif => Extracted::metadata(
@@ -359,7 +368,7 @@ pub fn to_text_bytes(bytes: &[u8], name: &str, cfg: &ExtractConfig) -> Extracted
     let base_empty = ex.text.trim().is_empty();
     if matches!(
         ex.outcome,
-        Outcome::Text | Outcome::Metadata(_) | Outcome::NeedsOcr
+        Outcome::Text | Outcome::Metadata(_) | Outcome::Visual
     ) && let Some(tool) = external::plan(kind, &ext, base_empty, cfg)
     {
         ex.outcome = Outcome::Pending(tool);
@@ -434,7 +443,7 @@ pub fn from_fetched(bytes: &[u8], content_type: &str) -> String {
         Outcome::Text | Outcome::Pending(_) if !ex.text.trim().is_empty() => {
             ex.text.trim().to_string()
         }
-        Outcome::NeedsOcr if ex.kind == Kind::Pdf => {
+        Outcome::Visual if ex.kind == Kind::Pdf => {
             "[scanned PDF: no text layer to extract]".to_string()
         }
         _ if ct.contains("application/pdf") && ex.kind != Kind::Pdf && !ex.kind.is_text() => {
@@ -666,55 +675,28 @@ pub fn is_image_ext(ext: &str) -> bool {
     matches!(ext, "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp")
 }
 
-/// Why OCR failed: the tools aren't installed (user-fixable hint) vs a real
-/// failure (surfaced as an error status).
+/// Why rendering failed: a missing tool or a failure reported by the tool.
 #[derive(Debug)]
-pub enum OcrError {
+pub enum ToolError {
     MissingTools,
     Failed(String),
 }
 
-/// OCR a (scanned) PDF with pdftoppm + tesseract. Pages join with `[page N]`
-/// marker lines — same inline-marker convention as pptx's `[slide N]`.
-/// `Ok("")` means the tools ran but found no text. `progress` is called after
-/// each finished page with (pages done, total pages).
-pub fn ocr_pdf(
-    path: &Path,
-    progress: &(dyn Fn(usize, usize) + Sync),
-) -> std::result::Result<String, OcrError> {
-    ocr_pdf_with("pdftoppm", "tesseract", path, progress)
-}
-
-/// Binary names are parameters so tests can exercise the missing-tools path
-/// without mutating the process-global PATH.
-fn ocr_pdf_with(
-    pdftoppm: &str,
-    tesseract: &str,
-    path: &Path,
-    progress: &(dyn Fn(usize, usize) + Sync),
-) -> std::result::Result<String, OcrError> {
-    let tmp = std::env::temp_dir().join(format!("nexus-ocr-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&tmp).map_err(|e| OcrError::Failed(e.to_string()))?;
-    let result = ocr_pdf_in(pdftoppm, tesseract, path, &tmp, progress);
-    let _ = std::fs::remove_dir_all(&tmp);
-    result
-}
-
-/// Run a command, mapping a missing binary to `OcrError::MissingTools` and a
+/// Run a command, mapping a missing binary to `ToolError::MissingTools` and a
 /// non-zero exit to `Failed` with its stderr.
-fn run_ocr_cmd(
+fn run_tool(
     cmd: &mut std::process::Command,
     name: &str,
-) -> std::result::Result<Vec<u8>, OcrError> {
+) -> std::result::Result<Vec<u8>, ToolError> {
     let out = cmd.output().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
-            OcrError::MissingTools
+            ToolError::MissingTools
         } else {
-            OcrError::Failed(e.to_string())
+            ToolError::Failed(e.to_string())
         }
     })?;
     if !out.status.success() {
-        return Err(OcrError::Failed(format!(
+        return Err(ToolError::Failed(format!(
             "{name}: {}",
             String::from_utf8_lossy(&out.stderr).trim()
         )));
@@ -730,15 +712,15 @@ pub fn render_pdf_pages(
     tmp: &Path,
     dpi: u32,
     gray: bool,
-) -> std::result::Result<Vec<std::path::PathBuf>, OcrError> {
+) -> std::result::Result<Vec<std::path::PathBuf>, ToolError> {
     let mut cmd = std::process::Command::new(pdftoppm);
     cmd.args(["-r", &dpi.to_string()]);
     if gray {
         cmd.arg("-gray");
     }
-    run_ocr_cmd(cmd.arg("-png").arg(path).arg(tmp.join("page")), "pdftoppm")?;
+    run_tool(cmd.arg("-png").arg(path).arg(tmp.join("page")), "pdftoppm")?;
     let mut pages: Vec<std::path::PathBuf> = std::fs::read_dir(tmp)
-        .map_err(|e| OcrError::Failed(e.to_string()))?
+        .map_err(|e| ToolError::Failed(e.to_string()))?
         .flatten()
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|e| e == "png"))
@@ -747,108 +729,37 @@ pub fn render_pdf_pages(
     Ok(pages)
 }
 
-/// Join per-page OCR results with `[page N]` markers: blank pages are
-/// dropped, failed pages leave a `[page N: ocr failed]` marker so the rest
-/// of the document still lands.
-pub fn join_pages(results: &[std::result::Result<String, String>]) -> String {
-    let mut text = String::new();
-    for (i, r) in results.iter().enumerate() {
-        match r {
-            Ok(p) if p.trim().is_empty() => {}
-            Ok(p) => {
-                let _ = write!(text, "[page {}]\n{}\n", i + 1, p.trim());
-            }
-            Err(_) => {
-                let _ = writeln!(text, "[page {}: ocr failed]", i + 1);
-            }
-        }
-    }
-    text.trim().to_string()
-}
-
-fn ocr_pdf_in(
+/// Render one PDF page to `out` as a PNG at the requested DPI.
+pub fn render_pdf_page(
     pdftoppm: &str,
-    tesseract: &str,
-    path: &Path,
-    tmp: &Path,
-    progress: &(dyn Fn(usize, usize) + Sync),
-) -> std::result::Result<String, OcrError> {
-    let run = run_ocr_cmd;
-
-    // 200 dpi is ~2x faster to render and OCR than 300 with negligible
-    // accuracy loss on normal print.
-    let pages = render_pdf_pages(pdftoppm, path, tmp, 200, true)?;
-
-    // Recognize with every installed language pack (eng+jpn+…): tesseract
-    // then picks the right script per line itself, so installing a tessdata
-    // pack is all it takes to support a language. None = listing failed;
-    // fall back to tesseract's default (eng).
-    let langs = installed_langs(tesseract);
-
-    // OCR pages in parallel — one tesseract process per core, pulling page
-    // indices off a shared counter; results re-ordered by index afterwards.
-    let workers = std::thread::available_parallelism()
-        .map_or(4, std::num::NonZero::get)
-        .min(pages.len().max(1));
-    let next = std::sync::atomic::AtomicUsize::new(0);
-    let results = std::sync::Mutex::new(Vec::with_capacity(pages.len()));
-    std::thread::scope(|s| {
-        for _ in 0..workers {
-            s.spawn(|| {
-                loop {
-                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let Some(png) = pages.get(i) else { return };
-                    let mut cmd = std::process::Command::new(tesseract);
-                    cmd.arg(png).arg("stdout");
-                    if let Some(l) = &langs {
-                        cmd.args(["-l", l]);
-                    }
-                    let r = run(&mut cmd, "tesseract");
-                    let done = {
-                        let mut res = results.lock().unwrap();
-                        res.push((i, r));
-                        res.len()
-                    };
-                    progress(done, pages.len());
-                }
-            });
-        }
-    });
-    let mut results = results.into_inner().unwrap();
-    results.sort_by_key(|(i, _)| *i);
-
-    let mut text = String::new();
-    for (i, r) in results {
-        let stdout = r?;
-        let page = String::from_utf8_lossy(&stdout);
-        let page = page.trim();
-        if !page.is_empty() {
-            let _ = writeln!(text, "[page {}]\n{page}", i + 1);
-        }
-    }
-    Ok(text.trim().to_string())
-}
-
-/// All installed tesseract language packs joined as "eng+jpn+…" (minus the
-/// osd script-detection pack), or None if listing fails. Older tesseracts
-/// print the list to stderr, newer to stdout — scan both; language codes
-/// never contain spaces, which filters the header line.
-fn installed_langs(tesseract: &str) -> Option<String> {
-    let out = std::process::Command::new(tesseract)
-        .arg("--list-langs")
-        .output()
-        .ok()?;
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
+    pdf: &Path,
+    page: u32,
+    dpi: u32,
+    out: &Path,
+) -> std::result::Result<(), ToolError> {
+    let result = run_tool(
+        std::process::Command::new(pdftoppm)
+            .args([
+                "-f",
+                &page.to_string(),
+                "-l",
+                &page.to_string(),
+                "-r",
+                &dpi.to_string(),
+                "-png",
+                "-singlefile",
+            ])
+            .arg(pdf)
+            .arg(out.with_extension("")),
+        "pdftoppm",
     );
-    let langs: Vec<&str> = text
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.contains(' ') && *l != "osd")
-        .collect();
-    (!langs.is_empty()).then(|| langs.join("+"))
+    if matches!(result, Err(ToolError::MissingTools)) {
+        return Err(ToolError::MissingTools);
+    }
+    if !out.exists() {
+        return Err(ToolError::Failed(format!("page {page} does not exist")));
+    }
+    result.map(|_| ())
 }
 
 /// Build a minimal valid PDF: one page, optionally with `text` drawn in
@@ -916,32 +827,6 @@ fn serialize_pdf(objs: &[String]) -> Vec<u8> {
         format!("trailer\n<< /Size {n} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n").as_bytes(),
     );
     out
-}
-
-/// OCR a still image with tesseract. `Ok("")` means the tool ran and found
-/// no text.
-pub fn ocr_image(path: &Path) -> std::result::Result<String, OcrError> {
-    ocr_image_with("tesseract", path)
-}
-
-fn ocr_image_with(tesseract: &str, path: &Path) -> std::result::Result<String, OcrError> {
-    let mut args = vec![path.to_string_lossy().to_string(), "stdout".to_string()];
-    if let Some(langs) = installed_langs(tesseract) {
-        args.push("-l".to_string());
-        args.push(langs);
-    }
-    let out = external::run_capped(
-        Path::new(tesseract),
-        &args,
-        &std::env::temp_dir(),
-        std::time::Duration::from_secs(180),
-        8 * 1024 * 1024,
-    )
-    .map_err(|e| match e {
-        external::RunError::Missing => OcrError::MissingTools,
-        other => OcrError::Failed(other.to_string()),
-    })?;
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 #[cfg(test)]
@@ -1059,10 +944,16 @@ mod tests {
             assert!(ex.text.contains("HELLO PDF"), "{name}: {:?}", ex.text);
             assert_eq!(ex.index(name, 1).0, "ok");
         }
-        // No text layer: handed to OCR, not decoded.
+        // No text layer: searchable by name, not decoded.
         let ex = read("scan.pdf", &minimal_pdf(None));
-        assert_eq!(ex.outcome, Outcome::NeedsOcr);
-        assert_eq!(ex.index("scan.pdf", 1), ("ocr…".to_string(), Vec::new()));
+        assert_eq!(ex.outcome, Outcome::Visual);
+        assert_eq!(
+            ex.index("scan.pdf", 1),
+            (
+                "ok · scanned pdf (no text layer)".to_string(),
+                metadata_chunks("scan.pdf"),
+            )
+        );
         // A broken PDF is an error with a metadata chunk, never garbage text.
         let ex = read("broken.pdf", b"%PDF-1.7\nnot really a pdf \x00\x01\x02");
         let (status, chunks) = ex.index("broken.pdf", 20);
@@ -1117,13 +1008,14 @@ mod tests {
     }
 
     #[test]
-    fn images_go_to_ocr_and_unreadable_images_are_metadata_only() {
+    fn images_are_visual_and_unreadable_images_are_metadata_only() {
         let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
         png.extend_from_slice(&[0; 16]);
         let ex = read("shot.dat", &png);
+        assert_eq!((ex.kind, ex.outcome.clone()), (Kind::Png, Outcome::Visual));
         assert_eq!(
-            (ex.kind, ex.outcome.clone()),
-            (Kind::Png, Outcome::NeedsOcr)
+            ex.index("shot.dat", png.len() as u64),
+            ("ok · image".to_string(), metadata_chunks("shot.dat"))
         );
         let heic = b"\0\0\0\x18ftypheic\0\0\0\0";
         let (status, chunks) = read("p.heic", heic).index("p.heic", 20);
@@ -1230,16 +1122,6 @@ mod tests {
     }
 
     #[test]
-    fn image_ocr_reports_a_missing_tool_distinctly() {
-        let path = temp_dir().join("a.png");
-        std::fs::write(&path, b"\x89PNG\r\n\x1a\n").unwrap();
-        assert!(matches!(
-            ocr_image_with("nexus-definitely-not-a-binary", &path),
-            Err(OcrError::MissingTools)
-        ));
-    }
-
-    #[test]
     fn status_helpers_classify_known_statuses() {
         for ok in ["ok", "ok · html → text", "ok — 2 pages failed (p1: x)"] {
             assert!(status_is_ok(ok), "{ok}");
@@ -1253,16 +1135,10 @@ mod tests {
         ] {
             assert!(!status_is_ok(not_ok), "{not_ok}");
         }
-        for q in [
-            "ocr…",
-            "ocr 3/10",
-            "ocr: rendering",
-            "convert: pandoc…",
-            "convert: soffice",
-        ] {
+        for q in ["convert: pandoc…", "convert: soffice"] {
             assert!(status_is_queued(q), "{q}");
         }
-        for not_q in ["ok", "conversion failed: x", "error: ocr: x"] {
+        for not_q in ["ok", "conversion failed: x", "ocr…", "ocr 3/10"] {
             assert!(!status_is_queued(not_q), "{not_q}");
         }
     }
@@ -1350,50 +1226,17 @@ mod tests {
         assert!(chunk_lines("   \n  ").is_empty());
     }
 
-    /// True when tesseract + pdftoppm are runnable (real-OCR tests skip otherwise).
-    fn ocr_tools_present() -> bool {
-        std::process::Command::new("tesseract")
-            .arg("--version")
+    /// True when pdftoppm is runnable (render tests skip otherwise).
+    fn render_tool_present() -> bool {
+        std::process::Command::new("pdftoppm")
+            .arg("-v")
             .output()
             .is_ok()
-            && std::process::Command::new("pdftoppm")
-                .arg("-v")
-                .output()
-                .is_ok()
-    }
-
-    #[test]
-    fn ocr_pdf_reads_rendered_text() {
-        if !ocr_tools_present() {
-            eprintln!("skipping ocr_pdf_reads_rendered_text: tesseract/pdftoppm not installed");
-            return;
-        }
-        let dir = std::env::temp_dir().join(format!("nexus-ocr-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let pdf = dir.join("scan.pdf");
-        std::fs::write(&pdf, minimal_pdf(Some("HELLO NEXUS OCR"))).unwrap();
-
-        let text = ocr_pdf(&pdf, &|_, _| {}).unwrap();
-        assert!(text.contains("HELLO"), "ocr text was: {text:?}");
-        assert!(text.contains("[page 1]"), "ocr text was: {text:?}");
-    }
-
-    #[test]
-    fn ocr_pdf_blank_page_yields_empty_text() {
-        if !ocr_tools_present() {
-            eprintln!("skipping ocr_pdf_blank_page_yields_empty_text: tools not installed");
-            return;
-        }
-        let dir = std::env::temp_dir().join(format!("nexus-ocr-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let pdf = dir.join("blank.pdf");
-        std::fs::write(&pdf, minimal_pdf(None)).unwrap();
-        assert_eq!(ocr_pdf(&pdf, &|_, _| {}).unwrap(), "");
     }
 
     #[test]
     fn render_pdf_pages_renders_sorted_pages_at_dpi() {
-        if !ocr_tools_present() {
+        if !render_tool_present() {
             eprintln!("skipping render_pdf_pages_renders_sorted_pages_at_dpi: tools not installed");
             return;
         }
@@ -1413,72 +1256,25 @@ mod tests {
     }
 
     #[test]
-    fn join_pages_marks_failures_and_skips_blank_pages() {
-        let joined = join_pages(&[
-            Ok("first".to_string()),
-            Err("boom".to_string()),
-            Ok("   ".to_string()),
-            Ok("fourth".to_string()),
-        ]);
-        assert!(joined.contains("[page 1]\nfirst"), "{joined:?}");
-        assert!(joined.contains("[page 2: ocr failed]"), "{joined:?}");
-        assert!(!joined.contains("[page 3]"), "{joined:?}");
-        assert!(joined.contains("[page 4]\nfourth"), "{joined:?}");
-    }
-
-    #[test]
-    fn ocr_pdf_multipage_keeps_page_order() {
-        if !ocr_tools_present() {
-            eprintln!("skipping ocr_pdf_multipage_keeps_page_order: tools not installed");
+    fn render_pdf_page_renders_only_the_requested_page_at_dpi() {
+        if !render_tool_present() {
+            eprintln!("skipping render_pdf_page: pdftoppm not installed");
             return;
         }
-        let dir = std::env::temp_dir().join(format!("nexus-ocr-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = temp_dir();
         let pdf = dir.join("multi.pdf");
-        std::fs::write(
-            &pdf,
-            pdf_with_pages(&["ALPHA BRAVO", "CHARLIE DELTA", "ECHO FOXTROT"]),
-        )
-        .unwrap();
-
-        let text = ocr_pdf(&pdf, &|_, _| {}).unwrap();
-        // Parallel OCR must still emit pages in document order.
-        let a = text.find("ALPHA").expect(&text);
-        let c = text.find("CHARLIE").expect(&text);
-        let e = text.find("ECHO").expect(&text);
-        assert!(a < c && c < e, "pages out of order: {text:?}");
-        assert!(text.contains("[page 3]"), "{text:?}");
-    }
-
-    #[test]
-    fn installed_langs_lists_packs_without_osd() {
-        if !ocr_tools_present() {
-            eprintln!("skipping installed_langs_lists_packs_without_osd: tools not installed");
-            return;
-        }
-        let langs = installed_langs("tesseract").expect("langs should list");
-        assert!(langs.split('+').any(|l| l == "eng"), "{langs}");
-        assert!(!langs.split('+').any(|l| l == "osd"), "{langs}");
-    }
-
-    #[test]
-    fn installed_langs_missing_binary_is_none() {
-        assert!(installed_langs("nexus-definitely-not-a-binary").is_none());
-    }
-
-    #[test]
-    fn ocr_pdf_missing_tools_is_distinguishable() {
-        let dir = std::env::temp_dir().join(format!("nexus-ocr-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let pdf = dir.join("x.pdf");
-        std::fs::write(&pdf, minimal_pdf(None)).unwrap();
-        let err = ocr_pdf_with(
-            "nexus-definitely-not-a-binary",
-            "tesseract",
-            &pdf,
-            &|_, _| {},
-        )
-        .unwrap_err();
-        assert!(matches!(err, OcrError::MissingTools));
+        std::fs::write(&pdf, pdf_with_pages(&["ONE", "TWO", "THREE"])).unwrap();
+        let out = dir.join("page-2.png");
+        render_pdf_page("pdftoppm", &pdf, 2, 150, &out).unwrap();
+        let image = image::open(&out).unwrap();
+        assert_eq!((image.width(), image.height()), (834, 313));
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
+        let missing = dir.join("page-4.png");
+        assert!(matches!(
+            render_pdf_page("pdftoppm", &pdf, 4, 150, &missing),
+            Err(ToolError::Failed(message)) if message == "page 4 does not exist"
+        ));
+        assert!(!missing.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

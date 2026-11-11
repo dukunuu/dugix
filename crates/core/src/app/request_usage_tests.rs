@@ -528,7 +528,7 @@ async fn research_pipeline_logs_every_stage_and_respects_incognito() {
 #[tokio::test]
 async fn vision_and_embedding_requests_retain_usage_but_never_content() {
     for incognito in [false, true] {
-        for kind in ["describe image", "ocr", "embed", "generate image"] {
+        for kind in ["embed", "generate image"] {
             let mut fixture = Fixture::new();
             let app = &mut fixture.app;
             app.incognito = incognito;
@@ -541,15 +541,6 @@ async fn vision_and_embedding_requests_retain_usage_but_never_content() {
                 decider_mock::server(200, body.to_string(), Duration::ZERO, 1).await;
             let provider = app.usage_provider(provider, "helper");
             match kind {
-                "describe image" => {
-                    provider
-                        .describe_image("vision", "PRIVATE_IMAGE")
-                        .await
-                        .unwrap();
-                }
-                "ocr" => {
-                    provider.ocr_page("vision", "PRIVATE_IMAGE").await.unwrap();
-                }
                 "embed" => {
                     provider
                         .embed("embedding", vec!["PRIVATE_INPUT".into()])

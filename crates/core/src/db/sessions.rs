@@ -249,7 +249,7 @@ impl Db {
 
     /// Whether an `app_settings` key is device-local rather than syncable.
     /// Local keys describe this device's capabilities or per-device state
-    /// (search endpoints, secrets, the OCR stack, ui state); everything else
+    /// (search endpoints, secrets, ui state); everything else
     /// is a user preference that should follow the user. New keys must be
     /// classified here — the default is sync, so a forgotten local key would
     /// silently sync to other devices.
@@ -258,12 +258,11 @@ impl Db {
             || matches!(
                 key,
                 // Device capabilities / local services: a phone has no
-                // localhost SearXNG, no ollama, no tesseract, and its API keys
+                // localhost SearXNG, no ollama, and its API keys
                 // are its own.
                 "searxng_url"
                 | "langsearch_key"
                 | "search_provider"
-                | "ocr_images"
                 // Per-device ui/timing state.
                 | "usage_range"
                 | "ui_background"

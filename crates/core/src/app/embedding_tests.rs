@@ -115,11 +115,7 @@ async fn local_model_embeds_text_and_images_directly_and_queues_no_ocr() {
         .iter()
         .find(|f| f.name == "beach.png")
         .unwrap();
-    assert!(
-        beach.status.contains("image (direct embeddings)"),
-        "{}",
-        beach.status
-    );
+    assert_eq!(beach.status, "ok · image");
     assert_eq!(
         documents(&mock),
         vec!["title: notes.txt | text: quarterly financial report"]
@@ -155,20 +151,20 @@ async fn same_identity_is_not_reembedded_but_a_new_digest_is() {
 
     app.rescan_files();
     drain(&mut app).await;
-    assert_eq!(documents(&mock).len(), 1);
+    assert_eq!(documents(&mock).len(), 2);
     let first = stored(&app)[0].2.clone();
 
     // A rescan re-probes the runtime, finds the same identity, embeds nothing.
     app.rescan_files();
     drain(&mut app).await;
-    assert_eq!(documents(&mock).len(), 1);
+    assert_eq!(documents(&mock).len(), 2);
     assert!(stored(&app).iter().all(|row| row.2 == first));
 
     // `ollama pull` replaced the weights: same name, different digest.
     mock.state.lock().unwrap().digest = "sha256:two".to_string();
     app.rescan_files();
     drain(&mut app).await;
-    assert_eq!(documents(&mock).len(), 2);
+    assert_eq!(documents(&mock).len(), 4);
     let rows = stored(&app);
     assert!(!rows.is_empty());
     assert!(
@@ -211,40 +207,6 @@ async fn discovering_the_local_model_replaces_old_vectors_lazily() {
     let rows = stored(&app);
     assert!(!rows.is_empty());
     assert!(rows.iter().all(|row| row.2 != "old-identity"), "{rows:?}");
-}
-
-#[tokio::test]
-async fn image_ocr_is_automatic_only_when_images_are_not_embedded() {
-    let mut app = app_with_key();
-    assert!(
-        app.automatic_image_ocr(),
-        "cloud default keeps OCR for images"
-    );
-
-    // Local choice, runtime not probed yet: hold OCR rather than race a paid call.
-    app.embedding_model = "local:embeddinggemma-2".to_string();
-    assert!(!app.automatic_image_ocr());
-
-    let mock = MockOllama::start(false).await;
-    point_at(&mut app, &mock.endpoint);
-    app.rescan_files();
-    drain(&mut app).await;
-    assert!(
-        app.automatic_image_ocr(),
-        "text-only runtime falls back to OCR"
-    );
-
-    let mock = MockOllama::start(true).await;
-    point_at(&mut app, &mock.endpoint);
-    app.reset_embedding_backend();
-    app.rescan_files();
-    drain(&mut app).await;
-    assert!(!app.automatic_image_ocr());
-
-    app.set_setting("ocr_images", "true").unwrap();
-    assert!(app.automatic_image_ocr(), "explicit setting wins");
-    app.set_setting("ocr_images", "false").unwrap();
-    assert!(!app.automatic_image_ocr());
 }
 
 #[tokio::test]

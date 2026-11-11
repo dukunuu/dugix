@@ -3648,14 +3648,7 @@ async fn doctor(network: bool) -> Result<()> {
     );
 
     // Optional external tools.
-    for tool in [
-        "ffmpeg",
-        "tesseract",
-        "ollama",
-        "node",
-        "npm",
-        "cloudflared",
-    ] {
+    for tool in ["ffmpeg", "ollama", "node", "npm", "cloudflared"] {
         let present = std::process::Command::new(tool)
             .arg("--version")
             .output()

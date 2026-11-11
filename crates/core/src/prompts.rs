@@ -29,8 +29,6 @@ pub const RESEARCH_WRITER: &str = include_str!("../assets/prompts/research/write
 /// Research topic derivation from a chat transcript.
 pub const RESEARCH_TOPIC_FROM_CHAT: &str =
     include_str!("../assets/prompts/research/topic-from-chat.md");
-/// Scanned-page transcription instructions.
-pub const OCR: &str = include_str!("../assets/prompts/ocr.md");
 /// Conversation compaction instructions.
 pub const COMPACTION: &str = include_str!("../assets/prompts/compaction.md");
 /// Experimental item-preserving conversation compaction instructions.
@@ -95,7 +93,6 @@ mod tests {
         (RESEARCH_VERIFIER, &[]),
         (RESEARCH_WRITER, &[]),
         (RESEARCH_TOPIC_FROM_CHAT, &["conversation"]),
-        (OCR, &[]),
         (COMPACTION, &[]),
         (MEMORY_TIDY, &[]),
         (TITLE, &["conversation"]),

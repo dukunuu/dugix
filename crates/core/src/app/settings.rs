@@ -39,9 +39,6 @@ impl App {
             self.db.set_setting(key, value)?;
         }
         self.refresh_toolbox();
-        if key == "ocr_images" {
-            self.rescan_files();
-        }
         self.push_status(format!("{key} set"));
         Ok(())
     }
@@ -49,7 +46,7 @@ impl App {
 
 /// Every key `set_setting` accepts — the same keys `apply_setting` (and the
 /// `blocked_domains` special case) can actually apply.
-const SETTING_KEYS: [&str; 19] = [
+const SETTING_KEYS: [&str; 18] = [
     "remote_images",
     "show_stats",
     "show_reasoning",
@@ -58,7 +55,6 @@ const SETTING_KEYS: [&str; 19] = [
     "temperature",
     "top_p",
     "max_tokens",
-    "ocr_images",
     "compact_threshold",
     "searxng_url",
     "verbosity",
@@ -74,13 +70,14 @@ const SETTING_KEYS: [&str; 19] = [
 /// Per-feature model settings that earlier builds accepted and that are now
 /// automatic. Stored values are ignored on read (other devices' sync data may
 /// still carry them) and rejected on set.
-const REMOVED_SETTING_KEYS: [&str; 9] = [
+const REMOVED_SETTING_KEYS: [&str; 10] = [
     "helper_model",
     "memory_model",
     "transcriber_model",
     "ocr_model",
     "ocr_engine",
     "local_ocr_model",
+    "ocr_images",
     "embedding_model",
     "image_gen_model",
     "video_gen_model",
@@ -99,7 +96,9 @@ pub fn removed_setting_message(key: &str) -> String {
         "helper_model" | "memory_model" | "transcriber_model" | "ocr_model" => {
             "background jobs use the session model"
         }
-        "ocr_engine" | "local_ocr_model" => "OCR now picks tesseract or the session model itself",
+        "ocr_engine" | "local_ocr_model" | "ocr_images" => {
+            "images are embedded directly; there is no OCR"
+        }
         "embedding_model" => "embeddings are chosen automatically",
         _ => "media generation uses the active backend's default model",
     };
@@ -222,7 +221,6 @@ fn valid_popup_sizes(value: &str) -> bool {
 fn valid_setting_value(key: &str, value: &str) -> bool {
     match key {
         "remote_images" => matches!(value, "on" | "off"),
-        "ocr_images" => matches!(value, "" | "true" | "false"),
         "show_stats" | "show_reasoning" | "hide_hints" => matches!(value, "0" | "1"),
         "temperature" => {
             value.is_empty()

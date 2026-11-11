@@ -484,12 +484,12 @@ fn fs_read_converted(
     if ex.text.trim().is_empty() {
         let kind = ex.kind;
         return match (&ex.outcome, kind) {
-            (crate::extract::Outcome::NeedsOcr, crate::extract::Kind::Pdf) => format!(
-                "pdf ({} bytes) has no text layer · import it into the space files to have it OCR'd",
+            (crate::extract::Outcome::Visual, crate::extract::Kind::Pdf) => format!(
+                "pdf ({} bytes) has no text layer · import it into the space files and view pages with files(action=pdf_page)",
                 bytes.len()
             ),
-            (crate::extract::Outcome::NeedsOcr, _) => format!(
-                "{} image ({} bytes) · not shown as text · import it into the space files to have it OCR'd or described",
+            (crate::extract::Outcome::Visual, _) => format!(
+                "{} image ({} bytes) · not text · import it into the space files to view or search it",
                 kind.label(),
                 bytes.len()
             ),

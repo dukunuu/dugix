@@ -22,7 +22,6 @@ use super::{
     ChatMessage, ChatParams, Completion, Model, ModelPricing, PromptConvention, ReasoningEffort,
     StreamEvent, ToolCall, ToolDef, Usage,
 };
-use crate::prompts;
 use crate::tools::ToolExecutor;
 use crate::trace::{TraceResponse, TraceStep, TraceToolResult};
 
@@ -1456,22 +1455,6 @@ impl OpenRouter {
         })
     }
 
-    /// One-shot, non-streaming vision call: describe `image_data_url` with `model`.
-    pub async fn describe_image(&self, model: &str, image_data_url: &str) -> Result<String> {
-        let completion = self
-            .post_completion_with_usage(vision_body(model, image_data_url))
-            .await?;
-        if let Some((log, _)) = self.usage_log.as_deref() {
-            log.record(
-                self.backend_tag().name(),
-                model,
-                completion.usage.unwrap_or_default(),
-                "describe image",
-            );
-        }
-        Ok(completion.text)
-    }
-
     /// Generate an image via `OpenRouter`'s dedicated `/api/v1/images` endpoint.
     /// Returns `(decoded_bytes, file_extension)` — the caller should use the
     /// returned extension (e.g. `"png"`, `"jpg"`, `"webp"`) for the saved file.
@@ -1598,22 +1581,6 @@ impl OpenRouter {
         } else {
             "1K"
         }
-    }
-
-    /// One-shot, non-streaming vision call: transcribe a scanned page image.
-    pub async fn ocr_page(&self, model: &str, image_data_url: &str) -> Result<String> {
-        let completion = self
-            .post_completion_with_usage(ocr_body(model, image_data_url))
-            .await?;
-        if let Some((log, _)) = self.usage_log.as_deref() {
-            log.record(
-                self.backend_tag().name(),
-                model,
-                completion.usage.unwrap_or_default(),
-                "ocr",
-            );
-        }
-        Ok(completion.text)
     }
 
     /// Embed `inputs` with `model` (OpenAI-format /embeddings endpoint);
@@ -3525,46 +3492,6 @@ fn codex_usage(data: &str) -> Option<Usage> {
     v.get("response")?.get("usage").and_then(parse_usage_value)
 }
 
-/// Request body for a one-shot image-understanding call: a text part with the
-/// instruction plus the image as a data-URL content part (`OpenAI` vision shape).
-/// Shared page-transcription instructions (``OpenRouter`` VLMs and local Ollama).
-pub const OCR_PROMPT: &str = prompts::OCR.trim_ascii_end();
-
-fn ocr_body(model: &str, image_data_url: &str) -> serde_json::Value {
-    serde_json::json!({
-        "model": model,
-        "stream": false,
-        // Page transcriptions run long; don't let a provider default clip them.
-        "max_tokens": 8000,
-        "messages": [{
-            "role": "user",
-            "content": [
-                { "type": "text", "text": prompts::render(prompts::OCR, &[]) },
-                { "type": "image_url", "image_url": { "url": image_data_url } },
-            ],
-        }],
-    })
-}
-
-fn vision_body(model: &str, image_data_url: &str) -> serde_json::Value {
-    serde_json::json!({
-        "model": model,
-        "stream": false,
-        "messages": [{
-            "role": "user",
-            "content": [
-                { "type": "text",
-                  "text": "Describe this image so another AI model can reason about it without seeing it. \
-                           Cover: what it is (screenshot, chart, photo, diagram…), overall layout and structure, \
-                           the key entities and how they relate, ALL visible text verbatim (preserve code, \
-                           tables, and labels as markdown), and any notable visual details (colors, states, \
-                           highlights, errors). Be thorough but do not speculate beyond what is visible." },
-                { "type": "image_url", "image_url": { "url": image_data_url } },
-            ],
-        }],
-    })
-}
-
 /// Validate basic video generation parameters against known model capabilities.
 /// Returns `Ok` if the params look valid, or a descriptive error message if not.
 /// This is a best-effort check — the API is the final authority.
@@ -5026,44 +4953,6 @@ mod tests {
         let out = truncate_error_body(&long);
         assert!(out.ends_with('…'));
         assert_eq!(out.chars().count(), 301); // 300 chars + the ellipsis marker
-    }
-
-    #[test]
-    fn ocr_body_has_prompt_image_and_token_budget() {
-        let body = ocr_body("google/gemini-2.5-flash-lite", "data:image/png;base64,AAAA");
-        assert_eq!(body["model"], "google/gemini-2.5-flash-lite");
-        assert_eq!(body["stream"], false);
-        // Generous output budget — page transcriptions are long.
-        assert!(body["max_tokens"].as_u64().unwrap() >= 8000);
-        let content = &body["messages"][0]["content"];
-        let prompt = content[0]["text"].as_str().unwrap();
-        assert!(
-            prompt.contains("furigana"),
-            "prompt must say to skip furigana"
-        );
-        assert!(
-            prompt.contains("right to left"),
-            "prompt must cover vertical text"
-        );
-        assert_eq!(content[1]["image_url"]["url"], "data:image/png;base64,AAAA");
-    }
-
-    #[test]
-    fn vision_body_has_image_url_content_part() {
-        let body = vision_body("google/gemini-2.5-flash-lite", "data:image/png;base64,AAAA");
-        assert_eq!(body["model"], "google/gemini-2.5-flash-lite");
-        assert_eq!(body["stream"], false);
-        let content = &body["messages"][0]["content"];
-        assert_eq!(content[0]["type"], "text");
-        assert!(
-            content[0]["text"]
-                .as_str()
-                .unwrap()
-                .to_lowercase()
-                .contains("describe this image")
-        );
-        assert_eq!(content[1]["type"], "image_url");
-        assert_eq!(content[1]["image_url"]["url"], "data:image/png;base64,AAAA");
     }
 
     /// One golden usage payload per provider family, each asserting the same

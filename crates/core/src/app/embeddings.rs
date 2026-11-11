@@ -145,21 +145,6 @@ impl App {
             }
         }
     }
-
-    pub(super) fn automatic_image_ocr(&self) -> bool {
-        self.ocr_images.unwrap_or_else(|| {
-            // Hold image OCR during a local probe as well: it must not race a
-            // paid caption request before the runtime's capability is known.
-            !self.embedding_backend.as_ref().map_or_else(
-                || {
-                    self.embedding_model
-                        .strip_prefix("local:")
-                        .is_some_and(is_gemma)
-                },
-                |b| b.supports_images() || (b.is_ollama() && b.identity().is_none()),
-            )
-        })
-    }
 }
 
 #[cfg(test)]

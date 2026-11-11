@@ -17,8 +17,7 @@ const groups: { name: string; fields: Field[] }[] = [
     { key: "compact_threshold", label: "Auto-compact at context %", type: "number", hint: "0 disables automatic compaction" },
   ] },
   { name: "Models and media", fields: [
-    { key: "ocr_model", label: "OCR model" }, { key: "ocr_engine", label: "OCR engine", options: ["auto", "tesseract", "vlm", "local"] },
-    { key: "local_ocr_model", label: "Local OCR model" }, { key: "embedding_model", label: "Embedding model" },
+    { key: "embedding_model", label: "Embedding model" },
     { key: "image_gen_model", label: "Image generation model" }, { key: "video_gen_model", label: "Video generation model" },
   ] },
   { name: "Search", fields: [

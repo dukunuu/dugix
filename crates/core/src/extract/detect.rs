@@ -95,8 +95,8 @@ impl Kind {
         }
     }
 
-    /// Still pictures the OCR / caption pipeline can read.
-    pub const fn is_ocr_image(self) -> bool {
+    /// Still image files supported for direct embedding.
+    pub const fn is_image_file(self) -> bool {
         matches!(
             self,
             Self::Png | Self::Jpeg | Self::Gif | Self::Webp | Self::Bmp | Self::Tiff
@@ -104,7 +104,7 @@ impl Kind {
     }
 
     pub const fn is_image(self) -> bool {
-        self.is_ocr_image() || matches!(self, Self::Heic | Self::Avif)
+        self.is_image_file() || matches!(self, Self::Heic | Self::Avif)
     }
 
     /// The kinds that are text on disk (decoded, never treated as binary).

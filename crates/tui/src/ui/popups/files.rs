@@ -123,7 +123,7 @@ fn render_files(f: &mut Frame, app: &AppView) {
             "Ctrl+N import · / find · drop files here · Tab tab".to_string()
         }
         FilesMode::Browse => format!(
-            "{}↑↓ · Enter open · Ctrl+N import · / find · Ctrl+R rename · Ctrl+D remove · Ctrl+O re-extract · Ctrl+F OCR · Tab tab",
+            "{}↑↓ · Enter open · Ctrl+N import · / find · Ctrl+R rename · Ctrl+D remove · Ctrl+O re-extract · Tab tab",
             chrome::count_hint(app.files_cache.len(), "file")
         ),
         FilesMode::Pick => String::new(),
@@ -436,10 +436,6 @@ fn handle_files_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
             }
             if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
                 app.reextract_selected_file();
-                return Ok(());
-            }
-            if key.code == KeyCode::Char('f') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                app.reocr_selected_file();
                 return Ok(());
             }
             if key.code == KeyCode::Char('/') && !super::is_chord(key) {

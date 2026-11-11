@@ -163,10 +163,10 @@ reports that in the result header when a filter was requested.
   location/text, so any identity change re-embeds lazily and a vector from
   another identity is never ranked. Prefixes are applied once, inside
   `Embedder` (`document`/`query`), never in transport code. Images are embedded
-  directly when the probe shows the runtime accepts them; then
-  `App::automatic_image_ocr` is false and rescans do not queue OCR/captions for
-  images (`ocr_images` overrides; `reocr_file` is the explicit action). Tests
-  use `provider::embedding::tests::MockOllama`; never hit a real Ollama.
+  directly for search when the probe shows the runtime accepts them; scanned
+  PDFs are found by name. The model views any imported PDF page with
+  `files(action=pdf_page)`, rendered on demand using poppler's `pdftoppm`.
+  Tests use `provider::embedding::tests::MockOllama`; never hit a real Ollama.
 - **Past-chat search**: `db/chats.rs` maintains rebuildable FTS5 message chunks
   and `(message_id, seq, EmbedIdentity)` vectors in device-local `cache.db` only.
   Index persisted user/assistant content, never tool/system/reasoning text or
@@ -179,11 +179,9 @@ reports that in the result header when a filter was requested.
   transcript that `fetch_url` pages; a separate tool would not fit the chat prompt
   token ceiling. Never in research searcher toolboxes.
 - **Background jobs use the session model**: `App::session_backend` resolves
-  the session's own model for titles, compaction, image descriptions, vision
-  OCR and the `LlmDecider`; `/memory tidy` uses it in the conversation too.
-  Image descriptions and OCR require a session model that accepts images;
-  otherwise they are skipped (tesseract still handles scanned PDFs when
-  installed). Embeddings (`app/embeddings.rs`: local EmbeddingGemma 2 → backend
+  the session's own model for titles, compaction and the `LlmDecider`;
+  `/memory tidy` uses it in the conversation too.
+  Embeddings (`app/embeddings.rs`: local EmbeddingGemma 2 → backend
   default → none) and media generation (`App::generation_backend`, the backend's
   `default_*_gen_model`) are computed, not configured. The removed keys
   (`settings::is_removed_setting`) are ignored on read and rejected on set.
