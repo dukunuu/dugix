@@ -394,7 +394,10 @@ pub(crate) fn open_pinned(app: &mut AppView, reference: &str) -> bool {
             return false;
         }
     };
-    let mut session = match Document::parse(&pinned.program).and_then(Session::new) {
+    let document = Document::recover(&pinned.program)
+        .map(|(document, _)| document)
+        .map_err(|errors| anyhow::anyhow!(errors[0].message.clone()));
+    let mut session = match document.and_then(Session::new) {
         Ok(session) => session,
         Err(error) => {
             app.push_status(format!("{} cannot open: {error}", pinned.name));

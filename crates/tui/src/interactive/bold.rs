@@ -1,6 +1,8 @@
-//! The Bold panel look's shared drawing pieces: the label column that lines
-//! labelled controls and bars up, eighth-cell bars on a track, and filled
-//! pills for buttons, badges and tabs. Glyphs come from `ui/style.rs`.
+//! Shared panel drawing: aligned sentence-case labels, slim tracks, solid
+//! bars and compact filled controls (chips, switches, checks, segmented
+//! strips). The panel's primary action, focus and "on" states carry the
+//! strong fills; everything else sits on the theme's control surface.
+//! Glyphs come from `ui/style.rs`.
 
 use super::{Session, accent_color, display, glyph, tone_color};
 use crate::theme::Theme;
@@ -39,7 +41,7 @@ pub(super) fn label_column(session: &Session, width: u16) -> u16 {
         .min(width)
 }
 
-/// A control label in the label column: dim capitals, your accent when the
+/// A control label in the label column: dim sentence case, your accent when the
 /// control has focus.
 pub(super) fn label(buffer: &mut Buffer, area: Rect, text: &str, focused: bool, theme: &Theme) {
     let style = if focused {
@@ -49,12 +51,12 @@ pub(super) fn label(buffer: &mut Buffer, area: Rect, text: &str, focused: bool, 
     } else {
         Style::default().fg(theme.fg_dim)
     };
-    let text = super::clipped(&text.to_uppercase(), area.width.saturating_sub(1));
+    let text = super::clipped(text, area.width.saturating_sub(1));
     buffer.set_stringn(area.x, area.y, text, usize::from(area.width), style);
 }
 
-/// A one-row bar: `ratio` of `area` in `fill`, eighth-cell precise, on a
-/// dim track.
+/// A slim one-row bar: `ratio` of `area` in `fill`, with a partial end cap
+/// and a dim, unfilled track.
 pub(super) fn bar(buffer: &mut Buffer, area: Rect, ratio: f64, fill: Color, theme: &Theme) {
     if area.width == 0 {
         return;
@@ -67,11 +69,11 @@ pub(super) fn bar(buffer: &mut Buffer, area: Rect, ratio: f64, fill: Color, them
     for x in 0..area.width {
         let cell = usize::from(x);
         let (symbol, style) = if cell < whole {
-            ("█", Style::default().fg(fill))
+            (glyph::BAR_FILL, Style::default().fg(fill))
         } else if cell == whole && part > 0 {
-            (glyph::EIGHTHS[part - 1], Style::default().fg(fill))
+            (glyph::BAR_END, Style::default().fg(fill))
         } else {
-            (glyph::TRACK, track)
+            (glyph::BAR_TRACK, track)
         };
         buffer.set_string(area.x + x, area.y, symbol, style);
     }
@@ -90,16 +92,38 @@ pub(super) fn tone_fill(tone: Tone, session: &Session, theme: &Theme) -> (Color,
     }
 }
 
-/// A filled pill `▐ text ▌` at `(x, y)`, clipped to `limit` columns; returns
-/// the width drawn. The caps take the fill color over the panel background,
-/// so the ends read as rounded.
+/// One end of a filled shape: a Powerline half circle in `fill` where the
+/// terminal draws them, else a plain cell of `fill`. The cap takes the
+/// background already under it, so shapes stay round on cards and tiles.
+/// Either way it is one cell, so geometry never depends on the font.
+pub(super) fn cap(buffer: &mut Buffer, (x, y): (u16, u16), left: bool, fill: Color, theme: &Theme) {
+    if theme.round_caps {
+        let under = buffer.cell((x, y)).map_or(theme.surface, |cell| cell.bg);
+        buffer.set_string(
+            x,
+            y,
+            if left {
+                glyph::CAP_LEFT
+            } else {
+                glyph::CAP_RIGHT
+            },
+            Style::default().fg(fill).bg(under),
+        );
+    } else {
+        buffer.set_string(x, y, " ", Style::default().bg(fill));
+    }
+}
+
+/// A padded label on a filled surface, clipped to `limit` columns: a cap,
+/// ` text `, a cap. Returns the width drawn; drawing and hit-testing share
+/// this geometry.
 pub(super) fn pill(
     buffer: &mut Buffer,
     (x, y): (u16, u16),
     limit: u16,
     text: &str,
     (fill, ink): (Color, Color),
-    bold: bool,
+    (bold, theme): (bool, &Theme),
 ) -> u16 {
     if limit < 5 {
         return 0;
@@ -112,16 +136,9 @@ pub(super) fn pill(
         inner
     };
     let inner_width = u16::try_from(text.width()).unwrap_or(0) + 2;
-    // An unpainted fill (transparent backgrounds) gets no caps: they would
-    // draw in the terminal's default foreground.
-    let (left, right) = if fill == Color::Reset {
-        (" ", " ")
-    } else {
-        (glyph::CAP_LEFT, glyph::CAP_RIGHT)
-    };
-    buffer.set_string(x, y, left, Style::default().fg(fill));
+    cap(buffer, (x, y), true, fill, theme);
     buffer.set_string(x + 1, y, format!(" {text} "), inner);
-    buffer.set_string(x + 1 + inner_width, y, right, Style::default().fg(fill));
+    cap(buffer, (x + 1 + inner_width, y), false, fill, theme);
     inner_width + 2
 }
 
@@ -155,22 +172,24 @@ pub(super) fn value(buffer: &mut Buffer, area: Rect, text: &str, theme: &Theme) 
     width
 }
 
-/// A pill as spans for line-based layouts; `bg` is the surface it sits on,
-/// which the caps keep as their background.
+/// A padded label as spans for line-based layouts. `bg` is the surface the
+/// pill sits on, which round caps take as their background.
 pub(super) fn pill_spans(
     text: &str,
     (fill, ink): (Color, Color),
-    bg: Color,
+    (bg, round): (Color, bool),
 ) -> Vec<ratatui::text::Span<'static>> {
     use ratatui::text::Span;
-    let cap = Style::default().fg(fill).bg(bg);
-    let (left, right) = if fill == Color::Reset {
-        (" ", " ")
-    } else {
-        (glyph::CAP_LEFT, glyph::CAP_RIGHT)
+    let fill_or_bg = if fill == Color::Reset { bg } else { fill };
+    let end = |symbol: &'static str| {
+        if round {
+            Span::styled(symbol, Style::default().fg(fill_or_bg).bg(bg))
+        } else {
+            Span::styled(" ", Style::default().bg(fill_or_bg))
+        }
     };
     vec![
-        Span::styled(left, cap),
+        end(glyph::CAP_LEFT),
         Span::styled(
             format!(" {text} "),
             Style::default()
@@ -178,7 +197,7 @@ pub(super) fn pill_spans(
                 .bg(fill)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(right, cap),
+        end(glyph::CAP_RIGHT),
     ]
 }
 
@@ -204,14 +223,27 @@ pub(super) fn button(
     panel: Color,
     theme: &Theme,
 ) -> Rect {
+    // Secondary and unavailable actions are quiet text links, so the one
+    // filled shape in a row is the action the panel wants.
+    if !focused && kind != Kind::Primary {
+        if limit < 5 {
+            return Rect::new(x, y, 0, 1);
+        }
+        let text = super::clipped(text, limit.saturating_sub(4));
+        let style = if kind == Kind::Disabled {
+            Style::default().fg(theme.border_dim)
+        } else {
+            Style::default()
+                .fg(theme.fg_dim)
+                .add_modifier(Modifier::UNDERLINED)
+        };
+        buffer.set_string(x + 2, y, &text, style);
+        return Rect::new(x, y, u16::try_from(text.width()).unwrap_or(0) + 4, 1);
+    }
     let colors = if focused {
         (theme.accent, theme.on(theme.accent))
     } else {
-        match kind {
-            Kind::Primary => (panel, theme.on(panel)),
-            Kind::Secondary => (theme.control, theme.fg),
-            Kind::Disabled => (theme.raised, theme.fg_dim),
-        }
+        (panel, theme.on(panel))
     };
     let width = pill(
         buffer,
@@ -219,7 +251,7 @@ pub(super) fn button(
         limit,
         text,
         colors,
-        kind == Kind::Primary || focused,
+        (kind == Kind::Primary || focused, theme),
     );
     if focused && width > 0 {
         buffer.set_string(
@@ -235,16 +267,155 @@ pub(super) fn button(
     Rect::new(x, y, width, 1)
 }
 
-/// Where each tab's pill sits on the strip; shared by drawing and clicks.
-pub(super) fn tab_rects(labels: &[String], area: Rect) -> Vec<Rect> {
-    let mut x = area.x;
+/// Where each segment of a segmented strip sits: a cap cell, then
+/// ` label ` slots joined by one-cell seams, then a cap cell. Drawing and
+/// clicks share this geometry; tabs and selects both use it.
+pub(super) fn segment_rects(labels: &[String], area: Rect) -> Vec<Rect> {
+    let mut x = area.x.saturating_add(1).min(area.right());
     labels
         .iter()
         .map(|label| {
-            let width = pill_width(label).min(area.right().saturating_sub(x));
+            let width = u16::try_from(label.width())
+                .unwrap_or(u16::MAX)
+                .saturating_add(2)
+                .min(area.right().saturating_sub(x).saturating_sub(1));
             let rect = Rect::new(x, area.y, width, 1);
             x = x.saturating_add(width).saturating_add(1).min(area.right());
             rect
         })
         .collect()
+}
+
+/// Total width of a segmented strip for `labels`, caps included.
+pub(super) fn segments_width(labels: &[String]) -> u16 {
+    let text: usize = labels.iter().map(|label| label.width() + 2).sum();
+    u16::try_from(text + labels.len().saturating_sub(1) + 2).unwrap_or(u16::MAX)
+}
+
+/// A segmented strip: every option on the control surface, the active one
+/// filled with `fill`, capped at both ends. Seams are thin background-colored
+/// rules, so the strip reads as one control with parts.
+pub(super) fn segmented(
+    buffer: &mut Buffer,
+    area: Rect,
+    labels: &[String],
+    (active, fill): (usize, Color),
+    theme: &Theme,
+) -> Vec<Rect> {
+    let rects = segment_rects(labels, area);
+    let surface = |index: usize| if index == active { fill } else { theme.control };
+    for (index, (rect, label)) in rects.iter().zip(labels).enumerate() {
+        if rect.width == 0 {
+            continue;
+        }
+        let style = if index == active {
+            Style::default()
+                .fg(theme.on(fill))
+                .bg(fill)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.fg).bg(theme.control)
+        };
+        buffer.set_style(*rect, style);
+        buffer.set_stringn(
+            rect.x + 1,
+            rect.y,
+            label,
+            usize::from(rect.width.saturating_sub(2)),
+            style,
+        );
+        if index + 1 < labels.len() && rect.right() < area.right() {
+            buffer.set_string(
+                rect.right(),
+                rect.y,
+                "▕",
+                Style::default().fg(theme.bg).bg(theme.control),
+            );
+        }
+    }
+    if let (Some(first), Some(last)) = (rects.first(), rects.last())
+        && first.width > 0
+        && last.right() < area.right()
+    {
+        cap(buffer, (first.x - 1, first.y), true, surface(0), theme);
+        cap(
+            buffer,
+            (last.right(), last.y),
+            false,
+            surface(rects.len() - 1),
+            theme,
+        );
+    }
+    rects
+}
+
+/// Where each tab sits on the strip; shared by drawing and clicks.
+pub(super) fn tab_rects(labels: &[String], area: Rect) -> Vec<Rect> {
+    segment_rects(labels, area)
+}
+
+/// A compact filled chip, ` text `, returning its width.
+pub(super) fn chip(buffer: &mut Buffer, (x, y): (u16, u16), text: &str, style: Style) -> u16 {
+    let width = u16::try_from(text.width())
+        .unwrap_or(u16::MAX)
+        .saturating_add(2);
+    buffer.set_string(x, y, format!(" {text} "), style);
+    width
+}
+
+/// Width of a switch.
+pub(super) const SWITCH_WIDTH: u16 = 4;
+/// Width of a check box.
+pub(super) const CHECK_WIDTH: u16 = 3;
+
+/// A four-cell switch: on is a success-filled track with its knob at the
+/// right; off is the control surface with a dim knob at the left.
+pub(super) fn switch(buffer: &mut Buffer, (x, y): (u16, u16), on: bool, theme: &Theme) {
+    let (fill, knob) = if on {
+        (theme.success, theme.on(theme.success))
+    } else {
+        (theme.control, theme.fg_dim)
+    };
+    let track = Style::default().fg(knob).bg(fill);
+    cap(buffer, (x, y), true, fill, theme);
+    if on {
+        buffer.set_string(x + 1, y, " ", track);
+        buffer.set_string(x + 2, y, glyph::DOT, track);
+    } else {
+        buffer.set_string(x + 1, y, glyph::DOT, track);
+        buffer.set_string(x + 2, y, " ", track);
+    }
+    cap(buffer, (x + 3, y), false, fill, theme);
+}
+
+/// A three-cell check box: a check on a success fill, or an empty control
+/// cell, capped at both ends.
+pub(super) fn check(buffer: &mut Buffer, (x, y): (u16, u16), on: bool, theme: &Theme) {
+    let fill = if on { theme.success } else { theme.control };
+    cap(buffer, (x, y), true, fill, theme);
+    buffer.set_string(
+        x + 1,
+        y,
+        if on { glyph::OK } else { " " },
+        Style::default()
+            .fg(theme.on(theme.success))
+            .bg(fill)
+            .add_modifier(Modifier::BOLD),
+    );
+    cap(buffer, (x + 2, y), false, fill, theme);
+}
+
+/// A solid one-row bar for data (Bars), where length is the reading. Cells
+/// are five-eighths tall, so stacked bars keep a seam between rows.
+pub(super) fn solid_bar(buffer: &mut Buffer, area: Rect, ratio: f64, fill: Color) {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let cells = (ratio.clamp(0.0, 1.0) * f64::from(area.width)).round() as u16;
+    // Any nonzero value shows at least one cell.
+    let cells = if ratio > 0.0 { cells.max(1) } else { 0 };
+    buffer.set_string(
+        area.x,
+        area.y,
+        "▆".repeat(usize::from(cells.min(area.width))),
+        Style::default().fg(fill),
+    );
 }

@@ -537,9 +537,15 @@ pub(super) fn ui_failure_notes(content: &str) -> String {
         let error = &errors[0];
         let message = error.message.lines().collect::<Vec<_>>().join(" ");
         let path = error.path.replace(['\n', '\r'], " ");
+        // A program with a valid root shows without its broken pieces.
+        let outcome = if crate::interactive::Document::recover(&block.source).is_ok() {
+            "rendered with parts left out"
+        } else {
+            "failed to render"
+        };
         let _ = write!(
             notes,
-            "\n[nexus: the nexus-ui block {title:?} failed to render — {path}: {message}. Correct the reported errors and resend it if the user still needs it.]"
+            "\n[nexus: the nexus-ui block {title:?} {outcome} — {path}: {message}. Correct the reported errors and resend it if the user still needs it.]"
         );
     }
     notes

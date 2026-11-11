@@ -508,6 +508,9 @@ dots on a 0–100 grid, and `Anim` keyframes move them: a spinning clock hand, a
 bouncing ball, an orbit diagram. Animations run at about 15 frames a second
 only while the canvas is on screen and the terminal has focus; shapes can also
 follow panel state, so a slider can drive a drawing.
+Panels use quiet sentence-case headings, compact result values and slim slider
+tracks. Related actions stay together in reading and keyboard order; the model
+gets working calculator, quiz and planner examples rather than a dashboard recipe.
 Panels are laid out with `Row`, `Grid` and `Stack`, which stack on narrow
 terminals. Bars and meters glide to new values, and charts draw in the first
 time a panel appears; `/motion off` turns all panel motion off (canvases then

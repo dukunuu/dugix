@@ -1189,7 +1189,8 @@ impl AppView {
             }
         }
         for placement in self.history_cache.widgets.iter().filter(|p| p.complete) {
-            let Ok(document) = nexus_core::interactive::Document::parse(&placement.source) else {
+            let Ok((document, _)) = nexus_core::interactive::Document::recover(&placement.source)
+            else {
                 continue;
             };
             for (index, image) in crate::interactive::document_images(&document)

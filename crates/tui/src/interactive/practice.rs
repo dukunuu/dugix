@@ -218,7 +218,7 @@ fn quiz(
             width,
             &score,
             (fill, theme.on(fill)),
-            true,
+            (true, theme),
         );
     }
     let mut hits = vec![(header, control)];

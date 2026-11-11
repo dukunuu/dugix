@@ -103,15 +103,28 @@ pub(super) fn signatures() -> String {
         .join("\n")
 }
 
+/// How strictly a program is turned into a document.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Mode {
+    /// Every statement must resolve and validate.
+    Strict,
+    /// A program still arriving: unfinished or invalid pieces are left out,
+    /// and timers and keys stay inert.
+    Streaming,
+    /// A finished program with mistakes: broken pieces are left out, the rest
+    /// (timers and keys included) runs.
+    Salvage,
+}
+
 pub(super) fn materialize(
     symbols: &BTreeMap<String, Expr>,
-    partial: bool,
+    mode: Mode,
     current: Option<&Map<String, Value>>,
     results: Option<&Map<String, Value>>,
 ) -> Result<Value> {
     let mut context = Context {
         symbols,
-        partial,
+        partial: mode != Mode::Strict,
         visiting: BTreeSet::new(),
         budget: 4096,
         actions: Map::new(),
@@ -199,23 +212,58 @@ pub(super) fn materialize(
         .lower(&root, 0)?
         .ok_or_else(|| anyhow::anyhow!("root is not available yet"))?;
     ensure!(value.get("view").is_some(), "root must be a Panel");
-    context.attach_play(&mut value, symbols, partial)?;
+    let play = context.play_in(mode, symbols)?;
     value["version"] = 1.into();
     value["state"] = state.into();
     value["actions"] = context.actions.into();
     value["calls"] = calls.into();
-    if partial {
-        retain_valid_nodes(&mut value);
+    let all_actions = context.partial.then(|| retain_valid_nodes(&mut value));
+    if let Some((timers, keys)) = play {
+        attach_play(&mut value, all_actions.as_ref(), timers, keys);
     }
     Ok(value)
 }
 
+// A strict panel takes its timers and keys as they are. A salvaged one (which
+// passes every action it had) keeps them only if they validate with the
+// elements that survived; otherwise they are left out too.
+fn attach_play(value: &mut Value, salvaged: Option<&Value>, timers: Value, keys: Value) {
+    let Some(actions) = salvaged else {
+        value["timers"] = timers;
+        value["keys"] = keys;
+        return;
+    };
+    let mut with = value.clone();
+    let names = timers
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|timer| timer["action"].as_str())
+        .chain(
+            keys.as_object()
+                .into_iter()
+                .flatten()
+                .filter_map(|(_, a)| a.as_str()),
+        );
+    for name in names {
+        if let Some(action) = actions.get(name) {
+            with["actions"][name] = action.clone();
+        }
+    }
+    with["timers"] = timers;
+    with["keys"] = keys;
+    if crate::interactive::Document::check_value(with.clone()).is_ok() {
+        *value = with;
+    }
+}
+
 // Validate each arriving sibling against the same runtime contract. A malformed
 // component or not-yet-declared binding cannot blank already valid elements.
-fn retain_valid_nodes(value: &mut Value) {
+// Returns every action the panel had, before unused ones were dropped.
+fn retain_valid_nodes(value: &mut Value) -> Value {
     let nodes = value["view"].take();
     let Some(nodes) = nodes.as_array() else {
-        return;
+        return value["actions"].clone();
     };
     let actions = value["actions"].take();
     value["view"] = Value::Array(Vec::new());
@@ -230,6 +278,7 @@ fn retain_valid_nodes(value: &mut Value) {
         }
     }
     value["actions"] = used_actions(&value["view"], &actions);
+    actions
 }
 
 fn used_actions(view: &Value, actions: &Value) -> Value {
@@ -679,20 +728,18 @@ impl Context<'_> {
         self.actions.insert(id.clone(), steps.into());
         Ok(id)
     }
-    /// Add timers and keys to a materialized panel; they stay inert (absent)
-    /// while it streams in.
-    fn attach_play(
+    /// Timers and keys for this mode: required when strict, best effort when
+    /// salvaging, and none (inert) while streaming.
+    fn play_in(
         &mut self,
-        value: &mut Value,
+        mode: Mode,
         symbols: &BTreeMap<String, Expr>,
-        partial: bool,
-    ) -> Result<()> {
-        if !partial {
-            let (timers, keys) = self.play(symbols)?;
-            value["timers"] = timers;
-            value["keys"] = keys;
-        }
-        Ok(())
+    ) -> Result<Option<(Value, Value)>> {
+        Ok(match mode {
+            Mode::Strict => Some(self.play(symbols)?),
+            Mode::Salvage => self.play(symbols).ok(),
+            Mode::Streaming => None,
+        })
     }
     /// Timers and key bindings: top-level `@Every` / `@Keys` statements.
     fn play(&mut self, symbols: &BTreeMap<String, Expr>) -> Result<(Value, Value)> {

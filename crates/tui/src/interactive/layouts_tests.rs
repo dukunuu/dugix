@@ -32,9 +32,9 @@ fn render(source: &str) -> Vec<String> {
 fn framed(content: &str) -> String {
     format!(" {content}")
 }
-/// The Bold title bar of a static (non-interactive) panel `width` wide.
-fn title_bar(title: &str, width: usize) -> String {
-    format!("▐ {title:<inner$}▌", inner = width - 3)
+/// A static panel's quiet title (snapshots trim trailing whitespace).
+fn title_bar(title: &str, _width: usize) -> String {
+    format!("  {title}")
 }
 
 fn rust_vs_go() -> String {
@@ -99,7 +99,7 @@ fn hero() -> String {
 fn columns_and_callout_render_at_80_columns_in_a_rounded_frame() {
     let rows = render(&rust_vs_go());
     let expected = vec![
-        title_bar("OVERVIEW", 80),
+        title_bar("Overview", 80),
         framed(""),
         framed(" RUST                                   GO"),
         framed(" ✓ tiny static binaries                 ✓ builds in seconds"),
@@ -140,8 +140,10 @@ fn accent_colors_come_from_the_theme_roles() {
             json!([{"type":"callout","tone":"tip","text":"Note"}]),
         );
         let (canvas, _) = entry(&source).canvas(60, &theme, false, true);
-        assert_eq!(canvas[(3, 0)].bg, color, "{accent} title bar");
-        assert_eq!(canvas[(3, 0)].fg, theme.on(color), "{accent} title ink");
+        assert_eq!(canvas[(3, 0)].bg, theme.bg, "{accent} unfilled title");
+        // Titles are bold foreground in every accent; the accent colors
+        // what the panel draws, not its name.
+        assert_eq!(canvas[(3, 0)].fg, theme.fg, "{accent} title ink");
         assert_eq!(canvas[(2, 2)].fg, color, "{accent} tip rail");
         assert_eq!(canvas[(2, 2)].symbol(), "▌");
         let bottom = canvas.area.height - 1;
@@ -166,7 +168,7 @@ fn accent_colors_come_from_the_theme_roles() {
 fn stats_and_steps_render_at_80_columns_in_a_heavy_frame() {
     let rows = render(&release());
     assert_eq!(rows.len(), 8, "{rows:#?}");
-    assert_eq!(rows[0], title_bar("OVERVIEW", 80));
+    assert_eq!(rows[0], title_bar("Overview", 80));
     // A heavy frame draws a heavy bottom rule.
     assert_eq!(rows[7], "━".repeat(80));
     assert!(rows[2].starts_with("  12 "), "{}", rows[2]);
@@ -242,13 +244,13 @@ fn steps_fall_back_to_a_connected_timeline_when_they_do_not_fit() {
 fn cards_form_a_tiled_responsive_grid() {
     let rows = render(&cards());
     let text = rows.join("\n");
-    assert!(rows[0].starts_with("▐ OVERVIEW "), "{text}");
+    assert_eq!(rows[0], "  Overview", "{text}");
     // 80 columns fit three cards per row; four cards balance into a 2x2 grid.
     let row_of = |word: &str| rows.iter().position(|row| row.contains(word)).unwrap();
     assert_eq!(row_of("Speed"), row_of("Safety"), "{text}");
     assert_eq!(row_of("Size"), row_of("Cost"), "{text}");
     assert!(row_of("Size") > row_of("Speed"), "{text}");
-    assert!(text.contains("▐ fast ▌"), "{text}");
+    assert!(text.contains("  fast"), "{text}");
     assert!(text.contains("Builds finish in"), "{text}");
     // Narrow panels stack: one card's rail per row.
     let narrow = render_at(&cards(), 30).1;
@@ -275,11 +277,11 @@ fn cards_form_a_tiled_responsive_grid() {
 fn hero_badge_is_a_pill_right_after_the_title() {
     let rows = render(&hero());
     let text = rows.join("\n");
-    assert!(rows[0].starts_with("▐ OVERVIEW "), "{text}");
+    assert_eq!(rows[0], "  Overview", "{text}");
     // A dashed frame draws a dashed bottom rule.
     assert!(rows.last().unwrap().starts_with('╌'), "{text}");
     let title = rows.iter().find(|row| row.contains("Nexus 0.2")).unwrap();
-    assert!(title.contains("Nexus 0.2  ▐ NEW ▌"), "{title}");
+    assert!(title.contains("Nexus 0.2    NEW"), "{title}");
     assert!(text.contains("Designed replies land today"), "{text}");
     assert!(text.contains(" highlights "), "{text}");
     assert!(text.contains("│ Simple things stay simple."), "{text}");
@@ -293,7 +295,7 @@ fn plain_frame_has_only_a_title_rule() {
     // Plain frames draw an unfilled title over a rule.
     assert_eq!(
         rows[0],
-        format!("OVERVIEW {}", "─".repeat(80 - "OVERVIEW ".width()))
+        format!("Overview {}", "─".repeat(80 - "Overview ".width()))
     );
     assert!(
         rows.iter().all(|row| !row.contains(['│', '╰', '╭'])),
@@ -312,7 +314,7 @@ fn frames_pick_their_bottom_rule_glyphs() {
     ] {
         let source = doc(frame, "accent", json!([{"type":"text","text":"Body"}]));
         let rows = render_at(&source, 40).1;
-        assert_eq!(rows[0], title_bar("OVERVIEW", 40), "{frame}");
+        assert_eq!(rows[0], title_bar("Overview", 40), "{frame}");
         assert_eq!(rows.last().unwrap(), &rule.repeat(40), "{frame}");
     }
 }
@@ -474,10 +476,10 @@ fn first_hero_suppresses_only_a_matching_rendered_border_title() {
         })
         .to_string();
         let (canvas, rows) = render_at(&source, 80);
-        // The hero already says it: the bar carries no title.
-        assert_eq!(rows[0], format!("▐{}▌", " ".repeat(78)));
+        // The hero already says it: the header remains empty.
+        assert!(rows[0].is_empty());
         assert!(rows[2].to_lowercase().contains("overview"));
-        assert_eq!(canvas[(2, 2)].fg, Theme::default().accent2);
+        assert_eq!(canvas[(2, 2)].fg, Theme::default().fg);
         assert!(canvas[(2, 2)].modifier.contains(Modifier::BOLD));
     }
     for view in [
@@ -485,6 +487,6 @@ fn first_hero_suppresses_only_a_matching_rendered_border_title() {
         json!([{"type":"text","text":"Before"},{"type":"hero","title":"Overview"}]),
     ] {
         let rows = render(&doc("rounded", "accent", view));
-        assert!(rows[0].starts_with("▐ OVERVIEW "));
+        assert_eq!(rows[0], "  Overview");
     }
 }

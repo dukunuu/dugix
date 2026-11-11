@@ -104,6 +104,9 @@ pub struct Theme {
     pub control: Color,
     /// Text-selection highlight background.
     pub selection: Color,
+    /// Filled panel shapes get round end caps (Powerline half circles).
+    /// Only on when the terminal is known to draw them; see [`round_caps`].
+    pub round_caps: bool,
 }
 
 impl Default for Theme {
@@ -131,6 +134,7 @@ impl Default for Theme {
             raised_opaque: Color::Indexed(236),
             control: Color::Indexed(238),
             selection: Color::Indexed(239),
+            round_caps: false,
         }
     }
 }
@@ -272,7 +276,39 @@ fn color_hex(color: Color) -> String {
 
 /// The shared terminal palette, converted without losing ANSI fallbacks.
 pub fn load() -> Theme {
-    Theme::from_palette(&nexus_core::theme_colors::load())
+    let mut theme = Theme::from_palette(&nexus_core::theme_colors::load());
+    let var = |name| std::env::var(name).ok();
+    theme.round_caps = round_caps(
+        var("NEXUS_ROUND_CAPS").as_deref(),
+        var("TERM_PROGRAM").as_deref(),
+        var("TERM").as_deref(),
+        std::env::home_dir().is_some_and(|home| home.join(".config/omarchy").is_dir()),
+    );
+    theme
+}
+
+/// Whether the terminal draws the Powerline half-circle caps (U+E0B4/E0B6).
+/// `NEXUS_ROUND_CAPS=1|0` decides outright. Otherwise: Ghostty, `WezTerm`
+/// and kitty bundle the glyphs whatever the font, and Omarchy installs a Nerd
+/// Font by default. Anything else gets square ends drawn in the same cells.
+#[must_use]
+pub fn round_caps(
+    forced: Option<&str>,
+    term_program: Option<&str>,
+    term: Option<&str>,
+    omarchy: bool,
+) -> bool {
+    match forced.map(str::trim) {
+        Some("1" | "true" | "on" | "yes") => return true,
+        Some("0" | "false" | "off" | "no") => return false,
+        _ => {}
+    }
+    let program = term_program.unwrap_or_default().to_ascii_lowercase();
+    let term = term.unwrap_or_default().to_ascii_lowercase();
+    omarchy
+        || matches!(program.as_str(), "ghostty" | "wezterm" | "kitty")
+        || term.contains("kitty")
+        || term.contains("ghostty")
 }
 
 #[cfg(test)]
@@ -291,6 +327,23 @@ mod tests {
         };
         assert_eq!(light.on(Color::Rgb(20, 60, 140)), Color::Rgb(250, 250, 250));
         assert_eq!(light.on(Color::Rgb(250, 220, 90)), Color::Rgb(30, 30, 30));
+    }
+
+    #[test]
+    fn round_caps_follow_the_override_then_known_terminals() {
+        assert!(round_caps(Some("1"), None, None, false));
+        assert!(!round_caps(Some("0"), Some("ghostty"), None, true));
+        assert!(round_caps(None, Some("ghostty"), None, false));
+        assert!(round_caps(None, Some("WezTerm"), None, false));
+        assert!(round_caps(None, None, Some("xterm-kitty"), false));
+        assert!(round_caps(None, Some("Apple_Terminal"), None, true));
+        assert!(!round_caps(
+            None,
+            Some("Apple_Terminal"),
+            Some("xterm-256color"),
+            false
+        ));
+        assert!(!Theme::default().round_caps);
     }
 
     #[test]

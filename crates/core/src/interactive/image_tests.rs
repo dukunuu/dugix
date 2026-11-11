@@ -161,10 +161,10 @@ fn picture_tiles_count_their_band_toward_the_declared_rows() {
     data["view"] = json!([{"type":"buttons","rows":3,"items":[{"label":"A","action":"add"}]}]);
     assert_eq!(parse(&data).unwrap().nodes()[0].rows(), 3);
     // Too many picture rows for the card budget are refused up front.
-    data["view"] = json!([
-        {"type":"buttons","rows":3,"items":[{"label":"A","action":"add","image":PIC}]},
-        {"type":"buttons","rows":3,"items":[{"label":"B","action":"add","image":PIC}]},
-        {"type":"buttons","rows":3,"items":[{"label":"C","action":"add","image":PIC}]}
-    ]);
+    let tile =
+        json!({"type":"buttons","rows":3,"items":[{"label":"A","action":"add","image":PIC}]});
+    data["view"] = json!(vec![tile.clone(); 5]);
+    assert!(parse(&data).is_ok());
+    data["view"] = json!(vec![tile; 6]);
     assert!(parse(&data).is_err());
 }

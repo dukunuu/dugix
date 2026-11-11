@@ -1,0 +1,785 @@
+{
+ "contracts": [
+  {
+   "name": "Panel",
+   "signature": "Panel(title, view, frame?, accent?)"
+  },
+  {
+   "name": "Hero",
+   "signature": "Hero(title, subtitle?, badge?, image?, alt?)"
+  },
+  {
+   "name": "Text",
+   "signature": "Text(text, tone?, rows?)"
+  },
+  {
+   "name": "Image",
+   "signature": "Image(src, alt?, rows?)"
+  },
+  {
+   "name": "Columns",
+   "signature": "Columns(items)"
+  },
+  {
+   "name": "Column",
+   "signature": "Column(title, items)"
+  },
+  {
+   "name": "Item",
+   "signature": "Item(text, mark?)"
+  },
+  {
+   "name": "Cards",
+   "signature": "Cards(items)"
+  },
+  {
+   "name": "Card",
+   "signature": "Card(title, text, badge?, tone?, image?, alt?)"
+  },
+  {
+   "name": "Stats",
+   "signature": "Stats(items, big?)"
+  },
+  {
+   "name": "Stat",
+   "signature": "Stat(value, label, delta?, tone?)"
+  },
+  {
+   "name": "Steps",
+   "signature": "Steps(items)"
+  },
+  {
+   "name": "Step",
+   "signature": "Step(title, text?, state?)"
+  },
+  {
+   "name": "Callout",
+   "signature": "Callout(tone, text, title?)"
+  },
+  {
+   "name": "Quote",
+   "signature": "Quote(text, by?)"
+  },
+  {
+   "name": "Divider",
+   "signature": "Divider(label?)"
+  },
+  {
+   "name": "Buttons",
+   "signature": "Buttons(items, rows?)"
+  },
+  {
+   "name": "Button",
+   "signature": "Button(label, action, primary?, body?, image?, alt?)"
+  },
+  {
+   "name": "Input",
+   "signature": "Input(key, label, rules?, placeholder?, hint?)"
+  },
+  {
+   "name": "Textarea",
+   "signature": "Textarea(key, label, rows?, placeholder?, rules?, hint?)"
+  },
+  {
+   "name": "Kv",
+   "signature": "Kv(items)"
+  },
+  {
+   "name": "Table",
+   "signature": "Table(columns, rows_data, select?, sortable?, page_size?, search?)"
+  },
+  {
+   "name": "Progress",
+   "signature": "Progress(label, value, max?)"
+  },
+  {
+   "name": "Bars",
+   "signature": "Bars(items)"
+  },
+  {
+   "name": "Bar",
+   "signature": "Bar(label, value)"
+  },
+  {
+   "name": "Sparkline",
+   "signature": "Sparkline(values, rows?)"
+  },
+  {
+   "name": "Checklist",
+   "signature": "Checklist(items)"
+  },
+  {
+   "name": "Check",
+   "signature": "Check(label, key)"
+  },
+  {
+   "name": "Select",
+   "signature": "Select(key, label, options)"
+  },
+  {
+   "name": "Stepper",
+   "signature": "Stepper(key, label, min, max, step)"
+  },
+  {
+   "name": "Toggle",
+   "signature": "Toggle(key, label)"
+  },
+  {
+   "name": "Tabs",
+   "signature": "Tabs(items, key?)"
+  },
+  {
+   "name": "Tab",
+   "signature": "Tab(label, view)"
+  },
+  {
+   "name": "Accordion",
+   "signature": "Accordion(items)"
+  },
+  {
+   "name": "Section",
+   "signature": "Section(title, view, open?)"
+  },
+  {
+   "name": "Chart",
+   "signature": "Chart(kind, series, labels?, rows?)"
+  },
+  {
+   "name": "Series",
+   "signature": "Series(name, values, tone?)"
+  },
+  {
+   "name": "Row",
+   "signature": "Row(items, gap?)"
+  },
+  {
+   "name": "Grid",
+   "signature": "Grid(items, cols?)"
+  },
+  {
+   "name": "Stack",
+   "signature": "Stack(items, gap?)"
+  },
+  {
+   "name": "Spacer",
+   "signature": "Spacer(rows?)"
+  },
+  {
+   "name": "Number",
+   "signature": "Number(value, label, delta?, tone?)"
+  },
+  {
+   "name": "Gauge",
+   "signature": "Gauge(label, value, max?, tone?)"
+  },
+  {
+   "name": "Heatmap",
+   "signature": "Heatmap(values, labels?, tone?)"
+  },
+  {
+   "name": "Md",
+   "signature": "Md(text, rows?)"
+  },
+  {
+   "name": "Tree",
+   "signature": "Tree(items)"
+  },
+  {
+   "name": "Branch",
+   "signature": "Branch(label, items?, open?)"
+  },
+  {
+   "name": "Board",
+   "signature": "Board(items, rows?)"
+  },
+  {
+   "name": "Lane",
+   "signature": "Lane(title, items, tone?)"
+  },
+  {
+   "name": "Diagram",
+   "signature": "Diagram(source, alt?)"
+  },
+  {
+   "name": "Canvas",
+   "signature": "Canvas(shapes, rows?, alt?)"
+  },
+  {
+   "name": "Circle",
+   "signature": "Circle(x, y, r, tone?, fill?, animate?, action?)"
+  },
+  {
+   "name": "Rect",
+   "signature": "Rect(x, y, w, h, tone?, fill?, animate?, action?)"
+  },
+  {
+   "name": "Line",
+   "signature": "Line(x1, y1, x2, y2, tone?, animate?, action?)"
+  },
+  {
+   "name": "Ray",
+   "signature": "Ray(x, y, len, angle, tone?, animate?, action?)"
+  },
+  {
+   "name": "Arc",
+   "signature": "Arc(x, y, r, start, sweep, tone?, animate?, action?)"
+  },
+  {
+   "name": "Dot",
+   "signature": "Dot(x, y, tone?, animate?, action?)"
+  },
+  {
+   "name": "Poly",
+   "signature": "Poly(points, tone?, fill?, animate?, action?)"
+  },
+  {
+   "name": "Label",
+   "signature": "Label(text, x, y, tone?, animate?, action?)"
+  },
+  {
+   "name": "Anim",
+   "signature": "Anim(prop, values, seconds?, repeat?, ease?, delay?)"
+  },
+  {
+   "name": "Form",
+   "signature": "Form(title, fields, submit_label, action)"
+  },
+  {
+   "name": "Timeline",
+   "signature": "Timeline(items)"
+  },
+  {
+   "name": "Event",
+   "signature": "Event(time, title, text?, tone?)"
+  },
+  {
+   "name": "Rating",
+   "signature": "Rating(key, label, max?)"
+  },
+  {
+   "name": "Code",
+   "signature": "Code(source, lang?)"
+  },
+  {
+   "name": "Badge",
+   "signature": "Badge(text, tone?)"
+  },
+  {
+   "name": "Meter",
+   "signature": "Meter(label, value, max?, tone?)"
+  },
+  {
+   "name": "Slider",
+   "signature": "Slider(key, label, min, max, step)"
+  },
+  {
+   "name": "Editor",
+   "signature": "Editor(key, label, lang?, rows?)"
+  },
+  {
+   "name": "Choice",
+   "signature": "Choice(key, label, options, answer?)"
+  },
+  {
+   "name": "Quiz",
+   "signature": "Quiz(items, key?)"
+  },
+  {
+   "name": "Question",
+   "signature": "Question(title, view?, answer?, explain?)"
+  }
+ ],
+ "cases": [
+  {
+   "id": "trip-budget",
+   "names": [
+    "Trip budget",
+    "Panel"
+   ],
+   "group": "Experiences",
+   "note": "The approved Chart composition: a picture of the answer, totals beside it, compact controls below.",
+   "source": "root = Panel(\"Lisbon · 12–16 May\", [\n      Row([\n        Chart(\"bar\", [Series(\"Spend per day\", [720, 175, 170, 175])], [\"Thu 12\", \"Fri 13\", \"Sat 14\", \"Sun 15\"], 8),\n        Stack([Number(\"€760\", \"left of €2,000\", null, \"success\"), Kv([[\"Flights\", \"€540\"], [\"Hotel\", \"€480\"], [\"Food & transit\", \"€220\"], [\"Total\", \"€1,240\"]])], 1)\n      ], 4),\n      Divider(),\n      Stepper($people, \"Travellers\", 1, 8, 1),\n      Select($stay, \"Stay\", [\"Hotel\", \"Flat\", \"Hostel\"]),\n      Buttons([Button(\"Reset\", @Reset($people)), Button(\"Save budget\", @ToAssistant(\"Save this budget\"), true)])])\n$people = 3\n$stay = \"Hotel\""
+  },
+  {
+   "id": "deploy",
+   "names": [
+    "Deploy"
+   ],
+   "group": "Experiences",
+   "note": "A release flow: progress through stages, live metrics, a checklist and one primary action.",
+   "source": "root = Panel(\"Deploy v0.1.42\", [\n      Steps([Step(\"Build\", \"2m 04s\", \"done\"), Step(\"Test\", \"412 passed\", \"done\"), Step(\"Canary\", \"5% traffic\", \"current\"), Step(\"Rollout\", null, \"todo\")]),\n      Row([Number(\"0.02%\", \"error rate\", \"-0.01%\", \"success\"), Number(\"182 ms\", \"p99 latency\"), Number(\"5%\", \"traffic on canary\")], 4),\n      Checklist([Check(\"Migrations applied\", $migrated), Check(\"Dashboards watched\", $watched)]),\n      Select($region, \"Region\", [\"eu-west\", \"us-east\", \"ap-south\"]),\n      Buttons([Button(\"Roll back\", @Set($halt, true)), Button(\"Promote to 100%\", @ToAssistant(\"Promote the canary\"), true)])])\n$migrated = true\n$watched = false\n$region = \"eu-west\"\n$halt = false"
+  },
+  {
+   "id": "run-pace",
+   "names": [
+    "Run pace"
+   ],
+   "group": "Experiences",
+   "note": "A small calculator: two inputs, a live answer and a chart of the plan.",
+   "source": "root = Panel(\"Half marathon pace\", [\n      Stepper($minutes, \"Goal (min)\", 80, 150, 5),\n      Number(\"5:05 /km\", \"pace for 1:47:00\", null, \"accent\"),\n      Chart(\"line\", [Series(\"Planned split (s/km)\", [310, 306, 304, 305, 303, 300])], [\"km 1\", \"km 21\"], 5),\n      Toggle($negative, \"Negative split\"),\n      Buttons([Button(\"Copy splits\", @ToAssistant(\"Copy my splits\"), true)])])\n$minutes = 107\n$negative = true"
+  },
+  {
+   "id": "hero",
+   "names": [
+    "Hero"
+   ],
+   "group": "Foundations",
+   "source": "root = Panel(\"Trip\", [Hero(\"Lisbon, 12–16 May\", \"4 nights · 3 travellers · €2,000 budget\", \"PLANNED\")])"
+  },
+  {
+   "id": "text",
+   "names": [
+    "Text"
+   ],
+   "group": "Foundations",
+   "source": "root = Panel(\"Flights\", [Text(\"Flights are the biggest cost. Booking three weeks earlier usually saves about 15%.\"), Text(\"Prices from the last 30 days\", \"muted\")])"
+  },
+  {
+   "id": "image",
+   "names": [
+    "Image"
+   ],
+   "group": "Foundations",
+   "source": "root = Panel(\"Photo\", [Image(\"https://example.test/lisbon.png\", \"Alfama rooftops at dusk\", 6)])"
+  },
+  {
+   "id": "quote",
+   "names": [
+    "Quote"
+   ],
+   "group": "Foundations",
+   "source": "root = Panel(\"On reliability\", [Quote(\"Simplicity is prerequisite for reliability.\", \"Edsger W. Dijkstra\")])"
+  },
+  {
+   "id": "divider",
+   "names": [
+    "Divider"
+   ],
+   "group": "Foundations",
+   "source": "root = Panel(\"Itinerary\", [Text(\"Land at 11:40, taxi to Alfama.\"), Divider(\"Day 2\"), Text(\"Tram 28 before the crowds.\")])"
+  },
+  {
+   "id": "badge",
+   "names": [
+    "Badge"
+   ],
+   "group": "Foundations",
+   "source": "root = Panel(\"Build\", [Row([Badge(\"PASSING\", \"success\"), Badge(\"2 WARNINGS\", \"warning\"), Badge(\"v0.1.42\", \"muted\")])])"
+  },
+  {
+   "id": "md",
+   "names": [
+    "Md"
+   ],
+   "group": "Foundations",
+   "source": "root = Panel(\"Debugging\", [Md(\"**Tip:** set `RUST_LOG=debug` to see each request.\\n- Retries back off exponentially\\n- Timeouts default to 30 s\", 5)])"
+  },
+  {
+   "id": "callout",
+   "names": [
+    "Callout"
+   ],
+   "group": "Foundations",
+   "source": "root = Panel(\"Migration\", [Callout(\"warning\", \"The migration locks the users table for about 40 s. Run it outside peak hours.\", \"Before you deploy\")])"
+  },
+  {
+   "id": "columns",
+   "names": [
+    "Columns",
+    "Column",
+    "Item"
+   ],
+   "group": "Composition",
+   "source": "root = Panel(\"Serverless?\", [Columns([Column(\"For\", [Item(\"No servers to run\", \"ok\"), Item(\"Generous free tier\", \"ok\")]), Column(\"Against\", [Item(\"Cold starts\", \"no\"), Item(\"15 minute limit\", \"no\")])])])"
+  },
+  {
+   "id": "cards",
+   "names": [
+    "Cards",
+    "Card"
+   ],
+   "group": "Composition",
+   "source": "root = Panel(\"Plans\", [Cards([Card(\"Starter\", \"3 projects · community support\", \"€0\", \"muted\"), Card(\"Team\", \"Unlimited projects · SSO · audit log\", \"€12\", \"accent\")])])"
+  },
+  {
+   "id": "row",
+   "names": [
+    "Row"
+   ],
+   "group": "Composition",
+   "source": "root = Panel(\"Latency\", [Row([Number(\"42 ms\", \"p50\"), Number(\"180 ms\", \"p99\"), Number(\"0.02%\", \"errors\", null, \"success\")], 4)])"
+  },
+  {
+   "id": "grid",
+   "names": [
+    "Grid"
+   ],
+   "group": "Composition",
+   "source": "root = Panel(\"Host db-2\", [Grid([Meter(\"CPU\", 0.62, 1), Meter(\"Memory\", 0.81, 1, \"warning\"), Meter(\"Disk\", 0.34, 1), Meter(\"Network\", 0.12, 1)], 2)])"
+  },
+  {
+   "id": "stack",
+   "names": [
+    "Stack"
+   ],
+   "group": "Composition",
+   "source": "root = Panel(\"Build 1842\", [Stack([Number(\"4m 12s\", \"build time\", \"-38s\", \"success\"), Progress(\"Tests\", 412, 412)], 1)])"
+  },
+  {
+   "id": "spacer",
+   "names": [
+    "Spacer"
+   ],
+   "group": "Composition",
+   "source": "root = Panel(\"Setup\", [Text(\"1  Install the CLI\"), Spacer(1), Text(\"2  Sign in with your token\")])"
+  },
+  {
+   "id": "buttons",
+   "names": [
+    "Buttons",
+    "Button"
+   ],
+   "group": "Controls",
+   "source": "root = Panel(\"Ship it?\", [Text(\"Staging has been green for 2 hours.\"), Buttons([Button(\"Cancel\", @Reset($env)), Button(\"Preview\", @Set($env, \"preview\")), Button(\"Deploy to production\", @ToAssistant(\"Deploy to production\"), true)])])\n$env = \"staging\""
+  },
+  {
+   "id": "input",
+   "names": [
+    "Input"
+   ],
+   "group": "Controls",
+   "source": "root = Panel(\"Invite\", [Input($email, \"Work email\", {required:true}, \"you@company.com\", \"The invite goes to this address\")])\n$email = \"\""
+  },
+  {
+   "id": "textarea",
+   "names": [
+    "Textarea"
+   ],
+   "group": "Controls",
+   "source": "root = Panel(\"Release notes\", [Textarea($notes, \"What changed for users?\", 3, \"Write a short summary\", null, \"Markdown is fine\")])\n$notes = \"Faster sync on large spaces.\\nFixes a crash when pasting images.\""
+  },
+  {
+   "id": "select",
+   "names": [
+    "Select"
+   ],
+   "group": "Controls",
+   "source": "root = Panel(\"Server\", [Select($region, \"Region\", [\"eu-west\", \"us-east\", \"ap-south\"]), Select($size, \"Instance size\", [\"small\", \"medium\", \"large\", \"xlarge\", \"metal\"])])\n$region = \"eu-west\"\n$size = \"medium\""
+  },
+  {
+   "id": "stepper",
+   "names": [
+    "Stepper"
+   ],
+   "group": "Controls",
+   "source": "root = Panel(\"Scaling\", [Stepper($replicas, \"Replicas\", 1, 12, 1), Stepper($workers, \"Workers\", 1, 4, 1)])\n$replicas = 3\n$workers = 4"
+  },
+  {
+   "id": "toggle",
+   "names": [
+    "Toggle"
+   ],
+   "group": "Controls",
+   "source": "root = Panel(\"Project settings\", [Toggle($autoscale, \"Autoscale on CPU\"), Toggle($previews, \"Preview deploys for pull requests\")])\n$autoscale = true\n$previews = false"
+  },
+  {
+   "id": "slider",
+   "names": [
+    "Slider"
+   ],
+   "group": "Controls",
+   "source": "root = Panel(\"Spending cap\", [Slider($cap, \"Monthly cap (€)\", 0, 500, 25)])\n$cap = 200"
+  },
+  {
+   "id": "checklist",
+   "names": [
+    "Checklist",
+    "Check"
+   ],
+   "group": "Controls",
+   "source": "root = Panel(\"Before launch\", [Checklist([Check(\"Run migrations\", $migrate), Check(\"Warm the cache\", $cache), Check(\"Announce in #releases\", $announce)])])\n$migrate = true\n$cache = true\n$announce = false"
+  },
+  {
+   "id": "rating",
+   "names": [
+    "Rating"
+   ],
+   "group": "Controls",
+   "source": "root = Panel(\"Feedback\", [Rating($stars, \"How useful was this?\", 5)])\n$stars = 4"
+  },
+  {
+   "id": "choice",
+   "names": [
+    "Choice"
+   ],
+   "group": "Controls",
+   "source": "root = Panel(\"Pick a plan\", [Choice($plan, \"Which plan fits your team?\", [\"Starter · €0\", \"Team · €12 per seat\", \"Enterprise · talk to us\"])])\n$plan = \"Team · €12 per seat\""
+  },
+  {
+   "id": "stats",
+   "names": [
+    "Stats",
+    "Stat"
+   ],
+   "group": "Data",
+   "source": "root = Panel(\"This week\", [Stats([Stat(\"1,284\", \"active users\", \"+12%\", \"success\"), Stat(\"3.4 min\", \"median session\"), Stat(\"2.1%\", \"churn\", \"-0.3%\", \"success\")])])"
+  },
+  {
+   "id": "number",
+   "names": [
+    "Number"
+   ],
+   "group": "Data",
+   "source": "root = Panel(\"Revenue\", [Number(\"€12,480\", \"this month\", \"+8.2%\", \"success\")])"
+  },
+  {
+   "id": "kv",
+   "names": [
+    "Kv"
+   ],
+   "group": "Data",
+   "source": "root = Panel(\"Release\", [Kv([[\"Version\", \"0.1.42\"], [\"Commit\", \"26cda05\"], [\"Built\", \"9 Nov, 14:20\"], [\"Size\", \"18.4 MB\"]])])"
+  },
+  {
+   "id": "table",
+   "names": [
+    "Table"
+   ],
+   "group": "Data",
+   "source": "root = Panel(\"Services\", [Table([\"Service\", \"Status\", \"p99\"], [[\"api\", \"healthy\", \"180 ms\"], [\"worker\", \"degraded\", \"2.4 s\"], [\"web\", \"healthy\", \"95 ms\"]], $row, true)])\n$row = 0"
+  },
+  {
+   "id": "progress",
+   "names": [
+    "Progress"
+   ],
+   "group": "Data",
+   "source": "root = Panel(\"Upload\", [Progress(\"Photos\", 18, 24)])"
+  },
+  {
+   "id": "bars",
+   "names": [
+    "Bars",
+    "Bar"
+   ],
+   "group": "Data",
+   "source": "root = Panel(\"Languages\", [Bars([Bar(\"Rust\", 48), Bar(\"TypeScript\", 31), Bar(\"Python\", 12), Bar(\"Shell\", 9)])])"
+  },
+  {
+   "id": "sparkline",
+   "names": [
+    "Sparkline"
+   ],
+   "group": "Data",
+   "source": "root = Panel(\"Traffic\", [Text(\"Requests per minute, last hour\", \"muted\"), Sparkline([12, 18, 15, 22, 30, 28, 35, 41, 38, 44, 52, 47], 2)])"
+  },
+  {
+   "id": "chart",
+   "names": [
+    "Chart",
+    "Series"
+   ],
+   "group": "Data",
+   "source": "root = Panel(\"Commits\", [Chart(\"bar\", [Series(\"This week\", [12, 19, 8, 23, 17]), Series(\"Last week\", [9, 14, 11, 15, 20])], [\"Mon\", \"Tue\", \"Wed\", \"Thu\", \"Fri\"], 7)])"
+  },
+  {
+   "id": "gauge",
+   "names": [
+    "Gauge"
+   ],
+   "group": "Data",
+   "source": "root = Panel(\"Storage\", [Gauge(\"Disk used\", 0.72, 1, \"warning\")])"
+  },
+  {
+   "id": "meter",
+   "names": [
+    "Meter"
+   ],
+   "group": "Data",
+   "source": "root = Panel(\"Laptop\", [Meter(\"Battery\", 0.84, 1, \"success\"), Meter(\"Storage\", 0.91, 1, \"warning\")])"
+  },
+  {
+   "id": "heatmap",
+   "names": [
+    "Heatmap"
+   ],
+   "group": "Data",
+   "source": "root = Panel(\"Deploys by hour\", [Heatmap([[0, 2, 5, 3, 1, 0, 0], [1, 4, 8, 6, 2, 0, 1], [0, 3, 7, 9, 4, 1, 0]], [\"Week 1\", \"Week 2\", \"Week 3\"])])"
+  },
+  {
+   "id": "tabs",
+   "names": [
+    "Tabs",
+    "Tab"
+   ],
+   "group": "Flow",
+   "source": "root = Panel(\"nexus-api\", [Tabs([Tab(\"Overview\", [Kv([[\"Owner\", \"platform\"], [\"Language\", \"Rust\"], [\"Uptime\", \"99.98%\"]])]), Tab(\"Deploys\", [Text(\"3 this week, last one 2 h ago.\")]), Tab(\"Settings\", [Toggle($autoscale, \"Autoscale\")])])])\n$autoscale = true"
+  },
+  {
+   "id": "accordion",
+   "names": [
+    "Accordion",
+    "Section"
+   ],
+   "group": "Flow",
+   "source": "root = Panel(\"FAQ\", [Accordion([Section(\"Why is my build slow?\", [Text(\"Most time goes to linking. Try the mold linker.\")], true), Section(\"How do I cache dependencies?\", [Text(\"Use sccache with a shared bucket.\")])])])"
+  },
+  {
+   "id": "form",
+   "names": [
+    "Form"
+   ],
+   "group": "Flow",
+   "source": "root = Panel(\"Team\", [Form(\"Invite a teammate\", [Input($email, \"Email\", {required:true}, \"name@company.com\"), Select($role, \"Role\", [\"Viewer\", \"Editor\", \"Admin\"])], \"Send invite\", @ToAssistant(\"Send the invite\"))])\n$email = \"ana@company.com\"\n$role = \"Editor\""
+  },
+  {
+   "id": "steps",
+   "names": [
+    "Steps",
+    "Step"
+   ],
+   "group": "Flow",
+   "source": "root = Panel(\"Pipeline\", [Steps([Step(\"Build\", \"2m 04s\", \"done\"), Step(\"Test\", \"412 passed\", \"done\"), Step(\"Deploy\", \"2 of 3 regions\", \"current\"), Step(\"Verify\", null, \"todo\")])])"
+  },
+  {
+   "id": "timeline",
+   "names": [
+    "Timeline",
+    "Event"
+   ],
+   "group": "Flow",
+   "source": "root = Panel(\"Incident 231\", [Timeline([Event(\"14:02\", \"Deploy started\", \"v0.1.42\"), Event(\"14:05\", \"Health checks passing\", null, \"success\"), Event(\"14:09\", \"Error rate spike\", \"api · 2.1%\", \"warning\")])])"
+  },
+  {
+   "id": "tree",
+   "names": [
+    "Tree",
+    "Branch"
+   ],
+   "group": "Flow",
+   "source": "root = Panel(\"Repository\", [Tree([Branch(\"src\", [Branch(\"app\", [Branch(\"mod.rs\"), Branch(\"commands.rs\")], true), Branch(\"main.rs\")], true), Branch(\"Cargo.toml\")])])"
+  },
+  {
+   "id": "board",
+   "names": [
+    "Board",
+    "Lane"
+   ],
+   "group": "Flow",
+   "source": "root = Panel(\"Sprint 14\", [Board([Lane(\"To do\", [\"Rate limiter\", \"Billing email\"]), Lane(\"Doing\", [\"SSO login\"], \"warning\"), Lane(\"Done\", [\"Audit log\"], \"success\")], 2)])"
+  },
+  {
+   "id": "diagram",
+   "names": [
+    "Diagram"
+   ],
+   "group": "Flow",
+   "source": "root = Panel(\"Request path\", [Diagram(\"flowchart LR\\nA[Request]-->B[Auth]-->C[Handler]\", \"Request → auth → handler\")])"
+  },
+  {
+   "id": "code",
+   "names": [
+    "Code"
+   ],
+   "group": "Flow",
+   "source": "root = Panel(\"Health check\", [Code(\"curl -s https://api.example.com/v1/health | jq .status\", \"bash\")])"
+  },
+  {
+   "id": "editor",
+   "names": [
+    "Editor"
+   ],
+   "group": "Flow",
+   "source": "root = Panel(\"Fare formula\", [Editor($code, \"Try it\", \"python\", 3)])\n$code = \"def fare(km):\\n    return 2.5 + 1.2 * km\""
+  },
+  {
+   "id": "quiz",
+   "names": [
+    "Quiz",
+    "Question"
+   ],
+   "group": "Flow",
+   "source": "root = Panel(\"Git check\", [Quiz([Question(\"Which command shows staged changes?\", [Choice($pick, \"Your answer\", [\"git diff --staged\", \"git log -p\", \"git status -s\"])], \"git diff --staged\", \"--staged compares the index with HEAD.\")])])\n$pick = \"\""
+  },
+  {
+   "id": "canvas",
+   "names": [
+    "Canvas"
+   ],
+   "group": "Drawing",
+   "source": "root = Panel(\"Clock\", [Canvas([Circle(50, 50, 38, \"muted\"), Ray(50, 50, 30, 300, \"accent\"), Ray(50, 50, 20, 30, \"warning\"), Dot(50, 50, \"accent\"), Label(\"10:50\", 50, 96, \"muted\")], 8, \"A clock face at 10:50\")])"
+  },
+  {
+   "id": "circle",
+   "names": [
+    "Circle"
+   ],
+   "group": "Drawing",
+   "source": "root = Panel(\"Coverage\", [Canvas([Circle(50, 50, 36, \"muted\"), Circle(50, 50, 24, \"accent\"), Circle(50, 50, 5, \"warning\", true)], 6, \"Concentric rings\")])"
+  },
+  {
+   "id": "rect",
+   "names": [
+    "Rect"
+   ],
+   "group": "Drawing",
+   "source": "root = Panel(\"Layout\", [Canvas([Rect(10, 15, 80, 70, \"muted\"), Rect(20, 30, 25, 40, \"accent\", true), Rect(55, 30, 25, 40, \"warning\")], 6, \"Two panes in a frame\")])"
+  },
+  {
+   "id": "line",
+   "names": [
+    "Line"
+   ],
+   "group": "Drawing",
+   "source": "root = Panel(\"Route\", [Canvas([Line(10, 80, 90, 80, \"muted\"), Line(20, 65, 45, 25, \"accent\"), Line(45, 25, 70, 45, \"accent\"), Line(70, 45, 85, 15, \"accent\")], 6, \"An elevation profile\")])"
+  },
+  {
+   "id": "ray",
+   "names": [
+    "Ray"
+   ],
+   "group": "Drawing",
+   "source": "root = Panel(\"Wind\", [Canvas([Circle(50, 50, 36, \"muted\"), Ray(50, 50, 32, 15, \"accent\"), Ray(50, 50, 25, 120, \"warning\"), Dot(50, 50, \"accent\")], 6, \"Two bearings\")])"
+  },
+  {
+   "id": "arc",
+   "names": [
+    "Arc"
+   ],
+   "group": "Drawing",
+   "source": "root = Panel(\"Quota\", [Canvas([Arc(50, 50, 36, 0, 320, \"muted\"), Arc(50, 50, 30, 0, 245, \"accent\"), Arc(50, 50, 22, 0, 160, \"warning\")], 6, \"Nested partial readings\")])"
+  },
+  {
+   "id": "dot",
+   "names": [
+    "Dot"
+   ],
+   "group": "Drawing",
+   "source": "root = Panel(\"Scale\", [Canvas([Line(10, 50, 90, 50, \"muted\"), Dot(20, 50, \"accent\"), Dot(50, 50, \"warning\"), Dot(80, 50, \"success\")], 6, \"Three points on a scale\")])"
+  },
+  {
+   "id": "poly",
+   "names": [
+    "Poly"
+   ],
+   "group": "Drawing",
+   "source": "root = Panel(\"Region\", [Canvas([Poly([[15, 70], [30, 25], [55, 15], [80, 45], [70, 80]], \"accent\"), Line(15, 70, 80, 45, \"muted\")], 6, \"A polygon with a chord\")])"
+  },
+  {
+   "id": "label",
+   "names": [
+    "Label"
+   ],
+   "group": "Drawing",
+   "source": "root = Panel(\"Map\", [Canvas([Dot(35, 50, \"accent\"), Label(\"You are here\", 60, 50, \"normal\"), Label(\"38.7° N\", 50, 80, \"muted\")], 6, \"Annotated point\")])"
+  },
+  {
+   "id": "anim",
+   "names": [
+    "Anim"
+   ],
+   "group": "Drawing",
+   "source": "root = Panel(\"Loading\", [Canvas([Circle(50, 50, 30, \"muted\"), Ray(50, 50, 27, 0, \"accent\", [Anim(\"angle\", [0, 360], 6, \"loop\", \"linear\")])], 6, \"A turning hand\")])"
+  }
+ ]
+}

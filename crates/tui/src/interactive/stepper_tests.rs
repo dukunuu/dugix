@@ -30,27 +30,31 @@ fn row(buffer: &Buffer, y: u16) -> String {
 #[test]
 fn stepper_renders_one_row_at_80_columns_with_dim_label_and_bound_arrows() {
     let theme = Theme::default();
-    for (days, expected, left, right) in [
-        (5, "5", theme.fg, theme.fg),
-        (1, "1", theme.fg_dim, theme.fg),
-        (7, "7", theme.fg, theme.fg_dim),
+    // A ` − value + ` chip on the control surface after the label column;
+    // a bound's sign goes faint.
+    for (days, expected, minus, plus) in [
+        (5, "5", theme.fg_dim, theme.fg_dim),
+        (1, "1", theme.border_dim, theme.fg_dim),
+        (7, "7", theme.fg_dim, theme.border_dim),
     ] {
         let entry = entry(&source(days));
         let (buffer, hits) = entry.canvas(80, &theme, false, true);
-        assert!(row(&buffer, 4).contains(&format!("DAYS  ◀ {expected} ▶")));
+        assert!(row(&buffer, 4).contains(&format!("Days   − {expected} +")));
         assert_eq!(buffer[(2, 4)].fg, theme.fg_dim);
-        assert_eq!(buffer[(8, 4)].fg, left);
-        assert_eq!(buffer[(12, 4)].fg, right);
-        assert!(buffer[(10, 4)].modifier.contains(Modifier::BOLD));
+        assert_eq!(buffer[(9, 4)].fg, minus);
+        assert_eq!(buffer[(13, 4)].fg, plus);
+        assert_eq!(buffer[(11, 4)].bg, theme.control);
+        assert!(buffer[(11, 4)].modifier.contains(Modifier::BOLD));
         assert_eq!(hits[1], (Rect::new(2, 4, 76, 1), 1));
     }
     let entry = entry(&source(1));
     let (buffer, _) = entry.canvas(80, &theme, true, true);
-    assert_eq!(buffer[(8, 4)].fg, theme.fg_dim);
-    assert_eq!(buffer[(12, 4)].fg, theme.accent);
+    assert_eq!(buffer[(9, 4)].fg, theme.border_dim);
+    assert_eq!(buffer[(13, 4)].fg, theme.accent);
+    assert_eq!(buffer[(11, 4)].bg, theme.selection);
     // Focus: the label turns your accent and the gutter carries the marker;
     // nothing is underlined.
-    assert!(!buffer[(10, 4)].modifier.contains(Modifier::UNDERLINED));
+    assert!(!buffer[(11, 4)].modifier.contains(Modifier::UNDERLINED));
     assert_eq!(buffer[(2, 4)].fg, theme.accent);
     assert!(buffer[(2, 4)].modifier.contains(Modifier::BOLD));
     assert_eq!(buffer[(0, 4)].symbol(), "▸");
@@ -147,7 +151,8 @@ fn clicks_only_adjust_on_arrows_inline_and_in_the_expanded_view() {
     let mut widgets = Widgets::default();
     draw(&mut widgets, &p);
     let screen = Rect::new(0, 0, 82, 32);
-    for (offset, expected) in [(0, "5"), (8, "5"), (10, "7"), (10, "7"), (6, "5")] {
+    // Minus covers chip cells 6–7, the value sits at 9, plus covers 11–12.
+    for (offset, expected) in [(0, "5"), (9, "5"), (11, "7"), (12, "7"), (6, "5")] {
         click(&mut widgets, offset, screen);
         assert_eq!(days(&widgets, &p), expected);
         assert_eq!(widgets.entries[&p.key()].focus, 1);
@@ -189,22 +194,22 @@ fn prompt_app_has_an_80_column_render_and_state_driven_progress() {
     let (buffer, _) = entry.canvas(80, &Theme::default(), false, true);
     let card_row = |content: &str| format!("  {content:<78}");
     let expected = [
-        format!("▐ {:<75}⤢ ▌", "TRIP PLANNER"),
+        format!("  {:<75}⤢  ", "Trip planner"),
         card_row(""),
-        card_row(&format!("{:<14}◀ 5 ▶", "DAYS")),
+        card_row(&format!("{:<14} − 5 +", "Days")),
         card_row(""),
-        card_row("● Beach (2 days)"),
-        card_row("○ Hiking (3 days)"),
+        card_row(" ✓  Beach (2 days)"),
+        card_row("    Hiking (3 days)"),
         card_row(""),
         // Shared label column, a 55-cell bar at 2/5, the value at the right.
         card_row(&format!(
             "{:<14}{}{}  2 / 5",
-            "PLANNED DAYS",
-            "█".repeat(22),
-            "░".repeat(33)
+            "Planned days",
+            "━".repeat(22),
+            "─".repeat(33)
         )),
         card_row(""),
-        card_row("▐ Save plan ↵ ▌"),
+        card_row("  Save plan ↵"),
         card_row(""),
         format!("{} F2 keyboard ──", "─".repeat(65)),
     ];
@@ -216,6 +221,6 @@ fn prompt_app_has_an_80_column_render_and_state_driven_progress() {
     session.toggle("hiking").unwrap();
     session.step(0, true).unwrap();
     let (updated, _) = entry.canvas(80, &Theme::default(), false, true);
-    assert!(row(&updated, 2).contains("◀ 6 ▶"));
+    assert!(row(&updated, 2).contains("− 6 +"));
     assert!(row(&updated, 7).contains("5 / 6"));
 }

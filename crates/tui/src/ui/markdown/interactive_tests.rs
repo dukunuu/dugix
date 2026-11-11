@@ -138,3 +138,15 @@ fn invalid_finished_programs_report_a_diagnostic_instead_of_becoming_active() {
     assert!(plain(&rendered).contains("unknown component NotAComponent"));
     assert_eq!(rendered.blocks, [source]);
 }
+
+#[test]
+fn a_program_with_one_broken_piece_reserves_a_card_instead_of_the_error_box() {
+    let source = "root = Panel(\"Trip\", [Text(\"Kept\"), PieChart([1])])";
+    let r = render(&format!("```nexus-ui\n{source}\n```"), 72, colors());
+    assert_eq!(r.widgets.len(), 1);
+    assert!(!plain(&r).contains("couldn't be shown"));
+    let nothing_left = "root = Panel(\"Trip\", [PieChart([1])])";
+    let r = render(&format!("```nexus-ui\n{nothing_left}\n```"), 72, colors());
+    assert!(r.widgets.is_empty());
+    assert!(plain(&r).contains("couldn't be shown"));
+}

@@ -28,7 +28,7 @@ fn snapshot(view: Value, state: Value, expected: &[String]) -> Buffer {
         .draw(|f| f.buffer_mut().clone_from(&canvas))
         .unwrap();
     let buffer = terminal.backend().buffer();
-    assert!(row_text(buffer, 0).starts_with("▐ PANEL "));
+    assert!(row_text(buffer, 0).starts_with("  Panel"));
     // Component expectations describe the content, excluding the new card
     // padding and blank section separators. Full-card snapshots live below.
     let regions = node_regions(entry.session.as_ref().unwrap(), 36);
@@ -68,12 +68,13 @@ fn kv_snapshot_aligns_dim_labels_and_normal_values() {
 #[test]
 fn table_snapshot_shows_header_selection_and_truncated_cells() {
     let buffer = snapshot(
-        json!([{"type":"table","columns":["Name","Status"],"rows_data":[["Ada","Ready"],["Longer than the column","Waiting"]],"select":"row"}]),
+        json!([{"type":"table","columns":["Name","Status"],"rows_data":[["Ada","Ready"],["Longer than the column, and more","Waiting"]],"select":"row"}]),
         json!({"row":0}),
+        // Status keeps its natural width; Name takes the rest and clips.
         &[
-            format!(" {:<15}Status", "Name"),
-            format!("▸{:<15}Ready", "Ada"),
-            format!(" {:<15}Waiting", "Longer than t…"),
+            format!(" {:<24}Status", "Name"),
+            format!("▸{:<24}Ready", "Ada"),
+            format!(" {:<24}Waiting", "Longer than the column…"),
         ],
     );
     assert_eq!(buffer[(1, 2)].fg, Theme::default().fg_dim);
@@ -88,9 +89,9 @@ fn progress_snapshot_clamps_and_uses_accent_bar() {
         json!({}),
         &[format!(
             "{:<6}{}{}  5 / 10",
-            "DONE",
-            "█".repeat(9),
-            "░".repeat(9)
+            "Done",
+            "━".repeat(9),
+            "─".repeat(9)
         )],
     );
     assert_eq!(buffer[(6, 2)].fg, Theme::default().accent2);
@@ -98,7 +99,7 @@ fn progress_snapshot_clamps_and_uses_accent_bar() {
     snapshot(
         json!([{"type":"progress","label":"Done","value":99,"max":10}]),
         json!({}),
-        &[format!("{:<6}{}  10 / 10", "DONE", "█".repeat(17))],
+        &[format!("{:<6}{}  10 / 10", "Done", "━".repeat(17))],
     );
 }
 
@@ -108,9 +109,10 @@ fn bars_snapshot_scales_to_largest_value() {
         json!([{"type":"bars","items":[{"label":"A","value":2},{"label":"B","value":4},{"label":"C","value":-1}]}]),
         json!({}),
         &[
-            format!("{:<6}{}▌{}  2", "A", "█".repeat(11), "░".repeat(11)),
-            format!("{:<6}{}  4", "B", "█".repeat(23)),
-            format!("{:<6}{}  0", "C", "░".repeat(23)),
+            // Solid data bars: no track behind them, zero draws nothing.
+            format!("{:<6}{}{}  2", "A", "▆".repeat(12), " ".repeat(11)),
+            format!("{:<6}{}  4", "B", "▆".repeat(23)),
+            format!("{:<6}{}  0", "C", " ".repeat(23)),
         ],
     );
 }
@@ -121,8 +123,8 @@ fn bars_keep_a_shared_scale_when_value_widths_differ() {
         json!([{"type":"bars","items":[{"label":"A","value":9},{"label":"B","value":10}]}]),
         json!({}),
         &[
-            format!("{:<6}{}▊░░   9", "A", "█".repeat(19)),
-            format!("{:<6}{}  10", "B", "█".repeat(22)),
+            format!("{:<6}{}     9", "A", "▆".repeat(20)),
+            format!("{:<6}{}  10", "B", "▆".repeat(22)),
         ],
     );
 }
@@ -143,12 +145,14 @@ fn checklist_snapshot_shows_independent_boolean_values() {
     let buffer = snapshot(
         json!([{"type":"checklist","items":[{"label":"{{name}}","key":"ready"},{"label":"Done","key":"done"}]}]),
         json!({"name":"Ready","ready":false,"done":true}),
-        &["○ Ready".into(), "● Done".into()],
+        &["    Ready".into(), " ✓  Done".into()],
     );
-    // Off rings are dim; on dots take the panel accent.
-    assert_eq!(buffer[(0, 2)].fg, Theme::default().fg_dim);
-    assert_eq!(buffer[(0, 3)].fg, Theme::default().accent2);
-    assert_eq!(buffer[(2, 3)].fg, Theme::default().fg);
+    // An empty box sits on the control surface; a checked one is
+    // success-filled with a bright label. The first item has focus.
+    assert_eq!(buffer[(1, 2)].bg, Theme::default().control);
+    assert_eq!(buffer[(4, 2)].fg, Theme::default().accent);
+    assert_eq!(buffer[(1, 3)].bg, Theme::default().success);
+    assert_eq!(buffer[(4, 3)].fg, Theme::default().fg);
 }
 
 #[test]
@@ -156,7 +160,7 @@ fn select_snapshot_displays_label_and_current_option() {
     snapshot(
         json!([{"type":"select","key":"mode","label":"Mode","options":["Fast","Full"]}]),
         json!({"mode":"Fast"}),
-        &["MODE  ◀ Fast ▶".into()],
+        &["Mode    Fast ▕ Full".into()],
     );
 }
 
@@ -165,7 +169,7 @@ fn toggle_snapshot_displays_label_and_boolean() {
     snapshot(
         json!([{"type":"toggle","key":"ready","label":"{{name}}"}]),
         json!({"ready":true,"name":"Ready"}),
-        &["● Ready".into()],
+        &["  ●  Ready".into()],
     );
 }
 
@@ -187,12 +191,12 @@ fn mixed_document_snapshot_keeps_all_components_in_fixed_slots() {
             "Name Ada".into(),
             "Name".into(),
             "Ada".into(),
-            format!("{:<6}{}  100%", "DONE", "█".repeat(20)),
-            format!("{:<6}{}  1", "A", "█".repeat(23)),
+            format!("{:<6}{}  100%", "Done", "━".repeat(20)),
+            format!("{:<6}{}  1", "A", "▆".repeat(23)),
             " █".into(),
-            "○ Ready".into(),
-            "MODE  ◀ Fast ▶".into(),
-            "○ Ready".into(),
+            "    Ready".into(),
+            "Mode    Fast ▕ Full".into(),
+            " ●   Ready".into(),
         ],
     );
 }
@@ -359,7 +363,7 @@ fn labels_are_sanitized_and_narrow_component_views_are_safe() {
     snapshot(
         json!([{"type":"toggle","key":"ready","label":"Ready\u{fe0f}"}]),
         json!({"ready":true}),
-        &["● Ready".into()],
+        &["  ●  Ready".into()],
     );
     assert_eq!(clipped("宽宽宽", 5), "宽宽…");
     let entry = entry(
@@ -451,7 +455,7 @@ fn game_card_snapshots_70_and_80_columns() {
         expected.push(card_row(&format!(" {tile_bottom}"), width));
         expected.extend([
             card_row("", width),
-            card_row(" ▐ Reset score ▌", width),
+            card_row("   Reset score", width),
             card_row("", width),
             bottom_border(width),
         ]);
@@ -474,16 +478,13 @@ fn counter_card_snapshots_70_and_80_columns() {
             card_row("", width),
             card_row(" Count: 0", width),
             card_row("", width),
-            card_row(" ▐ Add one ▌ ▐ Reset ▌", width),
+            card_row("   Add one     Reset", width),
             card_row("", width),
-            card_row(
-                &format!(" ╭ Name {}╮", "─".repeat(usize::from(width - 12))),
-                width,
-            ),
-            card_row(&format!(" │{}│", " ".repeat(usize::from(width - 6))), width),
-            card_row(&format!(" ╰{}╯", "─".repeat(usize::from(width - 6))), width),
+            card_row(" Name", width),
             card_row("", width),
-            card_row(" ▐ Submit result ↵ ▌", width),
+            card_row(&format!(" {}", "▔".repeat(usize::from(width - 4))), width),
+            card_row("", width),
+            card_row("   Submit result ↵", width),
             card_row("", width),
             bottom_border(width),
         ];
@@ -492,7 +493,7 @@ fn counter_card_snapshots_70_and_80_columns() {
         // The primary pill fills with the panel accent.
         assert_eq!(actual[(3, 10)].bg, theme.accent2);
         assert_eq!(actual[(3, 10)].fg, theme.on(theme.accent2));
-        assert_eq!(actual[(3, 4)].bg, theme.control);
+        assert!(actual[(4, 4)].modifier.contains(Modifier::UNDERLINED));
         assert_eq!(actual[(2, 2)].fg, theme.fg);
     }
 }
@@ -502,13 +503,9 @@ fn counter_card_snapshots_70_and_80_columns() {
 fn card_row(content: &str, _width: u16) -> String {
     format!(" {content}").trim_end().to_string()
 }
-/// The Bold title bar: capital title, expand mark, rounded caps.
+/// Quiet sentence-case title, with a discreet expand affordance.
 fn top_border(title: &str, width: u16) -> String {
-    format!(
-        "▐ {:<inner$}⤢ ▌",
-        title.to_uppercase(),
-        inner = usize::from(width) - 5
-    )
+    format!("  {title:<inner$}⤢", inner = usize::from(width) - 5)
 }
 /// The bottom rule with the hint right-aligned two columns from the end.
 fn bottom_border(width: u16) -> String {
@@ -577,7 +574,7 @@ fn short_last_tile_row_stays_left_aligned_without_stretching() {
 }
 
 #[test]
-fn input_fields_use_full_width_surfaces_with_visible_focus_borders() {
+fn input_fields_are_underlined_lines_with_visible_focus() {
     let theme = Theme::default();
     for (width, label) in [
         (70, "Name"),
@@ -591,17 +588,18 @@ fn input_fields_use_full_width_surfaces_with_visible_focus_borders() {
         );
         let (quiet, _) = entry.canvas(width, &theme, false, true);
         let (focused, _) = entry.canvas(width, &theme, true, true);
-        for x in 3..width - 3 {
-            assert_eq!(quiet[(x, 3)].symbol(), " ");
-            assert_eq!(quiet[(x, 3)].bg, theme.raised);
-            assert_eq!(focused[(x, 3)].bg, theme.raised);
-        }
-        assert_eq!(quiet[(2, 2)].symbol(), "╭");
-        assert_eq!(quiet[(2, 2)].fg, theme.border_dim);
+        // Label above, a text row on the panel surface, an underline below
+        // that spans the content width.
+        assert_eq!(quiet[(2, 2)].fg, theme.fg_dim);
         assert_eq!(focused[(2, 2)].fg, theme.accent);
-        assert_eq!(quiet[(1, 3)].bg, theme.bg);
-        assert_eq!(quiet[(width - 2, 3)].bg, theme.bg);
-        assert!(focused[(4, 3)].modifier.contains(Modifier::REVERSED));
+        for x in 2..width - 2 {
+            assert_eq!(quiet[(x, 3)].bg, theme.bg);
+            assert_eq!(quiet[(x, 4)].symbol(), "▔");
+            assert_eq!(quiet[(x, 4)].fg, theme.border_dim);
+            assert_eq!(focused[(x, 4)].fg, theme.accent);
+        }
+        assert!(focused[(2, 3)].modifier.contains(Modifier::REVERSED));
+        assert!(inputs::caret(&quiet, quiet.area).is_none());
     }
 }
 
@@ -641,12 +639,12 @@ fn focus_is_only_visible_on_the_focused_control() {
     let theme = Theme::default();
     let (quiet, _) = entry.canvas(80, &theme, false, true);
     assert!(inputs::caret(&quiet, quiet.area).is_none());
-    assert_eq!(quiet[(2, 2)].fg, theme.border_dim);
+    assert_eq!(quiet[(2, 2)].fg, theme.fg_dim);
     let (focused, _) = entry.canvas(80, &theme, true, true);
     assert!(row_text(&focused, 3).contains("Ada"));
     assert_eq!(
         inputs::caret(&focused, focused.area),
-        Some(Position::new(7, 3))
+        Some(Position::new(5, 3))
     );
     assert_eq!(focused[(2, 2)].fg, theme.accent);
     assert!(row_text(&focused, focused.area.height - 1).contains("Tab next"));
@@ -664,14 +662,16 @@ fn pills_use_contrasting_surfaces_and_distinct_primary_and_focus_styles() {
     let mut theme = Theme::default();
     theme.raised = theme.bg;
     let (quiet, _) = entry.canvas(80, &theme, false, true);
-    assert_eq!(quiet[(3, 4)].bg, theme.control);
-    assert_ne!(quiet[(3, 4)].bg, theme.bg);
-    assert_eq!(quiet[(3, 4)].fg, theme.fg);
+    // Secondary actions are quiet underlined text on the panel surface; the
+    // primary action is the one filled pill.
+    assert_eq!(quiet[(4, 4)].bg, theme.bg);
+    assert_eq!(quiet[(4, 4)].fg, theme.fg_dim);
+    assert!(quiet[(4, 4)].modifier.contains(Modifier::UNDERLINED));
     assert_eq!(quiet[(3, 10)].bg, theme.accent2);
     assert_eq!(quiet[(3, 10)].fg, theme.on(theme.accent2));
     assert!(quiet[(3, 10)].modifier.contains(Modifier::BOLD));
-    assert_eq!(quiet[(2, 4)].symbol(), "▐");
-    assert_eq!(quiet[(2, 4)].fg, theme.control);
+    assert_eq!(quiet[(2, 10)].symbol(), " ");
+    assert_eq!(quiet[(2, 10)].bg, theme.accent2);
     // Focus fills a pill with your accent and marks it, with no underline.
     let (focused, _) = entry.canvas(80, &theme, true, true);
     assert_eq!(focused[(3, 4)].bg, theme.accent);
@@ -685,12 +685,12 @@ fn pills_use_contrasting_surfaces_and_distinct_primary_and_focus_styles() {
     assert!(focused[(3, 10)].modifier.contains(Modifier::BOLD));
     theme.set_background_mode(crate::theme::BackgroundMode::Transparent);
     let (transparent, _) = entry.canvas(80, &theme, false, true);
-    assert_eq!(transparent[(3, 4)].bg, theme.control);
-    assert_eq!(transparent[(1, 4)].bg, Color::Reset);
+    assert_eq!(transparent[(3, 10)].bg, theme.accent2);
+    assert_eq!(transparent[(1, 10)].bg, Color::Reset);
 }
 
 #[test]
-fn only_a_single_review_send_in_a_fitting_mixed_group_is_right_aligned() {
+fn related_actions_stay_together_in_source_order_at_every_width() {
     let mut data: Value = serde_json::from_str(super::tests::COUNTER).unwrap();
     data["view"] = json!([{"type":"buttons","items":[
         {"label":"Add one","action":"add"},
@@ -705,10 +705,10 @@ fn only_a_single_review_send_in_a_fitting_mixed_group_is_right_aligned() {
     };
     let entry = make_entry(&data);
     let (_, wide) = entry.canvas(80, &Theme::default(), false, true);
-    // Pills are their label plus two caps and two padding columns.
+    // Buttons keep two padding columns per side and source reading order.
     assert_eq!(wide[0].0, Rect::new(2, 2, 11, 1));
     assert_eq!(wide[1].0, Rect::new(14, 2, 9, 1));
-    assert_eq!(wide[2].0, Rect::new(59, 2, 19, 1));
+    assert_eq!(wide[2].0, Rect::new(24, 2, 19, 1));
     let (_, narrow) = entry.canvas(30, &Theme::default(), false, true);
     assert_eq!(narrow[2].0, Rect::new(2, 3, 19, 1));
     // Once anything wraps, the send stays in the left-aligned flow.
@@ -744,4 +744,42 @@ fn wrapped_secondary_pill_rows_and_mixed_answer_buttons_stay_left_aligned() {
     assert_eq!(hits[0], (Rect::new(2, 2, 18, 1), 0));
     assert_eq!(hits[1], (Rect::new(2, 3, 16, 1), 1));
     assert_eq!(hits[2], (Rect::new(2, 4, 17, 1), 2));
+}
+
+const FLAGS: &str = r#"root = Panel("Flags", [flags])
+flags = Table(["Flag", "Meaning"], [["Z · Zero", "1 when the difference is zero, so the inputs were equal"], ["N · Negative", "1 when the highest bit of the difference is set"]], null, true)"#;
+
+#[test]
+fn a_short_label_column_leaves_room_for_the_long_one() {
+    let entry = Entry::new(Ok(Session::new(Document::parse(FLAGS).unwrap()).unwrap()));
+    let (buffer, _) = entry.canvas(72, &Theme::default(), false, true);
+    let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+    assert!(
+        text.contains("1 when the difference is zero, so the inputs were equal"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_header_click_sorts_the_column_drawn_under_the_pointer() {
+    let mut session = Session::new(Document::parse(FLAGS).unwrap()).unwrap();
+    let area = Rect::new(0, 0, 68, 3);
+    let mut buffer = Buffer::empty(area);
+    let document = session.document();
+    let index = document.node_index(&document.nodes()[0]);
+    render_table(
+        &document.nodes()[0],
+        &session,
+        area,
+        &Theme::default(),
+        false,
+        &mut buffer,
+    );
+    let header: String = (0..area.width).map(|x| buffer[(x, 0)].symbol()).collect();
+    let meaning = u16::try_from(header.find("Meaning").unwrap()).unwrap();
+    components::click_table(&mut session, index, 0, meaning, area).unwrap();
+    assert_eq!(
+        session.table_state(index).sort.map(|(column, _)| column),
+        Some(1)
+    );
 }

@@ -153,13 +153,13 @@ fn word_navigation_document_selection_and_key_repeats_stay_in_the_field() {
 fn mouse_places_the_caret_by_display_cells_including_wide_text() {
     let (mut widgets, placement) =
         focused_input("root = Panel('Contact', [Input($name, 'Name')])\n$name = 'A李B'");
-    // Content starts two columns into the field. Click the second cell of 李.
-    pointer(&mut widgets, 4, 1, false);
+    // Content starts at the field's left edge. Click the second cell of 李.
+    pointer(&mut widgets, 2, 1, false);
     widgets.key(KeyCode::Char('X').into(), false);
     assert_eq!(value(&widgets, &placement, "name"), "AX李B");
     draw(&mut widgets, &[placement.clone()], 0);
-    pointer(&mut widgets, 2, 1, false);
-    pointer(&mut widgets, 3, 1, true);
+    pointer(&mut widgets, 0, 1, false);
+    pointer(&mut widgets, 1, 1, true);
     widgets.paste("Z");
     assert_eq!(value(&widgets, &placement, "name"), "ZX李B");
 }
@@ -168,9 +168,9 @@ fn mouse_places_the_caret_by_display_cells_including_wide_text() {
 fn mouse_drag_keeps_its_original_selection_anchor() {
     let (mut widgets, placement) =
         focused_input("root = Panel('Contact', [Input($name, 'Name')])\n$name = 'hello world'");
-    pointer(&mut widgets, 2, 1, false);
-    pointer(&mut widgets, 4, 1, true);
-    pointer(&mut widgets, 7, 1, true);
+    pointer(&mut widgets, 0, 1, false);
+    pointer(&mut widgets, 2, 1, true);
+    pointer(&mut widgets, 5, 1, true);
     widgets.paste("Hi");
     assert_eq!(value(&widgets, &placement, "name"), "Hi world");
 }
@@ -188,15 +188,15 @@ fn clipped_and_expanded_fields_keep_mouse_and_terminal_carets_aligned() {
     assert_eq!(hit.row_offset, 1);
     assert_eq!(
         terminal.get_cursor_position().unwrap(),
-        Position::new(hit.rect.x + 5, hit.rect.y)
+        Position::new(hit.rect.x + 3, hit.rect.y)
     );
-    pointer(&mut widgets, 3, 0, false);
+    pointer(&mut widgets, 1, 0, false);
     widgets.paste("X");
     assert_eq!(value(&widgets, &placement, "name"), "AXda");
     terminal
         .draw(|frame| widgets.popup(frame, &Theme::default(), Rect::new(4, 4, 50, 20), false))
         .unwrap();
-    pointer(&mut widgets, 2, 1, false);
+    pointer(&mut widgets, 0, 1, false);
     widgets.paste("Y");
     assert_eq!(value(&widgets, &placement, "name"), "YAXda");
 }
@@ -221,11 +221,12 @@ fn horizontally_scrolled_input_clicks_use_the_visible_text_not_the_start() {
     let source = format!("root = Panel('Long', [Input($name, 'Name')])\n$name = '{initial}'");
     let (mut widgets, placement) = focused_input(&source);
     draw(&mut widgets, &[placement.clone()], 0);
-    // Field inner width is 62; the end caret reserves one visible cell.
+    // The field's text spans its full 66 columns; the end caret reserves one
+    // visible cell, so the view starts at character 39.
     pointer(&mut widgets, 4, 1, false);
     widgets.paste("!");
     let mut expected = initial;
-    expected.insert(45, '!');
+    expected.insert(43, '!');
     assert_eq!(value(&widgets, &placement, "name"), expected);
 }
 
@@ -239,7 +240,7 @@ fn textarea_wraps_and_supports_mouse_editing_newlines_and_tab_navigation() {
     draw(&mut widgets, &[placement.clone()], 0);
     assert!(widgets.focus_latest());
     draw(&mut widgets, &[placement.clone()], 0);
-    pointer(&mut widgets, 6, 1, false);
+    pointer(&mut widgets, 4, 1, false);
     widgets.key(KeyCode::Char('X').into(), false);
     assert_eq!(value(&widgets, &placement, "notes"), "abcdXefghijklmnopqrs");
     widgets.key(KeyCode::Enter.into(), true);
@@ -298,7 +299,9 @@ fn fields_use_theme_borders_placeholders_help_and_inline_errors_at_every_width()
             let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
             assert!(text.contains("Email *"));
             assert!(text.contains("you@example.com"));
-            assert!(text.contains("Required"));
+            // An untouched empty field shows its hint, not an error.
+            assert!(text.contains("Use your work email"));
+            assert!(!text.contains("Required"));
             assert!(text.contains("What should we know?"));
         }
     }
@@ -335,7 +338,7 @@ fn single_line_inputs_leave_page_keys_to_the_panel_but_textareas_keep_them() {
 
 #[test]
 fn focused_fields_keep_the_focus_border_even_while_invalid() {
-    let source = "root = Panel('Contact', [Input($email, 'Email', {required: true})])\n$email = ''";
+    let source = "root = Panel('Contact', [Input($email, 'Email', {required: true, minLength: 5})])\n$email = 'ab'";
     let entry = Entry::new(Ok(Session::new(Document::parse(source).unwrap()).unwrap()));
     let theme = Theme::default();
     let border = |focused: bool| {
@@ -351,8 +354,37 @@ fn focused_fields_keep_the_focus_border_even_while_invalid() {
 fn a_drag_past_the_field_edge_keeps_extending_the_selection() {
     let (mut widgets, placement) =
         focused_input("root = Panel('Contact', [Input($name, 'Name')])\n$name = 'hello world'");
-    pointer(&mut widgets, 2, 1, false);
+    pointer(&mut widgets, 0, 1, false);
     pointer(&mut widgets, 70, 1, true);
     widgets.paste("Hi");
     assert_eq!(value(&widgets, &placement, "name"), "Hi");
+}
+
+#[test]
+fn a_multiline_textarea_placeholder_draws_one_line_per_row() {
+    let source = "root = Panel('Recap', [Textarea($answers, 'Answers', 3, 'A1. first\\nA2. second')])\n$answers = ''";
+    let entry = Entry::new(Ok(Session::new(Document::parse(source).unwrap()).unwrap()));
+    let (buffer, _) = entry.canvas(60, &Theme::default(), false, true);
+    let rows: Vec<String> = (0..buffer.area.height)
+        .map(|y| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect()
+        })
+        .collect();
+    let first = rows
+        .iter()
+        .position(|row| row.contains("A1. first"))
+        .expect("first line");
+    assert!(rows[first + 1].contains("A2. second"), "{rows:#?}");
+    assert!(!rows[first].contains("A2."), "{rows:#?}");
+}
+
+#[test]
+fn a_focused_multiline_placeholder_keeps_its_lines_apart() {
+    let source = "root = Panel('Recap', [Textarea($answers, 'Answers', 3, 'A1. first\\nA2. second')])\n$answers = ''";
+    let entry = Entry::new(Ok(Session::new(Document::parse(source).unwrap()).unwrap()));
+    let (buffer, _) = entry.canvas(60, &Theme::default(), true, true);
+    let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+    assert!(text.contains("A1. first · A2. second"), "{text}");
 }

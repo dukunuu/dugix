@@ -62,12 +62,12 @@ $todo = ["Docs", "Tests"]
 $done = []"#;
     let mut entry = entry(source);
     let before = text(&entry.canvas(60, &Theme::default(), false, true).0);
-    assert!(before.contains("TODO ▐ 2 ▌"), "{before}");
-    assert!(before.contains("DONE ▐ 0 ▌"), "{before}");
+    assert!(before.contains("TODO   2"), "{before}");
+    assert!(before.contains("DONE   0"), "{before}");
     entry.activate(0, true, true);
     let after = text(&entry.canvas(60, &Theme::default(), false, true).0);
-    assert!(after.contains("TODO ▐ 1 ▌"), "{after}");
-    assert!(after.contains("DONE ▐ 1 ▌"), "{after}");
+    assert!(after.contains("TODO   1"), "{after}");
+    assert!(after.contains("DONE   1"), "{after}");
     let done_row = after.lines().find(|row| row.contains("Docs")).unwrap();
     assert!(
         done_row.contains("Tests"),

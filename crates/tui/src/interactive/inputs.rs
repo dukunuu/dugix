@@ -10,7 +10,7 @@ use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
     style::{Modifier, Style},
-    widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Widget},
+    widgets::{Clear, Paragraph, Widget},
 };
 use std::collections::HashMap;
 use tui_textarea::{CursorMove, TextArea, WrapMode};
@@ -519,7 +519,59 @@ struct FieldView<'a> {
     vim: Option<&'a Vim>,
 }
 
+/// A field's label above and underline below; returns the text body
+/// between them. Focus wins over the error colour so the focused field stays
+/// findable; the error itself shows on the row below the field.
+fn field_frame(
+    buffer: &mut Buffer,
+    frame: Rect,
+    label: &str,
+    (selected, invalid): (bool, bool),
+    theme: &Theme,
+) -> Rect {
+    let (line, label_style) = if selected {
+        (
+            theme.accent,
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else if invalid {
+        (theme.error, Style::default().fg(theme.error))
+    } else {
+        (theme.border_dim, Style::default().fg(theme.fg_dim))
+    };
+    buffer.set_stringn(
+        frame.x,
+        frame.y,
+        label,
+        usize::from(frame.width),
+        label_style,
+    );
+    if frame.height >= 2 {
+        buffer.set_string(
+            frame.x,
+            frame.bottom() - 1,
+            "▔".repeat(usize::from(frame.width)),
+            Style::default().fg(line),
+        );
+    }
+    Rect::new(
+        frame.x,
+        frame.y + 1,
+        frame.width,
+        frame.height.saturating_sub(2),
+    )
+}
+
 /// Paint one field into `view.area`; returns the editor's text body.
+fn placeholder_style(theme: &Theme) -> Style {
+    Style::default()
+        .fg(theme.fg_dim)
+        .bg(theme.surface)
+        .add_modifier(Modifier::ITALIC)
+}
+
 fn paint(field: &mut TextArea<'static>, view: FieldView<'_>, buffer: &mut Buffer) -> Rect {
     let FieldView {
         node,
@@ -542,42 +594,38 @@ fn paint(field: &mut TextArea<'static>, view: FieldView<'_>, buffer: &mut Buffer
     };
     Clear.render(area, buffer);
     buffer.set_style(area, theme.background_style());
-    let error = session.input_error(key);
-    // Focus wins over the error colour so the focused field stays findable;
-    // the error itself still shows on the row below.
-    let border = if selected {
-        theme.accent
-    } else if error.is_some() {
-        theme.error
-    } else {
-        theme.border_dim
-    };
+    // An empty field has not been answered yet: say what it needs (the
+    // hint and the required mark) rather than greeting it with an error.
+    // Submitting still validates it.
+    let error = session
+        .input_error(key)
+        .filter(|_| !session.value(key).is_empty());
     let required = if rules.get("required").and_then(serde_json::Value::as_bool) == Some(true) {
         " *"
     } else {
         ""
     };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(border))
-        .style(Style::default().bg(theme.raised))
-        .padding(Padding::horizontal(u16::from(area.width >= 5)))
-        .title(format!(" {}{required} ", safe(label)));
     let frame = Rect::new(
         area.x,
         area.y,
         area.width,
         rows.saturating_add(2).min(area.height),
     );
-    let body = block.inner(frame);
-    block.render(frame, buffer);
-    field.set_style(Style::default().fg(theme.fg).bg(theme.raised));
+    let body = field_frame(
+        buffer,
+        frame,
+        &format!("{}{required}", safe(label)),
+        (selected, error.is_some()),
+        theme,
+    );
+    field.set_style(Style::default().fg(theme.fg).bg(theme.surface));
     field.set_cursor_line_style(Style::default());
     field.set_selection_style(Style::default().fg(theme.fg).bg(theme.selection));
     field.set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
-    field.set_placeholder_text(safe(placeholder));
-    field.set_placeholder_style(Style::default().fg(theme.fg_dim).bg(theme.raised));
+    // The focused field draws its placeholder as a single line.
+    let lines: Vec<_> = placeholder.lines().collect();
+    field.set_placeholder_text(safe(&lines.join(crate::ui::style::SEP)));
+    field.set_placeholder_style(placeholder_style(theme));
     crate::editor::decorate(
         field,
         crate::editor::Decor {
@@ -588,13 +636,29 @@ fn paint(field: &mut TextArea<'static>, view: FieldView<'_>, buffer: &mut Buffer
         },
     );
     if body.width > 0 && body.height > 0 {
-        (&*field).render(body, buffer);
-        if !selected && let Some(caret) = caret(buffer, body) {
-            buffer[caret].modifier.remove(Modifier::REVERSED);
+        if !selected && field.is_empty() {
+            // Without focus there is no caret cell, so the placeholder lines
+            // up with the label above it, one placeholder line per row.
+            for (y, line) in (body.y..body.bottom()).zip(lines) {
+                let width = usize::from(body.width);
+                buffer.set_stringn(body.x, y, safe(line), width, placeholder_style(theme));
+            }
+        } else {
+            (&*field).render(body, buffer);
+            if !selected && let Some(caret) = caret(buffer, body) {
+                buffer[caret].modifier.remove(Modifier::REVERSED);
+            }
         }
     }
     if frame.bottom() < area.bottom() {
-        Paragraph::new(safe(error.as_deref().unwrap_or(hint)))
+        // The row is reserved for errors; until one appears it says what the
+        // field needs.
+        let note = if hint.is_empty() && !required.is_empty() && session.value(key).is_empty() {
+            "Required"
+        } else {
+            hint.as_str()
+        };
+        Paragraph::new(safe(error.as_deref().unwrap_or(note)))
             .style(
                 Style::default()
                     .fg(if error.is_some() {

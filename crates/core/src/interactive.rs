@@ -61,9 +61,9 @@ pub fn edit_patch(source: &str) -> Option<(&str, &str)> {
 
 /// Maximum serialized UI document size.
 pub const MAX_SOURCE: usize = 16 * 1024;
-/// Validation row budget, including title and interaction hint.
-pub const ROWS: u16 = 24;
-const LAYOUT_ROWS: u16 = 48;
+/// Validation row budget, including title and interaction hint. A panel
+/// taller than the screen scrolls to its focused control.
+pub const ROWS: u16 = 48;
 const MAX_TEXT: usize = 4096;
 const MAX_VALUE: usize = 1024;
 
@@ -1313,6 +1313,8 @@ pub struct Document {
     sending: BTreeSet<String>,
     answering: BTreeSet<String>,
     program: Option<String>,
+    /// The program had broken pieces that are left out of this document.
+    salvaged: bool,
 }
 
 impl Document {
@@ -1385,6 +1387,50 @@ impl Document {
             document.program = Some(source.into());
         }
         Ok(document)
+    }
+
+    /// A finished program's document, leaving out its broken pieces the way
+    /// `OpenUI` does: a component, list item or statement that fails is dropped
+    /// and the rest renders. Returns the problems that caused anything to be
+    /// left out (empty when the program is valid).
+    /// # Errors
+    /// Returns the check errors when nothing usable remains: no valid root, no
+    /// surviving element, or a legacy JSON document.
+    pub fn recover(source: &str) -> std::result::Result<(Self, Vec<CheckError>), Vec<CheckError>> {
+        let errors = match Self::check(source) {
+            Ok(document) => return Ok((document, Vec::new())),
+            Err(errors) => errors,
+        };
+        if source.len() > MAX_SOURCE || source.trim_start().starts_with('{') {
+            return Err(errors);
+        }
+        let program = stream::parseable(source);
+        let salvaged = stream::program_state(&program, None, None, true)
+            .ok()
+            .and_then(|value| Self::check_value(value).ok());
+        match salvaged {
+            Some(mut document) if !document.view.is_empty() => {
+                document.program = Some(program);
+                document.salvaged = true;
+                Ok((document, errors))
+            }
+            _ => Err(errors),
+        }
+    }
+
+    /// The inert document a finished block displays, broken pieces left out;
+    /// what layout measures before the live session exists.
+    #[must_use]
+    pub fn settled(source: &str) -> Option<Self> {
+        Self::recover(source)
+            .ok()
+            .map(|(document, _)| document.inert_preview())
+    }
+
+    /// Whether broken pieces of this document's program are left out.
+    #[must_use]
+    pub const fn is_salvaged(&self) -> bool {
+        self.salvaged
     }
 
     /// Validated, inert snapshot of the complete elements received so far.
@@ -1511,6 +1557,7 @@ impl Document {
             sending: BTreeSet::new(),
             answering: BTreeSet::new(),
             program: None,
+            salvaged: false,
         };
         check_result(
             &mut errors,
@@ -1727,13 +1774,8 @@ impl Document {
         );
         let rows: u32 = self.view.iter().map(|node| u32::from(node.rows())).sum();
         let controls = self.control_count();
-        let cap = if self.all_nodes().into_iter().any(Node::is_display) {
-            LAYOUT_ROWS
-        } else {
-            ROWS
-        };
         ensure!(
-            rows <= u32::from(cap - 3) && controls <= 32,
+            rows <= u32::from(ROWS - 3) && controls <= 32,
             "UI exceeds its fixed display budget"
         );
         Ok(())
@@ -1804,7 +1846,13 @@ impl Document {
             } => {
                 validation::check(rules, node.input_limit().unwrap_or(MAX_VALUE))?;
                 ensure!((1..=8).contains(rows), "input rows must be 1–8");
-                line_ok(placeholder, 120)?;
+                // A Textarea's placeholder may sketch the expected shape over
+                // several lines ("1. …\n2. …"); an Input's is one line.
+                if node.is_textarea() {
+                    text_ok(placeholder, 240)?;
+                } else {
+                    line_ok(placeholder, 120)?;
+                }
                 line_ok(hint, 120)?;
                 ensure!(
                     self.state.contains_key(key),
@@ -2811,10 +2859,13 @@ impl Session {
     fn commit(&mut self, state: Map<String, Value>) -> Result<()> {
         data::value_ok(&Value::Object(state.clone()), &mut 4096, 0)?;
         if let Some(source) = &self.document.program {
-            let value = stream::program_state(source, Some(&state), Some(&self.live.values()))?;
+            let salvaged = self.document.salvaged;
+            let value =
+                stream::program_state(source, Some(&state), Some(&self.live.values()), salvaged)?;
             let mut document = Document::check_value(value)
                 .map_err(|errors| anyhow::anyhow!(errors[0].message.clone()))?;
             document.program = Some(source.clone());
+            document.salvaged = salvaged;
             self.document = document;
         }
         self.state = state;
@@ -2831,6 +2882,21 @@ impl Session {
             .program
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("legacy panels cannot be patched"))?;
+        if self.document.salvaged {
+            // A panel already missing broken pieces takes any patch that leaves
+            // something to show; patching the broken statement restores it.
+            let source = stream::merge_statements(source, patch)?;
+            let (document, _) = Document::recover(&source).map_err(|errors| {
+                anyhow::anyhow!(
+                    errors
+                        .iter()
+                        .map(|error| format!("{}: {}", error.path, error.message))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            })?;
+            return self.replace_document(document);
+        }
         let source = merge_program(source, patch)?;
         self.replace_program(&source)
     }
@@ -2839,7 +2905,11 @@ impl Session {
     /// # Errors
     /// Invalid revisions leave the previous document and state untouched.
     pub fn replace_program(&mut self, source: &str) -> Result<()> {
-        let mut next = Self::new(Document::parse(source)?)?;
+        self.replace_document(Document::parse(source)?)
+    }
+
+    fn replace_document(&mut self, document: Document) -> Result<()> {
+        let mut next = Self::new(document)?;
         let mut state = next.state.clone();
         state.extend(self.state.clone());
         let mut held = Map::new();

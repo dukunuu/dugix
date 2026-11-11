@@ -165,8 +165,8 @@ fn measured_reservations_match_the_drawn_card_at_actual_widths() {
                         .collect::<String>()
                 })
                 .collect();
-            // Bold chrome: a title bar on top, a full-width rule at the bottom.
-            assert!(rows[0].starts_with('▐') && rows[0].ends_with('▌'));
+            // Open, sentence-case header; bottom rule keeps panel boundaries clear.
+            assert!(rows[0].starts_with("  ") && rows[0].contains('⤢'));
             assert!(rows.last().unwrap().starts_with('─'));
             assert!(rows.last().unwrap().ends_with('─'));
             if source.contains("supporting content") {
@@ -281,8 +281,8 @@ fn pinned_card_keeps_state_hits_and_composer_clear_until_escape_or_session_reset
     terminal.draw(|f| crate::ui::render(f, &mut app)).unwrap();
     let viewport = app.interactive.layout.as_ref().unwrap().0;
     assert_eq!(
-        terminal.backend().buffer()[(viewport.x + 2, viewport.y)].symbol(),
-        "▐"
+        terminal.backend().buffer()[(viewport.x + 4, viewport.y)].symbol(),
+        "C"
     );
     let pinned = text(&terminal);
     assert!(pinned.contains("pinned · Esc to unpin"), "{pinned}");
@@ -375,8 +375,8 @@ fn arbitrary_game_artwork_and_controls_use_the_same_renderer() {
     let p = placement(source, 0);
     let screen = text(&draw(&mut widgets, &[p], 0));
     for label in [
-        // The title bar sets the panel title in capitals.
-        "ROCK · PAPER · SCISSORS",
+        // Preserve the model's sentence-case title.
+        "Rock · Paper · Scissors",
         "Wins 0",
         "Losses 0",
         "Draws 0",

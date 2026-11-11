@@ -68,20 +68,23 @@ pub mod glyph {
     pub const SECTION: &str = "▍";
     /// A card's left rail.
     pub const RAIL: &str = "▎";
-    /// The rounded left end of a filled bar or pill.
-    pub const CAP_LEFT: &str = "▐";
-    /// The rounded right end of a filled bar or pill.
-    pub const CAP_RIGHT: &str = "▌";
     /// The unfilled part of a bar.
     pub const TRACK: &str = "░";
-    /// Left-anchored partial cells, one to seven eighths wide.
-    pub const EIGHTHS: [&str; 7] = ["▏", "▎", "▍", "▌", "▋", "▊", "▉"];
+    /// Filled and unfilled portions of a compact panel progress track.
+    pub const BAR_FILL: &str = "━";
+    pub const BAR_TRACK: &str = "─";
+    /// Half-cell end cap on a compact progress track.
+    pub const BAR_END: &str = "╸";
     /// Bottom-anchored partial cells, one to eight eighths tall.
     pub const LEVELS: [&str; 8] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
     /// A favorite.
     pub const FAVORITE: &str = "★";
     /// Accepts images.
     pub const VISION: &str = "⊡";
+    /// Round ends of filled panel shapes (Powerline half circles). Drawn
+    /// only when `Theme::round_caps` says the terminal has them.
+    pub const CAP_LEFT: &str = "\u{e0b6}";
+    pub const CAP_RIGHT: &str = "\u{e0b4}";
     /// Previous / next item in a viewer.
     pub const PREV: &str = "‹";
     pub const NEXT: &str = "›";

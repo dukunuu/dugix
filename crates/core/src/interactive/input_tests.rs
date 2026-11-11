@@ -100,3 +100,14 @@ fn placeholders_and_hints_share_the_label_length_cap() {
         assert!(Document::parse(&source).is_err());
     }
 }
+
+#[test]
+fn a_textarea_placeholder_may_span_lines_but_an_input_placeholder_may_not() {
+    let textarea = "root = Panel('Recap', [Textarea($answers, 'Answers', 3, '1. …\\n2. …\\n3. …')])\n$answers = ''";
+    let document = Document::parse(textarea).unwrap();
+    assert!(
+        matches!(document.nodes().first(), Some(Node::Input { placeholder, .. }) if placeholder == "1. …\n2. …\n3. …")
+    );
+    let input = "root = Panel('Name', [Input($name, 'Name', null, 'first\\nlast')])\n$name = ''";
+    assert!(Document::parse(input).is_err());
+}

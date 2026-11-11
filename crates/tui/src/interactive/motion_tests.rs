@@ -21,12 +21,12 @@ fn ink(buffer: &Buffer) -> usize {
         })
         .count()
 }
-/// Full-block cells: a progress bar's filled part.
+/// Heavy track cells: a progress bar's filled part.
 fn filled(buffer: &Buffer) -> usize {
     buffer
         .content
         .iter()
-        .filter(|cell| cell.symbol() == "█")
+        .filter(|cell| cell.symbol() == glyph::BAR_FILL)
         .count()
 }
 

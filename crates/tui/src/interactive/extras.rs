@@ -35,7 +35,9 @@ fn number_lines(node: &Node, session: &Session, width: u16, theme: &Theme) -> Ve
         delta: delta.clone(),
         tone: *tone,
     };
-    super::stat_lines(&stat, session, (width, true), theme)
+    // A headline is hierarchy, not ASCII artwork: use a bold, legible value
+    // with its unit intact, even in a narrow column.
+    super::stat_lines(&stat, session, (width, false), theme)
 }
 fn md_lines(
     text: &str,
@@ -364,7 +366,7 @@ fn board_lane(
         area.width.saturating_sub(title_width + 1),
         &count,
         (theme.control, theme.fg),
-        false,
+        (false, theme),
     );
     buffer.set_string(
         area.x,

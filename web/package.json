@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prototype:panels": "vite --host 127.0.0.1 --port 8843 --strictPort",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "playwright test"

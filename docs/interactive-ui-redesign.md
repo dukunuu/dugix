@@ -1,10 +1,42 @@
 # Interactive UI: the Bold redesign and what comes next
 
-nexus-ui panels work, but they don't look designed. This plan restyles them in
-one bold, consistent visual language. It then adds four capabilities on top:
-layout containers, live interactivity, new components, and motion.
+This records the original Bold restyle and its layout, live-interactivity,
+component and motion additions. The follow-up below supersedes the original
+presentation defaults; the component language and interaction model remain.
 
-## Decisions (user, 2026-11-08)
+## Current presentation: useful tools, quieter defaults
+
+The Bold pass made the widget vocabulary consistent, but still gave ordinary
+calculators and quizzes the visual weight of dashboards. The follow-up:
+
+- Sentence-case, unfilled panel headers; no block-glyph button caps.
+- Slim progress tracks, explicit slider thumbs and sentence-case labels.
+- Related actions remain together in source order, matching keyboard order.
+- `Number` uses readable bold text with units, not three-row ASCII digits.
+  Explicit legacy `Stats(..., true)` remains available, but isn't recommended
+  for ordinary interactive tools.
+- Model guidance favors one task, meaningful controls and an immediate result;
+  no invented metrics, repeated headings or mandatory follow-up menus.
+- Prompt examples for a planner, bill splitter and quiz are rendered in
+  `crates/tui/src/interactive/reference_snapshots.txt` at 32 and 72 columns.
+  Their tests cover dark/light/transparent themes, local calculation/reset,
+  quiz feedback and stable transcript reservations. The component gallery
+  remains the compatibility net for the larger vocabulary.
+
+Blank rows reserved for quiz answers and taller tab branches are intentional:
+revealing content must not push the following transcript around.
+
+For the native component-library design lab, run
+`scripts/preview-terminal-panels.sh`. Pick any of the 72 contracts and compare
+Field Notes / Instrument / Playful options side by side (57 component families,
+171 authored options, compact/wide and default/focused renders). Previews use
+actual terminal cells, with signatures and copyable native source. Choices stay
+in the page's memory and do not apply to Nexus. Full overview toggles the original
+197×60-cell contact sheet; `--terminal` prints that ANSI frame in a sufficiently
+large terminal. This is a design mockup, not a production renderer or live chat
+mode.
+
+## Original decisions (user, 2026-11-08)
 
 - **The look is "Bold".** Panels get a filled title bar in the panel's accent
   color, big display numerals for headline numbers, filled pill controls, and

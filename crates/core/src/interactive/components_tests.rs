@@ -235,9 +235,10 @@ fn new_nodes_share_the_existing_node_and_row_budgets() {
     source["view"] = json!(vec![node; 17]);
     assert!(Document::parse(&source.to_string()).is_err());
     let tall = json!({"type":"kv","items":vec![["A","B"];7]});
-    source["view"] = json!([tall, tall, tall]);
+    let short = json!({"type":"kv","items":vec![["A","B"];3]});
+    source["view"] = json!([tall, tall, tall, tall, tall, tall, short]);
     assert_eq!(Document::parse(&source.to_string()).unwrap().rows(), ROWS);
-    source["view"][0]["items"] = json!(vec![["A", "B"]; 8]);
+    source["view"][6]["items"] = json!(vec![["A", "B"]; 4]);
     assert!(Document::parse(&source.to_string()).is_err());
 }
 

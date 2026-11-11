@@ -289,8 +289,8 @@ fn choice_list_card_at_80_columns_has_chips_labels_and_right_edge_arrows() {
     let frame = |text: &str| format!("  {text:<78}");
     let choice = |text: &str| format!("  {text:<75}→  ");
     let expected = [
-        // The hero repeats the panel title, so the bar carries no title.
-        format!("▐{}⤢ ▌", " ".repeat(76)),
+        // The hero repeats the panel title, so only the expand mark remains.
+        format!("{}⤢  ", " ".repeat(77)),
         " ".repeat(80),
         frame("A little memory nook"),
         frame("Pick one thread, and we'll follow it gently."),
@@ -302,7 +302,8 @@ fn choice_list_card_at_80_columns_has_chips_labels_and_right_edge_arrows() {
         format!("{} 1–3 pick · F2 keyboard ──", "─".repeat(54)),
     ];
     assert_eq!(rows(&canvas), expected);
-    assert_eq!(canvas[(2, 2)].fg, theme.accent2);
+    // Hero titles are bold foreground; color is kept for interaction.
+    assert_eq!(canvas[(2, 2)].fg, theme.fg);
     assert!(canvas[(2, 2)].modifier.contains(Modifier::BOLD));
     assert_eq!(canvas[(2, 3)].fg, theme.fg_dim);
     for (item, y) in (5..8).enumerate() {

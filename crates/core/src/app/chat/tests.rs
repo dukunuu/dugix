@@ -86,6 +86,18 @@ fn ui_replay_notes_ignore_open_and_literal_fences_and_number_untitled_blocks() {
 }
 
 #[test]
+fn a_panel_shown_without_its_broken_piece_is_replayed_as_partly_rendered() {
+    let note = ui_failure_notes(
+        "```nexus-ui\nroot = Panel(\"Trip\", [Text(\"Kept\"), PieChart([1])])\n```",
+    );
+    assert!(
+        note.contains("block \"Trip\" rendered with parts left out — "),
+        "{note}"
+    );
+    assert!(note.contains("unknown component PieChart"), "{note}");
+}
+
+#[test]
 fn chat_params_pass_the_cache_ttl_experiment() {
     let mut app = super::super::tests::app_with_key();
     for enabled in [false, true] {

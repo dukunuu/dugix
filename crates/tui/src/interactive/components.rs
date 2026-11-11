@@ -81,7 +81,8 @@ pub(super) fn height(node: &Node, session: &Session, width: u16) -> Option<u16> 
             .iter()
             .map(|item| 1 + branch_height(&item.view, session, width))
             .sum(),
-        Node::Form { fields, .. } => 2 + branch_height(fields, session, width),
+        // Title, fields, a blank row, then the submit button.
+        Node::Form { fields, .. } => 3 + branch_height(fields, session, width),
         Node::Chart { rows, .. } | Node::Canvas { rows, .. } | Node::Spacer { rows } => *rows,
         Node::Row { .. } | Node::Grid { .. } | Node::Stack { .. } => {
             container_regions(node, session, Rect::new(0, 0, width, u16::MAX))
@@ -137,7 +138,7 @@ pub(super) fn visible_regions(session: &Session, width: u16) -> Vec<(&Node, Rect
                     }
                 }
                 Node::Form { fields, .. } => {
-                    let area = body(region, 1, region.height.saturating_sub(2));
+                    let area = body(region, 1, region.height.saturating_sub(3));
                     visit(session, fields, stacked(fields, area), out);
                 }
                 Node::Row { items, .. } | Node::Grid { items, .. } | Node::Stack { items, .. } => {
@@ -202,6 +203,23 @@ pub(super) fn container_regions(node: &Node, session: &Session, area: Rect) -> V
         regions
     };
     match node {
+        // A row of badges reads as one line of labels, packed from the left.
+        Node::Row { items, .. } if items.iter().all(|item| matches!(item, Node::Badge { .. })) => {
+            let mut x = area.x;
+            items
+                .iter()
+                .map(|item| {
+                    let Node::Badge { text, .. } = item else {
+                        unreachable!("checked above")
+                    };
+                    let width = bold::pill_width(&display(session, text))
+                        .min(area.right().saturating_sub(x));
+                    let region = Rect::new(x, area.y, width, 1);
+                    x = x.saturating_add(width).saturating_add(1).min(area.right());
+                    region
+                })
+                .collect()
+        }
         Node::Row { items, gap } => {
             let count = u16::try_from(items.len()).unwrap_or(1).max(1);
             let slot = area.width.saturating_sub(gap * (count - 1)) / count;
@@ -216,7 +234,11 @@ pub(super) fn container_regions(node: &Node, session: &Session, area: Rect) -> V
             while count > 1 && area.width.saturating_sub(2 * (count - 1)) / count < MIN_GRID_SLOT {
                 count -= 1;
             }
-            columns(items, count, 2, 1)
+            // Grids of hairline readings pack without row gaps.
+            let compact = items
+                .iter()
+                .all(|item| super::run_kind(item) == Some(super::Run::Reading));
+            columns(items, count, 2, u16::from(!compact))
         }
         Node::Stack { items, gap } => {
             let mut y = area.y;
@@ -277,30 +299,12 @@ pub(super) fn render(
                 .collect();
             let focused = focus == Some(control);
             let active = session.tab(index);
-            for (tab, rect) in bold::tab_rects(&labels, row(area, 0))
-                .into_iter()
-                .enumerate()
-            {
-                if tab == active {
-                    let fill = if focused {
-                        theme.accent
-                    } else {
-                        accent_color(session.document(), theme)
-                    };
-                    bold::pill(
-                        buffer,
-                        (rect.x, rect.y),
-                        rect.width,
-                        &labels[tab],
-                        (fill, theme.on(fill)),
-                        true,
-                    );
-                } else {
-                    Paragraph::new(clipped(&format!("  {}", labels[tab]), rect.width))
-                        .style(Style::default().fg(theme.fg_dim))
-                        .render(rect, buffer);
-                }
-            }
+            let fill = if focused {
+                theme.accent
+            } else {
+                accent_color(session.document(), theme)
+            };
+            bold::segmented(buffer, row(area, 0), &labels, (active, fill), theme);
             hits.push((row(area, 0), control));
             if let Some(item) = items.get(session.tab(index)) {
                 let regions = branch_regions(
@@ -353,7 +357,7 @@ pub(super) fn render(
             let regions = branch_regions(
                 session,
                 fields,
-                body(area, 1, area.height.saturating_sub(2)),
+                body(area, 1, area.height.saturating_sub(3)),
             );
             hits.extend(Entry::branch(
                 fields, session, &regions, theme, focus, can_send, buffer, &mut next,
@@ -409,6 +413,22 @@ pub(super) fn render(
             hits.extend(Entry::branch(
                 items, session, &regions, theme, focus, can_send, buffer, &mut next,
             ));
+            // Side-by-side row items with room between them get a hairline
+            // divider down the middle of the gap.
+            if let Node::Row { gap, .. } = node
+                && *gap >= 3
+            {
+                let bottom = regions.iter().map(|rect| rect.bottom()).max().unwrap_or(0);
+                for pair in regions.windows(2) {
+                    if pair[1].y != pair[0].y {
+                        continue;
+                    }
+                    let x = pair[0].right() + (pair[1].x - pair[0].right()) / 2;
+                    for y in pair[0].y..bottom.min(area.bottom()) {
+                        buffer.set_string(x, y, "│", Style::default().fg(theme.border_dim));
+                    }
+                }
+            }
         }
         Node::Spacer { .. } => {}
         Node::Timeline { items } => {
@@ -522,7 +542,7 @@ pub(super) fn render(
                 area.width,
                 &display(session, text),
                 bold::tone_fill(*tone, session, theme),
-                true,
+                (true, theme),
             );
         }
         Node::Meter {
@@ -540,7 +560,7 @@ pub(super) fn render(
             super::render_bar(
                 &super::BarRow {
                     label: &display(session, label),
-                    caps: true,
+                    control_label: true,
                     value: &text,
                     value_width: u16::try_from(text.width()).unwrap_or(0),
                     ratio: session.eased((index, 0), if max > 0.0 { value / max } else { 0.0 }),
@@ -575,7 +595,18 @@ pub(super) fn render(
             } else {
                 accent_color(session.document(), theme)
             };
-            bold::bar(buffer, track, session.eased((index, 0), ratio), fill, theme);
+            let ratio = session.eased((index, 0), ratio).clamp(0.0, 1.0);
+            bold::bar(buffer, track, ratio, fill, theme);
+            if track.width > 0 {
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let thumb = (ratio * f64::from(track.width - 1)).round() as u16;
+                buffer.set_string(
+                    track.x + thumb,
+                    track.y,
+                    glyph::DOT,
+                    Style::default().fg(fill),
+                );
+            }
             bold::value(
                 buffer,
                 Rect::new(track.right(), area.y, area.right() - track.right(), 1),
@@ -682,8 +713,13 @@ pub(super) fn click_table(
     let header = u16::from(*search);
     if row == header && *sortable {
         let lead = u16::from(select.is_some());
-        let column = usize::from(x.saturating_sub(lead)) * columns.len()
-            / usize::from(area.width.saturating_sub(lead).max(1));
+        let table = session.document().node(node).expect("table node");
+        let x = x.saturating_sub(lead);
+        // The column drawn under the pointer; a gap belongs to the column on its left.
+        let column = super::table_columns(session, table, area.width.saturating_sub(lead))
+            .iter()
+            .rposition(|&(start, _)| start <= x)
+            .unwrap_or(0);
         return session.sort_table(node, column.min(columns.len() - 1));
     }
     if page_size.is_some() && row + 1 == session.document().node(node).expect("table node").rows() {
@@ -726,34 +762,49 @@ fn chart(
                 .collect()
         })
         .collect();
+    // Series left on the default accent take the next data hue, so several
+    // series never draw in one color.
+    let hues = [
+        accent_color(session.document(), theme),
+        theme.accent2,
+        theme.warning,
+        theme.success,
+        theme.error,
+    ];
     let tones: Vec<_> = series
         .iter()
-        .map(|item| color(item.tone, session, theme))
+        .enumerate()
+        .map(|(index, item)| match item.tone {
+            Tone::Accent if index > 0 => hues[index % hues.len()],
+            tone => color(tone, session, theme),
+        })
         .collect();
     let legend = Line::from(
         series
             .iter()
             .enumerate()
-            .map(|(index, item)| {
-                Span::styled(
-                    format!(
-                        "{} {}{} ",
-                        glyph::DOT,
-                        display(session, &item.name),
-                        if kind == ChartKind::Pie {
-                            format!(
-                                " {}",
-                                values[index]
-                                    .iter()
-                                    .map(|value| value.max(0.0))
-                                    .sum::<f64>()
-                            )
-                        } else {
-                            String::new()
-                        }
+            .flat_map(|(index, item)| {
+                [
+                    Span::styled("■ ", Style::default().fg(tones[index])),
+                    Span::styled(
+                        format!(
+                            "{}{}   ",
+                            display(session, &item.name),
+                            if kind == ChartKind::Pie {
+                                format!(
+                                    " {}",
+                                    values[index]
+                                        .iter()
+                                        .map(|value| value.max(0.0))
+                                        .sum::<f64>()
+                                )
+                            } else {
+                                String::new()
+                            }
+                        ),
+                        Style::default().fg(theme.fg_dim),
                     ),
-                    Style::default().fg(tones[index]),
-                )
+                ]
             })
             .collect::<Vec<_>>(),
     );
@@ -779,13 +830,42 @@ fn chart(
     if kind == ChartKind::Pie {
         ring(&values, &tones, plot, buffer);
     } else {
-        let min = values.iter().flatten().copied().fold(0.0, f64::min);
+        // Bars and areas stand on zero; lines and points use the data's own
+        // range so a small change is visible.
+        let lowest = values
+            .iter()
+            .flatten()
+            .copied()
+            .fold(f64::INFINITY, f64::min);
+        let min = if matches!(kind, ChartKind::Line | ChartKind::Scatter) && lowest.is_finite() {
+            lowest
+        } else {
+            lowest.min(0.0)
+        };
         let max = values
             .iter()
             .flatten()
             .copied()
             .fold(0.0, f64::max)
             .max(min + f64::EPSILON);
+        if kind == ChartKind::Bar && min >= 0.0 {
+            columns(
+                &values,
+                &tones,
+                max,
+                Rect::new(area.x, plot.y, area.width, plot.height),
+                (session, theme),
+                buffer,
+            );
+            column_labels(
+                labels,
+                values.iter().map(Vec::len).max().unwrap_or(0),
+                body(area, area.height - 1, 1),
+                (session, theme),
+                buffer,
+            );
+            return;
+        }
         Paragraph::new(clipped(&format!("{max}"), 5))
             .style(Style::default().fg(theme.fg_dim))
             .render(Rect::new(area.x, plot.y, 5, 1), buffer);
@@ -890,6 +970,105 @@ fn chart(
         .right_aligned()
         .style(Style::default().fg(theme.fg_dim))
         .render(axis, buffer);
+}
+/// Grouped columns on a zero baseline, eighth-cell tall, one hue per series.
+/// A single series prints each value above its column.
+fn columns(
+    values: &[Vec<f64>],
+    tones: &[Color],
+    max: f64,
+    plot: Rect,
+    (session, theme): (&Session, &Theme),
+    buffer: &mut Buffer,
+) {
+    const LOWER: [&str; 7] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇"];
+    let samples = values.iter().map(Vec::len).max().unwrap_or(0);
+    if samples == 0 || plot.height == 0 {
+        return;
+    }
+    let count = u16::try_from(samples).unwrap_or(u16::MAX);
+    let group = (plot.width / count).max(1);
+    let series = u16::try_from(values.len()).unwrap_or(1).max(1);
+    let gap = (group / 4).clamp(u16::from(group > 2), 3);
+    let column = (group.saturating_sub(gap) / series).max(1);
+    let labelled = values.len() == 1;
+    // A single series keeps the top row for its value labels.
+    let rows = plot.height.saturating_sub(u16::from(labelled)).max(1);
+    let revealed = bold::revealed(plot.width, session);
+    for (index, series_values) in values.iter().enumerate() {
+        for (sample, value) in series_values.iter().enumerate() {
+            let x = plot.x
+                + u16::try_from(sample).unwrap_or(0) * group
+                + u16::try_from(index).unwrap_or(0) * column
+                + gap / 2;
+            if x >= plot.x + revealed || x + column > plot.right() {
+                continue;
+            }
+            let ratio = if max > 0.0 { value.max(0.0) / max } else { 0.0 };
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let eighths = (ratio * f64::from(rows) * 8.0).round() as u16;
+            let (whole, part) = (eighths / 8, eighths % 8);
+            let ink = Style::default().fg(tones[index]);
+            let bottom = plot.bottom() - 1;
+            for level in 0..whole.min(rows) {
+                buffer.set_string(x, bottom - level, "█".repeat(usize::from(column)), ink);
+            }
+            if part > 0 && whole < rows {
+                buffer.set_string(
+                    x,
+                    bottom - whole,
+                    LOWER[usize::from(part - 1)].repeat(usize::from(column)),
+                    ink,
+                );
+            }
+            if labelled {
+                let text = clipped(&value.to_string(), group);
+                let top = bottom - whole.min(rows) - u16::from(part > 0);
+                buffer.set_stringn(
+                    x,
+                    top.max(plot.y),
+                    text,
+                    usize::from(group),
+                    Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+                );
+            }
+        }
+    }
+}
+/// One label under each column group when they fit, else first and last.
+fn column_labels(
+    labels: &[String],
+    samples: usize,
+    axis: Rect,
+    (session, theme): (&Session, &Theme),
+    buffer: &mut Buffer,
+) {
+    let count = u16::try_from(samples.max(1)).unwrap_or(u16::MAX);
+    let group = (axis.width / count).max(1);
+    let style = Style::default().fg(theme.fg_dim);
+    let texts: Vec<_> = labels.iter().map(|label| display(session, label)).collect();
+    if texts.len() == samples && texts.iter().all(|text| text.width() < usize::from(group)) {
+        for (index, text) in texts.iter().enumerate() {
+            let x = axis.x
+                + u16::try_from(index).unwrap_or(0) * group
+                + (group / 4).clamp(u16::from(group > 2), 3) / 2;
+            buffer.set_stringn(x, axis.y, text, usize::from(group), style);
+        }
+    } else {
+        if let Some(first) = texts.first() {
+            buffer.set_stringn(axis.x, axis.y, first, usize::from(axis.width / 2), style);
+        }
+        if let Some(last) = texts.last().filter(|_| texts.len() > 1) {
+            let width = u16::try_from(last.width()).unwrap_or(0).min(axis.width / 2);
+            buffer.set_stringn(
+                axis.right() - width,
+                axis.y,
+                last,
+                usize::from(width),
+                style,
+            );
+        }
+    }
 }
 /// Samples as braille dot positions, spread evenly across the plot.
 fn braille_points(

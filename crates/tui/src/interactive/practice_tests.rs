@@ -68,7 +68,7 @@ fn quiz_pages_questions_marks_choices_and_reveals_answers_in_a_fixed_height() {
     assert!(
         first
             .iter()
-            .any(|row| row.starts_with("‹ Question 1 of 2 ›") && row.ends_with("0/1 right ▌")),
+            .any(|row| row.starts_with("‹ Question 1 of 2 ›") && row.ends_with("0/1 right")),
         "{first:#?}"
     );
     assert!(
@@ -77,7 +77,7 @@ fn quiz_pages_questions_marks_choices_and_reveals_answers_in_a_fixed_height() {
             .any(|row| row == "Which lookup is O(1) on average?")
     );
     assert!(first.iter().any(|row| row == "○ Hash map"));
-    assert!(first.iter().any(|row| row == "▐ Show answer ▌"));
+    assert!(first.iter().any(|row| row == "Show answer"));
     assert!(!first.iter().any(|row| row.contains("Hashing finds")));
     assert!(widgets.focus_latest());
     assert!(matches!(
@@ -102,7 +102,7 @@ fn quiz_pages_questions_marks_choices_and_reveals_answers_in_a_fixed_height() {
     let revealed = rows(&draw(&mut widgets, &p));
     // Still focused, so the pill carries the focus mark.
     assert!(
-        revealed.iter().any(|row| row == "▐▸Hide answer ▌"),
+        revealed.iter().any(|row| row == "Hide answer"),
         "{revealed:#?}"
     );
     assert!(revealed.iter().any(|row| row == "Hash map"));

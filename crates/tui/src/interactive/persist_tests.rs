@@ -256,7 +256,7 @@ fn a_pinned_app_opens_full_size_with_its_state_and_keeps_changes() {
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).unwrap();
     terminal.draw(|f| render_popup(f, &mut app)).unwrap();
     let view = screen(&terminal);
-    assert!(view.contains("WEEKLY COUNTER"), "{view}");
+    assert!(view.contains("Weekly Counter"), "{view}");
     assert!(view.contains("Count: 0"), "{view}");
     let focused = app.interactive.focused.clone().unwrap();
     let name = |app: &AppView| {

@@ -159,6 +159,8 @@ struct Entry {
     born: std::time::Instant,
     /// The control last pressed and when, for the brief press flash.
     pressed: Option<(usize, std::time::Instant)>,
+    /// Why part of the model's panel was left out, when it was.
+    left_out: Option<String>,
 }
 impl Entry {
     fn new(session: Result<Session, String>) -> Self {
@@ -170,6 +172,7 @@ impl Entry {
             inputs: std::cell::RefCell::default(),
             born: std::time::Instant::now(),
             pressed: None,
+            left_out: None,
         }
     }
     /// Move the animation clock to now; whether anything is still moving.
@@ -665,6 +668,14 @@ impl Entry {
                 .render(area, &mut buffer);
             return (buffer, hits);
         };
+        if let Some(note) = &self.left_out {
+            let hint = if session.document().is_static() {
+                ""
+            } else {
+                hint.as_str()
+            };
+            draw_left_out(&mut buffer, note, hint, theme);
+        }
         if !self.error.is_empty() {
             Paragraph::new(safe(&self.error))
                 .style(Style::default().fg(theme.error))
@@ -688,8 +699,8 @@ impl Entry {
                 .cell((0, rect.y))
                 .is_some_and(|cell| cell.symbol() == " ")
             && buffer
-                .cell((rect.x, rect.y))
-                .is_some_and(|cell| cell.symbol() != glyph::CAP_LEFT)
+                .cell((rect.x + 1, rect.y))
+                .is_some_and(|cell| cell.symbol() != glyph::SELECTED)
         {
             buffer.set_string(
                 0,
@@ -1272,23 +1283,14 @@ fn button_regions(session: &Session, items: &[Button], area: Rect) -> Vec<(usize
     } else {
         let mut x = area.x;
         let mut y = area.y;
-        let review = |item: usize| {
-            session.document().sends(&items[item].action)
-                && !session.document().answers(&items[item].action)
-        };
-        let reviews = (0..items.len()).filter(|item| review(*item)).count();
-        let order = (0..items.len())
-            .filter(|item| !review(*item))
-            .chain((0..items.len()).filter(|item| review(*item)));
-        for item in order {
-            let width = bold::pill_width(&button_label(session, &items[item])).min(area.width);
+        // Keep action order predictable: drawing, tabbing and the source
+        // all agree. Related actions stay together instead of opposite edges.
+        for (item, button) in items.iter().enumerate() {
+            let width = bold::pill_width(&button_label(session, button)).min(area.width);
             let fits = x > area.x && x.saturating_add(width) <= area.right();
             if x > area.x && !fits {
                 x = area.x;
                 y = y.saturating_add(1);
-            }
-            if review(item) && reviews == 1 && items.len() > 1 && fits && y == area.y {
-                x = area.right().saturating_sub(width);
             }
             regions.push((item, Rect::new(x, y, width, 1)));
             x = x.saturating_add(width).saturating_add(1);
@@ -1310,16 +1312,22 @@ fn node_regions(session: &Session, width: u16) -> Vec<Rect> {
 fn branch_regions(session: &Session, nodes: &[Node], area: Rect) -> Vec<Rect> {
     let width = area.width;
     let mut y = area.y;
-    let mut previous_text = false;
+    let mut previous = None;
+    // A field's message row (hint or error) already spaces it from the next
+    // node, so no extra blank row follows it.
+    let mut spaced = false;
     nodes
         .iter()
         .enumerate()
         .map(|(index, node)| {
-            let text = matches!(node, Node::Text { .. });
-            if index > 0 && !(text && previous_text) {
+            // Runs of text, and runs of hairline readings, read as one block:
+            // no blank row inside a run, one between different kinds.
+            let run = run_kind(node);
+            if index > 0 && !spaced && (run.is_none() || run != previous) {
                 y = y.saturating_add(1);
             }
-            previous_text = text;
+            previous = run;
+            spaced = matches!(node, Node::Input { rules, hint, .. } if !rules.is_empty() || !hint.is_empty());
             let height = components::height(node, session, width).unwrap_or_else(|| match node {
                 Node::Text { text, .. } => u16::try_from(text_lines(session, text, width).len())
                     .unwrap_or(u16::MAX)
@@ -1350,13 +1358,40 @@ fn branch_regions(session: &Session, nodes: &[Node], area: Rect) -> Vec<Rect> {
         })
         .collect()
 }
+/// Nodes that stack without a blank row when they follow one of their own
+/// kind: paragraphs, and hairline readings. Filled controls always keep a
+/// row between them so their shapes never merge.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Run {
+    Text,
+    Reading,
+}
+fn run_kind(node: &Node) -> Option<Run> {
+    match node {
+        Node::Text { .. } => Some(Run::Text),
+        Node::Progress { .. } | Node::Meter { .. } => Some(Run::Reading),
+        _ => None,
+    }
+}
 fn card_height(regions: &[Rect]) -> u16 {
     regions
         .last()
         .map_or(4, |rect| rect.bottom().saturating_add(2))
 }
 pub(crate) fn source_height(source: &str, width: u16) -> u16 {
-    Document::preview(source)
+    document_height(Document::preview(source), width)
+}
+/// Rows a block reserves: a finished one as it will settle (broken pieces
+/// left out), one still arriving as its streamed preview.
+pub(crate) fn block_height(source: &str, complete: bool, width: u16) -> u16 {
+    if complete {
+        document_height(Document::settled(source), width)
+    } else {
+        source_height(source, width)
+    }
+}
+fn document_height(document: Option<Document>, width: u16) -> u16 {
+    document
         .and_then(|document| Session::new(document).ok())
         .map_or(4, |session| card_height(&node_regions(&session, width)))
 }
@@ -1377,13 +1412,7 @@ fn streaming_buffer(document: Option<Document>, width: u16, theme: &Theme) -> Bu
     render_nodes(&session, &regions, theme, None, false, &mut buffer);
     // Replace final-panel affordances with an explicit, inert streaming status.
     if width >= 8 {
-        let fill = accent_color(session.document(), theme);
-        buffer.set_string(
-            width - 3,
-            0,
-            "◌",
-            Style::default().fg(theme.on(fill)).bg(fill),
-        );
+        buffer.set_string(width - 3, 0, "◌", Style::default().fg(theme.fg_dim));
     }
     let count = session.document().nodes().len();
     let status = format!(
@@ -1399,6 +1428,82 @@ fn streaming_buffer(document: Option<Document>, width: u16, theme: &Theme) -> Bu
         );
     buffer
 }
+/// Scroll a pinned panel taller than the viewport so its focused control (or
+/// caret) stays in view above the pinned rule; returns the rows scrolled.
+fn follow_focus(
+    entry: &mut Entry,
+    canvas: &Buffer,
+    hits: &[(Rect, usize)],
+    caret: Option<Position>,
+    viewport: u16,
+) -> u16 {
+    let rows = viewport.saturating_sub(1).max(1);
+    let target = caret
+        .map(|caret| Rect::new(caret.x, caret.y, 1, 1))
+        .or_else(|| {
+            hits.iter()
+                .find(|(_, control)| *control == entry.focus)
+                .map(|(rect, _)| *rect)
+        });
+    if let Some(rect) = target {
+        if rect.bottom() > entry.scroll + rows {
+            entry.scroll = rect.bottom() - rows;
+        }
+        if rect.y < entry.scroll {
+            entry.scroll = rect.y;
+        }
+    }
+    entry.scroll = entry.scroll.min(canvas.area.height.saturating_sub(rows));
+    entry.scroll
+}
+/// The canvas from row `scroll` down.
+fn scrolled(canvas: &Buffer, scroll: u16) -> Buffer {
+    let area = canvas.area;
+    let height = area.height.saturating_sub(scroll);
+    let mut buffer = Buffer::empty(Rect::new(0, 0, area.width, height));
+    for y in 0..height {
+        for x in 0..area.width {
+            buffer[(x, y)] = canvas[(x, y + scroll)].clone();
+        }
+    }
+    buffer
+}
+/// One line on why part of a panel is missing: the first line of the first
+/// problem, without its list of alternatives.
+fn left_out_note(error: &nexus_core::interactive::CheckError) -> String {
+    let line = error.message.lines().next().unwrap_or_default();
+    let line = line.split(';').next().unwrap_or(line).trim_end_matches(':');
+    safe(line.trim())
+}
+/// Mark a panel that renders without its broken pieces, on the bottom rule
+/// left of the key hints, so the gap is never silent.
+fn draw_left_out(buffer: &mut Buffer, note: &str, hint: &str, theme: &Theme) {
+    let area = buffer.area;
+    if area.width < 12 || area.height < 2 {
+        return;
+    }
+    let reserved = if hint.is_empty() {
+        0
+    } else {
+        u16::try_from(clipped(hint, area.width.saturating_sub(6)).width())
+            .unwrap_or(area.width)
+            .saturating_add(3)
+    };
+    let room = area.width.saturating_sub(6 + reserved);
+    let text = if room >= 24 {
+        clipped(&format!("{} left out: {note}", glyph::WARN), room)
+    } else {
+        clipped(&format!("{} part left out", glyph::WARN), room)
+    };
+    if !text.is_empty() {
+        buffer.set_string(
+            2,
+            area.height - 1,
+            format!(" {text} "),
+            Style::default().fg(theme.warning),
+        );
+    }
+}
 fn card_buffer(width: u16, height: u16, title: &str, theme: &Theme, hint: &str) -> Buffer {
     let area = Rect::new(0, 0, width, height);
     let mut buffer = Buffer::empty(area);
@@ -1407,7 +1512,6 @@ fn card_buffer(width: u16, height: u16, title: &str, theme: &Theme, hint: &str) 
         &mut buffer,
         &Chrome {
             title: Some(title),
-            fill: theme.accent2,
             frame: DocumentFrame::Rounded,
             expand: true,
             hint,
@@ -1416,22 +1520,19 @@ fn card_buffer(width: u16, height: u16, title: &str, theme: &Theme, hint: &str) 
     );
     buffer
 }
-/// What the Bold panel chrome draws around a panel's content.
+/// Quiet, shared chrome around a panel's content.
 struct Chrome<'a> {
     /// Title text; `None` leaves the bar empty (a Hero already says it).
     title: Option<&'a str>,
-    /// The panel accent: the title bar's fill.
-    fill: Color,
     frame: DocumentFrame,
     /// Show the expand affordance at the bar's right end.
     expand: bool,
     /// Key hints, right-aligned on the bottom rule.
     hint: &'a str,
 }
-/// Bold chrome: a filled title bar on the top row and a rule carrying the
-/// hint on the bottom row. Content keeps its two-column inset, so heights and
-/// regions are unchanged from the boxed design. `plain` frames draw an
-/// unfilled accent title over a rule instead of the bar.
+/// Sentence-case title, a discreet expand affordance, and a bottom rule.
+/// Content keeps its two-column inset and existing height contract. Explicit
+/// `plain` frames retain their title rule; other frames leave the header open.
 fn panel_chrome(buffer: &mut Buffer, chrome: &Chrome, theme: &Theme) {
     let area = buffer.area;
     if area.width < 4 || area.height < 2 {
@@ -1440,7 +1541,12 @@ fn panel_chrome(buffer: &mut Buffer, chrome: &Chrome, theme: &Theme) {
     let width = area.width;
     let title = chrome
         .title
-        .map(|title| clipped(&safe(title).to_uppercase(), width.saturating_sub(10)))
+        .map(|title| {
+            clipped(
+                &safe(title),
+                width.saturating_sub(if chrome.expand { 6 } else { 4 }),
+            )
+        })
         .unwrap_or_default();
     let rule = match chrome.frame {
         DocumentFrame::Double => "═",
@@ -1456,33 +1562,19 @@ fn panel_chrome(buffer: &mut Buffer, chrome: &Chrome, theme: &Theme) {
                 0,
                 0,
                 format!("{title} "),
-                Style::default()
-                    .fg(chrome.fill)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
             );
         }
-    } else {
-        let ink = theme.on(chrome.fill);
-        let bar = Style::default().fg(ink).bg(chrome.fill);
-        buffer.set_string(0, 0, glyph::CAP_LEFT, Style::default().fg(chrome.fill));
-        buffer.set_string(1, 0, " ".repeat(usize::from(width - 2)), bar);
+    } else if !title.is_empty() {
         buffer.set_string(
-            width - 1,
+            2,
             0,
-            glyph::CAP_RIGHT,
-            Style::default().fg(chrome.fill),
+            &title,
+            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
         );
-        if !title.is_empty() {
-            buffer.set_string(2, 0, &title, bar.add_modifier(Modifier::BOLD));
-        }
     }
     if chrome.expand {
-        let style = if matches!(chrome.frame, DocumentFrame::Plain) {
-            Style::default().fg(theme.fg_dim)
-        } else {
-            Style::default().fg(theme.on(chrome.fill)).bg(chrome.fill)
-        };
-        buffer.set_string(width - 3, 0, "⤢", style);
+        buffer.set_string(width - 3, 0, "⤢", Style::default().fg(theme.fg_dim));
     }
     let bottom = area.height - 1;
     buffer.set_string(0, bottom, rule.repeat(usize::from(width)), dim);
@@ -1531,7 +1623,6 @@ fn document_buffer(
         &mut buffer,
         &Chrome {
             title: (!duplicate).then(|| doc.title()),
-            fill: accent_color(doc, theme),
             frame: doc.frame(),
             expand: !doc.is_static(),
             hint: if doc.is_static() { "" } else { hint },
@@ -1668,7 +1759,7 @@ fn hero_lines(
         session,
         title,
         width.saturating_sub(badge_width).max(1),
-        Style::default().fg(accent).add_modifier(Modifier::BOLD),
+        Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
     );
     // The badge rides right after the title's last line.
     if let Some(badge) = badge
@@ -1678,7 +1769,7 @@ fn hero_lines(
         last.spans.extend(bold::pill_spans(
             &clipped(&badge, width.saturating_sub(6)),
             (accent, theme.on(accent)),
-            theme.surface,
+            (theme.surface, theme.round_caps),
         ));
     }
     if let Some(subtitle) = subtitle {
@@ -1708,7 +1799,7 @@ fn card_head(item: &Card, session: &Session, width: u16, theme: &Theme) -> Vec<L
         let pill = bold::pill_spans(
             &clipped(&badge, inner.saturating_sub(4)),
             (color, theme.on(color)),
-            theme.raised,
+            (theme.raised, theme.round_caps),
         );
         // On the title row when both fit, so a badge costs no height.
         let single_title = content.len() == 1;
@@ -1813,7 +1904,7 @@ fn stat_lines(
     (width, big): (u16, bool),
     theme: &Theme,
 ) -> Vec<Line<'static>> {
-    let color = tone_color(item.tone, accent_color(session.document(), theme), theme);
+    let color = tone_color(item.tone.or(Some(Tone::Normal)), theme.fg, theme);
     let value_style = Style::default().fg(color).add_modifier(Modifier::BOLD);
     let value = display(session, &item.value);
     let (number, unit) = crate::ui::style::display_split(&value);
@@ -1892,6 +1983,71 @@ fn stats_lines(
     }
     lines
 }
+/// A step's marker and its color.
+fn step_marker(state: StepState, accent: Color, theme: &Theme) -> (&'static str, Color) {
+    match state {
+        StepState::Done => ("●", theme.success),
+        StepState::Current => ("◉", accent),
+        StepState::Todo => ("○", theme.fg_dim),
+    }
+}
+/// Steps in equal columns joined by a rule: titles on one row, details under
+/// them. `None` when a title or detail would not fit its column.
+fn step_columns(
+    items: &[nexus_core::interactive::DisplayStep],
+    session: &Session,
+    width: u16,
+    theme: &Theme,
+) -> Option<Vec<Line<'static>>> {
+    let accent = accent_color(session.document(), theme);
+    let count = u16::try_from(items.len()).unwrap_or(u16::MAX).max(1);
+    let column = usize::from(width / count);
+    let fits = items.iter().all(|item| {
+        display(session, &item.title).width() + 4 <= column
+            && item
+                .text
+                .as_ref()
+                .is_none_or(|text| display(session, text).width() + 3 <= column)
+    });
+    if !fits || items.is_empty() {
+        return None;
+    }
+    let mut titles = Vec::new();
+    let mut details = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        let (mark, color) = step_marker(item.state, accent, theme);
+        let title = display(session, &item.title);
+        titles.push(Span::styled(format!("{mark} "), Style::default().fg(color)));
+        titles.push(Span::styled(
+            title.clone(),
+            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+        ));
+        let rest = column.saturating_sub(title.width() + 2);
+        let joint = if index + 1 < items.len() {
+            format!(" {}", "─".repeat(rest.saturating_sub(2)))
+        } else {
+            String::new()
+        };
+        titles.push(Span::styled(
+            format!("{joint:<rest$}"),
+            Style::default().fg(theme.border_dim),
+        ));
+        let text = item
+            .text
+            .as_ref()
+            .map(|text| display(session, text))
+            .unwrap_or_default();
+        details.push(Span::styled(
+            format!("  {text:<width$}", width = column.saturating_sub(2)),
+            Style::default().fg(theme.fg_dim),
+        ));
+    }
+    let mut lines = vec![Line::from(titles)];
+    if items.iter().any(|item| item.text.is_some()) {
+        lines.push(Line::from(details));
+    }
+    Some(lines)
+}
 fn steps_lines(
     items: &[nexus_core::interactive::DisplayStep],
     session: &Session,
@@ -1899,11 +2055,7 @@ fn steps_lines(
     theme: &Theme,
 ) -> Vec<Line<'static>> {
     let accent = accent_color(session.document(), theme);
-    let marker = |state| match state {
-        StepState::Done => ("●", theme.success),
-        StepState::Current => ("◉", accent),
-        StepState::Todo => ("○", theme.fg_dim),
-    };
+    let marker = |state| step_marker(state, accent, theme);
     let mut horizontal = Vec::new();
     for (index, item) in items.iter().enumerate() {
         if index > 0 {
@@ -1925,6 +2077,9 @@ fn steps_lines(
     let horizontal = Line::from(horizontal);
     if horizontal.width() <= usize::from(width) {
         return vec![horizontal];
+    }
+    if let Some(lines) = step_columns(items, session, width, theme) {
+        return lines;
     }
     let mut lines = Vec::new();
     for (index, item) in items.iter().enumerate() {
@@ -2081,8 +2236,8 @@ fn layout_lines(
             vec![Line::from(Span::styled(
                 format!(
                     "{}{label}{}",
-                    "─".repeat(remaining / 2),
-                    "─".repeat(remaining.div_ceil(2))
+                    "╌".repeat(remaining / 2),
+                    "╌".repeat(remaining.div_ceil(2))
                 ),
                 Style::default().fg(theme.border_dim),
             ))]
@@ -2103,99 +2258,69 @@ fn control_style(theme: &Theme, selected: bool) -> Style {
         style
     }
 }
+/// A switch (or, for checklist items, a check box) followed by its label.
 fn render_toggle(
     session: &Session,
-    (key, label): (&str, &str),
+    (key, label, boxed): (&str, &str, bool),
     area: Rect,
     (theme, focused): (&Theme, bool),
     buffer: &mut Buffer,
 ) {
-    let on = session.value(key) == "true";
-    let mark = if on {
-        Span::styled(
-            glyph::DOT,
-            Style::default().fg(accent_color(session.document(), theme)),
-        )
+    let mark = if boxed {
+        bold::CHECK_WIDTH
     } else {
-        Span::styled(glyph::RING, Style::default().fg(theme.fg_dim))
+        bold::SWITCH_WIDTH
     };
-    Paragraph::new(Line::from(vec![
-        mark,
-        Span::raw(" "),
-        Span::styled(display(session, label), control_style(theme, focused)),
-    ]))
-    .render(area, buffer);
+    if area.width < mark + 2 {
+        return;
+    }
+    let on = session.value(key) == "true";
+    if boxed {
+        bold::check(buffer, (area.x, area.y), on, theme);
+    } else {
+        bold::switch(buffer, (area.x, area.y), on, theme);
+    }
+    let offset = mark + 1;
+    let style = if on || focused {
+        control_style(theme, focused)
+    } else {
+        Style::default().fg(theme.fg_dim)
+    };
+    buffer.set_stringn(
+        area.x + offset,
+        area.y,
+        display(session, label),
+        usize::from(area.width - offset),
+        style,
+    );
 }
-/// Arrow hit regions for an inline stepper: `◀ value ▶` after the label
-/// column.
+/// Where a stepper's chip starts: after the label column, leaving room for
+/// ` − value + `.
+fn stepper_offset(label: &str, value: &str, session: &Session, area: Rect) -> u16 {
+    let chip = u16::try_from(value.width())
+        .unwrap_or(u16::MAX)
+        .saturating_add(6);
+    if label.is_empty() {
+        0
+    } else {
+        bold::label_column(session, area.width).min(area.width.saturating_sub(chip))
+    }
+}
+/// Minus and plus hit regions of an inline stepper chip, ` − value + `.
 fn stepper_arrows(node: &Node, session: &Session, area: Rect) -> Option<[Rect; 2]> {
     let Node::Stepper { key, label, .. } = node else {
         return None;
     };
-    let value_width = u16::try_from(session.value(key).width()).unwrap_or(u16::MAX);
-    if area.width < value_width.saturating_add(4) {
+    let value = session.value(key);
+    let value_width = u16::try_from(value.width()).unwrap_or(u16::MAX);
+    if area.width < value_width.saturating_add(6) {
         return None;
     }
-    let offset = if display(session, label).is_empty() {
-        0
-    } else {
-        bold::label_column(session, area.width)
-            .min(area.width.saturating_sub(value_width.saturating_add(4)))
-    };
+    let offset = stepper_offset(&display(session, label), &value, session, area);
     Some([
-        Rect::new(area.x + offset, area.y, 1, 1),
-        Rect::new(area.x + offset + value_width + 3, area.y, 1, 1),
+        Rect::new(area.x + offset, area.y, 2, 1),
+        Rect::new(area.x + offset + value_width + 4, area.y, 2, 1),
     ])
-}
-/// `LABEL  ◀ value ▶` in the shared label column; arrows dim at the ends of
-/// the range or while unfocused.
-fn render_arrows(
-    (label, value): (&str, &str),
-    (at_min, at_max): (bool, bool),
-    area: Rect,
-    (theme, selected): (&Theme, bool),
-    session: &Session,
-    buffer: &mut Buffer,
-) {
-    let value_width = u16::try_from(value.width()).unwrap_or(u16::MAX);
-    let column = if label.is_empty() {
-        0
-    } else {
-        bold::label_column(session, area.width)
-            .min(area.width.saturating_sub(value_width.saturating_add(4)))
-    };
-    bold::label(
-        buffer,
-        Rect::new(area.x, area.y, column, 1),
-        label,
-        selected,
-        theme,
-    );
-    let live = if selected {
-        Style::default().fg(theme.accent)
-    } else {
-        Style::default().fg(theme.fg)
-    };
-    let dim = Style::default().fg(theme.fg_dim);
-    Paragraph::new(Line::from(vec![
-        Span::styled("◀", if at_min { dim } else { live }),
-        Span::raw(" "),
-        Span::styled(
-            value.to_string(),
-            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" "),
-        Span::styled("▶", if at_max { dim } else { live }),
-    ]))
-    .render(
-        Rect::new(
-            area.x + column,
-            area.y,
-            area.width.saturating_sub(column),
-            1,
-        ),
-        buffer,
-    );
 }
 fn render_stepper(
     node: &Node,
@@ -2216,21 +2341,161 @@ fn render_stepper(
         return;
     };
     let value = session.value(key);
-    if stepper_arrows(node, session, region).is_some() {
-        let number = value.parse::<f64>().unwrap_or_default();
-        render_arrows(
-            (&display(session, label), &value),
-            (number <= *min, number >= *max),
-            region,
-            (theme, selected),
-            session,
-            buffer,
-        );
-    } else {
+    let label = display(session, label);
+    if stepper_arrows(node, session, region).is_none() {
         Paragraph::new(value)
             .style(control_style(theme, selected).add_modifier(Modifier::BOLD))
             .render(region, buffer);
+        return;
     }
+    let offset = stepper_offset(&label, &value, session, region);
+    bold::label(
+        buffer,
+        Rect::new(region.x, region.y, offset, 1),
+        &label,
+        selected,
+        theme,
+    );
+    let number = value.parse::<f64>().unwrap_or_default();
+    let surface = if selected {
+        theme.selection
+    } else {
+        theme.control
+    };
+    let live = Style::default()
+        .fg(if selected { theme.accent } else { theme.fg_dim })
+        .bg(surface);
+    let spent = Style::default().fg(theme.border_dim).bg(surface);
+    let x = region.x + offset;
+    let value_width = u16::try_from(value.width()).unwrap_or(0);
+    bold::cap(buffer, (x, region.y), true, surface, theme);
+    buffer.set_string(
+        x + 1,
+        region.y,
+        "−",
+        if number <= *min { spent } else { live },
+    );
+    bold::chip(
+        buffer,
+        (x + 2, region.y),
+        &value,
+        Style::default()
+            .fg(theme.fg)
+            .bg(surface)
+            .add_modifier(Modifier::BOLD),
+    );
+    buffer.set_string(
+        x + value_width + 4,
+        region.y,
+        "+",
+        if number >= *max { spent } else { live },
+    );
+    bold::cap(
+        buffer,
+        (x + value_width + 5, region.y),
+        false,
+        surface,
+        theme,
+    );
+}
+/// A select: every option as a segmented strip when they fit beside the
+/// label, else the current value in a chip with cycle arrows.
+fn render_select(
+    node: &Node,
+    session: &Session,
+    region: Rect,
+    theme: &Theme,
+    selected: bool,
+    buffer: &mut Buffer,
+) {
+    let Node::Select {
+        key,
+        label,
+        options,
+    } = node
+    else {
+        return;
+    };
+    let label = display(session, label);
+    let value = display(session, &session.value(key));
+    let column = if label.is_empty() {
+        0
+    } else {
+        bold::label_column(session, region.width)
+    };
+    bold::label(
+        buffer,
+        Rect::new(region.x, region.y, column, 1),
+        &label,
+        selected,
+        theme,
+    );
+    let area = Rect::new(
+        region.x + column,
+        region.y,
+        region.width.saturating_sub(column),
+        1,
+    );
+    let labels: Vec<_> = options.iter().map(|option| safe(option)).collect();
+    let fill = if selected {
+        theme.accent
+    } else {
+        accent_color(session.document(), theme)
+    };
+    if bold::segments_width(&labels) <= area.width {
+        let active = options
+            .iter()
+            .position(|option| *option == session.value(key))
+            .unwrap_or(0);
+        bold::segmented(buffer, area, &labels, (active, fill), theme);
+    } else {
+        let surface = if selected {
+            theme.selection
+        } else {
+            theme.control
+        };
+        let arrows = Style::default()
+            .fg(if selected { theme.accent } else { theme.fg_dim })
+            .bg(surface);
+        let text = clipped(&value, area.width.saturating_sub(6));
+        bold::cap(buffer, (area.x, area.y), true, surface, theme);
+        buffer.set_string(area.x + 1, area.y, format!("{} ", glyph::PREV), arrows);
+        let width = bold::chip(
+            buffer,
+            (area.x + 2, area.y),
+            &text,
+            Style::default()
+                .fg(theme.fg)
+                .bg(surface)
+                .add_modifier(Modifier::BOLD),
+        );
+        buffer.set_string(area.x + 2 + width, area.y, glyph::NEXT, arrows);
+        bold::cap(buffer, (area.x + 3 + width, area.y), false, surface, theme);
+    }
+}
+/// The option of a select under column `x`, if its strip is showing.
+fn select_option_at(node: &Node, session: &Session, region: Rect, x: u16) -> Option<usize> {
+    let Node::Select { label, options, .. } = node else {
+        return None;
+    };
+    let column = if display(session, label).is_empty() {
+        0
+    } else {
+        bold::label_column(session, region.width)
+    };
+    let area = Rect::new(
+        region.x + column,
+        region.y,
+        region.width.saturating_sub(column),
+        1,
+    );
+    let labels: Vec<_> = options.iter().map(|option| safe(option)).collect();
+    if bold::segments_width(&labels) > area.width {
+        return None;
+    }
+    bold::segment_rects(&labels, area)
+        .iter()
+        .position(|rect| x >= rect.x && x < rect.right().saturating_add(1))
 }
 fn render_component(
     node: &Node,
@@ -2253,7 +2518,7 @@ fn render_component(
                 );
                 render_toggle(
                     session,
-                    (&item.key, &item.label),
+                    (&item.key, &item.label, true),
                     row,
                     (theme, focus == Some(control)),
                     buffer,
@@ -2265,25 +2530,15 @@ fn render_component(
         Node::Toggle { key, label } => {
             render_toggle(
                 session,
-                (key, label),
+                (key, label, false),
                 region,
                 (theme, focus == Some(control)),
                 buffer,
             );
             hits.push((region, control));
         }
-        Node::Select { key, label, .. } => {
-            render_arrows(
-                (
-                    &display(session, label),
-                    &display(session, &session.value(key)),
-                ),
-                (false, false),
-                region,
-                (theme, focus == Some(control)),
-                session,
-                buffer,
-            );
+        Node::Select { .. } => {
+            render_select(node, session, region, theme, focus == Some(control), buffer);
             hits.push((region, control));
         }
         Node::Stepper { .. } => {
@@ -2340,6 +2595,72 @@ fn clipped(text: &str, width: u16) -> String {
     result.push('…');
     result
 }
+/// Each table column's `(x, width)` within `width` cells, one gap between
+/// columns. Columns get their widest cell (header and every row, so paging
+/// and sorting never shift them) when that fits; otherwise narrow columns keep
+/// their natural width and the rest share what remains. Drawing and header
+/// clicks both use this, so a click sorts the column drawn under it.
+pub(super) fn table_columns(session: &Session, node: &Node, width: u16) -> Vec<(u16, u16)> {
+    let Node::Table {
+        columns,
+        rows_data,
+        sortable,
+        ..
+    } = node
+    else {
+        return Vec::new();
+    };
+    let count = columns.len();
+    if count == 0 {
+        return Vec::new();
+    }
+    let arrow = if *sortable { 2 } else { 0 };
+    let mut natural: Vec<usize> = columns
+        .iter()
+        .map(|header| display(session, header).width() + arrow)
+        .collect();
+    for row in rows_data {
+        for (column, cell) in row.iter().enumerate().take(count) {
+            natural[column] = natural[column].max(display(session, cell).width());
+        }
+    }
+    let gaps = count - 1;
+    let available = usize::from(width).saturating_sub(gaps);
+    let mut widths = vec![0; count];
+    let total: usize = natural.iter().sum();
+    if total <= available {
+        // Everything fits: share the slack evenly so the table fills its row.
+        let slack = available - total;
+        for (column, width) in widths.iter_mut().enumerate() {
+            *width = natural[column] + slack / count + usize::from(column < slack % count);
+        }
+    } else {
+        // Water-fill: columns narrower than a fair share keep their width.
+        let mut order: Vec<usize> = (0..count).collect();
+        order.sort_by_key(|&column| natural[column]);
+        let mut remaining = available;
+        for (placed, &column) in order.iter().enumerate() {
+            let share = remaining / (count - placed);
+            widths[column] = natural[column].min(share);
+            remaining -= widths[column];
+        }
+        // Rounding leftovers go to the widest columns, which were clipped.
+        for &column in order.iter().rev().take(remaining) {
+            widths[column] += 1;
+        }
+    }
+    let mut x = 0u16;
+    widths
+        .into_iter()
+        .map(|width| {
+            let width = u16::try_from(width).unwrap_or(u16::MAX);
+            let column = (x, width);
+            x = x.saturating_add(width).saturating_add(1);
+            column
+        })
+        .collect()
+}
+
 fn render_table(
     node: &Node,
     session: &Session,
@@ -2359,7 +2680,6 @@ fn render_table(
     else {
         return;
     };
-    let count = u16::try_from(columns.len()).unwrap_or(1);
     let selected = select.as_ref().map(|key| session.selected_row(key));
     let index = session.document().node_index(node);
     let state = session.table_state(index);
@@ -2404,17 +2724,13 @@ fn render_table(
         if lead > 0 {
             buffer.set_string(area.x, y, marker, style);
         }
-        let width = area.width.saturating_sub(lead);
-        for (column, cell) in cells.iter().enumerate() {
-            let column = u16::try_from(column).unwrap_or(0);
-            let x = width * column / count;
-            let end = width * (column + 1) / count;
-            let cell_width = (end - x).saturating_sub(u16::from(column + 1 < count));
+        let layout = table_columns(session, node, area.width.saturating_sub(lead));
+        for (column, (cell, &(x, cell_width))) in cells.iter().zip(&layout).enumerate() {
             let mut text = display(session, cell);
             if row == 0
                 && *sortable
                 && let Some((sorted, descending)) = state.sort
-                && sorted == usize::from(column)
+                && sorted == column
             {
                 text.push_str(if descending { " ▾" } else { " ▴" });
             }
@@ -2436,11 +2752,11 @@ fn render_table(
         );
     }
 }
-/// One labelled bar row in the Bold layout: label column, bar, value.
+/// One compact data row: label column, slim track, value.
 struct BarRow<'a> {
     label: &'a str,
-    /// Control-style capital label rather than a data category.
-    caps: bool,
+    /// A dim control label rather than a foreground data category.
+    control_label: bool,
     value: &'a str,
     /// Width reserved for values, shared by sibling rows so bars line up.
     value_width: u16,
@@ -2450,7 +2766,7 @@ struct BarRow<'a> {
 fn render_bar(row: &BarRow, session: &Session, area: Rect, theme: &Theme, buffer: &mut Buffer) {
     let column = bold::label_column(session, area.width);
     let label_area = Rect::new(area.x, area.y, column, 1);
-    if row.caps {
+    if row.control_label {
         bold::label(buffer, label_area, row.label, false, theme);
     } else {
         Paragraph::new(clipped(row.label, column.saturating_sub(1)))
@@ -2459,13 +2775,14 @@ fn render_bar(row: &BarRow, session: &Session, area: Rect, theme: &Theme, buffer
     }
     let value_width = row.value_width.min(area.width.saturating_sub(column));
     let bar_width = area.width.saturating_sub(column + value_width + 2);
-    bold::bar(
-        buffer,
-        Rect::new(area.x + column, area.y, bar_width, 1),
-        row.ratio,
-        row.fill,
-        theme,
-    );
+    let track = Rect::new(area.x + column, area.y, bar_width, 1);
+    // Data bars are solid, their length is the reading; progress-like
+    // controls keep the slim track that shows what remains.
+    if row.control_label {
+        bold::bar(buffer, track, row.ratio, row.fill, theme);
+    } else {
+        bold::solid_bar(buffer, track, row.ratio, row.fill);
+    }
     bold::value(
         buffer,
         Rect::new(area.right() - value_width, area.y, value_width, 1),
@@ -2503,7 +2820,7 @@ fn render_bars(
         render_bar(
             &BarRow {
                 label: &display(session, &item.label),
-                caps: false,
+                control_label: false,
                 value: &value.to_string(),
                 value_width: u16::try_from(value_width).unwrap_or(0),
                 ratio: session.eased((node, index), if max > 0.0 { value / max } else { 0.0 }),
@@ -2551,7 +2868,7 @@ fn render_data(node: &Node, session: &Session, area: Rect, theme: &Theme, buffer
             render_bar(
                 &BarRow {
                     label: &display(session, label),
-                    caps: true,
+                    control_label: true,
                     value: &text,
                     value_width: u16::try_from(text.width()).unwrap_or(0),
                     ratio: session.eased(
@@ -2823,9 +3140,20 @@ impl Widgets {
         if self.entries.contains_key(key) {
             return;
         }
-        let mut session = Document::parse(&key.source)
-            .and_then(Session::new)
-            .map_err(|error| error.to_string());
+        let recovered = Document::recover(&key.source).map_err(|errors| {
+            errors
+                .iter()
+                .map(|error| format!("{}: {}", error.path, error.message))
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
+        let left_out = recovered
+            .as_ref()
+            .ok()
+            .and_then(|(_, dropped)| dropped.first())
+            .map(left_out_note);
+        let mut session = recovered
+            .and_then(|(document, _)| Session::new(document).map_err(|error| error.to_string()));
         // Layouts are inert, so they do not count against the interactive-panel limit.
         let is_static = session.as_ref().is_ok_and(|s| s.document().is_static());
         let count = self
@@ -2845,7 +3173,9 @@ impl Widgets {
         if let Ok(session) = &mut session {
             self.restore_message_panel(key, session);
         }
-        self.entries.insert(key.clone(), Entry::new(session));
+        let mut entry = Entry::new(session);
+        entry.left_out = left_out;
+        self.entries.insert(key.clone(), entry);
     }
     fn reconcile_patches(&mut self, placements: &[Placement]) {
         self.index_occurrences(placements);
@@ -3022,6 +3352,48 @@ impl Widgets {
                 };
                 (streaming_buffer(document, width, theme), Vec::new())
             };
+            let mut hits = hits;
+            let mut caret = if active && focused {
+                self.entries
+                    .get(&key)
+                    .and_then(|entry| entry.input_caret(&canvas))
+            } else {
+                None
+            };
+            if focused && !pinned && placement.complete {
+                // Tab reached a control outside the visible rows of a tall
+                // panel: pin it, and the pinned view scrolls to that control.
+                let hidden = self.entries.get(&key).is_some_and(|entry| {
+                    hits.iter().any(|(rect, control)| {
+                        *control == entry.focus
+                            && (usize::from(rect.y) < first || usize::from(rect.bottom()) > end)
+                    })
+                });
+                if hidden {
+                    self.pinned = true;
+                    self.animating = true;
+                }
+            }
+            if pinned && let Some(entry) = self.entries.get_mut(&key) {
+                let scroll = follow_focus(entry, &canvas, &hits, caret, viewport.height);
+                if scroll > 0 {
+                    canvas = scrolled(&canvas, scroll);
+                    hits = hits
+                        .into_iter()
+                        .filter(|(rect, _)| rect.bottom() > scroll)
+                        .map(|(rect, control)| {
+                            let y = rect.y.max(scroll);
+                            (
+                                Rect::new(rect.x, y - scroll, rect.width, rect.bottom() - y),
+                                control,
+                            )
+                        })
+                        .collect();
+                    caret = caret.and_then(|caret| {
+                        Some(Position::new(caret.x, caret.y.checked_sub(scroll)?))
+                    });
+                }
+            }
             let end = end.min(usize::from(canvas.area.height));
             if pinned {
                 let overlay = Rect::new(
@@ -3048,12 +3420,7 @@ impl Widgets {
                         canvas[(x, u16::try_from(offset).unwrap_or(0))].clone();
                 }
             }
-            if active
-                && focused
-                && let Some(caret) = self
-                    .entries
-                    .get(&key)
-                    .and_then(|entry| entry.input_caret(&canvas))
+            if let Some(caret) = caret
                 && usize::from(caret.y) >= first
                 && usize::from(caret.y) < end.saturating_sub(usize::from(pinned))
             {
@@ -3264,6 +3631,32 @@ impl Widgets {
                         entry.activate(index, can_send, self.answer_blocked.is_none()),
                     )
                 }
+            }
+            Some((index, Control::Select(node)))
+                if let Ok(session) = &mut entry.session
+                    && let Some(Node::Select { key, options, .. }) =
+                        session.document().node(node).cloned()
+                    && let Some(target) = select_option_at(
+                        session.document().node(node).expect("control node"),
+                        session,
+                        hit.rect,
+                        pos.x,
+                    ) =>
+            {
+                // A segment click picks that option; cycling forward reaches
+                // it through the session's own validation.
+                entry.focus = index;
+                self.focused = Some(hit.key);
+                for _ in 0..options.len() {
+                    if session.value(&key) == options[target] {
+                        break;
+                    }
+                    if let Err(error) = session.cycle(node, true) {
+                        entry.error = error.to_string();
+                        break;
+                    }
+                }
+                (true, None)
             }
             Some((
                 index,
@@ -3908,6 +4301,12 @@ mod containers_tests;
 #[cfg(test)]
 #[path = "interactive/gallery_tests.rs"]
 mod gallery_tests;
+#[cfg(test)]
+mod reference_tests;
+#[cfg(test)]
+mod terminal_library_tests;
+#[cfg(test)]
+mod terminal_overview_tests;
 
 #[cfg(test)]
 #[path = "interactive/motion_tests.rs"]

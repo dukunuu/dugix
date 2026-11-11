@@ -1,6 +1,6 @@
-▐ RUST VS GO FOR A CLI                                                 ▌
+  Rust vs Go for a CLI
 
-  Rust or Go for your next CLI?  ▐ COMPARISON ▌
+  Rust or Go for your next CLI?    COMPARISON
   Both ship single binaries; they differ in build speed and footprint.
 
   2.1 MB         38 s          0.4 s
@@ -12,7 +12,7 @@
   ✗ Slow compiles                    ✗ GC pauses
 
   ▎                                  ▎
-  ▎  Ship fast              ▐ GO ▌   ▎  Ship small           ▐ RUST ▌
+  ▎  Ship fast                GO     ▎  Ship small             RUST
   ▎                                  ▎
   ▎  Go gets you to v1 this week.    ▎  Rust when size and latency
   ▎                                  ▎  matter.
@@ -23,47 +23,47 @@
 
 ────────────────────────────────────────────────────────────────────────
 
-▐ TRIP PLANNER                                                       ⤢ ▌
+  Trip planner                                                       ⤢
 
-▸ DAYS          ◀ 5 ▶
+▸ Days           − 5 +
 
-  ● Beach (2 days)
-  ○ Hiking (3 days)
+   ✓  Beach (2 days)
+      Hiking (3 days)
 
-  PLANNED DAYS  ██████████████████▊░░░░░░░░░░░░░░░░░░░░░░░░░░░░  2 / 5
+  Planned days  ━━━━━━━━━━━━━━━━━━╸────────────────────────────  2 / 5
 
-  ▐ Reset ▌                                            ▐ Save plan ↵ ▌
+    Save plan ↵     Reset
 
 ─────────────────────────────────── Tab next · Enter press · Esc done ──
 
-▐ SIGN UP                                                            ⤢ ▌
+  Sign up                                                            ⤢
 
   Your details
-  ╭ Name * ──────────────────────────────────────────────────────────╮
-  │  Ada Lovelace                                                    │
-  ╰──────────────────────────────────────────────────────────────────╯
-  Required
+  Name *
+  Ada Lovelace
+  ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  As on your ID
+  About you
+  A sentence or two
 
-  ╭ About you ───────────────────────────────────────────────────────╮
-  │  A sentence or two                                               │
-  │                                                                  │
-  │                                                                  │
-  ╰──────────────────────────────────────────────────────────────────╯
 
-  PLAN        ◀ Pro ▶
+  ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
 
-  ● Newsletter
+  Plan          Free ▕ Pro ▕ Team
 
-  EXPERIENCE  ★★★☆☆
+    ●  Newsletter
 
-  VOLUME      ████████████████████▊░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  40
-  ▐ Create account ↵ ▌
+  Experience  ★★★☆☆
+
+  Volume      ━━━━━━━━━━━━━━━━━━━━●───────────────────────────────  40
+
+    Create account ↵
 
 ───────────────────────────────────────────────────────── F2 keyboard ──
 
-▐ TEAM DASHBOARD                                                     ⤢ ▌
+  Team dashboard                                                     ⤢
 
-  ▐ People ▌   Trend     Notes
+    People ▕ Trend ▕ Notes
    Name                  Role                  Status
   ▸Ada                   Eng                   Active
    Bob                   Design                Away
@@ -73,7 +73,7 @@
 
 ───────────────────────────────────────────────────────── F2 keyboard ──
 
-▐ RELEASE OVERVIEW                                                     ▌
+  Release overview
 
   █ █ ▀▀█    █▀█ █▀█   █▀▀     ▀█    ▀▀█
   ▀▀█ █▀▀    ▀▀█ █▀█   ▀▀█      █    █▀▀
@@ -90,36 +90,36 @@
   Owner Ada
   Due   Friday
 
-  CPU   █████████████████████████████████████████░░░░░░░░░░░░░░░░  72%
+  CPU   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────  72%
 
-  ▐ BETA ▌
+    BETA
 
-  Rust  ██████████████████████████████████████████████████████████  42
-  Go    █████████████████████████████████████████▍░░░░░░░░░░░░░░░░  30
-  Zig   ███████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   8
+  Rust  ▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆  42
+  Go    ▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆                   30
+  Zig   ▆▆▆▆▆▆▆▆▆▆▆                                                  8
 
      ▄ █▂
   ▂█▄█▆██
 
 ────────────────────────────────────────────────────────────────────────
 
-▐ PYTHON INTERVIEW                                                   ⤢ ▌
+  Python interview                                                   ⤢
 
-  ‹ Question 1 of 2 ›                                    ▐ 0/1 right ▌
+  ‹ Question 1 of 2 ›                                      0/1 right
   Which structure gives O(1) lookup?
 
-  PICK ONE
+  Pick one
   ○ Hash map
   ○ List
   ○ Tree
 
-  ▐ Show answer ▌
+    Show answer
 
 
 
 ───────────────────────────────────────────────────────── F2 keyboard ──
 
-▐ PICK A DESTINATION                                                 ⤢ ▌
+  Pick a destination                                                 ⤢
 
   Where to next?
   Three quick picks for a long weekend
@@ -130,10 +130,10 @@
 
 ────────────────────────────────────────────── 1–3 pick · F2 keyboard ──
 
-▐ OPS DASHBOARD                                                      ⤢ ▌
+  Ops dashboard                                                      ⤢
 
-  █▀█ █▀█   █▀█                      CPU     ██████████████▍░░░░░  72%
-  ▀▀█ ▀▀█   ▀▀█                      MEMORY  ████████▎░░░░░░░░░░░  41%
+  █▀█ █▀█   █▀█                      CPU     ━━━━━━━━━━━━━━╸─────  72%
+  ▀▀█ ▀▀█   ▀▀█                      Memory  ━━━━━━━━╸───────────  41%
   ▀▀▀ ▀▀▀ ▀ ▀▀▀%                        ▄▂█▆
   uptime                             ▅█▇████
   ▲ 0.1%
@@ -146,19 +146,19 @@
   ▌ DB                               ▌ Cache
   ▌ Healthy                          ▌ Cold start
 
-  LOAD    █████████████▌░░░░░░░  64  ● Autoscale
+  Load    ━━━━━━━━━━━━━●───────  64    ●  Autoscale
 
-                                     ▐ Roll back ▌        ▐ Deploy ↵ ▌
+                                       Deploy ↵     Roll back
 
 ───────────────────────────────────────────────────────── F2 keyboard ──
 
-▐ TEAM PULSE                                                           ▌
+  Team pulse
 
-  ▀█  ▀▀█ █▀█                                   ⣀⣤⣶⠿⠿⠿⠿⣶⣦⣄
-   █  █▀▀ █▀█                                 ⢀⣮⠟⠋      ⠙⠻⣵⡀
-  ▀▀▀ ▀▀▀ ▀▀▀                                ⢠⣿⠋          ⠙⣿⡄
-  signups this week                          ⢸⣿    68%     ⢿⣇
-  ▲ 12%                                          CAPACITY
+  128                                           ⣀⣤⣶⠿⠿⠿⠿⣶⣦⣄
+  signups this week                           ⢀⣮⠟⠋      ⠙⠻⣵⡀
+  ▲ 12%                                      ⢠⣿⠋          ⠙⣿⡄
+                                             ⢸⣿    68%     ⢿⣇
+                                                 CAPACITY
 
   Mon ░░░░▒▒▓▓░░░░░░
   Tue ░░▒▒▓▓██▒▒░░░░
@@ -171,7 +171,7 @@
 
 ────────────────────────────────────────────────────────────────────────
 
-▐ PLANNING                                                           ⤢ ▌
+  Planning                                                           ⤢
 
   ▾ crates
     ▸ core
@@ -179,7 +179,7 @@
   · docs
 
 
-  TODO ▐ 3 ▌             DOING ▐ 1 ▌            DONE ▐ 2 ▌
+  TODO   3               DOING   1              DONE   2
   ─────────────────────  ─────────────────────  ─────────────────────
   ▎ Docs                 ▎ Specs                ▎ Kickoff
   ▎ Tests                                       ▎ Design
@@ -200,7 +200,7 @@
 
 ───────────────────────────────────────────────────────── F2 keyboard ──
 
-▐ ORBIT                                                                ▌
+  Orbit
 
                                   noon
                                ⣠⠔⠉⠁ ⡇⠈⠉⠢⣄

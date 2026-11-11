@@ -37,7 +37,7 @@ fn validated_form_snapshot_and_reviewed_payload() {
         .map(|line| line.trim_matches([' ', '│']).trim())
         .collect();
     assert_eq!(fields.len(), 2);
-    assert!(fields[0].starts_with("╭ Email * "));
+    assert_eq!(fields[0], "Email *");
     assert_eq!(fields[1], "Required");
     assert!(entry.activate(1, true, true).is_none());
     assert!(entry.error.contains("Required"));

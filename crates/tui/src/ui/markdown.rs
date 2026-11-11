@@ -254,7 +254,9 @@ fn visible_controls(text: &str) -> String {
 fn render_ui(r: &mut Rendered, source: &str, complete: bool, width: usize, colors: MdColors) {
     let ordinal = r.ui_count;
     r.ui_count += 1;
-    let document = nexus_core::interactive::Document::check(source);
+    // A finished block renders with its broken pieces left out; only one with
+    // nothing usable left falls back to its source.
+    let document = nexus_core::interactive::Document::recover(source);
     let patch = nexus_core::interactive::edit_patch(source).is_some();
     let fallback = width < 8 || (complete && document.is_err() && !patch);
     if fallback {
@@ -289,7 +291,7 @@ fn render_ui(r: &mut Rendered, source: &str, complete: bool, width: usize, color
         return;
     }
     let card_width = u16::try_from(width).unwrap_or(u16::MAX);
-    let height = crate::interactive::source_height(source, card_width);
+    let height = crate::interactive::block_height(source, complete, card_width);
     {
         r.widgets.push(crate::interactive::Placement {
             row: r.lines.len(),

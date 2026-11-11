@@ -1,0 +1,101 @@
+Trip planner / 32
+  Trip planner               ⤢
+
+  Days      − 5 +
+
+   ✓  Beach (2 days)
+      Hiking (3 days)
+
+  Planned… ━━━━╸───────  2 / 5
+
+    Save plan ↵
+
+───────────────── F2 keyboard ──
+
+Trip planner / 72
+  Trip planner                                                       ⤢
+
+  Days           − 5 +
+
+   ✓  Beach (2 days)
+      Hiking (3 days)
+
+  Planned days  ━━━━━━━━━━━━━━━━━━╸────────────────────────────  2 / 5
+
+    Save plan ↵
+
+───────────────────────────────────────────────────────── F2 keyboard ──
+
+Split the bill / 32
+  Split the bill             ⤢
+
+  Adjust the bill, tip and
+  group size.
+
+  Bill ($)  − 80 +
+
+  Tip (%)  ━━━━━━━●───────  15
+
+  People    − 2 +
+
+  $46
+  per person
+
+    Reset
+
+───────────────── F2 keyboard ──
+
+Split the bill / 72
+  Split the bill                                                     ⤢
+
+  Adjust the bill, tip and group size.
+
+  Bill ($)   − 80 +
+
+  Tip (%)   ━━━━━━━━━━━━━━━━━━━━━━━━━━━●──────────────────────────  15
+
+  People     − 2 +
+
+  $46
+  per person
+
+    Reset
+
+───────────────────────────────────────────────────────── F2 keyboard ──
+
+Python quick check / 32
+  Python quick check         ⤢
+
+  ‹ Question 1 of 1 ›
+  Which structure gives
+  average O(1) lookup by key?
+
+  Your answer
+  ○ Hash map
+  ○ List
+  ○ Sorted array
+
+    Show answer
+
+
+
+
+
+───────────────── F2 keyboard ──
+
+Python quick check / 72
+  Python quick check                                                 ⤢
+
+  ‹ Question 1 of 1 ›
+  Which structure gives average O(1) lookup by key?
+
+  Your answer
+  ○ Hash map
+  ○ List
+  ○ Sorted array
+
+    Show answer
+
+
+
+───────────────────────────────────────────────────────── F2 keyboard ──
