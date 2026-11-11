@@ -1,4 +1,4 @@
-// Dev-only IPC fixture for the doc editor. Injected by doc-shot.mjs, never embedded.
+// Dev-only IPC fixture for the doc editor. Injected by doc-harness.mjs, never embedded.
 // It plays the backend's part: the doc is the single source of truth, every
 // DocApply is one undo step, and the model can edit from outside.
 (() => {

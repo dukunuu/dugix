@@ -1,4 +1,4 @@
-// Shared by doc-shot.mjs and doc-e2e.mjs: a static server for the UI, Chromium from the
+// Used by doc-e2e.mjs: a static server for the UI, Chromium from the
 // existing web/node_modules playwright-core, and the mock backend in doc-mock.js.
 import fs from 'node:fs';
 import http from 'node:http';

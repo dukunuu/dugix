@@ -17,8 +17,7 @@ terminal-native (§8). Everything works on local models (§9), and every
 model call is recorded as training data you control, so the harness can
 eventually fine-tune the local model it runs on (§10). Cost is cut by
 exact savings first (caching, prefix stability) and lossy context reduction
-only behind evals; the evidence is in
-[`cost-reduction-research.md`](cost-reduction-research.md).
+only behind evals.
 
 **Scope: terminal only.** Nothing in this plan touches the web surfaces —
 the host's web chat, `appserver.rs`, or the `app` tool's served web apps.
@@ -774,8 +773,7 @@ Acceptance remains `scripts/check.sh` for each phase.
 
 1. **Done — fix the security bugs.** Env scrub for every spawn; canonical
    confinement for app/script tools. Small, independent, worth doing first.
-2. **Done — exact cache fixes** ([cost research](cost-reduction-research.md) §3,
-   "do now" #1–#3 and #5). The Anthropic breakpoint follows the tool loop
+2. **Done — exact cache fixes.** The Anthropic breakpoint follows the tool loop
    instead of staying where `build_history` put it; OpenRouter gets a
    `session_id` for sticky routing; research and swarm loops get the same
    caching; a forced `/skill` moves to the tail. Same tokens, same model, so

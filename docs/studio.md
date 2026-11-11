@@ -1025,46 +1025,12 @@ operations; this is what the window does.
   `NEXUS_RENDER_OUT=<dir> cargo test write_fixture_renders` (core) and
   `write_core_renders_of_the_dev_deck` (studio) write core-renderer PNGs to
   compare with them.
-- **Activity harness:** `node crates/studio/ui-dev/activity-shot.mjs` checks
-  all waiting reasons, working/progress/done/failed/stopped text, safe excerpts,
-  pin rings and four-second checks, link-pill priority/counts, retry sending,
-  external-change Undo, toast View focus, unknown states, and reduced motion.
-  Outputs: `ui-dev/shots/activity-{working,done-excerpt,failed}-{default,light}.png`
-  at 1440×900.
-- **D1 comment/identity harness:** `node crates/studio/ui-dev/d1-shot.mjs`
-  uses a dark deck at 1440×900 in the default nexus palette and the checked-in
-  light Alacritty fixture. It checks safe Markdown, operation-derived edit
-  titles, preview/apply/undo, pin non-overlap and constant 24 px sizes at
-  0.5× / 1× / 2× native zoom, pointer-anchored zoom, Space+drag and two-axis
-  scroll panning, fit/100% shortcuts, and terminal colors winning over opposite
-  OS preferences.
-  Outputs: `ui-dev/shots/d1-{comments,applied,layers}-{default,light}.png`
-  and `d1-pin-geometry.json` (under `crates/studio/`). The original screenshot
-  harness and existing tests are unchanged. New Rust tests cover portable
-  colors, fixture palette equivalence, theme link round trips, and a theme
-  update leaving the saved deck and undo history untouched.
-- **D1 editor harness:** `node crates/studio/ui-dev/d1b-shot.mjs` checks wrapping,
-  layout modes/grid/gaps/padding/min-max/clip, snapping within 1 px, screen-space
-  guides/distances/equal gaps, reorder/reparent/absolute escape, align/distribute/
-  tidy, arithmetic/steps/scrubbing/mixed values, font search/keyboard/weights/
-  styles/native chooser-byte transport, layers rename/hide/lock/collapse/drop,
-  resize modifiers and cancellation. It also checks paired padding preserving
-  individual values, inline font-picker bounds/non-occlusion, common-section
-  fit, unique gap pills, local guide spans and crowded-label non-overlap.
-  It asserts that drag and scrub previews send no edits, and release sends one
-  `Apply` and adds one undo step. Outputs are 1440×900 in default nexus and the
-  light Alacritty fixture: `ui-dev/shots/d1b-{auto-layout,guides,reorder,fonts,
-  layers,align}-{default,light}.png` (gitignored). `backend/font_tests.rs` covers
-  cached font listing, imported metadata/theme/undo, chooser-byte transport,
+- **Theme, fonts and animation:** Rust tests cover portable colors, fixture
+  palette equivalence, theme link round trips, and a theme update leaving the
+  saved deck and undo history untouched. `backend/font_tests.rs` covers cached
+  font listing, imported metadata/theme/undo, chooser-byte transport,
   type/data/size/path rejection, symlink confinement and the serving size cap.
-- **D2 animation harness:** `node crates/studio/ui-dev/d2-shot.mjs` checks
-  click/with/after groups, leading automatic builds, reverse/jump boundaries,
-  id/name smart matching, reduced-motion half-duration fades, one undo per
-  animation edit/scrub/reorder, no-write previews, canvas badges, Play from here,
-  presenter notes and next-step thumbnails. Outputs at 1440×900 in both terminal
-  palettes: `ui-dev/shots/d2-{animate,badges,push,smart,presenter}-{default,light}.png`.
-  Push and smart frames are captured halfway through paused WAAPI animations.
-  New Rust animation tests cover typed payload defaults/round trips, operation
+  Animation tests cover typed payload defaults/round trips, operation
   validation/atomicity/clearing, build-order repair, merge-patch preservation,
   read summaries, schema-once references and backend Apply/undo/redo/resources.
 - **Import:** `deck::import` tests round-trip the classic and motion fixtures
@@ -1073,29 +1039,12 @@ operations; this is what the window does.
   inheritance, groups, crops, tables, charts, backgrounds, bullets, theme,
   gradients, custom paths, animations, SmartArt, limits, garbage input, unknown
   parts); the deck tool, studio's Open and the CLI have import tests too.
-- **Toolbar harness:** `node crates/studio/ui-dev/toolbar-shot.mjs` captures a
-  dense source-card grid at 1150/1280/1440 px in both terminal palettes, selecting
-  middle/top/right text at fit/50%/200% zoom. Assertions cover a 32 px single row,
-  controls ≤26 px, 48 px input, stage bounds, no selection/handle overlap,
-  the entire slide inside the stage at Fit, toolbar centring within 4 px unless
-  clamped, ordered narrow-stage collapse, overflow contents, keyboard menus/focus,
-  style/size/weight/italic/alignment/color edits, layer order/duplicate/delete/comment,
-  mixed selections, recent colors, one-undo scrubs, gesture/edit hiding and
-  scroll/resize repositioning. Fit shots select actual top/middle/right nodes
-  without panning; numeric-zoom shots pan to exercise stage-edge placement.
-  Before shots use HEAD's
-  unchanged UI, served in memory (no checkout). Outputs:
-  `ui-dev/shots/toolbar-before-1150-{default,light}.png`,
-  `toolbar-after-review-{1150,1280,1440}-{default,light}-{middle,top,right}-{fit,0.5,2}.png`, `toolbar-overflow-420-{default,light}.png` and
-  `toolbar-geometry.json`.
 - **Library and dialogs:** `canvas/tests.rs` (core: listing, order, exclusions, thumbnail cache keys,
   rename, duplicate, delete, save a copy, the settings), `backend/library_tests.rs` (every library
   command, each dialog with the `Scripted` fake: the pre-filled name and start folder, a cancel,
   replace, assets beside a Markdown export, open for each file type, no absolute path on the wire),
-  `tools/canvas/export_path_tests.rs`, the popup tests in `ui/popups/library_tests.rs`, `cli_library.rs`,
-  `node crates/studio/ui-dev/library-shot.mjs` (shots of the library, empty, full, filtered, with a
-  menu, as the start page, narrow, and in deck mode, in both palettes, into `ui-dev/shots/`) and the
-  `library*` and `nativeDialogs*` scenarios of `node crates/studio/ui-dev/doc-e2e.mjs`, which run
+  `tools/canvas/export_path_tests.rs`, the popup tests in `ui/popups/library_tests.rs`, `cli_library.rs`
+  and the `library*` and `nativeDialogs*` scenarios of `node crates/studio/ui-dev/doc-e2e.mjs`, which run
   against `library-mock.js`.
 - **Doc editor:** `backend/doc_tests.rs` (open, one undo step per apply, undo and
   redo on disk, an external edit as one undo step listing its blocks, the file
@@ -1105,8 +1054,7 @@ operations; this is what the window does.
   exists), `node crates/studio/ui-dev/doc-unit.mjs` (inline round trips, shortcuts,
   local ops, every structural edit; `--parity` feeds the core parser) and
   `node crates/studio/ui-dev/doc-e2e.mjs` (36 behaviors in Chromium against
-  `doc-mock.js`), plus `node crates/studio/ui-dev/doc-shot.mjs` for 1440×900 shots in
-  `ui-dev/shots/` (gitignored). The TUI tests cover the doc comment message, the
+  `doc-mock.js`). The TUI tests cover the doc comment message, the
   focus line, `Open` and focus after a canvas doc edit, activity summaries, the
   version-mismatch notice and the card hint.
 - **Hermetic:** no network, and no windows opened in Rust tests. Browser harnesses

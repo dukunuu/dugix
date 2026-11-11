@@ -557,9 +557,7 @@ non-control text/borders; invalid or unsupported definitions retain a source fal
 This is a bounded declarative renderer, not an HTML/JavaScript/script runtime.
 See the [model-facing schema](crates/core/assets/prompts/interactive-ui.md) for supported
 controls and expressions. Complex applications may still need scripts or `/apps`;
-the web client and inline web-app previews remain unchanged. The
-[interaction research](docs/interactive-ui-research.md) explains the ChatGPT-inspired
-patterns and terminal-specific limits.
+the web client and inline web-app previews remain unchanged.
 
 ### Documents and presentations
 
