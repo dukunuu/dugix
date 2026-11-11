@@ -368,6 +368,72 @@ async fn chat_usage_records_only_called_tool_names_and_merges_cost_event() {
     }
 }
 
+#[tokio::test]
+async fn a_reply_counts_every_round_of_its_tool_loop() {
+    let mut fixture = Fixture::new();
+    let app = &mut fixture.app;
+    let session = app.session.as_ref().unwrap().id.clone();
+    app.chat_tasks.insert(
+        1,
+        ChatTask {
+            id: 1,
+            session_id: session.clone(),
+            session_title: "usage".into(),
+            space_id: app.active_space.id.clone(),
+            model: "mock/model".into(),
+            model_id: "mock/model".into(),
+            backend: BackendTag::OpenRouter,
+            incognito: false,
+            buffer: String::new(),
+            thinking: String::new(),
+            tool_status: None,
+            usage: None,
+            usage_row_id: None,
+            started: std::time::Instant::now(),
+            thinking_idx: 0,
+            spinner_color: SpinnerColor::Green,
+            abort: tokio::spawn(async {}).abort_handle(),
+        },
+    );
+    let usage = |completion_tokens, cost| {
+        StreamEvent::Usage(Usage {
+            prompt_tokens: if completion_tokens > 0 { 100 } else { 0 },
+            completion_tokens,
+            cost: Some(cost),
+            ..Usage::default()
+        })
+    };
+    // Round one writes a tool call; a cost-only event then revises its price.
+    app.on_chat_event(1, usage(40, 0.01)).unwrap();
+    app.on_chat_event(
+        1,
+        StreamEvent::ToolCall {
+            id: "c1".into(),
+            name: "search".into(),
+            arguments: "{}".into(),
+            result: "found".into(),
+            reasoning: None,
+            assistant_content: None,
+        },
+    )
+    .unwrap();
+    app.on_chat_event(1, usage(0, 0.02)).unwrap();
+    // Round two writes the answer.
+    app.on_chat_event(1, usage(10, 0.03)).unwrap();
+    app.on_chat_event(1, StreamEvent::Token("done".into()))
+        .unwrap();
+    app.on_chat_event(1, StreamEvent::Done).unwrap();
+    let reply = app.db.load_messages(&session).unwrap().pop().unwrap();
+    assert_eq!(reply.content, "done");
+    assert_eq!(reply.tokens, Some(50));
+    assert!(
+        (reply.cost.unwrap() - 0.05).abs() < 1e-9,
+        "{:?}",
+        reply.cost
+    );
+    assert!(app.turn_usage.is_empty());
+}
+
 async fn workflow_server(
     replies: Vec<(&'static str, bool)>,
 ) -> (OpenRouter, tokio::task::JoinHandle<()>) {

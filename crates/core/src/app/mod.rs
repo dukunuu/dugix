@@ -892,6 +892,43 @@ pub struct ChatTask {
     pub abort: tokio::task::AbortHandle,
 }
 
+/// One chat turn's requests added up: the model's output tokens across every
+/// round of its tool loop, and their cost. A cost-only follow-up event (`OpenCode`
+/// Zen) revises the latest request's cost instead of adding a request.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TurnTally {
+    pub output_tokens: u64,
+    settled_cost: Option<f64>,
+    last_cost: Option<f64>,
+}
+
+impl TurnTally {
+    /// Record one usage event: `output_tokens` is `Some` for a new request,
+    /// `None` for a cost-only revision of the latest one.
+    pub fn observe(&mut self, output_tokens: Option<u64>, cost: Option<f64>) {
+        if let Some(tokens) = output_tokens {
+            self.settled_cost = add_cost(self.settled_cost, self.last_cost.take());
+            self.output_tokens += tokens;
+            self.last_cost = cost;
+        } else if cost.is_some() {
+            self.last_cost = cost;
+        }
+    }
+
+    /// The turn's cost so far; `None` when no request had a known cost.
+    #[must_use]
+    pub fn cost(&self) -> Option<f64> {
+        add_cost(self.settled_cost, self.last_cost)
+    }
+}
+
+fn add_cost(a: Option<f64>, b: Option<f64>) -> Option<f64> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a + b),
+        (a, b) => a.or(b),
+    }
+}
+
 /// A completed chat task waiting for the user to open its session.
 pub struct ChatNotification {
     pub session_id: String,
@@ -1205,6 +1242,9 @@ pub struct App {
     pub subagent_runs: Vec<SubagentRun>,
     /// What each chat task's sub-agents have cost so far, added to its reply.
     pub subagent_turn_cost: HashMap<ChatTaskId, f64>,
+    /// Each chat task's own requests so far — every tool-loop round, not
+    /// just the last — totalled into its reply's tokens and cost.
+    pub turn_usage: HashMap<ChatTaskId, TurnTally>,
     /// Incognito mode captured when the job started: artifact persistence
     /// (plan files, and the plan message itself, which folds in survey
     /// replies) is decided by this, never by toggling `incognito` mid-job.
@@ -1467,6 +1507,7 @@ impl App {
             research_stage_rows: Vec::new(),
             subagent_runs: Vec::new(),
             subagent_turn_cost: HashMap::new(),
+            turn_usage: HashMap::new(),
             research_incognito: false,
             research_steer_tx: None,
             research_topic_rx: None,

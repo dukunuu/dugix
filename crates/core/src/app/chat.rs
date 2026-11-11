@@ -550,25 +550,33 @@ impl App {
                 let backend = task.backend;
                 let incognito = task.incognito;
                 let row_id = task.usage_row_id;
-                if !incognito
-                    && (merged.prompt_tokens > 0
-                        || merged.completion_tokens > 0
-                        || merged.cost.is_some())
-                {
-                    // Provider-reported cost wins; otherwise estimate from
-                    // cache-aware catalog rates (None when unknown).
-                    // Non-OpenRouter backends price via their OpenRouter
-                    // catalog twin (see `Db::model_price`).
-                    let cost_is_provider = merged.cost.is_some();
-                    let cost = merged.cost.or_else(|| {
-                        self.db.request_cost(
-                            &model_id,
-                            merged.prompt_tokens,
-                            merged.completion_tokens,
-                            merged.cache_read_tokens,
-                            merged.cache_creation_tokens,
-                        )
-                    });
+                let billable = merged.prompt_tokens > 0
+                    || merged.completion_tokens > 0
+                    || merged.cost.is_some();
+                // Provider-reported cost wins; otherwise estimate from
+                // cache-aware catalog rates (None when unknown).
+                // Non-OpenRouter backends price via their OpenRouter
+                // catalog twin (see `Db::model_price`).
+                let cost_is_provider = merged.cost.is_some();
+                let cost = merged.cost.or_else(|| {
+                    billable
+                        .then(|| {
+                            self.db.request_cost(
+                                &model_id,
+                                merged.prompt_tokens,
+                                merged.completion_tokens,
+                                merged.cache_read_tokens,
+                                merged.cache_creation_tokens,
+                            )
+                        })
+                        .flatten()
+                });
+                // The reply shows the whole turn, every tool-loop round included.
+                self.turn_usage
+                    .entry(task_id)
+                    .or_default()
+                    .observe(has_tokens.then_some(merged.completion_tokens), cost);
+                if !incognito && billable {
                     if has_tokens || row_id.is_none() {
                         let id = self.db.log_usage(
                             backend.name(),
@@ -844,6 +852,7 @@ impl App {
         stopped: bool,
     ) -> Result<()> {
         let helpers_cost = self.subagent_turn_cost.remove(&task.id);
+        let turn = self.turn_usage.remove(&task.id).unwrap_or_default();
         if self
             .session
             .as_ref()
@@ -889,11 +898,13 @@ impl App {
             .as_ref()
             .is_some_and(|session| session.id == task.session_id);
         let model = Some(task.model.clone());
-        // Prefer the provider's exact usage; fall back to a ~4-chars/token estimate.
+        // The provider's output tokens over every request of the turn (tool
+        // calls included); without usage, a ~4-chars/token estimate of the text.
         let usage = task.usage;
-        let tokens = Some(match usage {
-            Some(u) => u.completion_tokens as i64,
-            None => buf.chars().count().div_ceil(4) as i64,
+        let tokens = Some(if usage.is_some() {
+            turn.output_tokens as i64
+        } else {
+            buf.chars().count().div_ceil(4) as i64
         });
         if viewing && let Some(u) = usage {
             // Some providers omit total; derive it from prompt + completion.
@@ -909,19 +920,9 @@ impl App {
             }
         }
         let secs = Some(task.started.elapsed().as_secs_f64());
-        // Prefer the provider's exact charge; otherwise estimate from the
-        // cache-aware catalog. The same value was logged by the Usage event.
-        let cost = usage.and_then(|u| {
-            u.cost.or_else(|| {
-                self.db.request_cost(
-                    &task.model_id,
-                    u.prompt_tokens,
-                    u.completion_tokens,
-                    u.cache_read_tokens,
-                    u.cache_creation_tokens,
-                )
-            })
-        });
+        // Every request's cost as the Usage events logged it: the provider's
+        // exact charge, otherwise the cache-aware catalog estimate.
+        let cost = turn.cost();
         // The reply's cost is the whole turn's, its sub-agents included (each
         // priced under its own model; their rows are logged as `subagent`).
         let cost = match (cost, helpers_cost) {
