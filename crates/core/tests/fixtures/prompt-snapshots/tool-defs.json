@@ -403,7 +403,7 @@
   },
   {
     "name": "memory",
-    "description": "Long-term memory for this space: chapters of short facts kept across chats. Save lasting preferences, decisions and facts the user states (never chat summaries) under a fitting chapter. Read a chapter before relying on it; fix or forget wrong facts.\n- action=read: List chapters, or a chapter's facts. optional chapter.\n- action=add: Save a fact. Needs chapter, text; optional description, pinned.\n- action=update: Rewrite or move a fact. Needs id; optional text, chapter.\n- action=delete: Forget a fact. Needs id.",
+    "description": "Long-term memory for this space: chapters of short facts kept across chats. Save lasting preferences, decisions and facts the user states (never chat summaries) under a fitting chapter. Read a chapter before relying on it; fix or forget wrong facts.\n- action=read: List chapters, or a chapter's facts. optional chapter, offset.\n- action=add: Save a fact. Needs chapter, text; optional description, pinned.\n- action=update: Rewrite or move a fact. Needs id; optional text, chapter.\n- action=delete: Forget a fact. Needs id.",
     "parameters": {
       "properties": {
         "action": {
@@ -426,6 +426,10 @@
         "id": {
           "description": "fact id",
           "type": "string"
+        },
+        "offset": {
+          "description": "1-based start of the page",
+          "type": "integer"
         },
         "pinned": {
           "description": "show the chapter in every chat (identity, standing preferences)",

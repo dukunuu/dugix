@@ -963,13 +963,18 @@ pub(super) static MEMORY: ToolSpec = ToolSpec {
             kind: Kind::Bool,
             doc: "show the chapter in every chat (identity, standing preferences)",
         },
+        Param {
+            name: "offset",
+            kind: Kind::Int,
+            doc: "1-based start of the page",
+        },
     ],
     actions: &[
         ActionSpec {
             name: "read",
             summary: "List chapters, or a chapter's facts",
             required: &[],
-            optional: &["chapter"],
+            optional: &["chapter", "offset"],
             read_only: true,
             internal: "memory_read",
         },

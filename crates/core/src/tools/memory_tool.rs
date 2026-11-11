@@ -30,13 +30,16 @@ fn call(ctx: &MemoryCtx, internal: &str, args: &str) -> Result<String> {
         "memory_read" => {
             let chapters = memory::chapters(&conn, space)?;
             let facts = memory::facts(&conn, space)?;
+            let offset = value["offset"]
+                .as_u64()
+                .map_or(1, |n| usize::try_from(n).unwrap_or(usize::MAX));
             match text("chapter") {
-                None => book::chapter_list(&chapters, &facts),
+                None => book::chapter_list(&chapters, &facts, offset),
                 Some(title) => match memory::find_chapter(&conn, space, title)? {
-                    Some(chapter) => book::chapter_page(&chapter, &facts),
+                    Some(chapter) => book::chapter_page(&chapter, &facts, offset),
                     None => format!(
                         "no chapter titled {title:?}; chapters:\n{}",
-                        book::chapter_list(&chapters, &facts)
+                        book::chapter_list(&chapters, &facts, 1)
                     ),
                 },
             }

@@ -123,9 +123,49 @@ pub fn toc(chapters: &[Chapter], facts: &[Fact], docs: &[DocEntry]) -> String {
     out.trim_end().to_string()
 }
 
-/// One chapter with its facts, as `memory action=read` returns it.
+/// Characters of entries one `memory action=read` page holds, below the tool
+/// result cap so a page is never cut mid-entry.
+const PAGE_CHARS: usize = 6_000;
+
+/// Append `lines` from the 1-based `offset` until the page is full; when
+/// entries remain, end with how to read on. `what` names the entries.
+fn page(out: &mut String, lines: &[String], offset: usize, what: &str) {
+    let start = offset.max(1) - 1;
+    if start >= lines.len() {
+        let _ = writeln!(
+            out,
+            "(offset {offset} is past the last of {} {what})",
+            lines.len()
+        );
+        return;
+    }
+    let mut used = 0;
+    let mut end = start;
+    for line in &lines[start..] {
+        let size = line.chars().count() + 1;
+        if end > start && used + size > PAGE_CHARS {
+            break;
+        }
+        out.push_str(line);
+        out.push('\n');
+        used += size;
+        end += 1;
+    }
+    if end < lines.len() {
+        let _ = writeln!(
+            out,
+            "… {what} {}–{end} of {}; continue with offset={}",
+            start + 1,
+            lines.len(),
+            end + 1
+        );
+    }
+}
+
+/// One chapter with its facts from the 1-based `offset`, as `memory
+/// action=read` returns it.
 #[must_use]
-pub fn chapter_page(chapter: &Chapter, facts: &[Fact]) -> String {
+pub fn chapter_page(chapter: &Chapter, facts: &[Fact], offset: usize) -> String {
     let mut out = format!("## {}", chapter.title);
     if chapter.pinned {
         out.push_str(" [pinned]");
@@ -134,38 +174,42 @@ pub fn chapter_page(chapter: &Chapter, facts: &[Fact]) -> String {
     if !chapter.description.is_empty() {
         let _ = writeln!(out, "{}", chapter.description);
     }
-    let in_chapter: Vec<&Fact> = facts
+    let lines: Vec<String> = facts
         .iter()
         .filter(|f| f.chapter_id == chapter.id)
+        .map(|fact| format!("- [{}] {}", fact.short_id(), fact.text))
         .collect();
-    if in_chapter.is_empty() {
+    if lines.is_empty() {
         out.push_str("(no facts)\n");
-    }
-    for fact in in_chapter {
-        let _ = writeln!(out, "- [{}] {}", fact.short_id(), fact.text);
+    } else {
+        page(&mut out, &lines, offset, "facts");
     }
     out.trim_end().to_string()
 }
 
-/// Every chapter title with its count and description, as `memory
-/// action=read` without a chapter returns it.
+/// Chapter titles with their counts and descriptions from the 1-based
+/// `offset`, as `memory action=read` without a chapter returns them.
 #[must_use]
-pub fn chapter_list(chapters: &[Chapter], facts: &[Fact]) -> String {
+pub fn chapter_list(chapters: &[Chapter], facts: &[Fact], offset: usize) -> String {
     if chapters.is_empty() {
         return "memory is empty — save a fact with action=add".to_string();
     }
+    let lines: Vec<String> = chapters
+        .iter()
+        .map(|chapter| {
+            let count = facts.iter().filter(|f| f.chapter_id == chapter.id).count();
+            let mut line = format!("- {} ({count})", chapter.title);
+            if chapter.pinned {
+                line.push_str(" [pinned]");
+            }
+            if !chapter.description.is_empty() {
+                let _ = write!(line, " — {}", chapter.description);
+            }
+            line
+        })
+        .collect();
     let mut out = String::new();
-    for chapter in chapters {
-        let count = facts.iter().filter(|f| f.chapter_id == chapter.id).count();
-        let _ = write!(out, "- {} ({count})", chapter.title);
-        if chapter.pinned {
-            out.push_str(" [pinned]");
-        }
-        if !chapter.description.is_empty() {
-            let _ = write!(out, " — {}", chapter.description);
-        }
-        out.push('\n');
-    }
+    page(&mut out, &lines, offset, "chapters");
     out.trim_end().to_string()
 }
 

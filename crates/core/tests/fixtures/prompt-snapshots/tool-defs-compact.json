@@ -371,6 +371,9 @@
         "id": {
           "type": "string"
         },
+        "offset": {
+          "type": "integer"
+        },
         "pinned": {
           "type": "boolean"
         },

@@ -7,8 +7,9 @@ use super::{App, tests::app_with_key};
 // always on). Raised from 3,900 by 60 for the `history` action and the
 // one-deck-per-request / images / read-by-slides guidance. Raised to 4,120
 // for the `memory` tool (~170), which replaced a helper-model call after
-// every reply.
-const CHAT_PROMPT_TOKEN_CEILING: usize = 4_120;
+// every reply, then to 4,140 for its read `offset` (~10), so a large chapter
+// can be paged instead of truncated.
+const CHAT_PROMPT_TOKEN_CEILING: usize = 4_140;
 
 fn fixture_app() -> App {
     // app_with_key uses a fresh temporary space, with no space instructions.

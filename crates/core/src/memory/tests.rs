@@ -343,3 +343,45 @@ fn chapters_and_facts_sync_with_their_deletes() {
     assert_eq!(texts, ["uses Neovim"]);
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn reading_a_large_chapter_pages_by_offset() {
+    let conn = conn();
+    for n in 1..=40 {
+        let fact = format!("fact {n:02} {}", "x".repeat(280));
+        add(&conn, SPACE, "Notes", &fact, None, None).unwrap();
+    }
+    let chapter = find_chapter(&conn, SPACE, "Notes").unwrap().unwrap();
+    let all = facts(&conn, SPACE).unwrap();
+
+    let first = book::chapter_page(&chapter, &all, 1);
+    assert!(first.chars().count() <= 6_200, "{}", first.len());
+    assert!(first.contains("fact 01 "));
+    let (_, tail) = first.rsplit_once("continue with offset=").expect(&first);
+    let next: usize = tail.trim().parse().unwrap();
+    assert!(next > 1 && next <= 40, "{next}");
+    assert!(
+        first.contains(&format!("facts 1–{} of 40", next - 1)),
+        "{first}"
+    );
+
+    let mut seen = next - 1;
+    let mut offset = next;
+    while seen < 40 {
+        let page = book::chapter_page(&chapter, &all, offset);
+        assert!(page.contains(&format!("fact {offset:02} ")), "{page}");
+        let shown = page.lines().filter(|l| l.starts_with("- [")).count();
+        seen += shown;
+        offset += shown;
+        assert_eq!(page.contains("continue with offset="), seen < 40, "{page}");
+    }
+    assert_eq!(seen, 40);
+
+    let past = book::chapter_page(&chapter, &all, 41);
+    assert!(
+        past.contains("offset 41 is past the last of 40 facts"),
+        "{past}"
+    );
+    let list = book::chapter_list(&chapters(&conn, SPACE).unwrap(), &all, 1);
+    assert_eq!(list, "- Notes (40)");
+}
