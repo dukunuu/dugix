@@ -139,7 +139,13 @@ pub(super) async fn read_pdf_page(
         let result = tokio::task::spawn_blocking(move || {
             std::fs::create_dir_all(&page_dir)
                 .map_err(|e| crate::extract::ToolError::Failed(e.to_string()))?;
-            crate::extract::render_pdf_page(&pdftoppm, &pdf, page, 150, &png_path)
+            crate::extract::render_pdf_page(
+                &pdftoppm,
+                &pdf,
+                page,
+                crate::extract::PAGE_DPI,
+                &png_path,
+            )
         })
         .await
         .unwrap_or_else(|e| Err(crate::extract::ToolError::Failed(e.to_string())));
@@ -250,11 +256,23 @@ pub(super) fn semantic_snippets(
     Some(format_semantic_hits(&hits))
 }
 
-fn format_semantic_hits(hits: &[(String, String, String, f32)]) -> String {
+pub(super) fn format_semantic_hits(hits: &[(String, String, String, f32)]) -> String {
     hits.iter()
         .map(|(name, loc, text, score)| {
             if loc == "image" {
                 return format!("image · {name} · {score:.2}\n![{name}]({name})");
+            }
+            if let Some(page) = loc
+                .strip_prefix("page ")
+                .and_then(|n| n.parse::<u32>().ok())
+            {
+                let stem = Path::new(name)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(name);
+                return format!(
+                    "page · {name} p.{page} · {score:.2}\n![page {page}]({stem}/page-{page}.png)"
+                );
             }
             let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
             let cut: String = flat.chars().take(300).collect();

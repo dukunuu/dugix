@@ -14,6 +14,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use crate::db::FileRow;
+use crate::extract::{PAGE_DPI, SCANNED_PDF_STATUS};
 
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
@@ -59,6 +60,8 @@ fn clip_err(e: &str) -> String {
     }
     s
 }
+
+const MAX_EMBEDDED_PAGES: u32 = 30;
 
 /// Prefix of the transient status shown while a file's chunks are embedded.
 const EMBEDDING_STATUS: &str = "embedding…";
@@ -416,6 +419,25 @@ impl App {
             .join(&file_name);
         let is_image =
             embedder.supports_images() && crate::extract::detect_path(&image_path).is_image_file();
+        let settled_status = if file.status.starts_with(EMBEDDING_STATUS) {
+            restored_status(&file.status)
+        } else {
+            file.status
+        };
+        let is_scanned_pdf = embedder.supports_images()
+            && file_name.to_lowercase().ends_with(".pdf")
+            && settled_status == SCANNED_PDF_STATUS;
+        let pages = if is_scanned_pdf {
+            let count = crate::extract::pdf_page_count("pdfinfo", &image_path)
+                .unwrap_or_default()
+                .min(MAX_EMBEDDED_PAGES);
+            let page_dir = image_path.with_extension("");
+            (1..=count)
+                .map(|page| page_dir.join(format!("page-{page}.png")))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let text = chunks
             .iter()
             .map(|(_, text)| text.as_str())
@@ -423,6 +445,14 @@ impl App {
             .join("\n");
         self.embedding_chunks = if is_image {
             vec![("image".to_string(), file_name.clone())]
+        } else if is_scanned_pdf {
+            if pages.is_empty() {
+                crate::extract::metadata_chunks(&file_name)
+            } else {
+                (1..=pages.len())
+                    .map(|page| (format!("page {page}"), file_name.clone()))
+                    .collect()
+            }
         } else if embedder.is_gemma() {
             crate::extract::embedding::chunk_text(&text, &file_name)
         } else {
@@ -433,6 +463,8 @@ impl App {
             // picked again forever.
             self.embedding_chunks = crate::extract::metadata_chunks(&file_name);
         }
+        let pdf_path = is_scanned_pdf.then(|| image_path.clone());
+        let image_paths = if is_image { vec![image_path] } else { pages };
         let chunks = self
             .embedding_chunks
             .iter()
@@ -452,27 +484,42 @@ impl App {
             let mut out: Vec<(i64, Vec<f32>)> = Vec::with_capacity(chunks.len());
             let mut err = None;
             for batch in chunks.chunks(64) {
-                let inputs = if is_image {
-                    let path = image_path.clone();
-                    let prepared = tokio::task::spawn_blocking(move || {
-                        crate::provider::embedding::image_input(&path)
-                    })
-                    .await;
-                    // A file the model cannot take (corrupt, over the size
-                    // bound) must not stall the queue: it stays findable by
-                    // name through its metadata chunk.
-                    match prepared {
-                        Ok(Ok(input)) => vec![input],
-                        _ => vec![embedder.document(
-                            &file_name,
-                            &crate::extract::metadata_chunks(&file_name)[0].1,
-                        )],
-                    }
-                } else {
+                let inputs = if image_paths.is_empty() {
                     batch
                         .iter()
                         .map(|(_, text)| embedder.document(&file_name, text))
                         .collect()
+                } else {
+                    let mut inputs = Vec::with_capacity(batch.len());
+                    for (seq, _) in batch {
+                        let path = image_paths[*seq as usize].clone();
+                        let pdf = pdf_path.clone();
+                        let page = *seq as u32 + 1;
+                        let prepared = tokio::task::spawn_blocking(move || {
+                            if let Some(pdf) = pdf
+                                && !path.exists()
+                            {
+                                std::fs::create_dir_all(pdf.with_extension("")).ok()?;
+                                crate::extract::render_pdf_page(
+                                    "pdftoppm", &pdf, page, PAGE_DPI, &path,
+                                )
+                                .ok()?;
+                            }
+                            crate::provider::embedding::image_input(&path).ok()
+                        })
+                        .await;
+                        // A file the model cannot take (corrupt, over the size
+                        // bound) must not stall the queue: it stays findable by
+                        // name through its metadata chunk.
+                        inputs.push(match prepared {
+                            Ok(Some(input)) => input,
+                            _ => embedder.document(
+                                &file_name,
+                                &crate::extract::metadata_chunks(&file_name)[0].1,
+                            ),
+                        });
+                    }
+                    inputs
                 };
                 match embedder.embed(inputs).await {
                     Ok(vecs) if vecs.len() == batch.len() => out.extend(

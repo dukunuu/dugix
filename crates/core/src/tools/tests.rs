@@ -3658,6 +3658,20 @@ fn semantic_snippets_rank_truncate_and_report_none_without_vectors() {
     assert!(out.lines().nth(1).unwrap().len() < long.len(), "{out}");
 }
 
+#[test]
+fn files_semantic_page_hit_shows_the_matching_page_image() {
+    let out = files::format_semantic_hits(&[(
+        "annual.report.pdf".into(),
+        "page 2".into(),
+        "annual.report.pdf".into(),
+        0.875,
+    )]);
+    assert_eq!(
+        out,
+        "page · annual.report.pdf p.2 · 0.88\n![page 2](annual.report/page-2.png)"
+    );
+}
+
 /// A real file db with a text file and an image embedded through a mock
 /// Ollama, so ranking and formatting run the production search path.
 async fn embedded_space(

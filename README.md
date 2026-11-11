@@ -382,9 +382,10 @@ directly (downscaled to at most 768 px, up to 20 MiB) and returned by
 `files search` as `image · name · score` hits the model can look at. Audio and
 video are not embedded yet.
 
-Images are embedded directly for search when the embedder accepts images;
-scanned PDFs are found by name. The model views any imported PDF page with
-`files(action=pdf_page)`, rendered on demand using poppler's `pdftoppm`.
+With an image-capable embedder, images and up to 30 pages of a scanned PDF
+are embedded as images, so search finds them by content. The model views any
+imported PDF page with `files(action=pdf_page)`, rendered on demand using
+poppler's `pdftoppm`.
 
 **Switching and updating.** Each vector records the model's identity: backend,
 model, weights digest, dimension, prefix scheme and preprocessing version.

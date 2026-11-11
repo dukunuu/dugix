@@ -35,6 +35,12 @@ const CHUNK_LINES: usize = 40;
 /// rescan re-extracts any file indexed by an older extractor, once.
 pub const EXTRACTOR_VERSION: i64 = 1;
 
+/// Settled index status for a PDF without a text layer.
+pub const SCANNED_PDF_STATUS: &str = "ok · scanned pdf (no text layer)";
+
+/// Resolution of cached PDF pages, shared by embedding and direct viewing.
+pub(crate) const PAGE_DPI: u32 = 150;
+
 /// Files up to this size are read whole; bigger ones are only sniffed (text
 /// is read up to the limit, media is handled by path, the rest is metadata).
 const MAX_READ: u64 = 64 * 1024 * 1024;
@@ -108,7 +114,7 @@ impl Extracted {
         match &self.outcome {
             Outcome::Visual => (
                 if self.kind == Kind::Pdf {
-                    "ok · scanned pdf (no text layer)".to_string()
+                    SCANNED_PDF_STATUS.to_string()
                 } else {
                     "ok · image".to_string()
                 },
@@ -729,6 +735,24 @@ pub fn render_pdf_pages(
     Ok(pages)
 }
 
+/// Read a PDF's page count from its index using poppler's pdfinfo.
+///
+/// # Errors
+/// Returns [`ToolError::MissingTools`] when pdfinfo is missing, or
+/// [`ToolError::Failed`] when it fails or reports no valid page count.
+pub fn pdf_page_count(pdfinfo: &str, pdf: &Path) -> std::result::Result<u32, ToolError> {
+    let output = run_tool(std::process::Command::new(pdfinfo).arg(pdf), "pdfinfo")?;
+    parse_pdf_page_count(&String::from_utf8_lossy(&output))
+}
+
+fn parse_pdf_page_count(output: &str) -> std::result::Result<u32, ToolError> {
+    output
+        .lines()
+        .find_map(|line| line.strip_prefix("Pages:"))
+        .and_then(|pages| pages.trim().parse().ok())
+        .ok_or_else(|| ToolError::Failed("pdfinfo: missing or invalid page count".to_string()))
+}
+
 /// Render one PDF page to `out` as a PNG at the requested DPI.
 pub fn render_pdf_page(
     pdftoppm: &str,
@@ -1224,6 +1248,38 @@ mod tests {
         );
         assert!(chunk_lines("").is_empty());
         assert!(chunk_lines("   \n  ").is_empty());
+    }
+
+    #[test]
+    fn scanned_pdf_embedding_page_count_parses_pdfinfo_output() {
+        let output = "Title:           Annual report\n\
+                      Producer:        Acrobat Distiller\n\
+                      Tagged:          no\n\
+                      Pages:           42\n\
+                      Encrypted:       no\n\
+                      Page size:       612 x 792 pts (letter)\n\
+                      PDF version:     1.4\n";
+        assert_eq!(parse_pdf_page_count(output).unwrap(), 42);
+        assert_eq!(parse_pdf_page_count("Pages: 0\n").unwrap(), 0);
+        for invalid in [
+            "Title: Pages: 42",
+            "Pages: unknown",
+            "Pages: -1",
+            "Pages: 4294967296",
+        ] {
+            assert!(matches!(
+                parse_pdf_page_count(invalid),
+                Err(ToolError::Failed(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn scanned_pdf_embedding_page_count_reports_missing_tools() {
+        assert!(matches!(
+            pdf_page_count("nexus-definitely-not-a-binary", Path::new("scan.pdf")),
+            Err(ToolError::MissingTools)
+        ));
     }
 
     /// True when pdftoppm is runnable (render tests skip otherwise).

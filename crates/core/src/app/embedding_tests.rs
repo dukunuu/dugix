@@ -141,6 +141,126 @@ async fn local_model_embeds_text_and_images_directly_and_queues_no_ocr() {
     );
 }
 
+/// Duplicate a blank page: no text operators or text layer in the fixture.
+fn scanned_pdf(page_count: u32) -> Vec<u8> {
+    use pdf_extract::{Document, Object};
+
+    let mut pdf = Document::load_mem(&crate::extract::minimal_pdf(None)).unwrap();
+    let page = pdf.get_object((3, 0)).unwrap().clone();
+    let mut kids = vec![Object::Reference((3, 0))];
+    for _ in 1..page_count {
+        kids.push(Object::Reference(pdf.add_object(page.clone())));
+    }
+    let pages = pdf.get_object_mut((2, 0)).unwrap().as_dict_mut().unwrap();
+    pages.set("Kids", kids);
+    pages.set("Count", i64::from(page_count));
+    let mut bytes = Vec::new();
+    pdf.save_to(&mut bytes).unwrap();
+    bytes
+}
+
+#[tokio::test]
+async fn scanned_pdf_embedding_uses_pages_only_with_image_support() {
+    let can_render = ["pdfinfo", "pdftoppm"]
+        .iter()
+        .all(|tool| std::process::Command::new(tool).arg("-v").output().is_ok());
+    let pdf = scanned_pdf(2);
+    for images in [true, false] {
+        if images && !can_render {
+            eprintln!("skipping scanned_pdf_embedding images: pdfinfo or pdftoppm not installed");
+            continue;
+        }
+        let mock = MockOllama::start(images).await;
+        let mut app = app_with_key();
+        point_at(&mut app, &mock.endpoint);
+        let dir = app.space.files_dir(&app.active_space.name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("scan.PDF"), &pdf).unwrap();
+        app.embedding_model = "local:embeddinggemma-2".to_string();
+
+        app.rescan_files();
+        drain(&mut app).await;
+
+        assert!(app.ocr_rx.is_none());
+        assert_eq!(
+            app.files_cache[0].status,
+            "ok · scanned pdf (no text layer)"
+        );
+        let rows = stored(&app);
+        if images {
+            assert_eq!(
+                rows.iter().map(|r| r.1.as_str()).collect::<Vec<_>>(),
+                ["page 1", "page 2"]
+            );
+            assert_eq!(image_inputs(&mock), 3, "one probe plus two pages");
+            assert!(documents(&mock).is_empty());
+            for page in 1..=2 {
+                let image = image::open(dir.join(format!("scan/page-{page}.png"))).unwrap();
+                assert_eq!((image.width(), image.height()), (834, 313));
+            }
+            assert!(!dir.join("scan/page-3.png").exists());
+        } else {
+            assert_eq!(rows.len(), 1);
+            assert_eq!(image_inputs(&mock), 0);
+            let docs = documents(&mock);
+            assert_eq!(docs.len(), 1);
+            assert!(docs[0].contains("uploaded file: scan.PDF"), "{docs:?}");
+            assert!(!dir.join("scan").exists());
+        }
+        app.rescan_files();
+        drain(&mut app).await;
+        assert_eq!(stored(&app), rows, "the same PDF is not re-embedded");
+        assert_eq!(image_inputs(&mock), if images { 4 } else { 0 });
+    }
+}
+
+#[tokio::test]
+async fn scanned_pdf_embedding_reuses_cached_pages_and_stops_at_thirty() {
+    if std::process::Command::new("pdfinfo")
+        .arg("-v")
+        .output()
+        .is_err()
+    {
+        eprintln!("skipping scanned_pdf_embedding cached pages: pdfinfo not installed");
+        return;
+    }
+    let mock = MockOllama::start(true).await;
+    let mut app = app_with_key();
+    point_at(&mut app, &mock.endpoint);
+    let dir = app.space.files_dir(&app.active_space.name);
+    std::fs::create_dir_all(dir.join("scan")).unwrap();
+    std::fs::write(dir.join("scan.pdf"), scanned_pdf(31)).unwrap();
+    for page in 1..=31 {
+        image::RgbImage::new(2, 2)
+            .save(dir.join(format!("scan/page-{page}.png")))
+            .unwrap();
+    }
+    app.embedding_model.clear();
+    app.rescan_files();
+    app.db
+        .set_file_status(
+            &app.files_cache[0].id,
+            "embedding… · ok · scanned pdf (no text layer)",
+        )
+        .unwrap();
+    app.embedding_model = "local:embeddinggemma-2".to_string();
+    app.start_embedding();
+    drain(&mut app).await;
+
+    let rows = stored(&app);
+    assert_eq!(rows.len(), 30);
+    assert_eq!(rows[0].1, "page 1");
+    assert_eq!(rows[29].1, "page 30");
+    assert_eq!(image_inputs(&mock), 31, "one probe plus thirty pages");
+    assert!(documents(&mock).is_empty());
+    assert_eq!(
+        app.files_cache[0].status,
+        "ok · scanned pdf (no text layer)"
+    );
+    let cached = image::open(dir.join("scan/page-1.png")).unwrap();
+    assert_eq!((cached.width(), cached.height()), (2, 2));
+}
+
 #[tokio::test]
 async fn same_identity_is_not_reembedded_but_a_new_digest_is() {
     let mock = MockOllama::start(false).await;
