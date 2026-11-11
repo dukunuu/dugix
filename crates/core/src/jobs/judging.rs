@@ -96,7 +96,7 @@ async fn evaluate(
             ))
         }
         ModelDecider::Llm => {
-            let (provider, model) = app.helper_backend().context("no helper model backend")?;
+            let (provider, model) = app.session_backend().context("no session model backend")?;
             let provider = provider.usage_kind("judge").for_usage_session(session);
             let response = tokio::time::timeout(
                 std::time::Duration::from_secs(10),

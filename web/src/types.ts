@@ -28,8 +28,6 @@ export interface Settings {
   top_p: number | null;
   max_tokens: number | null;
   compact_threshold: number;
-  memory_model: string;
-  transcriber_model: string;
   ocr_model: string;
   ocr_engine: string;
   embedding_model: string;

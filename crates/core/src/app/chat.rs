@@ -301,12 +301,6 @@ impl App {
         let mut params = self.chat_params(reasoning_effort, provider.backend_tag());
         params.parallel_tool_calls = (!profile.parallel_calls).then_some(false);
         params.tool_result_cap = profile.result_cap;
-        params.subagent_fast_model = self
-            .helper_backend()
-            .filter(|(helper, model)| {
-                helper.backend_tag() == provider.backend_tag() && *model != raw_model
-            })
-            .map(|(_, model)| model);
         let tools = self.chat_tool_defs();
         if provider.backend_tag() == crate::provider::BackendTag::Local
             && !self.context_warned
@@ -1079,7 +1073,6 @@ impl App {
             .current_model
             .as_deref()
             .and_then(|model| self.resolve_model_backend(model))
-            .or_else(|| self.helper_backend())
         else {
             return;
         };

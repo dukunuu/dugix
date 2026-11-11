@@ -132,10 +132,9 @@ and `provider` settings are available; LangSearch/SearXNG remain optional.
 Exa calls share a two-permit toolbox budget; tests inject loopback endpoints,
 and default search endpoints use dead local ports under `cfg(test)`.
 
-Native search uses the session backend's auto helper (`default_helper_for` +
-`newest_listed`, else its session model), never another provider or a helper
-picked on another backend. OpenRouter uses its server search tool ($0.007 per
-request plus tokens); record response-reported usage/cost. Codex uses the
+Native search uses the session's own model and backend, never another provider.
+OpenRouter uses its server search tool ($0.007 per request plus tokens); record
+response-reported usage/cost. Codex uses the
 ChatGPT subscription Responses route; OpenAI uses billed Responses web search
 (tool and token rates). Go/local skip native search. Exa ignores recency and
 reports that in the result header when a filter was requested.
@@ -179,20 +178,17 @@ reports that in the result header when a filter was requested.
   `search mode=chats` (read-only hybrid RRF, active space only) and the `chat:` URL
   transcript that `fetch_url` pages; a separate tool would not fit the chat prompt
   token ceiling. Never in research searcher toolboxes.
-- **One model setting, the rest automatic**: `/config` has one model row,
-  `helper_model` (blank = auto). `App::helper_backend` is where every background
-  job (compaction, image descriptions, vision OCR, the `LlmDecider`)
-  gets its model: the pick, else `OpenRouter::default_helper_for(tag)` on the
-  session's backend, else the session's own model there (local runtimes, or a
-  catalog that dropped the default); it never crosses backends. Embeddings
-  (`app/embeddings.rs`: local EmbeddingGemma 2 → backend default → none), OCR
-  (`App::ocr_backend`: tesseract if installed, else the helper) and media
-  generation (`App::generation_backend`, the backend's `default_*_gen_model`)
-  are computed, not configured. The removed keys (`settings::is_removed_setting`)
-  are ignored on read and rejected on set; `memory_model` migrates once into
-  `helper_model` (`settings::legacy_helper_model`). `App::embedding_model` is
-  runtime state, not a setting. New background jobs call `helper_backend()`;
-  do not add a per-feature model row.
+- **Background jobs use the session model**: `App::session_backend` resolves
+  the session's own model for titles, compaction, image descriptions, vision
+  OCR and the `LlmDecider`; `/memory tidy` uses it in the conversation too.
+  Image descriptions and OCR require a session model that accepts images;
+  otherwise they are skipped (tesseract still handles scanned PDFs when
+  installed). Embeddings (`app/embeddings.rs`: local EmbeddingGemma 2 → backend
+  default → none) and media generation (`App::generation_backend`, the backend's
+  `default_*_gen_model`) are computed, not configured. The removed keys
+  (`settings::is_removed_setting`) are ignored on read and rejected on set.
+  `App::embedding_model` is runtime state, not a setting. New background jobs
+  call `session_backend()`; `/config` has no per-feature model rows.
 - **Don't commit agent tooling**: `.claude/`, `.superpowers/`,
   `.pi-subagents/` are gitignored — leave them out of commits.
 

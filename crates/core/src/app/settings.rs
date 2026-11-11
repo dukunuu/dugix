@@ -49,7 +49,7 @@ impl App {
 
 /// Every key `set_setting` accepts — the same keys `apply_setting` (and the
 /// `blocked_domains` special case) can actually apply.
-const SETTING_KEYS: [&str; 20] = [
+const SETTING_KEYS: [&str; 19] = [
     "remote_images",
     "show_stats",
     "show_reasoning",
@@ -58,7 +58,6 @@ const SETTING_KEYS: [&str; 20] = [
     "temperature",
     "top_p",
     "max_tokens",
-    "helper_model",
     "ocr_images",
     "compact_threshold",
     "searxng_url",
@@ -75,7 +74,8 @@ const SETTING_KEYS: [&str; 20] = [
 /// Per-feature model settings that earlier builds accepted and that are now
 /// automatic. Stored values are ignored on read (other devices' sync data may
 /// still carry them) and rejected on set.
-const REMOVED_SETTING_KEYS: [&str; 8] = [
+const REMOVED_SETTING_KEYS: [&str; 9] = [
+    "helper_model",
     "memory_model",
     "transcriber_model",
     "ocr_model",
@@ -96,55 +96,14 @@ pub fn is_removed_setting(key: &str) -> bool {
 #[must_use]
 pub fn removed_setting_message(key: &str) -> String {
     let now = match key {
-        "memory_model" | "transcriber_model" | "ocr_model" => "use helper_model",
-        "ocr_engine" | "local_ocr_model" => "OCR now picks tesseract or the helper model itself",
+        "helper_model" | "memory_model" | "transcriber_model" | "ocr_model" => {
+            "background jobs use the session model"
+        }
+        "ocr_engine" | "local_ocr_model" => "OCR now picks tesseract or the session model itself",
         "embedding_model" => "embeddings are chosen automatically",
         _ => "media generation uses the active backend's default model",
     };
     format!("setting {key} was removed: {now}")
-}
-
-/// The helper model a pre-`helper_model` database implies: its
-/// `memory_model`, when `helper_model` is not set yet and the stored value was
-/// a deliberate pick. Builds before this one wrote the backend's default into
-/// `memory_model` the first time `/config` closed, so a value equal to a
-/// default is auto, not a choice.
-pub(super) fn legacy_helper_model(stored: &[(String, String)]) -> Option<String> {
-    let get = |key: &str| stored.iter().find(|(k, _)| k == key).map(|(_, v)| v.trim());
-    if get("helper_model").is_some_and(|v| !v.is_empty()) {
-        return None;
-    }
-    let legacy = get("memory_model").filter(|v| !v.is_empty())?;
-    (!is_default_helper_id(legacy)).then(|| legacy.to_string())
-}
-
-/// Memory-model defaults older builds wrote into `memory_model` (before the
-/// helper table moved to current models). Stored copies of these are auto too.
-const PAST_HELPER_DEFAULTS: [(crate::provider::BackendTag, &str); 4] = {
-    use crate::provider::BackendTag;
-    [
-        (BackendTag::OpenRouter, "google/gemini-2.5-flash-lite"),
-        (BackendTag::OpenAi, "gpt-4.1-mini"),
-        (BackendTag::Codex, "gpt-5.6-luna"),
-        (BackendTag::OpencodeGo, "deepseek-v4-flash"),
-    ]
-};
-
-/// Whether `id` (bare or backend-prefixed) is some backend's auto helper,
-/// current or past.
-fn is_default_helper_id(id: &str) -> bool {
-    use crate::provider::BackendTag;
-    use crate::provider::openrouter::OpenRouter;
-    [
-        BackendTag::OpenRouter,
-        BackendTag::OpenAi,
-        BackendTag::Codex,
-        BackendTag::OpencodeGo,
-    ]
-    .into_iter()
-    .map(|tag| (tag, OpenRouter::default_helper_for(tag)))
-    .chain(PAST_HELPER_DEFAULTS)
-    .any(|(tag, default)| id == default || id == format!("{}{default}", tag.key_prefix()))
 }
 
 /// Narrowest and widest the conversation column can be set to, in cells.

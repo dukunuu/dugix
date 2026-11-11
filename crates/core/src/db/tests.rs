@@ -1913,7 +1913,6 @@ fn settings_scope_registry_classifies_keys_and_stores_scope() {
         "show_reasoning",
         "hide_hints",
         "verbosity",
-        "helper_model",
     ] {
         assert!(!Db::setting_is_local(sync), "{sync} should sync");
     }

@@ -21,7 +21,6 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
     // Short title + the pick target as a footer hint, so the model picker
     // reads the same from any feature that opens it.
     let picking = match app.model_pick_target {
-        nexus_core::app::ModelPickTarget::Helper => "picking helper model",
         nexus_core::app::ModelPickTarget::Session => "picking chat model",
         nexus_core::app::ModelPickTarget::SwarmPersona(_) => "picking persona model",
     };
@@ -209,7 +208,6 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
         // Cancelling a memory-model pick returns to /config, same as picking one.
         KeyCode::Esc => {
             app.popup = match app.model_pick_target {
-                nexus_core::app::ModelPickTarget::Helper => Popup::Settings,
                 nexus_core::app::ModelPickTarget::SwarmPersona(_) => Popup::Swarm,
                 nexus_core::app::ModelPickTarget::Session => Popup::None,
             };

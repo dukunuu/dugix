@@ -670,7 +670,7 @@ fn start_stream_sets_trace_context_only_when_training_is_on() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn local_backend_discovers_models_and_uses_local_utility_fallback() {
+async fn local_backend_discovers_models_and_uses_the_session_model() {
     let mut app = App::new(Db::open_in_memory().unwrap(), None, test_space());
     app.saved.local = Some(crate::provider::local::LocalConfig {
         provider: crate::provider::local::LocalRuntime::Mlx,
@@ -697,7 +697,7 @@ async fn local_backend_discovers_models_and_uses_local_utility_fallback() {
         "local:mlx-community/test-model"
     );
     app.current_model = Some(composite_id(&app.models[0]));
-    let (provider, model) = app.resolve_utility_model_backend("gpt-4.1-mini").unwrap();
+    let (provider, model) = app.session_backend().unwrap();
     assert_eq!(provider.backend_tag(), BackendTag::Local);
     assert_eq!(model, "mlx-community/test-model");
 }
@@ -2717,53 +2717,11 @@ fn memory_snapshot_stays_stable_until_refresh() {
 }
 
 #[test]
-fn clear_helper_model_returns_to_auto() {
-    let mut a = app_with_key();
-    a.helper_model = "some/model".into();
-    a.clear_helper_model().unwrap();
-    assert!(a.helper_model.is_empty());
-    assert_eq!(
-        a.db.load_settings()
-            .unwrap()
-            .iter()
-            .find(|(k, _)| k == "helper_model")
-            .map(|(_, v)| v.clone()),
-        Some(String::new())
-    );
-}
-
-#[test]
 fn embedding_default_is_prefixed_for_non_openrouter_bootstrap_backend() {
     let db = Db::open_in_memory().unwrap();
     let a = App::new(db, Some("sk-openai-test-key"), test_space());
 
-    assert!(a.helper_model.is_empty(), "the helper model starts on auto");
     assert_eq!(a.embedding_model, "openai:text-embedding-3-small");
-}
-
-#[test]
-fn utility_model_resolution_falls_back_from_legacy_openrouter_id_on_openai() {
-    let db = Db::open_in_memory().unwrap();
-    let mut a = App::new(db, Some("sk-openai-test-key"), test_space());
-    a.models = vec![Model {
-        id: "gpt-4.1-mini".into(),
-        name: "GPT-4.1 mini".into(),
-        reasoning_efforts: Vec::new(),
-        context_length: None,
-        supports_images: false,
-        supports_image_generation: false,
-        supports_video_generation: false,
-        backend: BackendTag::OpenAi,
-        pricing: None,
-    }];
-    a.current_model = Some("openai:gpt-4.1-mini".into());
-
-    let (provider, raw) = a
-        .resolve_utility_model_backend("google/gemini-2.5-flash-lite")
-        .unwrap();
-
-    assert_eq!(provider.backend_tag(), BackendTag::OpenAi);
-    assert_eq!(raw, "gpt-4.1-mini");
 }
 
 #[tokio::test]
@@ -5943,7 +5901,7 @@ async fn chat_toolbox_connector_writes_reach_the_existing_app_approval_channel()
     std::fs::remove_dir_all(root).unwrap();
 }
 
-// --- the helper model and the automatic defaults behind the removed rows ---
+// --- the session model and the automatic defaults behind the removed rows ---
 
 fn catalog_model(backend: BackendTag, id: &str) -> Model {
     Model {
@@ -5969,224 +5927,39 @@ fn app_on(provider: OpenRouter, chat_model: &str) -> App {
     a
 }
 
-fn helper_of(a: &App) -> Option<(BackendTag, String)> {
-    a.helper_backend()
-        .map(|(provider, raw)| (provider.backend_tag(), raw))
-}
-
 #[test]
-fn auto_helper_table_has_one_entry_per_backend() {
-    for (tag, expected) in [
-        (BackendTag::OpenRouter, "openai/gpt-6-luna"),
-        (BackendTag::OpenAi, "gpt-6-luna"),
-        (BackendTag::Codex, "gpt-6-luna"),
-        (BackendTag::OpencodeGo, "gpt-6-luna"),
-        // A local runtime serves whatever the user installed: no cheap pick.
-        (BackendTag::Local, ""),
-    ] {
-        assert_eq!(OpenRouter::default_helper_for(tag), expected, "{tag:?}");
-    }
-}
-
-#[test]
-fn auto_helper_is_the_cheap_model_of_the_active_backend() {
-    for (provider, chat, tag, expected) in [
+fn background_jobs_use_the_session_model() {
+    for (provider, chat, expected) in [
         (
             OpenRouter::openrouter_flavor("k".into()),
             "a/chat",
-            BackendTag::OpenRouter,
-            "openai/gpt-6-luna",
+            "a/chat",
         ),
-        (
-            OpenRouter::openai("k".into()),
-            "openai:gpt-5",
-            BackendTag::OpenAi,
-            "gpt-6-luna",
-        ),
+        (OpenRouter::openai("k".into()), "openai:gpt-5", "gpt-5"),
         (
             OpenRouter::openai_codex("k".into()),
             "codex:gpt-5.5",
-            BackendTag::Codex,
-            "gpt-6-luna",
+            "gpt-5.5",
         ),
         (
             OpenRouter::opencode_go("k".into()),
             "opencode:kimi-k2.7-code",
-            BackendTag::OpencodeGo,
-            "gpt-6-luna",
+            "kimi-k2.7-code",
+        ),
+        (
+            OpenRouter::local("http://127.0.0.1:9/v1").unwrap(),
+            "local:big",
+            "big",
         ),
     ] {
-        let a = app_on(provider, chat);
-        assert!(a.helper_model.is_empty(), "{tag:?} starts on auto");
-        assert_eq!(helper_of(&a), Some((tag, expected.to_string())), "{tag:?}");
+        let tag = provider.backend_tag();
+        let mut a = app_on(provider, chat);
+        let (provider, model) = a.session_backend().unwrap();
+        assert_eq!(provider.backend_tag(), tag);
+        assert_eq!(model, expected);
+        a.current_model = None;
+        assert!(a.session_backend().is_none());
     }
-}
-
-#[test]
-fn auto_helper_follows_the_session_backend_and_never_switches_providers() {
-    let mut a = app_on(OpenRouter::openrouter_flavor("k".into()), "a/chat");
-    a.backends
-        .set(BackendTag::OpenAi, OpenRouter::openai("k".into()));
-    assert_eq!(
-        helper_of(&a),
-        Some((BackendTag::OpenRouter, "openai/gpt-6-luna".into()))
-    );
-    a.current_model = Some("openai:gpt-5".into());
-    assert_eq!(
-        helper_of(&a),
-        Some((BackendTag::OpenAi, "gpt-6-luna".into()))
-    );
-    // A picked id on a backend that is not configured resolves like auto,
-    // on the session's backend, instead of reaching for the other provider.
-    a.helper_model = "codex:gpt-5.6-luna".into();
-    assert_eq!(
-        helper_of(&a),
-        Some((BackendTag::OpenAi, "gpt-6-luna".into()))
-    );
-    // A picked id on a configured backend wins.
-    a.helper_model = "google/gemini-2.5-flash".into();
-    assert_eq!(
-        helper_of(&a),
-        Some((BackendTag::OpenRouter, "google/gemini-2.5-flash".into()))
-    );
-    // Nothing signed in: nothing to run on.
-    a.backends = Backends::default();
-    assert_eq!(helper_of(&a), None);
-}
-
-#[test]
-fn auto_helper_falls_back_to_the_session_model_without_a_cheap_option() {
-    // Local runtimes have no cheap default: the session's installed model,
-    // else the first installed one.
-    let local = OpenRouter::local("http://127.0.0.1:9/v1").unwrap();
-    let mut a = app_on(local, "local:big");
-    a.models = vec![
-        catalog_model(BackendTag::Local, "small"),
-        catalog_model(BackendTag::Local, "big"),
-    ];
-    assert_eq!(helper_of(&a), Some((BackendTag::Local, "big".into())));
-    a.current_model = None;
-    assert_eq!(helper_of(&a), Some((BackendTag::Local, "small".into())));
-
-    // A backend whose catalog no longer lists its cheap model uses the
-    // session's own model on that same backend.
-    let mut a = app_on(OpenRouter::openai_codex("k".into()), "codex:gpt-5.5");
-    a.models = vec![catalog_model(BackendTag::Codex, "gpt-5.5")];
-    assert_eq!(helper_of(&a), Some((BackendTag::Codex, "gpt-5.5".into())));
-    // ... and the cheap model again once the catalog lists it.
-    a.models
-        .push(catalog_model(BackendTag::Codex, "gpt-6-luna"));
-    assert_eq!(
-        helper_of(&a),
-        Some((BackendTag::Codex, "gpt-6-luna".into()))
-    );
-}
-
-#[test]
-fn auto_helper_moves_up_to_the_newest_listed_version_of_its_family() {
-    let mut a = app_on(OpenRouter::openai_codex("k".into()), "codex:gpt-5.5");
-    a.models = vec![
-        catalog_model(BackendTag::Codex, "gpt-5.5"),
-        catalog_model(BackendTag::Codex, "gpt-6-luna"),
-        catalog_model(BackendTag::Codex, "gpt-6.1-luna"),
-        // Other families and variants are not upgrades.
-        catalog_model(BackendTag::Codex, "gpt-6.2-sol"),
-        catalog_model(BackendTag::Codex, "gpt-6.9-luna-pro"),
-        // Another backend's newer luna is not this backend's.
-        catalog_model(BackendTag::OpenAi, "gpt-7-luna"),
-    ];
-    assert_eq!(
-        helper_of(&a),
-        Some((BackendTag::Codex, "gpt-6.1-luna".into()))
-    );
-    // Versions compare as numbers, not text.
-    a.models
-        .push(catalog_model(BackendTag::Codex, "gpt-6.10-luna"));
-    assert_eq!(
-        helper_of(&a),
-        Some((BackendTag::Codex, "gpt-6.10-luna".into()))
-    );
-    // Only the built-in floor listed: the floor.
-    a.models = vec![catalog_model(BackendTag::Codex, "gpt-6-luna")];
-    assert_eq!(
-        helper_of(&a),
-        Some((BackendTag::Codex, "gpt-6-luna".into()))
-    );
-    // A backend-prefixed OpenRouter id keeps its prefix.
-    let mut a = app_on(OpenRouter::openrouter_flavor("k".into()), "a/chat");
-    a.models = vec![
-        catalog_model(BackendTag::OpenRouter, "openai/gpt-6-luna"),
-        catalog_model(BackendTag::OpenRouter, "openai/gpt-6-luna:batch"),
-        catalog_model(BackendTag::OpenRouter, "openai/gpt-6.5-luna"),
-    ];
-    assert_eq!(
-        helper_of(&a),
-        Some((BackendTag::OpenRouter, "openai/gpt-6.5-luna".into()))
-    );
-}
-
-fn stored_pairs(rows: &[(&str, &str)]) -> Vec<(String, String)> {
-    rows.iter()
-        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
-        .collect()
-}
-
-#[test]
-fn a_chosen_memory_model_migrates_once_into_helper_model() {
-    let mut a = app_with_key();
-    a.db.set_setting("memory_model", "my/pinned-model").unwrap();
-    a.load_settings();
-    assert_eq!(a.helper_model, "my/pinned-model");
-    assert_eq!(
-        a.db.setting("helper_model").as_deref(),
-        Some("my/pinned-model")
-    );
-
-    // Once: a later pick is never overwritten by the stale legacy row.
-    a.helper_model = "other/model".into();
-    a.db.set_setting("helper_model", "other/model").unwrap();
-    a.load_settings();
-    assert_eq!(a.helper_model, "other/model");
-}
-
-#[test]
-fn legacy_memory_model_that_was_only_a_default_stays_auto() {
-    // Older builds wrote the backend default into memory_model the first
-    // time /config closed; that was never a choice.
-    for default in [
-        "google/gemini-2.5-flash-lite",
-        "openai:gpt-4.1-mini",
-        "gpt-4.1-mini",
-        "codex:gpt-5.6-luna",
-        "opencode:deepseek-v4-flash",
-        "",
-    ] {
-        assert_eq!(
-            settings::legacy_helper_model(&stored_pairs(&[("memory_model", default)])),
-            None,
-            "{default:?}"
-        );
-    }
-    assert_eq!(
-        settings::legacy_helper_model(&stored_pairs(&[("memory_model", "my/model")])),
-        Some("my/model".to_string())
-    );
-    // An existing helper_model always wins.
-    assert_eq!(
-        settings::legacy_helper_model(&stored_pairs(&[
-            ("memory_model", "my/model"),
-            ("helper_model", "newer/model"),
-        ])),
-        None
-    );
-    // An empty helper_model row (auto) does not block the migration.
-    assert_eq!(
-        settings::legacy_helper_model(&stored_pairs(&[
-            ("memory_model", "my/model"),
-            ("helper_model", ""),
-        ])),
-        Some("my/model".to_string())
-    );
 }
 
 #[test]
@@ -6207,10 +5980,9 @@ fn removed_model_settings_are_ignored_on_read_and_rejected_on_set() {
         a.db.set_setting(key, value).unwrap();
     }
     // Reading them (including a legacy blank embedding_model) must not crash
-    // or change anything but the one-time memory_model migration.
+    // or change anything.
     a.load_settings();
     assert_eq!(a.embedding_model, embedding_before);
-    assert_eq!(a.helper_model, "x/mem");
     let stored = a.db.load_settings().unwrap();
     for (key, value) in removed {
         assert!(
@@ -6225,12 +5997,7 @@ fn removed_model_settings_are_ignored_on_read_and_rejected_on_set() {
         assert!(error.contains(key) && error.contains("removed"), "{error}");
         assert!(is_removed_setting(key));
     }
-    assert_eq!(a.helper_model, "x/mem");
     assert_eq!(a.db.setting("ocr_model").as_deref(), Some("x/ocr"));
-    // The one model setting that replaced them is accepted.
-    a.set_setting("helper_model", "y/helper").unwrap();
-    assert_eq!(a.helper_model, "y/helper");
-    assert!(!is_removed_setting("helper_model"));
     // Unknown keys are still just unknown.
     assert!(
         !a.set_setting("nonsense", "1")
@@ -6241,7 +6008,7 @@ fn removed_model_settings_are_ignored_on_read_and_rejected_on_set() {
 }
 
 #[test]
-fn the_settings_popup_has_exactly_one_model_row() {
+fn the_settings_popup_has_no_model_rows() {
     let model_rows: Vec<_> = SETTINGS_GROUPS
         .iter()
         .flat_map(|group| group.fields)
@@ -6254,8 +6021,7 @@ fn the_settings_popup_has_exactly_one_model_row() {
                 .ends_with("model")
         })
         .collect();
-    assert!(model_rows == [&SettingsField::HelperModel]);
-    assert!(SettingsField::ALL.contains(&SettingsField::HelperModel));
+    assert!(model_rows.is_empty());
     assert_eq!(
         SettingsField::ALL
             .iter()
@@ -6266,7 +6032,7 @@ fn the_settings_popup_has_exactly_one_model_row() {
                 .unwrap_or("")
                 .ends_with("model"))
             .count(),
-        1
+        0
     );
     // Every field is reachable through a group.
     for field in SettingsField::ALL {

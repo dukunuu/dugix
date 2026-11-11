@@ -32,25 +32,6 @@ fn slots() -> &'static tokio::sync::Semaphore {
     SLOTS.get_or_init(|| tokio::sync::Semaphore::new(MAX_CONCURRENT))
 }
 
-/// The model a task runs on: `fast` (the backend's helper model) by default
-/// for read-only work, the session model for workspace edits or when asked.
-/// A fast model drops the session's reasoning effort, which it may not support.
-fn route(context: &Context, args: &Value, writable: bool) -> (String, ChatParams) {
-    let fast = args["model"]
-        .as_str()
-        .map_or(!writable, |model| model == "fast");
-    match context.params.subagent_fast_model.as_deref() {
-        Some(model) if fast => (
-            model.to_string(),
-            ChatParams {
-                reasoning_effort: None,
-                ..context.params.clone()
-            },
-        ),
-        _ => (context.model.clone(), context.params.clone()),
-    }
-}
-
 #[cfg(test)]
 mod tests;
 
@@ -265,7 +246,7 @@ pub(crate) async fn run(context: &Context, toolbox: &ToolBox, args: &Value) -> R
         toolbox.session_id.clone(),
         args["prompt"].as_str().expect("validated prompt").into(),
     )));
-    let (model, mut params) = route(context, args, writable);
+    let (model, mut params) = (context.model.clone(), context.params.clone());
     params.prompt_cache_key = params
         .prompt_cache_key
         .map(|key| format!("{key}:sub:{number}"));

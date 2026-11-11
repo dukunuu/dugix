@@ -79,9 +79,6 @@ pub struct SettingsSnapshot {
     pub top_p: Option<f32>,
     pub max_tokens: Option<u32>,
     pub compact_threshold: u8,
-    /// The helper model for background jobs; empty means auto.
-    #[serde(default)]
-    pub helper_model: String,
     pub blocked_domains: Vec<String>,
 }
 
@@ -193,7 +190,6 @@ impl App {
                 top_p: self.settings.top_p,
                 max_tokens: self.settings.max_tokens,
                 compact_threshold: self.settings.compact_threshold,
-                helper_model: self.helper_model.clone(),
                 blocked_domains: self.blocked_domains(),
             },
             tasks: self
@@ -260,7 +256,6 @@ mod tests {
                 top_p: None,
                 max_tokens: None,
                 compact_threshold: 60,
-                helper_model: String::new(),
                 blocked_domains: Vec::new(),
             },
             tasks: vec![TaskSnapshot {
@@ -277,7 +272,7 @@ mod tests {
         let json = serde_json::to_string(&snap).expect("snapshot serializes");
         assert_eq!(
             json,
-            r#"{"active_session_id":"s1","active_space_id":"sp1","active_space_name":"Default","sessions":[{"id":"s1","title":"hello","slug":"hello","model":"openrouter:anthropic/claude-sonnet-4","kind":"chat","created_at":"2025-01-01T00:00:00Z"}],"models":[{"id":"openrouter:anthropic/claude-sonnet-4","name":"Claude Sonnet 4","context_length":200000,"favorite":true}],"settings":{"show_stats":false,"show_reasoning":false,"hide_hints":false,"model":"openrouter:anthropic/claude-sonnet-4","verbosity":"high","incognito":false,"searxng_url":"","langsearch_configured":false,"search_provider":"searxng","temperature":0.7,"top_p":null,"max_tokens":null,"compact_threshold":60,"helper_model":"","blocked_domains":[]},"tasks":[{"id":1,"session_id":"s1","session_title":"hello","model":"openrouter:anthropic/claude-sonnet-4","backend":"OpenRouter","status":"streaming","buffer_chars":12,"buffer":""}]}"#
+            r#"{"active_session_id":"s1","active_space_id":"sp1","active_space_name":"Default","sessions":[{"id":"s1","title":"hello","slug":"hello","model":"openrouter:anthropic/claude-sonnet-4","kind":"chat","created_at":"2025-01-01T00:00:00Z"}],"models":[{"id":"openrouter:anthropic/claude-sonnet-4","name":"Claude Sonnet 4","context_length":200000,"favorite":true}],"settings":{"show_stats":false,"show_reasoning":false,"hide_hints":false,"model":"openrouter:anthropic/claude-sonnet-4","verbosity":"high","incognito":false,"searxng_url":"","langsearch_configured":false,"search_provider":"searxng","temperature":0.7,"top_p":null,"max_tokens":null,"compact_threshold":60,"blocked_domains":[]},"tasks":[{"id":1,"session_id":"s1","session_title":"hello","model":"openrouter:anthropic/claude-sonnet-4","backend":"OpenRouter","status":"streaming","buffer_chars":12,"buffer":""}]}"#
         );
         // The golden string must also parse back into the same shape.
         let back: CoreSnapshot = serde_json::from_str(&json).expect("golden parses");

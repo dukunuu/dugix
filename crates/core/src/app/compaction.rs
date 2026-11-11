@@ -127,8 +127,7 @@ impl App {
         self.start_compaction(pct);
     }
 
-    /// Kick off the background compaction job on the memory model (falling
-    /// back to the session model), same pattern as memory extraction.
+    /// Kick off the background compaction job on the session model.
     /// `before_pct` is only used to report the before/after status on completion.
     fn start_compaction(&mut self, before_pct: u64) {
         let (session_id, through, prior_summary) = {
@@ -150,27 +149,16 @@ impl App {
             return; // only the existing digest or excluded UI rows remain
         }
 
-        // The helper model summarizes (auto = a cheap model on the active
-        // backend). A picked id may belong to a backend that is no longer
-        // configured; it then resolves like auto does.
         let Some(session_model) = self.current_model.clone() else {
             self.push_status("pick a model first with /model".to_string());
             return;
         };
-        let Some((provider, raw_model)) = self.helper_backend() else {
+        let Some((provider, raw_model)) = self.session_backend() else {
             self.push_status(format!(
                 "model backend unavailable: {session_model} — pick another with /model"
             ));
             return;
         };
-        // The session's own model is the fallback when the helper model's
-        // backend rejects the request (an id from another backend, no credit).
-        let fallback =
-            self.resolve_model_backend(&session_model)
-                .filter(|(session_provider, session_raw)| {
-                    session_provider.backend_tag() != provider.backend_tag()
-                        || *session_raw != raw_model
-                });
         let new_through = end as i64;
         let prompt = compaction_prompt(
             prior_summary.as_deref(),
@@ -192,27 +180,20 @@ impl App {
                 prompt_cache_key: Some(prompt_cache_key),
                 ..ChatParams::default()
             };
-            let mut attempts = vec![(provider, raw_model)];
-            attempts.extend(fallback);
-            let mut errors = Vec::new();
-            for (provider, model) in attempts {
-                let provider = provider.logged(usage_log.clone(), "compaction");
-                match provider
-                    .complete_with_params(&model, msgs.clone(), &params)
-                    .await
-                {
-                    Ok(completion) if !completion.text.trim().is_empty() => {
-                        let summary = completion.text.trim().to_string();
-                        let _ = tx.send((session_id, summary, new_through, before_pct));
-                        return;
-                    }
-                    Ok(_) => errors.push(format!("{model}: empty digest")),
-                    Err(error) => {
-                        errors.push(format!("{model}: {}", first_line(&error.to_string())));
-                    }
+            let provider = provider.logged(usage_log, "compaction");
+            let error = match provider
+                .complete_with_params(&raw_model, msgs, &params)
+                .await
+            {
+                Ok(completion) if !completion.text.trim().is_empty() => {
+                    let summary = completion.text.trim().to_string();
+                    let _ = tx.send((session_id, summary, new_through, before_pct));
+                    return;
                 }
-            }
-            *error_slot.lock().expect("compaction error slot") = Some(errors.join(" · "));
+                Ok(_) => format!("{raw_model}: empty digest"),
+                Err(error) => format!("{raw_model}: {}", first_line(&error.to_string())),
+            };
+            *error_slot.lock().expect("compaction error slot") = Some(error);
         });
     }
 

@@ -143,7 +143,7 @@ agent on macOS and prints the activation command.
 - A modern terminal (truecolor recommended)
 - Extra tooling, all optional:
   - `tesseract` (with `poppler`) — local OCR for scanned PDFs and images; without
-    it the helper model reads them
+    it the session model reads them if it accepts images
   - `ffmpeg` — video transforms for `media`; with `ffprobe` and a local
     `whisper`, audio/video files get metadata and transcripts
   - `pandoc`, `libreoffice` (`soffice`), `antiword`/`catdoc` — richer reads of
@@ -182,44 +182,19 @@ the session backend's built-in search, DuckDuckGo, then Brave, continuing past
 errors and empty results. `/config` also offers explicit `exa` and `provider`
 choices; the LangSearch key and SearXNG URL are optional extras.
 
-The provider fallback stays on your session's backend and uses its auto helper
-model (upgraded to the newest listed version, or the session model if needed).
+The provider fallback uses your session's own model and backend.
 OpenRouter web search costs **$0.007 per request plus model tokens**; reported
-usage/cost is recorded with other helper calls. Codex uses your ChatGPT
+usage/cost is recorded with other background calls. Codex uses your ChatGPT
 subscription; OpenAI Responses web search is billed at OpenAI's search/tool
 and token rates. OpenCode Go and local runtimes have no built-in search and
 are skipped. Exa has no recency filter: when requested, the result header says
 it was not applied. HTML scrapers remain last-resort fallbacks and may return
 bot challenges.
 
-**One model setting.** `/config` has a single model row, the *helper model*
-(`helper_model` over the host settings API). It runs every background job that
-needs a model: `/memory tidy`, compaction summaries, image descriptions, vision OCR and
-the auto-approval judge. It starts on `auto` (Enter picks one, Backspace goes
-back to `auto`). Auto is a cheap model on the backend your session is using and
-never moves to another provider:
-
-| Active backend | Auto helper model |
-|---|---|
-| OpenRouter | `openai/gpt-6-luna` |
-| OpenAI | `gpt-6-luna` |
-| Codex | `gpt-6-luna` |
-| OpenCode Go | `gpt-6-luna` |
-| Local | your session's installed model (a local runtime has no cheap default) |
-
-These are floors: when the backend's live catalog lists a newer version of the
-same model (`gpt-6.1-luna`, `gpt-7-luna`), auto uses that instead, so it keeps
-up between nexus releases. When a backend's catalog lists neither, auto uses the
-session's own model there. Everything else is automatic: embeddings (local
-EmbeddingGemma 2 when Ollama has it, else the backend's embedding model, else
-keyword search), OCR (`tesseract` when installed, else the helper model's
-vision) and image/video generation (the active backend's default generation
-model; backends without one, such as Codex, have no `media` generation). The
-per-feature model settings of older builds (`memory_model`, `transcriber_model`,
-`ocr_model`, `ocr_engine`, `local_ocr_model`, `embedding_model`,
-`image_gen_model`, `video_gen_model`) are ignored if present and rejected by the
-settings API; a `memory_model` you had chosen carries over to `helper_model`
-once.
+Background jobs (titles, compaction, image descriptions, OCR, the approval
+judge, `/memory tidy`) run on the session's own model. Image descriptions and
+OCR need a session model that accepts images; otherwise they are skipped
+(tesseract still handles scanned PDFs when installed).
 
 ## Local inference (experimental)
 
@@ -414,8 +389,9 @@ Nexus no longer queues OCR or a vision caption for new images just to make them
 searchable. `Ctrl+F` in `/files` still runs OCR on a chosen file, and the
 `ocr_images` host setting (`true`/`false`, blank for automatic) overrides the
 default. Text extraction for reading and keyword search is unchanged. When OCR
-does run, scanned PDFs use `tesseract` if it is installed and the helper model's
-vision otherwise; images try `tesseract`, then the helper model describes them.
+does run, scanned PDFs use `tesseract` if it is installed and the session model's
+vision otherwise; images try `tesseract`, then the session model describes them
+if it accepts images.
 
 **Switching and updating.** Each vector records the model's identity: backend,
 model, weights digest, dimension, prefix scheme and preprocessing version.
@@ -644,7 +620,7 @@ Type `/` in the composer for autocomplete. Aliases in parentheses.
 | `/usage` (`analytics`, `costs`) | token/cache/cost analytics by backend & model (←/→ for 24h/7d/30d/all windows) |
 | `/compact` (`summarize`) | summarize old messages into a digest |
 | `/memory` (`remember`) | edit this space's memory in `$EDITOR`; `/memory tidy` asks the chat model to review and clean the memory with its own tool, in the conversation |
-| `/config` (`settings`, `stats`) | settings, footer toggles, sampling params, the helper model |
+| `/config` (`settings`, `stats`) | settings, footer toggles, sampling params |
 | `/export` (`save-report`) | write the research report + sources to a file |
 | `/incognito` | toggle no-persistence mode |
 | `/help` (`keys`, `shortcuts`; also `F1`) | keybinding + command reference |

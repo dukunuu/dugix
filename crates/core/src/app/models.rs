@@ -264,14 +264,12 @@ impl App {
         self.backends.resolve(id)
     }
 
-    /// The model every background job runs on: the picked `helper_model`, or
-    /// "auto" when it is blank. Auto is the cheap model of the backend the
-    /// session is on (`OpenRouter::default_helper_for`), or the session's own
-    /// model there when that backend has no cheap option. It never moves to
-    /// another backend on its own.
-    pub fn helper_backend(&self) -> Option<(OpenRouter, String)> {
-        self.resolve_utility_model_backend(&self.helper_model)
-            .map(|(p, model)| (self.usage_provider(p, "helper"), model))
+    /// The model background jobs run on: the session's own model. `None` when no model is selected.
+    pub fn session_backend(&self) -> Option<(OpenRouter, String)> {
+        self.current_model
+            .as_deref()
+            .and_then(|id| self.resolve_model_backend(id))
+            .map(|(p, model)| (self.usage_provider(p, "background"), model))
     }
 
     /// The default generation model of the active backend (`default` is
@@ -306,16 +304,6 @@ impl App {
                     .first()
                     .and_then(|tag| self.backends.get(*tag).cloned())
             })
-    }
-
-    /// Resolve a feature (non-session) model that may be a bare wire id or a
-    /// composite id. Feature models default to the session provider's
-    /// research-class default; a composite id picks its own backend.
-    pub fn resolve_utility_model_backend(
-        &self,
-        configured_id: &str,
-    ) -> Option<(OpenRouter, String)> {
-        self.resolve_feature_model_backend(configured_id, OpenRouter::default_utility_model)
     }
 
     /// Resolve a feature model by name for a backend that may not be
@@ -588,15 +576,14 @@ impl App {
     pub fn pick_model(&mut self, id: &str) -> Result<()> {
         match self.model_pick_target {
             ModelPickTarget::Session => {
-                if self.current_model.as_deref() != Some(id) {
+                let model_changed = self.current_model.as_deref() != Some(id);
+                if model_changed {
                     self.bump_cache_epoch();
                 }
-                let before = self.active_provider().map(|p| p.backend_tag());
                 self.current_model = Some(id.to_string());
-                let backend_changed = before != self.active_provider().map(|p| p.backend_tag());
-                if backend_changed && !self.is_streaming() {
-                    // Media generation and the helper model follow the
-                    // session's backend, so the toolbox is rebuilt for it.
+                if model_changed && !self.is_streaming() {
+                    // Background jobs follow the session's model, so the
+                    // toolbox is rebuilt for it.
                     self.refresh_toolbox();
                 }
                 if let Some(session) = &self.session {
@@ -611,11 +598,6 @@ impl App {
                     self.push_status("router models pick a model per request · prompt caching is less effective · compare with nexus eval --compare-model first");
                 }
             }
-            ModelPickTarget::Helper => {
-                self.helper_model = id.to_string();
-                self.db.set_setting("helper_model", id)?;
-                self.push_status(format!("helper model: {id}"));
-            }
             ModelPickTarget::SwarmPersona(row) => {
                 if let Some(p) = self.swarm_cache.get_mut(row) {
                     p.model = id.to_string();
@@ -627,35 +609,19 @@ impl App {
             }
         }
         if self.work_mode == super::WorkMode::AgentAuto
-            && matches!(
-                self.model_pick_target,
-                ModelPickTarget::Session | ModelPickTarget::Helper
-            )
+            && self.model_pick_target == ModelPickTarget::Session
         {
             self.refresh_toolbox();
         }
         Ok(())
     }
 
-    /// The popup a confirmed pick should return to, given the pick target —
-    /// view-layer helper (the picker opens from `/config` for feature models).
+    /// The popup a confirmed pick should return to, given the pick target.
     pub fn popup_after_pick(target: ModelPickTarget) -> Popup {
         match target {
             ModelPickTarget::Session => Popup::None,
-            ModelPickTarget::Helper => Popup::Settings,
             ModelPickTarget::SwarmPersona(_) => Popup::Swarm,
         }
-    }
-
-    /// Return the helper model to auto (Backspace on its row in `/config`).
-    pub fn clear_helper_model(&mut self) -> Result<()> {
-        self.helper_model.clear();
-        self.db.set_setting("helper_model", "")?;
-        self.push_status("helper model: auto".to_string());
-        if self.work_mode == super::WorkMode::AgentAuto {
-            self.refresh_toolbox();
-        }
-        Ok(())
     }
 
     /// `/login`: start the `OpenAI` Codex device-code login (the only backend
@@ -715,7 +681,7 @@ mod router_tests {
     fn router_note_is_once_per_run_and_only_for_session_selection() {
         for router in ["typesafe/jev-router", "openrouter/auto"] {
             let mut app = crate::app::tests::app_with_key();
-            app.model_pick_target = ModelPickTarget::Helper;
+            app.model_pick_target = ModelPickTarget::SwarmPersona(0);
             app.pick_model(router).unwrap();
             assert!(!app.router_note_shown);
             app.model_pick_target = ModelPickTarget::Session;

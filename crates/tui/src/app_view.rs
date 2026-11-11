@@ -881,7 +881,6 @@ impl AppView {
             | SettingsField::ShowStats
             | SettingsField::ShowReasoning
             | SettingsField::HideHints
-            | SettingsField::HelperModel
             | SettingsField::Verbosity
             | SettingsField::SearchProvider
             | SettingsField::ReplyStyle

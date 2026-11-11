@@ -77,13 +77,6 @@ pub fn render(f: &mut Frame, app: &AppView) {
             SettingsField::Temperature => numeric(&app.settings_inputs[0]),
             SettingsField::TopP => numeric(&app.settings_inputs[1]),
             SettingsField::MaxTokens => numeric(&app.settings_inputs[2]),
-            SettingsField::HelperModel => {
-                if app.helper_model.trim().is_empty() {
-                    Span::styled("auto", Style::default().fg(app.theme.accent))
-                } else {
-                    numeric(&app.helper_model)
-                }
-            }
             SettingsField::CompactThreshold => numeric(&app.settings_inputs[3]),
             SettingsField::SearxngUrl => numeric(&app.settings_inputs[4]),
             SettingsField::Verbosity => {
@@ -164,23 +157,6 @@ pub fn render(f: &mut Frame, app: &AppView) {
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
     use nexus_core::app::SettingsField;
-    // The helper model is picked, not typed: Enter opens the same model
-    // picker /model uses, Backspace returns it to auto.
-    if app.settings_field() == Some(SettingsField::HelperModel) {
-        match key.code {
-            KeyCode::Esc => app.save_settings()?,
-            KeyCode::Enter => app.open_model_picker_for_helper(),
-            KeyCode::Backspace => app.clear_helper_model()?,
-            KeyCode::Up => app.move_settings_selection(-1),
-            KeyCode::Down | KeyCode::Tab => app.move_settings_selection(1),
-            KeyCode::PageUp => app.move_settings_selection(-10),
-            KeyCode::PageDown => app.move_settings_selection(10),
-            KeyCode::Home => app.move_settings_selection(i32::MIN / 2),
-            KeyCode::End => app.move_settings_selection(i32::MAX / 2),
-            _ => {}
-        }
-        return Ok(());
-    }
     // The column width has no text to type: Enter, Space and the arrows
     // cycle it (← goes back), and it saves as it changes.
     if app.settings_field() == Some(SettingsField::ColumnWidth) {
@@ -192,7 +168,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
     }
     match key.code {
         // Enter on a group header toggles it; on a field it's a no-op here
-        // (fields with an Enter action are handled by the `picker` branch above).
+        // (fields with an Enter action are handled above).
         KeyCode::Enter if matches!(app.settings_row(), SettingsRow::Group(_)) => {
             app.toggle_settings_field();
         }

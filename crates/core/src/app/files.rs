@@ -36,7 +36,7 @@ pub enum OcrUpdate {
 /// Which service transcribes a rendered page image.
 #[derive(Clone)]
 pub enum OcrBackend {
-    /// A router-backed vision model: the helper model, for scanned PDFs
+    /// A router-backed vision model: the session model, for scanned PDFs
     /// (when tesseract is not installed) and for image files.
     Router(crate::provider::openrouter::OpenRouter, String),
 }
@@ -74,9 +74,9 @@ impl OcrBackend {
 }
 
 /// Scanned PDFs go through local tesseract when it is installed (free,
-/// private, no tokens); otherwise through the helper model's vision.
-fn pdf_ocr_backend(tesseract_installed: bool, helper: Option<OcrBackend>) -> Option<OcrBackend> {
-    if tesseract_installed { None } else { helper }
+/// private, no tokens); otherwise through the session model's vision.
+fn pdf_ocr_backend(tesseract_installed: bool, session: Option<OcrBackend>) -> Option<OcrBackend> {
+    if tesseract_installed { None } else { session }
 }
 
 /// A stem that looks like a UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).
@@ -292,7 +292,7 @@ async fn caption_image(
 }
 
 /// Read an image: tesseract first (free and local), then a vision-model
-/// caption from the helper model when OCR found little or nothing. Never
+/// caption from the session model when OCR found little or nothing. Never
 /// blocks indexing: the file is already searchable by name.
 async fn ocr_image_flow(
     backend: Option<&OcrBackend>,
@@ -333,7 +333,7 @@ async fn ocr_image_flow(
             Ok((text, Vec::new()))
         }
         None if local_missing => {
-            Err("image: install tesseract for ocr, or sign in to a backend so the helper model can describe it".to_string())
+            Err("image: install tesseract for ocr, or pick a session model that accepts images so it can describe it".to_string())
         }
         _ => Ok((local, Vec::new())),
     }
@@ -621,15 +621,17 @@ impl App {
         });
     }
 
-    /// The vision model that describes image files (pastes, generated media,
-    /// imports): the helper model. None = no backend is signed in.
+    /// The session model, when it accepts images.
     pub fn image_backend(&self) -> Option<OcrBackend> {
-        self.helper_backend()
+        if !self.current_model_supports_images() {
+            return None;
+        }
+        self.session_backend()
             .map(|(p, raw_model)| OcrBackend::Router(p, raw_model))
     }
 
     /// The vision backend scanned PDFs OCR through, or None for tesseract:
-    /// tesseract (with poppler) when installed, else the helper model's vision.
+    /// tesseract (with poppler) when installed, else the session model's vision.
     pub fn ocr_backend(&self) -> Option<OcrBackend> {
         pdf_ocr_backend(
             crate::extract::ExtractConfig::load().ocr_tools_installed(),
@@ -1190,11 +1192,24 @@ mod tests {
     fn openrouter_app() -> App {
         let root = std::env::temp_dir().join(format!("nexus-files-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
-        App::new(
+        let mut app = App::new(
             Db::open_in_memory().unwrap(),
             Some("sk-or-test"),
             Space { root },
-        )
+        );
+        app.current_model = Some("vision/model".into());
+        app.models = vec![crate::provider::Model {
+            id: "vision/model".into(),
+            name: "Vision model".into(),
+            reasoning_efforts: Vec::new(),
+            context_length: None,
+            supports_images: true,
+            supports_image_generation: false,
+            supports_video_generation: false,
+            backend: crate::provider::BackendTag::OpenRouter,
+            pricing: None,
+        }];
+        app
     }
 
     #[tokio::test]
@@ -1347,17 +1362,17 @@ mod tests {
     }
 
     #[test]
-    fn scanned_pdfs_use_tesseract_when_installed_else_the_helper_model() {
-        let helper = || {
+    fn scanned_pdfs_use_tesseract_when_installed_else_the_session_model() {
+        let session = || {
             Some(OcrBackend::Router(
                 crate::provider::openrouter::OpenRouter::openrouter_flavor("k".into()),
-                "helper/model".into(),
+                "session/model".into(),
             ))
         };
-        assert!(pdf_ocr_backend(true, helper()).is_none(), "tesseract wins");
+        assert!(pdf_ocr_backend(true, session()).is_none(), "tesseract wins");
         assert!(matches!(
-            pdf_ocr_backend(false, helper()),
-            Some(OcrBackend::Router(_, model)) if model == "helper/model"
+            pdf_ocr_backend(false, session()),
+            Some(OcrBackend::Router(_, model)) if model == "session/model"
         ));
         assert!(
             pdf_ocr_backend(false, None).is_none(),
@@ -1367,44 +1382,42 @@ mod tests {
 
     /// Tests never see the machine's tools (`ExtractConfig::load` is empty
     /// under `cargo test`), so tesseract counts as missing and the automatic
-    /// choice is the helper model's vision.
+    /// choice is the session model's vision.
     #[test]
-    fn ocr_backend_is_the_helper_model_when_tesseract_is_missing() {
+    fn ocr_backend_is_the_session_model_when_tesseract_is_missing() {
         let mut a = openrouter_app();
-        // Auto: the OpenRouter helper default.
-        match a.ocr_backend() {
-            Some(OcrBackend::Router(_, model)) => {
-                assert_eq!(model, "openai/gpt-6-luna");
-            }
-            _ => panic!("expected the auto helper model"),
-        }
-        // A picked helper model is the one that reads.
-        a.helper_model = "vision/model".to_string();
         match a.ocr_backend() {
             Some(OcrBackend::Router(_, model)) => assert_eq!(model, "vision/model"),
-            _ => panic!("expected the picked helper model"),
+            _ => panic!("expected the session model"),
         }
+        a.models[0].supports_images = false;
+        assert!(a.ocr_backend().is_none());
+        a.models[0].supports_images = true;
         // No signed-in backend: nothing to read with.
         a.backends = crate::app::Backends::default();
         assert!(a.ocr_backend().is_none());
         assert!(a.image_backend().is_none());
     }
 
-    /// Image files are described by the same helper model, picked or auto.
+    /// Image files are described only by a session model that accepts images.
     #[test]
-    fn image_backend_is_the_helper_model() {
+    fn image_backend_is_the_session_model_when_it_accepts_images() {
         let mut a = openrouter_app();
         match a.image_backend() {
-            Some(OcrBackend::Router(_, model)) => {
-                assert_eq!(model, "openai/gpt-6-luna");
+            Some(OcrBackend::Router(provider, model)) => {
+                assert_eq!(
+                    provider.backend_tag(),
+                    crate::provider::BackendTag::OpenRouter
+                );
+                assert_eq!(model, "vision/model");
             }
-            _ => panic!("expected the auto helper model"),
+            _ => panic!("expected the session model"),
         }
-        a.helper_model = "vision/model".to_string();
-        match a.image_backend() {
-            Some(OcrBackend::Router(_, model)) => assert_eq!(model, "vision/model"),
-            _ => panic!("expected the picked helper model"),
-        }
+        a.models[0].supports_images = false;
+        assert!(a.image_backend().is_none());
+        a.models[0].supports_images = true;
+        a.current_model = None;
+        assert!(a.image_backend().is_none());
     }
 
     #[test]

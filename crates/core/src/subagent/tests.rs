@@ -596,39 +596,3 @@ async fn task_schema_defaults_validation_and_agent_only_availability() {
     toolbox.workspace = None;
     assert!(toolbox.defs().iter().all(|tool| tool.name != "task"));
 }
-
-#[test]
-fn read_only_tasks_default_to_the_fast_model_and_workspace_tasks_to_the_session() {
-    let (events, _rx) = mpsc::unbounded_channel();
-    let with_fast = |fast: Option<&str>| Context {
-        provider: Fake::new(Vec::new()),
-        model: "session-model".into(),
-        params: ChatParams {
-            reasoning_effort: Some("xhigh".into()),
-            subagent_fast_model: fast.map(str::to_string),
-            ..ChatParams::default()
-        },
-        events: events.clone(),
-    };
-    let ctx = with_fast(Some("fast-model"));
-    let (model, params) = route(&ctx, &json!({}), false);
-    assert_eq!(model, "fast-model");
-    // The fast model may not support the session's reasoning effort.
-    assert_eq!(params.reasoning_effort, None);
-    assert_eq!(route(&ctx, &json!({}), true).0, "session-model");
-    assert_eq!(
-        route(&ctx, &json!({"model": "session"}), false).0,
-        "session-model"
-    );
-    let (model, params) = route(&ctx, &json!({"model": "session"}), false);
-    assert_eq!(
-        (model.as_str(), params.reasoning_effort.as_deref()),
-        ("session-model", Some("xhigh"))
-    );
-    assert_eq!(route(&ctx, &json!({"model": "fast"}), true).0, "fast-model");
-    // No helper on this backend: everything stays on the session model.
-    assert_eq!(
-        route(&with_fast(None), &json!({"model": "fast"}), false).0,
-        "session-model"
-    );
-}

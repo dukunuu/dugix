@@ -419,7 +419,7 @@ impl super::App {
             self.blocked_domains(),
             Some(self.space.db_path()),
         );
-        toolbox.search_backend = self.resolve_utility_model_backend("");
+        toolbox.search_backend = self.session_backend();
         toolbox.search_space_id.clone_from(&self.active_space.id);
         toolbox.session_id.clone_from(&session.id);
         toolbox.record_events = !self.incognito;

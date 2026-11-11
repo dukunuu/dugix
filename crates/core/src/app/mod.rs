@@ -538,14 +538,12 @@ impl CacheTally {
     }
 }
 
-/// What a confirmed model picker selection is for: the active session's model,
-/// the helper model in `/config`, or one row of the swarm roster.
+/// What a confirmed model picker selection is for: the active session's model
+/// or one row of the swarm roster.
 #[derive(PartialEq, Eq, Clone, Copy, Default)]
 pub enum ModelPickTarget {
     #[default]
     Session,
-    /// The helper model every background job uses (`/config`).
-    Helper,
     /// Picking the model for one row of the active session's `/swarm` roster.
     SwarmPersona(usize),
 }
@@ -560,7 +558,6 @@ pub enum SettingsField {
     Temperature,
     TopP,
     MaxTokens,
-    HelperModel,
     CompactThreshold,
     SearxngUrl,
     Verbosity,
@@ -573,7 +570,7 @@ pub enum SettingsField {
 }
 
 impl SettingsField {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 16] = [
         Self::RemoteImages,
         Self::ShowStats,
         Self::ShowReasoning,
@@ -581,7 +578,6 @@ impl SettingsField {
         Self::Temperature,
         Self::TopP,
         Self::MaxTokens,
-        Self::HelperModel,
         Self::CompactThreshold,
         Self::SearxngUrl,
         Self::Verbosity,
@@ -609,9 +605,6 @@ impl SettingsField {
             Self::Temperature => "temperature",
             Self::TopP => "top_p",
             Self::MaxTokens => "max_tokens",
-            Self::HelperModel => {
-                "helper model (Enter to pick, Backspace for auto; auto = a cheap model on your active backend, for memory, summaries and image reading)"
-            }
             Self::CompactThreshold => "auto-compact at (% of context, 0 disables)",
             Self::SearxngUrl => "optional SearXNG URL (auto search needs no setup)",
             Self::Verbosity => "answer length (Space cycles normal/concise/caveman)",
@@ -626,7 +619,7 @@ impl SettingsField {
 
 /// A functional group of settings fields, shown as a collapsible section in
 /// the nerd-config popup — grouped by what part of the pipeline the fields
-/// configure (chat display, sampling, the helper model and context, web
+/// configure (chat display, sampling, context, web
 /// search, or reply layout), not by widget type.
 pub struct SettingsGroup {
     pub name: &'static str,
@@ -652,8 +645,8 @@ pub const SETTINGS_GROUPS: &[SettingsGroup] = &[
         ],
     },
     SettingsGroup {
-        name: "Helper & Context",
-        fields: &[SettingsField::HelperModel, SettingsField::CompactThreshold],
+        name: "Context",
+        fields: &[SettingsField::CompactThreshold],
     },
     SettingsGroup {
         name: "Web Search",
@@ -1058,11 +1051,6 @@ pub struct App {
 
     /// The space the current/next session belongs to.
     pub active_space: SpaceRow,
-    /// The one model every background job uses: memory extraction,
-    /// compaction summaries, image descriptions, vision OCR, the
-    /// auto-approval judge. Empty = auto, a cheap model on the active
-    /// backend (`App::helper_backend`); never switches backends silently.
-    pub helper_model: String,
     /// The memory table of contents captured when the active session/cache
     /// epoch began; facts saved mid-session appear in the next one.
     pub(crate) memory_snapshot: String,
@@ -1511,7 +1499,6 @@ impl App {
             usage_range: crate::db::UsageRange::default(),
             harness: None,
             active_space,
-            helper_model: String::new(),
             memory_snapshot: String::new(),
             memory_docs: Vec::new(),
             memory_tidy_due: 0,
@@ -1944,15 +1931,8 @@ impl App {
         let Ok(kv) = self.db.load_settings() else {
             return;
         };
-        let legacy = settings::legacy_helper_model(&kv);
         for (k, v) in kv {
             self.apply_setting(&k, &v);
-        }
-        if let Some(model) = legacy {
-            // One-time migration: a deliberately chosen `memory_model` becomes
-            // the helper model. Persisting it makes this a no-op next boot.
-            self.helper_model.clone_from(&model);
-            let _ = self.db.set_setting("helper_model", &model);
         }
         self.refresh_toolbox();
     }
@@ -1972,11 +1952,6 @@ impl App {
             "temperature" => self.settings.temperature = v.parse().ok(),
             "top_p" => self.settings.top_p = v.parse().ok(),
             "max_tokens" => self.settings.max_tokens = v.parse().ok(),
-            // Empty = auto. Rows for the removed per-feature model settings
-            // (see `settings::is_removed_setting`) fall through to `_`:
-            // other devices' sync data may still carry them, and they are
-            // ignored, never deleted.
-            "helper_model" => self.helper_model = v.trim().to_string(),
             "ocr_images" => {
                 self.ocr_images = match v {
                     "true" => Some(true),
@@ -2054,7 +2029,7 @@ impl App {
                 })],
                 ModelDecider::Llm => {
                     let backend = self
-                        .helper_backend()
+                        .session_backend()
                         .map(|(p, m)| (p.usage_kind("decider"), m));
                     vec![Arc::new(LlmDecider { backend, context })]
                 }
@@ -2139,7 +2114,7 @@ impl App {
         {
             toolbox = toolbox.with_research_session(session_id);
         }
-        toolbox.search_backend = self.resolve_utility_model_backend("");
+        toolbox.search_backend = self.session_backend();
         toolbox.search_space_id.clone_from(&self.active_space.id);
         toolbox.image_gen_backend = self.generation_backend(OpenRouter::default_image_gen_model);
         toolbox.video_gen_backend = self.generation_backend(OpenRouter::default_video_gen_model);
@@ -3020,7 +2995,7 @@ mod model_decider_tests {
     }
 
     #[tokio::test]
-    async fn llm_wiring_follows_utility_and_session_model_changes() {
+    async fn llm_wiring_follows_session_model_changes() {
         let body = serde_json::json!({"choices": [{"message": {"content":
             r#"{"calls":[{"id":"c0","in_scope":0.99,"risk":1}]}"#
         }}]});
@@ -3038,23 +3013,21 @@ mod model_decider_tests {
             model.backend = BackendTag::Local;
         }
         app.current_model = Some("local:session".into());
-        app.helper_model.clear();
         app.work_mode = WorkMode::AgentAuto;
         app.incognito = true;
         app.workspace = Some(Arc::new(
             crate::workspace::Workspace::open(&root, Vec::new()).unwrap(),
         ));
         app.refresh_toolbox();
-        app.model_pick_target = ModelPickTarget::Helper;
+        app.model_pick_target = ModelPickTarget::Session;
         app.pick_model("local:utility").unwrap();
         for path in ["one", "two", "three"] {
             let args = serde_json::json!({"action": "write", "path": path, "content": "ok"});
             let (result, _) = app.toolbox.run("fs", &args.to_string()).await;
             assert!(result.starts_with("wrote "), "{result}");
             if path == "one" {
-                app.clear_helper_model().unwrap();
+                app.pick_model("local:session").unwrap();
             } else if path == "two" {
-                app.model_pick_target = ModelPickTarget::Session;
                 app.pick_model("local:utility").unwrap();
             }
         }

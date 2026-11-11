@@ -533,7 +533,7 @@ async fn exa_highlights_are_capped_and_optional_langsearch_credentials_stay_out_
 }
 
 #[test]
-fn auto_search_helper_resolution_stays_on_the_session_even_with_another_picked_helper() {
+fn search_backend_is_the_session_model() {
     let root = std::env::temp_dir().join(format!("nexus-search-helper-{}", uuid::Uuid::new_v4()));
     let mut app = crate::app::App::new(
         crate::db::Db::open_in_memory().unwrap(),
@@ -547,7 +547,6 @@ fn auto_search_helper_resolution_stays_on_the_session_even_with_another_picked_h
     app.backends
         .set(BackendTag::OpenAi, OpenRouter::openai("fixture-ai".into()));
     app.current_model = Some("openai:gpt-chat".into());
-    app.helper_model = "other/provider-model".into();
     app.models = ["gpt-chat", "gpt-6-luna", "gpt-6.1-luna"]
         .into_iter()
         .map(|id| crate::provider::Model {
@@ -562,11 +561,11 @@ fn auto_search_helper_resolution_stays_on_the_session_even_with_another_picked_h
             pricing: None,
         })
         .collect();
-    let (provider, model) = app.resolve_utility_model_backend("").unwrap();
+    let (provider, model) = app.session_backend().unwrap();
     assert_eq!(provider.backend_tag(), BackendTag::OpenAi);
-    assert_eq!(model, "gpt-6.1-luna");
+    assert_eq!(model, "gpt-chat");
     app.models.retain(|m| m.id == "gpt-chat");
-    let (provider, model) = app.resolve_utility_model_backend("").unwrap();
+    let (provider, model) = app.session_backend().unwrap();
     assert_eq!(provider.backend_tag(), BackendTag::OpenAi);
     assert_eq!(model, "gpt-chat");
     drop(app);

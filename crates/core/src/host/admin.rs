@@ -285,7 +285,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_api_accepts_helper_model_and_rejects_removed_model_keys() {
+    fn settings_api_rejects_removed_model_keys() {
         let root = std::env::temp_dir().join(format!("nexus-admin-{}", uuid::Uuid::new_v4()));
         let mut app = App::new(
             crate::db::Db::open_in_memory().unwrap(),
@@ -301,11 +301,9 @@ mod tests {
             dispatch(app, state, "PUT", "/v1/settings", "", &body)
         };
 
-        put(&mut app, &mut state, "helper_model", " some/model ").unwrap();
-        assert_eq!(app.helper_model, "some/model");
         let settings = dispatch(&mut app, &mut state, "GET", "/v1/settings", "", b"").unwrap();
-        assert_eq!(settings["helper_model"], "some/model");
         for removed in [
+            "helper_model",
             "memory_model",
             "transcriber_model",
             "ocr_model",

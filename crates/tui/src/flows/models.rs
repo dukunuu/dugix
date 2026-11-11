@@ -46,13 +46,6 @@ impl AppView {
         self.open_model_picker_impl();
     }
 
-    /// Open the same model picker, but a confirmed pick sets the helper model
-    /// (in `/config`) instead of the active session's model.
-    pub fn open_model_picker_for_helper(&mut self) {
-        self.core.model_pick_target = ModelPickTarget::Helper;
-        self.open_model_picker_impl();
-    }
-
     /// Open the same model picker, but a confirmed pick sets the model for
     /// one row of the active session's `/swarm` roster.
     pub fn open_model_picker_for_swarm_persona(&mut self, row: usize) {
@@ -732,28 +725,6 @@ mod tests {
         a.fav_selected = 0;
         a.toggle_favorite_focused().unwrap();
         assert!(!a.favorites.contains("a/one"));
-    }
-
-    #[test]
-    fn picking_helper_model_sets_it_and_returns_to_settings() {
-        let mut a = test_app();
-        let original_model = a.current_model.clone();
-        a.open_model_picker_for_helper();
-        assert_eq!(a.popup, Popup::Model);
-        assert!(a.model_pick_target == ModelPickTarget::Helper);
-
-        a.pick_model_at(ModelPanel::Available, 0).unwrap();
-        assert_eq!(a.helper_model, "a/one");
-        assert_eq!(a.popup, Popup::Settings); // back to /config, not closed
-        assert_eq!(a.current_model, original_model); // session model untouched
-        assert_eq!(
-            a.db.load_settings()
-                .unwrap()
-                .iter()
-                .find(|(k, _)| k == "helper_model")
-                .map(|(_, v)| v.clone()),
-            Some("a/one".to_string())
-        );
     }
 
     #[test]
