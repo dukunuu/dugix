@@ -163,10 +163,9 @@ pub(super) async fn run(
 }
 
 pub(crate) async fn event(app: &mut App, event: &crate::app::ResearchMsg) {
-    if let (session, _, _, ResearchUpdate::Done(result)) = event {
-        if let Err(error) = completed(app, session, result).await {
-            app.push_status(format!("could not finish research job: {error}"));
-        }
-        app.research_job_lock = None;
+    if let (session, _, _, ResearchUpdate::Done(result)) = event
+        && let Err(error) = completed(app, session, result).await
+    {
+        app.push_status(format!("could not finish research job: {error}"));
     }
 }

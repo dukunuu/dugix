@@ -92,30 +92,6 @@ impl super::App {
         Ok(existed)
     }
 
-    /// Startup hook: re-run every due watch (across all spaces) in the
-    /// background, ungated. Best-effort — a watch whose research job can't
-    /// start (e.g. no model configured) is silently skipped; it'll be
-    /// retried on the next app open since `last_run_at` isn't touched.
-    pub fn run_due_watches(&mut self) {
-        let Ok(lock) = crate::jobs::DaemonLock::acquire(&self.space.root) else {
-            return;
-        };
-        let Ok(all) = self.db.list_jobs() else {
-            return;
-        };
-        let Ok(device) = self.db.device_id() else {
-            return;
-        };
-        for job in crate::jobs::due(&all, chrono::Utc::now(), &device) {
-            if job.spec.kind == "research"
-                && self.run_one_watch(&crate::jobs::research::watch(&job))
-            {
-                self.research_job_lock = Some(lock);
-                break;
-            }
-        }
-    }
-
     /// Start one watch's research job (due or not — `nexus watch run <id>`
     /// force-runs). A watch may belong to a space other than whatever's
     /// currently active — `start_research_with_gate` reads `self.active_space`
@@ -182,7 +158,7 @@ impl super::App {
     /// means "no diff section". Takes the report's own `space_id` rather than
     /// reading `self.active_space`: this runs from `on_research_done`, which
     /// fires asynchronously and may land well after the user (or
-    /// `run_due_watches`, which restores it right after spawning the job) has
+    /// the caller, which restores it right after spawning the job) has
     /// switched the active space away from the one this job actually ran in.
     pub fn previous_citations_for_watch_session(
         &self,
@@ -239,8 +215,16 @@ mod tests {
         App::new(db, Some("k"), space)
     }
 
+    fn watch_row(a: &App, id: &str) -> crate::db::Watch {
+        a.db.list_all_watches()
+            .unwrap()
+            .into_iter()
+            .find(|w| w.id == id)
+            .unwrap()
+    }
+
     #[tokio::test]
-    async fn run_due_watches_repoints_the_watch_at_its_new_session() {
+    async fn a_watch_run_repoints_the_watch_at_its_new_session() {
         let mut a = test_app();
         a.current_model = Some("openai/gpt-5-mini".to_string());
         let space_id = a.active_space.id.clone();
@@ -253,7 +237,7 @@ mod tests {
             a.db.create_watch(&space_id, "rust async runtimes", 24, &first_session.id)
                 .unwrap();
 
-        a.run_due_watches();
+        assert!(a.run_one_watch(&watch_row(&a, &watch_id)));
 
         let updated =
             a.db.list_all_watches()
@@ -263,14 +247,14 @@ mod tests {
                 .unwrap();
         assert_ne!(
             updated.session_id, first_session.id,
-            "run_due_watches should repoint the watch at the session its re-run actually used, \
+            "a watch run should repoint the watch at the session its re-run actually used, \
              not leave it pinned to the first run's session forever"
         );
         assert!(updated.last_run_at.is_some());
     }
 
     #[tokio::test]
-    async fn run_due_watches_only_touches_the_watch_whose_job_actually_started() {
+    async fn a_watch_run_only_touches_the_watch_whose_job_actually_started() {
         let mut a = test_app();
         a.current_model = Some("openai/gpt-5-mini".to_string());
         let space_id = a.active_space.id.clone();
@@ -289,13 +273,12 @@ mod tests {
                 .unwrap();
 
         // Only one research job can run at a time — the pipeline's guard
-        // (`research_rx.is_some()`) fires for the 2nd+ watch in this
-        // synchronous startup loop, since nothing clears `research_rx` until
-        // a background job later completes. So watch_a's run actually
-        // starts (fresh session, repointed + touched); watch_b's call is a
-        // no-op (guard fires) and must be left exactly as it was — still due
-        // — for the next startup.
-        a.run_due_watches();
+        // (`research_rx.is_some()`) fires for a second watch while the first
+        // job runs. So watch_a's run actually starts (fresh session,
+        // repointed + touched); watch_b's call is a no-op and must be left
+        // exactly as it was — still due — for the next run.
+        assert!(a.run_one_watch(&watch_row(&a, &watch_a)));
+        assert!(!a.run_one_watch(&watch_row(&a, &watch_b)));
 
         let updated_a =
             a.db.list_all_watches()

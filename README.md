@@ -111,7 +111,7 @@ JSON-RPC 2.0 envelope, for example
 `{"jsonrpc":"2.0","id":1,"method":"tools/run","params":{"name":"read_file","arguments":{...}}}`.
 Sync clients POST metadata first, then upload/download each manifest blob by
 `space_id`, `name`, and `hash`. The host token is generated once and stored in
-`~/.config/nexus-chat/config.toml` as `[provider].host_token`; provider API
+`config.toml` (see [Configuration](#configuration)) as `[provider].host_token`; provider API
 keys remain on the machine and are never sent to clients.
 
 ```sh
@@ -173,12 +173,15 @@ model) and `mistral-vibe-cli-fast` (a faster, lighter one); they're listed under
 `mistral:` alongside the rest of Mistral's tool-calling catalog. Other models
 bill as pay-as-you-go on the same key. A console key works the same way.
 
-| What | Where |
-|---|---|
-| credentials & settings | `~/.config/nexus-chat/config.toml` |
-| system prompt overrides | `~/.config/nexus-chat/system_prompt.md` |
-| custom banner | `~/.config/nexus-chat/banner.txt` |
-| spaces (db, files, scripts, apps, media) | `~/.local/share/nexus-chat/spaces/<space>/` |
+| What | macOS | Linux |
+|---|---|---|
+| credentials & settings | `~/Library/Application Support/nexus-chat/config.toml` | `~/.config/nexus-chat/config.toml` |
+| system prompt overrides | `…/nexus-chat/system_prompt.md` (same folder) | `~/.config/nexus-chat/system_prompt.md` |
+| custom banner | `…/nexus-chat/banner.txt` (same folder) | `~/.config/nexus-chat/banner.txt` |
+| database (`nexus.db`, `cache.db`) | `~/Library/Application Support/nexus-chat/` | `~/.local/share/nexus-chat/` |
+| spaces (files, scripts, apps, media) | `…/nexus-chat/spaces/<space>/` | `~/.local/share/nexus-chat/spaces/<space>/` |
+
+`nexus status` prints the folders this machine uses.
 
 ### Web search: zero setup
 
@@ -205,7 +208,7 @@ run on the session's own model.
 Pick a runtime from inside the TUI with `/local` (also the last row of
 `/login`), or name one directly: `/ollama`, `/llama-cpp`, `/mlx`, `/mlx-serve`,
 `/lmstudio`, `/edge0`, `/local mlx-serve http://localhost:11234/v1`, `/local off`. Either way the choice is
-written to `~/.config/nexus-chat/config.toml` and the catalog reloads
+written to `config.toml` and the catalog reloads
 immediately — no restart.
 
 The same block can be written by hand:
@@ -436,7 +439,7 @@ Chat search is available in chat and agent mode, never in research searcher tool
   the **Library**, so it opens in studio to edit, comment on and export
 - **Swarm** (`/swarm`): a moderator-conducted multi-persona roundtable that
   iterates toward consensus
-- **Watches** (`/watch`): standing research jobs that re-run daily
+- **Watches** (`/watch`): standing research jobs that re-run daily (`nexus jobs daemon`, or `nexus watch run` from cron)
 - **Spaces**: per-project context (instructions, memory, imported files,
   scripts, apps) with embeddings-backed semantic file search
 - **Memory**: a book per space — chapters of short facts the model saves with

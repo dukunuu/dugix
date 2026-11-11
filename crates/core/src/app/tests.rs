@@ -1843,7 +1843,7 @@ async fn update_check_notifies_only_for_newer_versions() {
     // Newer published version -> status + notification.
     a.on_update_check(Some("99.0.0".into()));
     let (_, status) = a.drain_ui_events();
-    assert!(status.contains("update available"));
+    assert!(status.contains("run `nexus update`"));
     assert_eq!(a.notifications.len(), 1);
     // Same/older version or a failed check -> silent.
     a.on_update_check(Some("0.0.1".into()));

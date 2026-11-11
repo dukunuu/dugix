@@ -285,7 +285,8 @@ fn restrict_to_owner(path: &std::path::Path) {
 #[cfg(not(unix))]
 fn restrict_to_owner(_path: &std::path::Path) {}
 
-/// XDG dirs for the app: `~/.config/nexus-chat` and `~/.local/share/nexus-chat`.
+/// The app's dirs: `~/.config/nexus-chat` and `~/.local/share/nexus-chat` on
+/// Linux, both `~/Library/Application Support/nexus-chat` on macOS.
 pub fn project_dirs() -> Result<ProjectDirs> {
     ProjectDirs::from("", "", "nexus-chat").context("could not resolve home directory")
 }
@@ -295,7 +296,7 @@ pub fn config_path() -> Result<PathBuf> {
 }
 
 /// Optional custom start-screen banner: paste any ASCII art into
-/// `~/.config/nexus-chat/banner.txt` and it replaces the built-in one.
+/// `banner.txt` in the config dir and it replaces the built-in one.
 pub fn load_banner() -> Option<String> {
     let path = project_dirs().ok()?.config_dir().join("banner.txt");
     let art = std::fs::read_to_string(path).ok()?;

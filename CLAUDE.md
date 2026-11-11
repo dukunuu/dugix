@@ -116,7 +116,7 @@ Assembled prompts and tool definitions are snapshotted in crates/core/tests/fixt
 
 ## Secrets and agent tooling
 
-Keys come from `~/.config/nexus-chat/config.toml` or `OPENROUTER_API_KEY` /
+Keys come from `config.toml` (`~/.config/nexus-chat/` on Linux, `~/Library/Application Support/nexus-chat/` on macOS) or `OPENROUTER_API_KEY` /
 `OPENAI_API_KEY` / `OPENCODE_API_KEY` / `MISTRAL_API_KEY` — never hardcoded, never in snapshots,
 events, or app URLs (registered app UUIDs are the public capability; the host
 bearer token is not). `.claude/`, `.superpowers/`, and `.pi-subagents/` are

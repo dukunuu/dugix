@@ -47,7 +47,7 @@ code that fails `cargo clippy -- -D warnings -W clippy::pedantic`.**
   detail. Examples from history: `feat:`, `fix:`, `design:`, `docs:`,
   `style:`, `refactor:`, `test:`, `chore:`, `build:`, `license:`. One logical
   change per commit; run `scripts/check.sh` before committing.
-- **Secrets**: API keys come from `~/.config/nexus-chat/config.toml` or env
+- **Secrets**: API keys come from `config.toml` in the config dir (`nexus status` prints it) or env
   vars (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `OPENCODE_API_KEY`,
   `MISTRAL_API_KEY`). Never
   hardcode or commit keys.

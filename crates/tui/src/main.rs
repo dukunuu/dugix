@@ -119,8 +119,7 @@ async fn main() -> Result<()> {
             }
         }
     }
-    app.spawn_update_check(); // once a day: is a newer release out? — auto-installs it in the background
-    app.run_due_watches(); // re-run any standing research watches that are due
+    app.spawn_update_check(); // once a day: is a newer release out? Says so; never installs
     let result = events::run(app, &mut terminal, selection_requests).await;
     // Unix drops the socket and aborts the accept task here; elsewhere
     // `SelectionServer` is a stub with nothing to release.

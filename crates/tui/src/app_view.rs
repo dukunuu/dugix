@@ -186,7 +186,7 @@ pub(crate) fn image_lines(
     lines
 }
 
-/// Built-in start-screen banner (override with `~/.config/nexus-chat/banner.txt`).
+/// Built-in start-screen banner (override with `banner.txt` in the config dir).
 const BANNER: &str = r"
 ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗
 ████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝
