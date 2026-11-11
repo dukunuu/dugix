@@ -181,7 +181,7 @@ impl ToolBox {
                     BackendTag::OpenRouter => "OpenRouter web search",
                     BackendTag::Codex => "Codex web search",
                     BackendTag::OpenAi => "OpenAI web search",
-                    BackendTag::OpencodeGo | BackendTag::Local => {
+                    BackendTag::OpencodeGo | BackendTag::Mistral | BackendTag::Local => {
                         anyhow::bail!("session provider has no built-in web search")
                     }
                 });

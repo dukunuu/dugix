@@ -83,7 +83,10 @@ impl State {
                 }));
             }
         } else {
-            if !matches!(input.backend.as_str(), "openai" | "openrouter" | "opencode") {
+            if !matches!(
+                input.backend.as_str(),
+                "openai" | "openrouter" | "opencode" | "mistral"
+            ) {
                 bail!("unknown backend");
             }
             let key = input.key.trim();
@@ -95,6 +98,7 @@ impl State {
             match input.backend.as_str() {
                 "openai" => app.saved.openai_key = Some(key.into()),
                 "openrouter" => app.saved.openrouter_key = Some(key.into()),
+                "mistral" => app.saved.mistral_key = Some(key.into()),
                 _ => app.saved.opencode_key = Some(key.into()),
             }
             app.rebuild_all_backends();

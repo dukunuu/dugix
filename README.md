@@ -163,8 +163,15 @@ Add your own converter per extension or MIME type in `config.toml`:
 ### Configuration
 
 Keys come from the config file or env (`OPENROUTER_API_KEY`,
-`OPENAI_API_KEY`, `OPENCODE_API_KEY`), or `/login` in-app. On first launch a
-key is enough; models are fetched from the catalogs.
+`OPENAI_API_KEY`, `OPENCODE_API_KEY`, `MISTRAL_API_KEY`), or `/login` in-app. On
+first launch a key is enough; models are fetched from the catalogs.
+
+**Mistral Vibe plan.** Create a key under *Code > Vibe CLI* in Le Chat and pick
+*Mistral Vibe* in `/login` (or `nexus login mistral <key>`). The plan's budget
+meters the Vibe CLI's model names, `mistral-vibe-cli-latest` (the main coding
+model) and `mistral-vibe-cli-fast` (a faster, lighter one); they're listed under
+`mistral:` alongside the rest of Mistral's tool-calling catalog. Other models
+bill as pay-as-you-go on the same key. A console key works the same way.
 
 | What | Where |
 |---|---|
@@ -185,8 +192,8 @@ The provider fallback uses your session's own model and backend.
 OpenRouter web search costs **$0.007 per request plus model tokens**; reported
 usage/cost is recorded with other background calls. Codex uses your ChatGPT
 subscription; OpenAI Responses web search is billed at OpenAI's search/tool
-and token rates. OpenCode Go and local runtimes have no built-in search and
-are skipped. Exa has no recency filter: when requested, the result header says
+and token rates. OpenCode Go, Mistral and local runtimes have no built-in
+search and are skipped. Exa has no recency filter: when requested, the result header says
 it was not applied. HTML scrapers remain last-resort fallbacks and may return
 bot challenges.
 
@@ -368,7 +375,7 @@ the runtime is Ollama) and has one of those two tags installed, Nexus uses it
 (`embeddinggemma-2:270m` is preferred). Otherwise it uses the signed-in
 backend's own embedding model (OpenRouter uses `google/gemini-embedding-2` to
 embed text and image files directly; OpenAI uses text-only `text-embedding-3-small`),
-and where the backend has none (Codex, OpenCode Go) search is keyword-only. `/files` shows
+and where the backend has none (Codex, OpenCode Go, Mistral) search is keyword-only. `/files` shows
 which. A `local:` choice never falls back to a cloud embedder; if Ollama is
 down, search degrades to keywords with the reason, and `/files` shows
 `embeddings: not reachable — is `ollama serve` running?`.
@@ -420,7 +427,7 @@ Chat search is available in chat and agent mode, never in research searcher tool
 ## Features
 
 - **Chat** over any configured backend: OpenRouter, OpenAI, OpenCode Zen/Go,
-  and Codex — one merged model list, per-model reasoning-effort control
+  Codex, and Mistral (Vibe plan) — one merged model list, per-model reasoning-effort control
 - **Deep research** (`/research <topic>`): a conversational scoping survey →
   a plan of questions with why/angles/sources briefs → parallel searcher
   agents → synthesis → critic → verifier → writer, with a live activity view

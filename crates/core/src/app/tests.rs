@@ -5951,6 +5951,11 @@ fn background_jobs_use_the_session_model() {
             "local:big",
             "big",
         ),
+        (
+            OpenRouter::mistral("k".into()),
+            "mistral:mistral-vibe-cli-latest",
+            "mistral-vibe-cli-latest",
+        ),
     ] {
         let tag = provider.backend_tag();
         let mut a = app_on(provider, chat);

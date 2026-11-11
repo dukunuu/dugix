@@ -275,13 +275,13 @@ pub enum Command {
     },
     /// Fetch and list the model catalogs (network).
     Models {
-        /// Only this backend's models (openrouter / openai / opencode / codex).
+        /// Only this backend's models (openrouter / openai / opencode / codex / mistral).
         #[arg(long)]
         backend: Option<String>,
     },
     /// Save a provider API key to the config file.
     Login {
-        /// openrouter, openai, or opencode.
+        /// openrouter, openai, opencode, or mistral (a Vibe plan key).
         provider: String,
         /// The API key.
         key: String,
@@ -2736,7 +2736,7 @@ async fn models(backend: Option<&str>) -> Result<()> {
         .models
         .iter()
         .filter(|m| {
-            // Match the CLI spelling (openrouter/openai/opencode/codex) or
+            // Match the CLI spelling (openrouter/openai/opencode/codex/mistral) or
             // the catalog display name ("OpenRouter", …), case-insensitive.
             let prefix = m.backend.key_prefix().trim_end_matches(':');
             backend.is_none_or(|b| {
@@ -2779,19 +2779,31 @@ async fn login(provider: &str, key: &str, check: bool) -> Result<()> {
     if key.is_empty() {
         bail!("empty key");
     }
-    if !matches!(provider, "openrouter" | "openai" | "opencode") {
-        bail!("unknown provider {provider:?} — use openrouter, openai, or opencode");
+    if !matches!(provider, "openrouter" | "openai" | "opencode" | "mistral") {
+        bail!("unknown provider {provider:?} — use openrouter, openai, opencode, or mistral");
     }
     config::save_provider_key(provider, key)?;
     out(format!("saved {provider} key"));
     if check {
-        let client = OpenRouter::from_key_auto(key.to_string());
+        let client = client_for(provider, key);
         match client.list_models().await {
             Ok(_) => out("key check: ok"),
             Err(e) => bail!("key check failed: {e}"),
         }
     }
     Ok(())
+}
+
+/// The client for a key saved under `provider`. Keys other than
+/// `OpenRouter`'s carry no telling prefix, so the slot decides the backend.
+fn client_for(provider: &str, key: &str) -> OpenRouter {
+    let key = key.to_string();
+    match provider {
+        "openai" => OpenRouter::openai(key),
+        "opencode" => OpenRouter::opencode_go(key),
+        "mistral" => OpenRouter::mistral(key),
+        _ => OpenRouter::from_key_auto(key),
+    }
 }
 
 async fn skills(cmd: SkillsCmd) -> Result<()> {
@@ -3562,11 +3574,12 @@ fn status() -> Result<()> {
     out(format!("device id: {}", db.device_id()?));
     let mark = |on: bool| if on { "✓" } else { "✗" };
     out(format!(
-        "providers: openrouter {}  openai {}  opencode {}  codex {}",
+        "providers: openrouter {}  openai {}  opencode {}  codex {}  mistral {}",
         mark(creds.openrouter_key.is_some()),
         mark(creds.openai_key.is_some()),
         mark(creds.opencode_key.is_some()),
         mark(creds.codex.is_some()),
+        mark(creds.mistral_key.is_some()),
     ));
     out(format!("spaces: {}   sessions: {sessions}", spaces.len()));
     Ok(())
@@ -3671,10 +3684,11 @@ async fn doctor(network: bool) -> Result<()> {
             ("openrouter", creds.openrouter_key.as_deref()),
             ("openai", creds.openai_key.as_deref()),
             ("opencode", creds.opencode_key.as_deref()),
+            ("mistral", creds.mistral_key.as_deref()),
         ];
         for (name, key) in providers {
             if let Some(key) = key {
-                let client = OpenRouter::from_key_auto(key.to_string());
+                let client = client_for(name, key);
                 let ok = client.list_models().await.is_ok();
                 check(name, ok, if ok { "reachable" } else { "request failed" });
             } else {
@@ -3750,6 +3764,7 @@ fn train_export(cmd: TrainCmd) -> Result<()> {
         saved.openrouter_key,
         saved.openai_key,
         saved.opencode_key,
+        saved.mistral_key,
         saved.host_token,
     ]
     .into_iter()

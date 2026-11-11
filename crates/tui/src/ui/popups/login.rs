@@ -1,5 +1,6 @@
 //! `/login`'s provider selector: `OpenRouter`, `OpenCode` Go, `OpenAI`,
-//! Codex, or a local runtime (which takes no key and opens `/local`).
+//! Codex, Mistral Vibe, or a local runtime (which takes no key and opens
+//! `/local`).
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
@@ -12,11 +13,15 @@ use crate::app_view::AppView;
 use super::chrome;
 use crate::ui::style::glyph;
 
-const ROWS: [(&str, &str); 5] = [
+const ROWS: [(&str, &str); 6] = [
     ("OpenRouter", "paste a key, or reads $OPENROUTER_API_KEY"),
     ("OpenCode Go", "paste a key, or reads $OPENCODE_API_KEY"),
     ("OpenAI", "paste a key, or reads $OPENAI_API_KEY"),
     ("Codex", "ChatGPT subscription — device-code login"),
+    (
+        "Mistral Vibe",
+        "Vibe plan key (Code > Vibe CLI), or reads $MISTRAL_API_KEY",
+    ),
     (
         "Local runtime",
         "Ollama / llama.cpp / MLX / LM Studio / edge0 — no key",
@@ -46,6 +51,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
                 1 => app.backends.opencode.is_some(),
                 2 => app.backends.openai.is_some(),
                 3 => app.backends.codex.is_some(),
+                4 => app.backends.mistral.is_some(),
                 _ => app.backends.local.is_some(),
             };
             let chip = if configured {

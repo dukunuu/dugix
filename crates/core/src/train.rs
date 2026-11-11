@@ -285,6 +285,7 @@ fn backend_name(backend: &str) -> String {
         "openai" => "openai",
         "codex" => "codex",
         "opencode go" | "opencode" => "opencode",
+        "mistral" => "mistral",
         "local" => "local",
         _ => backend,
     }

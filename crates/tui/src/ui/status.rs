@@ -280,7 +280,12 @@ pub(super) fn fit_badge(prefix: &str, model: &str, max: usize) -> String {
 /// known backend prefix is split off.
 pub(crate) fn short_model_label(id: &str) -> String {
     let (backend, rest) = match id.split_once(':') {
-        Some((tag, rest)) if matches!(tag, "openai" | "opencode" | "go" | "codex" | "local") => {
+        Some((tag, rest))
+            if matches!(
+                tag,
+                "openai" | "opencode" | "go" | "codex" | "mistral" | "local"
+            ) =>
+        {
             (Some(tag), rest)
         }
         _ => (None, id),

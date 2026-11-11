@@ -10,12 +10,16 @@ use sha2::{Digest, Sha256};
 pub const OPENROUTER_ENV_KEY: &str = "OPENROUTER_API_KEY";
 pub const OPENAI_ENV_KEY: &str = "OPENAI_API_KEY";
 pub const OPENCODE_ENV_KEY: &str = "OPENCODE_API_KEY";
+/// Mistral's own variable, shared with the Vibe CLI; a Vibe plan key (made
+/// under Code > Vibe CLI) bills against the plan's monthly Vibe budget.
+pub const MISTRAL_ENV_KEY: &str = "MISTRAL_API_KEY";
 
 /// Credential environment variables never passed to children that run model-authored code.
 pub const SECRET_ENV_VARS: &[&str] = &[
     OPENROUTER_ENV_KEY,
     OPENAI_ENV_KEY,
     OPENCODE_ENV_KEY,
+    MISTRAL_ENV_KEY,
     "CF_API_TOKEN",
     "REDDIT_CLIENT_ID",
     "REDDIT_CLIENT_SECRET",
@@ -165,6 +169,8 @@ impl Experiments {
     }
 }
 
+/// The `[provider]` table: every stored credential, read without env
+/// overrides. Credential writers load it, change one field, and write it back.
 #[derive(Debug, Default, Deserialize)]
 struct Provider {
     #[serde(default)]
@@ -173,6 +179,8 @@ struct Provider {
     openai_key: String,
     #[serde(default)]
     opencode_key: String,
+    #[serde(default)]
+    mistral_key: String,
     #[serde(default)]
     host_token: Option<String>,
     #[serde(default)]
@@ -215,6 +223,7 @@ pub struct SavedCreds {
     pub openrouter_key: Option<String>,
     pub openai_key: Option<String>,
     pub opencode_key: Option<String>,
+    pub mistral_key: Option<String>,
     pub codex: Option<CodexCredentials>,
     /// Bearer token protecting the local host API, persisted under
     /// `[provider].host_token` and never synced with space data.
@@ -344,49 +353,40 @@ fn migrate_overlay_at(path: &Path) -> Option<String> {
 /// touch the network; the TUI and `nexus ask` use `load_all_providers`,
 /// which additionally refreshes a stale Codex token.
 pub fn load_creds_offline() -> SavedCreds {
-    let (mut openrouter_key, mut openai_key, mut opencode_key, codex) =
-        load_config_all().unwrap_or_default();
+    let stored = load_config_all().unwrap_or_default();
     let host_token = load_host_token().ok().flatten();
-    if openrouter_key.is_empty()
-        && let Ok(v) = std::env::var(OPENROUTER_ENV_KEY)
-        && !v.trim().is_empty()
-    {
-        openrouter_key = v.trim().to_string();
-    }
-    if openai_key.is_empty()
-        && let Ok(v) = std::env::var(OPENAI_ENV_KEY)
-        && !v.trim().is_empty()
-    {
-        openai_key = v.trim().to_string();
-    }
-    if opencode_key.is_empty()
-        && let Ok(v) = std::env::var(OPENCODE_ENV_KEY)
-        && !v.trim().is_empty()
-    {
-        opencode_key = v.trim().to_string();
-    }
+    // A key in the config file wins; the environment fills an empty slot.
+    let resolve = |stored: String, env_key: &str| {
+        Some(stored).filter(|key| !key.is_empty()).or_else(|| {
+            std::env::var(env_key)
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        })
+    };
     SavedCreds {
         local: load_local_config().ok().flatten(),
         experiments: load_experiments().unwrap_or_default(),
         agent: load_agent_config().unwrap_or_default(),
-        openrouter_key: (!openrouter_key.is_empty()).then_some(openrouter_key),
-        openai_key: (!openai_key.is_empty()).then_some(openai_key),
-        opencode_key: (!opencode_key.is_empty()).then_some(opencode_key),
-        codex,
+        openrouter_key: resolve(stored.openrouter_key, OPENROUTER_ENV_KEY),
+        openai_key: resolve(stored.openai_key, OPENAI_ENV_KEY),
+        opencode_key: resolve(stored.opencode_key, OPENCODE_ENV_KEY),
+        mistral_key: resolve(stored.mistral_key, MISTRAL_ENV_KEY),
+        codex: stored.openai_codex,
         host_token,
     }
 }
 
 /// Resolve every configured credential at once: `$OPENROUTER_API_KEY`/
-/// `$OPENAI_API_KEY`/`$OPENCODE_API_KEY` (if set) win over the config file
-/// for their respective slot, Codex creds always come from the config file
+/// `$OPENAI_API_KEY`/`$OPENCODE_API_KEY`/`$MISTRAL_API_KEY` fill any slot the
+/// config file leaves empty, Codex creds always come from the config file
 /// (refreshed if stale). Scaffolds an empty config on first run. Never
 /// fails on missing credentials — the app launches regardless and they can
 /// be set in-app with `/login`.
 pub async fn load_all_providers() -> Result<SavedCreds> {
     let path = config_path()?;
     if !path.exists() {
-        write_provider_config("", "", "", None)?; // scaffold template
+        write_provider_config(&Provider::default())?; // scaffold template
     }
     let mut saved = load_creds_offline();
     saved.local = load_local_config()?;
@@ -504,7 +504,7 @@ fn load_local_config() -> Result<Option<crate::provider::local::LocalConfig>> {
 }
 
 /// The first configured credential in a fixed priority order (openrouter >
-/// openai > opencode > codex) — used only to seed `App::new`'s "reasonable
+/// openai > opencode > mistral > codex) — used only to seed `App::new`'s "reasonable
 /// defaults" guess at startup; `App::rebuild_all_backends` populates every
 /// configured backend regardless of which one this picks.
 pub fn first_configured(saved: &SavedCreds) -> Option<(&'static str, String)> {
@@ -514,6 +514,7 @@ pub fn first_configured(saved: &SavedCreds) -> Option<(&'static str, String)> {
         .map(|k| ("openrouter", k))
         .or_else(|| saved.openai_key.clone().map(|k| ("openai", k)))
         .or_else(|| saved.opencode_key.clone().map(|k| ("opencode", k)))
+        .or_else(|| saved.mistral_key.clone().map(|k| ("mistral", k)))
         .or_else(|| saved.codex.as_ref().map(|c| ("codex", c.access.clone())))
 }
 
@@ -578,8 +579,9 @@ async fn refresh_codex_if_needed(creds: CodexCredentials) -> Result<CodexCredent
 }
 
 pub fn save_codex_credentials(creds: &CodexCredentials) -> Result<()> {
-    let (openrouter_key, openai_key, opencode_key, _) = load_config_all().unwrap_or_default();
-    write_provider_config(&openrouter_key, &openai_key, &opencode_key, Some(creds))
+    let mut stored = load_config_all().unwrap_or_default();
+    stored.openai_codex = Some(creds.clone());
+    write_provider_config(&stored)
 }
 
 pub fn load_openrouter_key_only() -> Option<String> {
@@ -591,40 +593,37 @@ pub fn load_openrouter_key_only() -> Option<String> {
     }
     load_config_all()
         .ok()
-        .and_then(|(openrouter_key, ..)| (!openrouter_key.is_empty()).then_some(openrouter_key))
+        .map(|stored| stored.openrouter_key)
+        .filter(|key| !key.is_empty())
 }
 
 /// Persist a provider's key by explicit flavor tag ("openrouter" / "openai"
-/// / "opencode") — called only from the `/login` provider selector, which
+/// / "opencode" / "mistral") — called only from the `/login` provider selector, which
 /// always knows exactly which flavor a pasted key is for (no shape-sniffing).
 pub fn save_provider_key(flavor: &str, key: &str) -> Result<()> {
-    let (mut openrouter_key, mut openai_key, mut opencode_key, codex) =
-        load_config_all().unwrap_or_default();
-    match flavor {
-        "openrouter" => openrouter_key = key.to_string(),
-        "openai" => openai_key = key.to_string(),
-        "opencode" => opencode_key = key.to_string(),
-        _ => {}
-    }
-    write_provider_config(&openrouter_key, &openai_key, &opencode_key, codex.as_ref())
+    let mut stored = load_config_all().unwrap_or_default();
+    let slot = match flavor {
+        "openrouter" => &mut stored.openrouter_key,
+        "openai" => &mut stored.openai_key,
+        "opencode" => &mut stored.opencode_key,
+        "mistral" => &mut stored.mistral_key,
+        _ => return Ok(()),
+    };
+    key.clone_into(slot);
+    write_provider_config(&stored)
 }
 
 /// Read all credential fields straight off disk, no env overrides.
-fn load_config_all() -> Result<(String, String, String, Option<CodexCredentials>)> {
+fn load_config_all() -> Result<Provider> {
     let path = config_path()?;
     if !path.exists() {
-        return Ok((String::new(), String::new(), String::new(), None));
+        return Ok(Provider::default());
     }
     let text =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let cfg: Config =
         toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-    Ok((
-        cfg.provider.openrouter_key,
-        cfg.provider.openai_key,
-        cfg.provider.opencode_key,
-        cfg.provider.openai_codex,
-    ))
+    Ok(cfg.provider)
 }
 
 /// Read the optional host bearer token without exposing it in provider
@@ -876,48 +875,14 @@ async fn login_openai_codex_device_with_browser(
 /// # Errors
 /// Propagates read/serialize/write failures on the config file.
 pub fn save_local_config(local: Option<&crate::provider::local::LocalConfig>) -> Result<()> {
-    let (openrouter_key, openai_key, opencode_key, codex) = load_config_all().unwrap_or_default();
-    write_config(
-        &openrouter_key,
-        &openai_key,
-        &opencode_key,
-        codex.as_ref(),
-        local,
-    )
+    let stored = load_config_all().unwrap_or_default();
+    write_config_at(&config_path()?, &stored, local)
 }
 
-fn write_provider_config(
-    openrouter_key: &str,
-    openai_key: &str,
-    opencode_key: &str,
-    codex: Option<&CodexCredentials>,
-) -> Result<()> {
+fn write_provider_config(stored: &Provider) -> Result<()> {
     // Credential writers leave the local runtime block exactly as it is.
     let local = load_local_config()?;
-    write_config(
-        openrouter_key,
-        openai_key,
-        opencode_key,
-        codex,
-        local.as_ref(),
-    )
-}
-
-fn write_config(
-    openrouter_key: &str,
-    openai_key: &str,
-    opencode_key: &str,
-    codex: Option<&CodexCredentials>,
-    local: Option<&crate::provider::local::LocalConfig>,
-) -> Result<()> {
-    write_config_at(
-        &config_path()?,
-        openrouter_key,
-        openai_key,
-        opencode_key,
-        codex,
-        local,
-    )
+    write_config_at(&config_path()?, stored, local.as_ref())
 }
 
 /// Update the credential keys, the Codex login and `[local]` in place. Every
@@ -926,10 +891,7 @@ fn write_config(
 /// rather than replaced.
 fn write_config_at(
     path: &std::path::Path,
-    openrouter_key: &str,
-    openai_key: &str,
-    opencode_key: &str,
-    codex: Option<&CodexCredentials>,
+    stored: &Provider,
     local: Option<&crate::provider::local::LocalConfig>,
 ) -> Result<()> {
     use toml::Value;
@@ -950,13 +912,22 @@ fn write_config_at(
         .as_table_mut()
         .context("config provider is not a TOML table")?;
     for (key, value) in [
-        ("openrouter_key", openrouter_key),
-        ("openai_key", openai_key),
-        ("opencode_key", opencode_key),
+        ("openrouter_key", &stored.openrouter_key),
+        ("openai_key", &stored.openai_key),
+        ("opencode_key", &stored.opencode_key),
     ] {
-        provider.insert(key.to_string(), Value::String(value.to_string()));
+        provider.insert(key.to_string(), Value::String(value.clone()));
     }
-    match codex {
+    // Written only once set, so configs that never used Mistral stay as they were.
+    if stored.mistral_key.is_empty() {
+        provider.remove("mistral_key");
+    } else {
+        provider.insert(
+            "mistral_key".to_string(),
+            Value::String(stored.mistral_key.clone()),
+        );
+    }
+    match &stored.openai_codex {
         Some(c) => {
             provider.insert(
                 "openai_codex".to_string(),
@@ -1238,9 +1209,16 @@ mod tests {
         let local = toml::from_str::<Config>("[local]\nprovider = 'ollama'\n")
             .unwrap()
             .local;
-        write_config_at(&path, "new", "", "", Some(&codex), local.as_ref()).unwrap();
+        let stored = Provider {
+            openrouter_key: "new".into(),
+            mistral_key: "vibe".into(),
+            openai_codex: Some(codex),
+            ..Provider::default()
+        };
+        write_config_at(&path, &stored, local.as_ref()).unwrap();
         let saved: toml::Table = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(saved["provider"]["openrouter_key"].as_str(), Some("new"));
+        assert_eq!(saved["provider"]["mistral_key"].as_str(), Some("vibe"));
         assert_eq!(saved["provider"]["host_token"].as_str(), Some("tok"));
         assert_eq!(saved["provider"]["future_key"].as_str(), Some("kept"));
         assert_eq!(
@@ -1267,20 +1245,25 @@ mod tests {
             .unwrap();
         assert_eq!(codex.refresh, "r");
 
-        // Clearing the Codex login and [local] removes only those.
-        write_config_at(&path, "new", "", "", None, None).unwrap();
+        // Clearing the Codex login, the Mistral key and [local] removes only those.
+        let only = |key: &str| Provider {
+            openrouter_key: key.into(),
+            ..Provider::default()
+        };
+        write_config_at(&path, &only("new"), None).unwrap();
         let saved: toml::Table = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert!(saved["provider"].get("openai_codex").is_none());
+        assert!(saved["provider"].get("mistral_key").is_none());
         assert!(saved.get("local").is_none());
         assert_eq!(saved["search"]["reddit_client_id"].as_str(), Some("rid"));
 
         // A file that doesn't parse is never replaced.
         std::fs::write(&path, "[provider\nopenrouter_key = 'precious'").unwrap();
-        assert!(write_config_at(&path, "x", "", "", None, None).is_err());
+        assert!(write_config_at(&path, &only("x"), None).is_err());
         assert!(std::fs::read_to_string(&path).unwrap().contains("precious"));
         #[cfg(unix)]
         {
-            write_config_at(&dir.join("fresh.toml"), "k", "", "", None, None).unwrap();
+            write_config_at(&dir.join("fresh.toml"), &only("k"), None).unwrap();
             use std::os::unix::fs::PermissionsExt as _;
             let mode = std::fs::metadata(dir.join("fresh.toml"))
                 .unwrap()
@@ -1411,7 +1394,15 @@ mod tests {
             "[extract.converters]\n\"rtf\" = [\"unrtf\", \"{in}\"]\n",
         )
         .unwrap();
-        write_config_at(&path, "key", "", "", None, None).unwrap();
+        write_config_at(
+            &path,
+            &Provider {
+                openrouter_key: "key".into(),
+                ..Provider::default()
+            },
+            None,
+        )
+        .unwrap();
         let saved = read_table_at(&path).unwrap();
         assert_eq!(
             converters_from_table(&saved),

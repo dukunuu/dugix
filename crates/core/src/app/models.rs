@@ -57,6 +57,10 @@ impl App {
             self.backends
                 .set(BackendTag::Codex, OpenRouter::openai_codex(c.access));
         }
+        if let Some(k) = self.saved.mistral_key.clone() {
+            self.backends
+                .set(BackendTag::Mistral, OpenRouter::mistral(k));
+        }
         if self.backends.any() {
             self.push_status("loading models…  (/model to pick, /help for commands)".to_string());
         }
@@ -411,16 +415,12 @@ impl App {
     /// shouldn't blank out the models of the others. Public so the view layer
     /// can re-trigger a fetch from the model picker.
     pub fn fetch_models(&mut self) {
-        let providers: Vec<OpenRouter> = [
-            self.backends.openrouter.clone(),
-            self.backends.openai.clone(),
-            self.backends.opencode.clone(),
-            self.backends.codex.clone(),
-            self.backends.local.clone(),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+        let providers: Vec<OpenRouter> = self
+            .backends
+            .configured_tags()
+            .into_iter()
+            .filter_map(|tag| self.backends.get(tag).cloned())
+            .collect();
         if providers.is_empty() {
             return;
         }

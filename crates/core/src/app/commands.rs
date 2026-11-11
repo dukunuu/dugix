@@ -80,6 +80,8 @@ pub const COMMANDS: &[Command] = &[
             "oauth",
             "chatgpt",
             "opencode",
+            "mistral",
+            "vibe",
         ],
     },
     Command {

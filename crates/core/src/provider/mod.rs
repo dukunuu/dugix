@@ -52,6 +52,9 @@ pub enum BackendTag {
     OpenAi,
     OpencodeGo,
     Codex,
+    /// Mistral's API: a Vibe plan key draws on the plan's Vibe budget, a
+    /// console key bills per token. Both hit the same endpoint.
+    Mistral,
     Local,
 }
 
@@ -63,6 +66,7 @@ impl BackendTag {
             Self::OpenAi => "OpenAI",
             Self::OpencodeGo => "OpenCode Go",
             Self::Codex => "Codex",
+            Self::Mistral => "Mistral",
             Self::Local => "Local",
         }
     }
@@ -77,6 +81,7 @@ impl BackendTag {
             Self::OpenAi => "openai:",
             Self::OpencodeGo => "opencode:",
             Self::Codex => "codex:",
+            Self::Mistral => "mistral:",
             Self::Local => "local:",
         }
     }
@@ -89,6 +94,7 @@ impl BackendTag {
             Self::OpenAi => "openai:",
             Self::OpencodeGo => "opencode:",
             Self::Codex => "codex:",
+            Self::Mistral => "mistral:",
             Self::Local => "local:",
         }
     }
@@ -99,6 +105,7 @@ impl BackendTag {
             Self::OpenAi => "OpenAI",
             Self::OpencodeGo => "OpenCode Go",
             Self::Codex => "Codex",
+            Self::Mistral => "Mistral",
             Self::Local => "Local",
         }
     }
@@ -172,6 +179,9 @@ impl ReasoningEffort {
 
     /// Models whose only configurable reasoning tier is `high`.
     pub const HIGH_ONLY: &'static [Self] = &[Self::High];
+
+    /// Models that think at `high` or not at all (Mistral's reasoning models).
+    pub const HIGH_AND_NONE: &'static [Self] = &[Self::High, Self::None];
 }
 
 /// Per-token catalog prices in USD per 1M tokens.

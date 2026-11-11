@@ -354,6 +354,7 @@ pub enum KeyTarget {
     OpenRouter,
     OpenAi,
     OpencodeGo,
+    Mistral,
 }
 
 /// What the `/swarm` roster popup is doing.
@@ -1358,6 +1359,7 @@ impl App {
                 crate::provider::BackendTag::OpencodeGo => {
                     saved.opencode_key = Some((*k).to_string());
                 }
+                crate::provider::BackendTag::Mistral => saved.mistral_key = Some((*k).to_string()),
                 // No full CodexCredentials from a bare key — fine for the
                 // bootstrap/test path, main.rs always has the real ones.
                 crate::provider::BackendTag::Codex | crate::provider::BackendTag::Local => {}
@@ -1863,6 +1865,7 @@ impl App {
             self.saved.openrouter_key.as_deref(),
             self.saved.openai_key.as_deref(),
             self.saved.opencode_key.as_deref(),
+            self.saved.mistral_key.as_deref(),
             self.saved.codex.as_ref().map(|creds| creds.access.as_str()),
             self.saved
                 .codex

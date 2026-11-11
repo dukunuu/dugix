@@ -62,7 +62,7 @@ Four seams carry everything across that boundary:
 Other structural facts worth knowing before editing:
 
 - **One provider client.** `provider/openrouter.rs` serves every OpenAI-wire
-  backend (OpenRouter, OpenAI, OpenCode Zen/Go, Codex); `provider/mod.rs` holds
+  backend (OpenRouter, OpenAI, OpenCode Zen/Go, Codex, Mistral); `provider/mod.rs` holds
   the message shapes, tool-call wire format, and `StreamEvent`. Backend
   differences are flags in that one client, not new clients.
 - **One db, two halves.** There is a single durable `nexus.db` at the data root
@@ -116,7 +116,7 @@ Assembled prompts and tool definitions are snapshotted in crates/core/tests/fixt
 ## Secrets and agent tooling
 
 Keys come from `~/.config/nexus-chat/config.toml` or `OPENROUTER_API_KEY` /
-`OPENAI_API_KEY` / `OPENCODE_API_KEY` — never hardcoded, never in snapshots,
+`OPENAI_API_KEY` / `OPENCODE_API_KEY` / `MISTRAL_API_KEY` — never hardcoded, never in snapshots,
 events, or app URLs (registered app UUIDs are the public capability; the host
 bearer token is not). `.claude/`, `.superpowers/`, and `.pi-subagents/` are
 gitignored — keep them out of commits.

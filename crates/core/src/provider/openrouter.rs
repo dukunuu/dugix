@@ -45,6 +45,15 @@ const OPENCODE_GO_BASE: &str = "https://opencode.ai/zen/go/v1";
 /// model rather than a general Zen one — stripped before it's ever sent to
 /// the API; only used to pick which of the two bases above to hit.
 const OPENCODE_GO_PREFIX: &str = "go:";
+/// Mistral's API. A Vibe plan key (Code > Vibe CLI) and a console key both
+/// authenticate here; the plan budget meters the `mistral-vibe-cli-*` names.
+const MISTRAL_BASE: &str = "https://api.mistral.ai/v1";
+/// The names Mistral meters against a Vibe plan, as the Vibe CLI sends them:
+/// `-latest` is the main coding model (Mistral Medium 3.5 as of 2026-11),
+/// `-fast` the small utility one. `/v1/models` may not list them, so
+/// `parse_mistral_catalog` adds whichever is missing.
+const MISTRAL_VIBE_MODEL: &str = "mistral-vibe-cli-latest";
+const MISTRAL_VIBE_FAST_MODEL: &str = "mistral-vibe-cli-fast";
 
 /// The OpenAI-wire base URL used by a backend gateway route.
 pub fn base_url(tag: crate::provider::BackendTag) -> &'static str {
@@ -53,6 +62,7 @@ pub fn base_url(tag: crate::provider::BackendTag) -> &'static str {
         crate::provider::BackendTag::OpenAi => OPENAI_BASE,
         crate::provider::BackendTag::OpencodeGo => OPENCODE_ZEN_BASE,
         crate::provider::BackendTag::Codex => CODEX_BASE,
+        crate::provider::BackendTag::Mistral => MISTRAL_BASE,
         // Local routing requires instance configuration; never fall back to a cloud URL.
         crate::provider::BackendTag::Local => "http://localhost:11434/v1",
     }
@@ -182,6 +192,10 @@ enum ProviderFlavor {
     /// models behind a fully OpenAI-compatible endpoint — no special
     /// request/response handling needed, unlike Codex.
     OpencodeGo,
+    /// Mistral: OpenAI-shaped chat completions, but strict about request
+    /// fields and tool-call ids (`mistral_body`), with its own model cards
+    /// (`parse_mistral_catalog`) and thinking as typed content chunks.
+    Mistral,
 }
 
 mod search;
@@ -237,6 +251,7 @@ impl ProviderFlavor {
             Self::OpenAi => OPENAI_BASE,
             Self::OpenAiCodex => CODEX_BASE,
             Self::OpencodeGo => OPENCODE_ZEN_BASE,
+            Self::Mistral => MISTRAL_BASE,
         }
     }
 
@@ -305,12 +320,14 @@ impl ProviderFlavor {
             // Their catalog metadata wins above when present; this standard
             // set is only for entries that expose no per-model detail.
             Self::OpenAiCodex | Self::OpencodeGo => E::STANDARD.to_vec(),
+            // Mistral cards go through `parse_mistral_catalog`, not here.
+            Self::Mistral => Vec::new(),
         }
     }
 
     fn supports_images(self, m: &ModelEntry) -> Option<bool> {
         match self {
-            Self::OpenRouter | Self::OpencodeGo => None,
+            Self::OpenRouter | Self::OpencodeGo | Self::Mistral => None,
             Self::OpenAi => {
                 let id = m.id.as_str();
                 Some(
@@ -331,8 +348,8 @@ impl ProviderFlavor {
             Self::OpenRouter => None,
             // Only dall-e models on OpenAI.
             Self::OpenAi => Some(m.id.contains("dall-e")),
-            // Codex and Go don't support image generation.
-            Self::OpenAiCodex | Self::OpencodeGo => Some(false),
+            // Codex, Go and Mistral's chat models don't generate images.
+            Self::OpenAiCodex | Self::OpencodeGo | Self::Mistral => Some(false),
         }
     }
 
@@ -350,14 +367,17 @@ impl ProviderFlavor {
                     serde_json::json!({ "include_usage": true }),
                 );
             }
-            Self::OpenAiCodex => {}
+            // Mistral sends usage in the final chunk unasked, and rejects
+            // `stream_options` as an unknown field.
+            Self::OpenAiCodex | Self::Mistral => {}
         }
     }
 
     /// Add the cache-lane key for backends that route on it.
     ///
-    /// `OpenAI` and `OpenCode` Zen/Go accept `prompt_cache_key` to keep one
-    /// conversation's requests on a single cache lane. `OpenRouter` uses
+    /// `OpenAI`, `OpenCode` Zen/Go and Mistral accept `prompt_cache_key` to
+    /// keep one conversation's requests on a single cache lane (Mistral's
+    /// chat completions cache only reliably hits with it). `OpenRouter` uses
     /// `session_id` for sticky upstream routing with a 10-minute inactivity
     /// window. Codex carries it too: the Responses body keeps it, and the
     /// request sends it as the `session-id` header the `ChatGPT` backend routes on.
@@ -366,7 +386,7 @@ impl ProviderFlavor {
             Self::OpenRouter => {
                 obj.insert("session_id".into(), serde_json::json!(key));
             }
-            Self::OpenAi | Self::OpencodeGo | Self::OpenAiCodex => {
+            Self::OpenAi | Self::OpencodeGo | Self::OpenAiCodex | Self::Mistral => {
                 obj.insert("prompt_cache_key".into(), serde_json::json!(key));
             }
         }
@@ -394,7 +414,7 @@ impl ProviderFlavor {
             Self::OpenRouter => {
                 obj.insert("reasoning".into(), serde_json::json!({ "effort": effort }));
             }
-            Self::OpenAi | Self::OpencodeGo => {
+            Self::OpenAi | Self::OpencodeGo | Self::Mistral => {
                 obj.insert("reasoning_effort".into(), serde_json::json!(effort));
             }
             Self::OpenAiCodex => {
@@ -435,6 +455,40 @@ fn looks_like_codex_token(key: &str) -> bool {
 #[derive(Deserialize)]
 struct ModelsResponse {
     data: Vec<ModelEntry>,
+}
+
+/// Mistral's `/v1/models`: one card per id *and* per alias, with the context
+/// window in `max_context_length` and capabilities as flags.
+#[derive(Deserialize)]
+struct MistralModelsResponse {
+    data: Vec<MistralModelEntry>,
+}
+
+#[derive(Deserialize)]
+struct MistralModelEntry {
+    id: String,
+    #[serde(default)]
+    max_context_length: Option<u64>,
+    #[serde(default)]
+    capabilities: MistralCapabilities,
+    #[serde(default)]
+    aliases: Vec<String>,
+    #[serde(default)]
+    deprecation: Option<serde_json::Value>,
+}
+
+// Mirrors the wire object's independent flags.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Deserialize, Default)]
+struct MistralCapabilities {
+    #[serde(default)]
+    completion_chat: bool,
+    #[serde(default)]
+    function_calling: bool,
+    #[serde(default)]
+    vision: bool,
+    #[serde(default)]
+    reasoning: bool,
 }
 
 #[derive(Deserialize)]
@@ -806,6 +860,20 @@ impl OpenRouter {
         }
     }
 
+    /// Mistral's API with a Vibe plan key or a console key.
+    pub fn mistral(key: String) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            key,
+            flavor: ProviderFlavor::Mistral,
+            #[cfg(test)]
+            search_endpoint: None,
+            endpoint: None,
+            local_config: None,
+            usage_log: None,
+        }
+    }
+
     pub fn openai_codex(key: String) -> Self {
         Self {
             client: reqwest::Client::new(),
@@ -835,6 +903,7 @@ impl OpenRouter {
             ProviderFlavor::OpenAi => crate::provider::BackendTag::OpenAi,
             ProviderFlavor::OpenAiCodex => crate::provider::BackendTag::Codex,
             ProviderFlavor::OpencodeGo => crate::provider::BackendTag::OpencodeGo,
+            ProviderFlavor::Mistral => crate::provider::BackendTag::Mistral,
         }
     }
 
@@ -1054,6 +1123,7 @@ impl OpenRouter {
         match tag {
             BackendTag::OpenRouter => "openai/gpt-6-luna",
             BackendTag::OpenAi | BackendTag::Codex | BackendTag::OpencodeGo => "gpt-6-luna",
+            BackendTag::Mistral => MISTRAL_VIBE_FAST_MODEL,
             BackendTag::Local => "",
         }
     }
@@ -1067,6 +1137,7 @@ impl OpenRouter {
             ProviderFlavor::OpenRouter => "openai/gpt-6-sol",
             ProviderFlavor::OpenAi | ProviderFlavor::OpenAiCodex => "gpt-6-sol",
             ProviderFlavor::OpencodeGo => "glm-5.3",
+            ProviderFlavor::Mistral => MISTRAL_VIBE_MODEL,
         }
     }
 
@@ -1074,8 +1145,10 @@ impl OpenRouter {
         match self.flavor {
             ProviderFlavor::OpenRouter => "google/gemini-embedding-2",
             ProviderFlavor::OpenAi => "text-embedding-3-small",
-            // Codex and Go's bundled models are all chat/coding models, no embeddings.
-            ProviderFlavor::OpenAiCodex | ProviderFlavor::OpencodeGo => "",
+            // Codex, Go and a Vibe plan cover chat/coding models, no embeddings.
+            ProviderFlavor::OpenAiCodex | ProviderFlavor::OpencodeGo | ProviderFlavor::Mistral => {
+                ""
+            }
         }
     }
 
@@ -1090,7 +1163,9 @@ impl OpenRouter {
         match self.flavor {
             ProviderFlavor::OpenRouter => "openai/gpt-image-2",
             ProviderFlavor::OpenAi => "dall-e-3",
-            ProviderFlavor::OpenAiCodex | ProviderFlavor::OpencodeGo => "",
+            ProviderFlavor::OpenAiCodex | ProviderFlavor::OpencodeGo | ProviderFlavor::Mistral => {
+                ""
+            }
         }
     }
 
@@ -1151,6 +1226,19 @@ impl OpenRouter {
             }));
             models.sort_by(|a, b| a.id.cmp(&b.id));
             return Ok(models);
+        }
+        if self.flavor == ProviderFlavor::Mistral {
+            let catalog = self
+                .authenticate(self.client.get(format!("{}/models", self.api_base())))
+                .send()
+                .await
+                .context("requesting Mistral model list")?
+                .error_for_status()
+                .context("Mistral model list request failed")?
+                .json::<MistralModelsResponse>()
+                .await
+                .context("parsing Mistral model list")?;
+            return Ok(parse_mistral_catalog(catalog));
         }
         let mut models = self.fetch_models_from(self.api_base()).await?;
         if self.flavor == ProviderFlavor::OpenRouter {
@@ -1416,6 +1504,9 @@ impl OpenRouter {
             });
         }
         let mut body = body;
+        if self.flavor == ProviderFlavor::Mistral {
+            mistral_body(&mut body);
+        }
         let base = if let Some(model) = body.get("model").and_then(|m| m.as_str()) {
             let (base, real_model) = self.opencode_route(model);
             if let Some(obj) = body.as_object_mut() {
@@ -1983,6 +2074,9 @@ impl OpenRouter {
             }
         }
         add_cache_ttl_1h(&mut body, model, params.cache_ttl_1h);
+        if self.flavor == ProviderFlavor::Mistral {
+            mistral_body(&mut body);
+        }
         body
     }
 
@@ -2831,10 +2925,48 @@ fn parse_delta(data: &str) -> (Option<String>, Option<String>) {
         return (None, None);
     };
     let field = |name: &str| delta.get(name).and_then(|x| x.as_str()).map(str::to_string);
+    // Mistral's reasoning models stream content as typed chunks: `text`
+    // parts are the answer, `thinking` parts carry the reasoning.
+    let (content, thinking) = match delta.get("content") {
+        Some(serde_json::Value::Array(parts)) => split_content_chunks(parts),
+        _ => (field("content"), None),
+    };
     (
-        field("content"),
-        field("reasoning_content").or_else(|| field("reasoning")),
+        content,
+        field("reasoning_content")
+            .or_else(|| field("reasoning"))
+            .or(thinking),
     )
+}
+
+/// Split typed content chunks into (answer text, thinking text); either is
+/// `None` when the chunk list carries none of it.
+fn split_content_chunks(parts: &[serde_json::Value]) -> (Option<String>, Option<String>) {
+    let text_of = |part: &serde_json::Value| {
+        part.get("text")
+            .and_then(|t| t.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    let mut content = String::new();
+    let mut thinking = String::new();
+    for part in parts {
+        match part.get("type").and_then(|t| t.as_str()) {
+            Some("thinking") => match part.get("thinking") {
+                Some(serde_json::Value::Array(inner)) => {
+                    for p in inner {
+                        thinking.push_str(&text_of(p));
+                    }
+                }
+                Some(serde_json::Value::String(text)) => thinking.push_str(text),
+                _ => {}
+            },
+            Some("text") | None => content.push_str(&text_of(part)),
+            Some(_) => {}
+        }
+    }
+    let some = |s: String| (!s.is_empty()).then_some(s);
+    (some(content), some(thinking))
 }
 
 /// Merge one SSE chunk's `delta.tool_calls` fragments into the running
@@ -3323,6 +3455,215 @@ fn chat_tool_to_codex_tool(tool: &serde_json::Value) -> Option<serde_json::Value
         "parameters": function.get("parameters").cloned().unwrap_or(serde_json::json!({})),
         "strict": false,
     }))
+}
+
+/// Mistral models usable in a tool-calling chat, one per alias group.
+///
+/// The catalog also lists embedding, OCR, moderation and FIM-only models,
+/// and repeats each model under every alias (`mistral-small-latest` and
+/// `mistral-small-2603`); the `-latest` name is kept since it follows new
+/// releases. The two Vibe-metered names are added when the catalog lacks them.
+fn parse_mistral_catalog(catalog: MistralModelsResponse) -> Vec<Model> {
+    // The catalog lists a model once per name and each card's `aliases`
+    // names the rest of its group: Medium 3.5 appears under eight names,
+    // three of them `-latest`. Show each group once, under the Vibe name
+    // when it has one (that name bills against the plan), else a `-latest`
+    // name, else the shortest.
+    let rank = |id: &str| {
+        let vibe = id == MISTRAL_VIBE_MODEL || id == MISTRAL_VIBE_FAST_MODEL;
+        (!vibe, !id.ends_with("-latest"), id.len(), id.to_string())
+    };
+    let mut groups: Vec<(std::collections::HashSet<String>, MistralModelEntry)> = Vec::new();
+    for m in catalog.data.into_iter().filter(|m| {
+        m.capabilities.completion_chat && m.capabilities.function_calling && m.deprecation.is_none()
+    }) {
+        let names: std::collections::HashSet<String> =
+            m.aliases.iter().cloned().chain([m.id.clone()]).collect();
+        match groups
+            .iter_mut()
+            .find(|(seen, _)| !seen.is_disjoint(&names))
+        {
+            Some((seen, best)) => {
+                seen.extend(names);
+                if rank(&m.id) < rank(&best.id) {
+                    *best = m;
+                }
+            }
+            None => groups.push((names, m)),
+        }
+    }
+    let mut models: Vec<Model> = groups
+        .into_iter()
+        .map(|(_, m)| Model {
+            name: m.id.clone(),
+            reasoning_efforts: if m.capabilities.reasoning {
+                ReasoningEffort::HIGH_AND_NONE.to_vec()
+            } else {
+                Vec::new()
+            },
+            context_length: m.max_context_length,
+            supports_images: m.capabilities.vision,
+            supports_image_generation: false,
+            supports_video_generation: false,
+            backend: crate::provider::BackendTag::Mistral,
+            id: m.id,
+            pricing: None,
+        })
+        .collect();
+    // In case a key's catalog leaves them out: both are reasoning, vision
+    // models as of 2026-11 (Medium 3.5 and Small 2603).
+    for (id, name) in [
+        (MISTRAL_VIBE_MODEL, "Mistral Vibe"),
+        (MISTRAL_VIBE_FAST_MODEL, "Mistral Vibe fast"),
+    ] {
+        if !models.iter().any(|m| m.id == id) {
+            models.push(Model {
+                id: id.to_string(),
+                name: name.to_string(),
+                reasoning_efforts: ReasoningEffort::HIGH_AND_NONE.to_vec(),
+                context_length: Some(262_144),
+                supports_images: true,
+                supports_image_generation: false,
+                supports_video_generation: false,
+                backend: crate::provider::BackendTag::Mistral,
+                pricing: None,
+            });
+        }
+    }
+    models.sort_by(|a, b| a.id.cmp(&b.id));
+    models
+}
+
+/// Fit a chat-completions body to Mistral's validation, which rejects what
+/// other backends ignore: unknown message fields (`reasoning_content`,
+/// `cache_control`) and tool-call ids that aren't 9 ASCII alphanumerics.
+/// Ids from Mistral already fit and pass through; ids recorded on another
+/// backend (`call_…`) map to a stable stand-in, the same on the assistant
+/// call and its tool result, so a session can switch to Mistral mid-way.
+/// System image chunks move to adjacent user messages: Mistral accepts
+/// images there, but only text in system messages.
+fn mistral_body(body: &mut serde_json::Value) {
+    let Some(messages) = body
+        .get_mut("messages")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+    mistral_system_images(messages);
+    mistral_image_cap(messages);
+    for message in messages.iter_mut().filter_map(|m| m.as_object_mut()) {
+        message.remove("reasoning_content");
+        if let Some(parts) = message
+            .get_mut("content")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for part in parts.iter_mut().filter_map(|p| p.as_object_mut()) {
+                part.remove("cache_control");
+            }
+        }
+        if let Some(id) = message.get_mut("tool_call_id") {
+            *id = serde_json::json!(mistral_tool_id(id.as_str().unwrap_or_default()));
+        }
+        for call in message
+            .get_mut("tool_calls")
+            .and_then(serde_json::Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(id) = call.get_mut("id") {
+                *id = serde_json::json!(mistral_tool_id(id.as_str().unwrap_or_default()));
+            }
+        }
+    }
+}
+
+/// Preserve system text at its original priority while placing its images
+/// in a role Mistral allows. This also covers image-only system messages.
+fn mistral_system_images(messages: &mut Vec<serde_json::Value>) {
+    let mut normalized = Vec::with_capacity(messages.len());
+    for mut message in std::mem::take(messages) {
+        let mut images = Vec::new();
+        let mut image_only = false;
+        if message["role"] == "system"
+            && let Some(parts) = message
+                .get_mut("content")
+                .and_then(serde_json::Value::as_array_mut)
+            && parts.iter().any(|part| part["type"] == "image_url")
+        {
+            let (image_parts, text_parts): (Vec<_>, Vec<_>) = std::mem::take(parts)
+                .into_iter()
+                .partition(|part| part["type"] == "image_url");
+            images = image_parts;
+            *parts = text_parts;
+            image_only = parts.is_empty();
+        }
+        if !image_only {
+            normalized.push(message);
+        }
+        if !images.is_empty() {
+            normalized.push(serde_json::json!({"role": "user", "content": images}));
+        }
+    }
+    *messages = normalized;
+}
+
+/// Mistral rejects a request carrying more than this many images
+/// ("Total number of images exceeds the maximum allowed of 20").
+const MISTRAL_MAX_IMAGES: usize = 20;
+
+/// Keep the newest `MISTRAL_MAX_IMAGES` image chunks and replace older ones
+/// with a text note, so a long session with deck renders or attachments
+/// keeps working instead of failing every turn with a 400.
+fn mistral_image_cap(messages: &mut [serde_json::Value]) {
+    let mut kept = 0;
+    for parts in messages.iter_mut().rev().filter_map(|m| {
+        m.get_mut("content")
+            .and_then(serde_json::Value::as_array_mut)
+    }) {
+        for part in parts.iter_mut().rev() {
+            if part["type"] != "image_url" {
+                continue;
+            }
+            if kept < MISTRAL_MAX_IMAGES {
+                kept += 1;
+            } else {
+                *part = serde_json::json!({
+                    "type": "text",
+                    "text": "[older image omitted: Mistral accepts at most 20 images per request]",
+                });
+            }
+        }
+    }
+}
+
+/// `mistral_body` for a request an OpenAI-wire client built (the host
+/// gateway): also drops the `OpenAI`-only top-level fields SDKs send by
+/// default, and renames `max_completion_tokens` to Mistral's `max_tokens`.
+pub fn mistral_gateway_body(body: &mut serde_json::Value) {
+    if let Some(object) = body.as_object_mut() {
+        for key in ["stream_options", "store", "service_tier"] {
+            object.remove(key);
+        }
+        if let Some(max) = object.remove("max_completion_tokens") {
+            object.entry("max_tokens").or_insert(max);
+        }
+    }
+    mistral_body(body);
+}
+
+/// A tool-call id Mistral accepts: unchanged if already 9 ASCII
+/// alphanumerics, else 9 characters derived from a hash of the original.
+fn mistral_tool_id(id: &str) -> String {
+    use sha2::{Digest, Sha256};
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    if id.len() == 9 && id.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return id.to_string();
+    }
+    Sha256::digest(id.as_bytes())
+        .iter()
+        .take(9)
+        .map(|b| char::from(ALPHABET[usize::from(*b) % ALPHABET.len()]))
+        .collect()
 }
 
 fn wire_text(v: &serde_json::Value) -> Option<String> {
@@ -4892,6 +5233,375 @@ mod tests {
         assert_eq!(p.default_embedding_model(), "");
     }
 
+    #[tokio::test]
+    async fn mistral_stream_delivers_typed_thinking_answer_and_usage() {
+        let response = fake_chat_frames(&[
+            serde_json::json!({"choices": [{"delta": {"content": [
+                {"type": "thinking", "thinking": [{"type": "text", "text": "Think."}]},
+                {"type": "text", "text": "Hello"}
+            ]}}]}),
+            serde_json::json!({"choices": [], "usage": {
+                "prompt_tokens": 100, "completion_tokens": 12, "total_tokens": 112,
+                "prompt_tokens_details": {"cached_tokens": 80},
+                "completion_tokens_details": {"reasoning_tokens": 10}
+            }}),
+        ]);
+        let (mock, server) = fake_chat_server(vec![response]).await;
+        let mut provider = OpenRouter::mistral("mock-mistral-key".into());
+        provider.endpoint = mock.endpoint;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let finish = provider
+            .run_stream(
+                MISTRAL_VIBE_MODEL,
+                &[ChatMessage::text("user", "Hi")],
+                &ChatParams {
+                    prompt_cache_key: Some("session".into()),
+                    reasoning_effort: Some("high".into()),
+                    ..ChatParams::default()
+                },
+                &[],
+                false,
+                &tx,
+            )
+            .await
+            .unwrap();
+        let Finish::Done(output) = finish else {
+            panic!("expected a completed Mistral round");
+        };
+        assert_eq!(output.content, "Hello");
+        assert_eq!(output.reasoning.as_deref(), Some("Think."));
+        let usage = output.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 100);
+        assert_eq!(usage.completion_tokens, 12);
+        assert_eq!(usage.cache_read_tokens, 80);
+        assert!(matches!(rx.try_recv().unwrap(), StreamEvent::Reasoning(s) if s == "Think."));
+        assert!(matches!(rx.try_recv().unwrap(), StreamEvent::Token(s) if s == "Hello"));
+        assert!(matches!(rx.try_recv().unwrap(), StreamEvent::Usage(u) if u.total_tokens == 112));
+        let requests = server.await.unwrap();
+        assert_eq!(requests[0]["model"], MISTRAL_VIBE_MODEL);
+        assert_eq!(requests[0]["reasoning_effort"], "high");
+        assert!(requests[0].get("stream_options").is_none());
+        assert_eq!(requests[0]["prompt_cache_key"], "session");
+    }
+
+    #[tokio::test]
+    async fn mistral_helper_completion_keeps_answer_and_cached_usage() {
+        let response = serde_json::json!({
+            "choices": [{"message": {"content": [
+                {"type": "thinking", "thinking": [{"type": "text", "text": "Private thought"}]},
+                {"type": "text", "text": "A short title"}
+            ]}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 12, "total_tokens": 112,
+                      "prompt_tokens_details": {"cached_tokens": 80}}
+        });
+        let (mock, server) =
+            decider_mock::server(200, response.to_string(), std::time::Duration::ZERO, 1).await;
+        let mut provider = OpenRouter::mistral("mock-mistral-key".into());
+        provider.endpoint = mock.endpoint;
+        let completion = provider
+            .post_completion_with_usage(serde_json::json!({
+                "model": MISTRAL_VIBE_FAST_MODEL,
+                "stream": false,
+                "messages": [{"role": "assistant", "content": "Hi", "reasoning_content": "Old"}]
+            }))
+            .await
+            .unwrap();
+        assert_eq!(completion.text, "A short title");
+        let usage = completion.usage.unwrap();
+        assert_eq!(usage.total_tokens, 112);
+        assert_eq!(usage.cache_read_tokens, 80);
+        let requests = server.await.unwrap();
+        assert!(requests[0].0.starts_with("POST /api/v1/chat/completions "));
+        assert!(requests[0].0.contains("Bearer mock-mistral-key"));
+        assert_eq!(requests[0].1["model"], MISTRAL_VIBE_FAST_MODEL);
+        assert!(
+            requests[0].1["messages"][0]
+                .get("reasoning_content")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn mistral_reports_its_backend_and_vibe_defaults() {
+        let p = OpenRouter::mistral("k".into());
+        assert_eq!(p.backend_tag(), crate::provider::BackendTag::Mistral);
+        assert_eq!(p.flavor.base(), "https://api.mistral.ai/v1");
+        assert_eq!(p.default_utility_model(), "mistral-vibe-cli-fast");
+        assert_eq!(p.default_research_model(), "mistral-vibe-cli-latest");
+        assert_eq!(p.default_embedding_model(), "");
+        assert_eq!(p.default_image_gen_model(), "");
+    }
+
+    #[test]
+    fn mistral_catalog_keeps_tool_chat_models_once_and_adds_vibe_names() {
+        // Alias groups as the live catalog reported them on 2026-11-09.
+        let medium = [
+            "mistral-medium-latest",
+            "mistral-medium-3-5",
+            "magistral-medium-latest",
+            "mistral-vibe-cli-latest",
+            "mistral-vibe-cli-with-tools",
+        ];
+        let card = |id: &str, group: &[&str], ctx: u64, reasoning: bool| {
+            serde_json::json!({
+                "id": id, "max_context_length": ctx,
+                "aliases": group.iter().filter(|a| **a != id).collect::<Vec<_>>(),
+                "capabilities": {"completion_chat": true, "function_calling": true,
+                                 "vision": true, "reasoning": reasoning}
+            })
+        };
+        let mut data: Vec<serde_json::Value> = medium
+            .iter()
+            .map(|id| card(id, &medium, 262_144, true))
+            .collect();
+        let large = ["mistral-large-latest", "mistral-large-2512"];
+        data.extend(large.iter().map(|id| card(id, &large, 262_144, false)));
+        let large4 = ["mistral-large-4-0", "mistral-large-4"];
+        data.extend(large4.iter().map(|id| card(id, &large4, 1_048_576, true)));
+        data.extend([
+            serde_json::json!({"id": "codestral-2508", "aliases": [],
+             "capabilities": {"completion_chat": true, "function_calling": true}}),
+            serde_json::json!({"id": "mistral-embed", "capabilities": {"completion_chat": false}}),
+            serde_json::json!({"id": "mistral-ocr-latest",
+             "capabilities": {"completion_chat": false, "function_calling": true}}),
+            serde_json::json!({"id": "open-mistral-7b", "deprecation": "2026-01-01T00:00:00Z",
+             "capabilities": {"completion_chat": true, "function_calling": true}}),
+        ]);
+        let catalog: MistralModelsResponse =
+            serde_json::from_value(serde_json::json!({"object": "list", "data": data})).unwrap();
+        let models = parse_mistral_catalog(catalog);
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "codestral-2508",
+                "mistral-large-4",
+                "mistral-large-latest",
+                "mistral-vibe-cli-fast",
+                "mistral-vibe-cli-latest"
+            ]
+        );
+        let vibe = &models[4];
+        assert_eq!(vibe.context_length, Some(262_144));
+        assert!(vibe.supports_images);
+        assert_eq!(vibe.reasoning_efforts, ReasoningEffort::HIGH_AND_NONE);
+        assert!(models[0].reasoning_efforts.is_empty());
+        assert!(models[2].reasoning_efforts.is_empty());
+        assert_eq!(models[1].context_length, Some(1_048_576));
+        // Missing from this catalog, so the built-in facts fill it in.
+        let fast = &models[3];
+        assert!(fast.supports_images);
+        assert_eq!(fast.reasoning_efforts, ReasoningEffort::HIGH_AND_NONE);
+        assert!(
+            models
+                .iter()
+                .all(|m| m.backend == crate::provider::BackendTag::Mistral)
+        );
+    }
+
+    #[test]
+    fn mistral_moves_system_images_to_user_messages_without_losing_context() {
+        let image = "data:image/png;base64,AA==";
+        let history = [
+            ChatMessage::text("system", "Follow the instructions."),
+            ChatMessage {
+                role: "system".into(),
+                content: "The user has these image files in this space: photo.png".into(),
+                images: vec![image.into()],
+                ..Default::default()
+            },
+            ChatMessage::text("user", "Describe the photo."),
+        ];
+        let provider = OpenRouter::mistral("mock-key".into());
+        let chat = provider.chat_completions_body(
+            MISTRAL_VIBE_MODEL,
+            &history,
+            &ChatParams::default(),
+            &[],
+            false,
+        );
+        let mut gateway = serde_json::json!({"messages": history});
+        mistral_gateway_body(&mut gateway);
+        for body in [chat, gateway] {
+            let messages = body["messages"].as_array().unwrap();
+            for message in messages.iter().filter(|m| m["role"] == "system") {
+                assert!(
+                    message["content"]
+                        .as_array()
+                        .is_none_or(|parts| parts.iter().all(|part| part["type"] != "image_url")),
+                    "ImageURLChunk cannot be used in system message: {message}"
+                );
+            }
+            assert_eq!(messages.len(), 4);
+            assert_eq!(messages[0]["content"], "Follow the instructions.");
+            assert_eq!(messages[1]["role"], "system");
+            assert_eq!(messages[1]["content"][0]["text"], history[1].content);
+            assert_eq!(messages[2]["role"], "user");
+            assert_eq!(messages[2]["content"][0]["image_url"]["url"], image);
+            assert_eq!(messages[3]["content"], "Describe the photo.");
+        }
+    }
+
+    #[test]
+    fn mistral_system_image_relocation_is_idempotent_and_leaves_other_roles_alone() {
+        let image = serde_json::json!({"type": "image_url", "image_url": {"url": "image.png"}});
+        let user = serde_json::json!({"role": "user", "content": [image.clone()]});
+        let assistant = serde_json::json!({"role": "assistant", "content": "I see it."});
+        let mut body = serde_json::json!({"messages": [
+            {"role": "system", "content": [image]}, user, assistant
+        ]});
+        mistral_body(&mut body);
+        assert_eq!(body["messages"], serde_json::json!([user, user, assistant]));
+        let normalized = body.clone();
+        mistral_body(&mut body);
+        assert_eq!(body, normalized);
+    }
+
+    #[test]
+    fn mistral_keeps_only_the_newest_images_within_its_limit() {
+        let history: Vec<ChatMessage> = (0..25)
+            .map(|i| ChatMessage {
+                role: "user".into(),
+                content: format!("turn {i}"),
+                images: vec![format!("data:image/png;base64,{i}")],
+                ..Default::default()
+            })
+            .collect();
+        let provider = OpenRouter::mistral("mock-key".into());
+        let mut body = provider.chat_completions_body(
+            MISTRAL_VIBE_MODEL,
+            &history,
+            &ChatParams::default(),
+            &[],
+            false,
+        );
+        let images = |body: &serde_json::Value| -> Vec<String> {
+            body["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|m| m["content"].as_array().cloned().unwrap_or_default())
+                .filter(|p| p["type"] == "image_url")
+                .map(|p| p["image_url"]["url"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let kept = images(&body);
+        assert_eq!(kept.len(), MISTRAL_MAX_IMAGES);
+        assert_eq!(kept[0], "data:image/png;base64,5");
+        assert_eq!(kept[19], "data:image/png;base64,24");
+        let first = &body["messages"][0]["content"];
+        assert_eq!(first[0]["text"], "turn 0");
+        assert!(first[1]["text"].as_str().unwrap().contains("omitted"));
+        let normalized = body.clone();
+        mistral_body(&mut body);
+        assert_eq!(body, normalized);
+    }
+
+    #[test]
+    fn mistral_body_drops_foreign_fields_and_fits_tool_ids() {
+        let tools = [ToolDef {
+            name: "read".into(),
+            description: "Read.".into(),
+            parameters: serde_json::json!({"type": "object", "properties": {}}),
+        }];
+        let call = |id: &str| crate::provider::ToolCall {
+            id: id.into(),
+            name: "read".into(),
+            arguments: "{}".into(),
+        };
+        let messages = [
+            ChatMessage::text("user", "Hi"),
+            ChatMessage {
+                role: "assistant".into(),
+                reasoning_content: Some("thought".into()),
+                tool_calls: Some(vec![call("call_9f8e7d6c5b4a"), call("Ab3dE6gH9")]),
+                ..Default::default()
+            },
+            ChatMessage {
+                role: "tool".into(),
+                content: "ok".into(),
+                tool_call_id: Some("call_9f8e7d6c5b4a".into()),
+                ..Default::default()
+            },
+            ChatMessage {
+                role: "user".into(),
+                content: "look".into(),
+                images: vec!["data:image/png;base64,AA==".into()],
+                cache_breakpoint: true,
+                ..Default::default()
+            },
+        ];
+        let params = ChatParams {
+            prompt_cache_key: Some("session-1".into()),
+            reasoning_effort: Some("high".into()),
+            ..ChatParams::default()
+        };
+        let body = OpenRouter::mistral("k".into()).chat_completions_body(
+            "mistral-vibe-cli-latest",
+            &messages,
+            &params,
+            &tools,
+            false,
+        );
+        for key in ["stream_options", "session_id", "usage"] {
+            assert!(body.get(key).is_none(), "{key}");
+        }
+        assert_eq!(body["prompt_cache_key"], "session-1");
+        assert_eq!(body["reasoning_effort"], "high");
+        let messages = body["messages"].as_array().unwrap();
+        assert!(messages[1].get("reasoning_content").is_none());
+        let foreign = messages[1]["tool_calls"][0]["id"].as_str().unwrap();
+        assert_eq!(foreign.len(), 9);
+        assert!(foreign.bytes().all(|b| b.is_ascii_alphanumeric()));
+        assert_eq!(messages[2]["tool_call_id"], foreign);
+        assert_eq!(messages[1]["tool_calls"][1]["id"], "Ab3dE6gH9");
+        assert!(
+            messages[3]["content"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|part| part.get("cache_control").is_none())
+        );
+        assert_eq!(mistral_tool_id("call_9f8e7d6c5b4a"), foreign);
+        assert_ne!(mistral_tool_id("call_other"), foreign);
+    }
+
+    #[test]
+    fn mistral_gateway_body_strips_openai_sdk_defaults() {
+        let mut body = serde_json::json!({
+            "model": "mistral-vibe-cli-latest",
+            "stream": true,
+            "stream_options": {"include_usage": true},
+            "store": false,
+            "max_completion_tokens": 512,
+            "messages": [{"role": "tool", "tool_call_id": "call_abc", "content": "ok"}],
+        });
+        mistral_gateway_body(&mut body);
+        assert!(body.get("stream_options").is_none());
+        assert!(body.get("store").is_none());
+        assert!(body.get("max_completion_tokens").is_none());
+        assert_eq!(body["max_tokens"], 512);
+        assert_eq!(body["stream"], true);
+        assert_eq!(
+            body["messages"][0]["tool_call_id"],
+            mistral_tool_id("call_abc")
+        );
+    }
+
+    #[test]
+    fn typed_content_chunks_split_into_answer_and_thinking() {
+        let data = r#"{"choices":[{"delta":{"content":[
+            {"type":"thinking","thinking":[{"type":"text","text":"Let me "},{"type":"text","text":"see."}]},
+            {"type":"text","text":"Answer"}]}}]}"#;
+        assert_eq!(
+            parse_delta(data),
+            (Some("Answer".into()), Some("Let me see.".into()))
+        );
+        let only_thinking =
+            r#"{"choices":[{"delta":{"content":[{"type":"thinking","thinking":"hm"}]}}]}"#;
+        assert_eq!(parse_delta(only_thinking), (None, Some("hm".into())));
+    }
+
     #[test]
     fn opencode_route_sends_go_tagged_models_to_the_go_base_untagged() {
         let p = OpenRouter::opencode_go("k".into());
@@ -5110,7 +5820,11 @@ mod tests {
 
     #[test]
     fn cache_key_goes_to_the_flavors_that_route_on_it() {
-        for flavor in [ProviderFlavor::OpencodeGo, ProviderFlavor::OpenAi] {
+        for flavor in [
+            ProviderFlavor::OpencodeGo,
+            ProviderFlavor::OpenAi,
+            ProviderFlavor::Mistral,
+        ] {
             let mut body = serde_json::Map::new();
             flavor.add_prompt_cache_key(&mut body, "session-1");
             assert_eq!(

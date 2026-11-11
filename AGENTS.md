@@ -10,7 +10,7 @@ research and multi-agent work. All state lives on the user's machine: a
 SQLite database (rows scoped by *space*), files/scripts/apps in space
 directories, and
 model-created web apps served from `localhost:8642`. It talks to any
-OpenAI-wire backend (OpenRouter, OpenAI, OpenCode Zen/Go, Codex) through one
+OpenAI-wire backend (OpenRouter, OpenAI, OpenCode Zen/Go, Codex, Mistral) through one
 client. The binary is named `nexus` (package name `nexus-chat`).
 
 ## Commands
@@ -48,7 +48,8 @@ code that fails `cargo clippy -- -D warnings -W clippy::pedantic`.**
   `style:`, `refactor:`, `test:`, `chore:`, `build:`, `license:`. One logical
   change per commit; run `scripts/check.sh` before committing.
 - **Secrets**: API keys come from `~/.config/nexus-chat/config.toml` or env
-  vars (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `OPENCODE_API_KEY`). Never
+  vars (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `OPENCODE_API_KEY`,
+  `MISTRAL_API_KEY`). Never
   hardcode or commit keys.
 - **cargo-audit**: gated in `scripts/check.sh`. `.cargo/audit.toml` ignores
   two advisories with written rationale — only extend that list when a

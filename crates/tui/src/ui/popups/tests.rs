@@ -907,7 +907,7 @@ fn local_popup_lists_runtimes_with_discovery_and_endpoint() {
     super::local::handle_key(&mut app, esc);
     assert_eq!(app.popup, nexus_core::app::Popup::None);
     app.open_login_popup();
-    for _ in 0..4 {
+    for _ in 0..5 {
         app.move_login_selection(1);
     }
     app.confirm_login_selection();
@@ -920,15 +920,16 @@ fn local_popup_lists_runtimes_with_discovery_and_endpoint() {
 fn login_popup_offers_the_local_runtime_row() {
     let mut app = test_app();
     app.open_login_popup();
-    // The list scrolls; the local row is the last one, past Codex.
-    for _ in 0..4 {
+    // The list scrolls; the local row is the last one, past Mistral Vibe.
+    for _ in 0..5 {
         app.move_login_selection(1);
     }
-    assert_eq!(app.login_selected, 4);
+    assert_eq!(app.login_selected, 5);
     app.move_login_selection(1);
-    assert_eq!(app.login_selected, 4, "selection must stay in range");
+    assert_eq!(app.login_selected, 5, "selection must stay in range");
 
     let screen = render_to_string(80, 30, |f| super::login::render(f, &app));
+    assert!(screen.contains("Mistral Vibe"), "{screen}");
     assert!(screen.contains("Local runtime"), "{screen}");
     assert!(screen.contains("Ollama / llama.cpp / MLX"), "{screen}");
 }

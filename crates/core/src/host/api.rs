@@ -1080,6 +1080,7 @@ impl From<WireModel> for OpenAiModel {
             WireBackendTag::OpenAi => "openai",
             WireBackendTag::OpencodeGo => "opencode-go",
             WireBackendTag::Codex => "codex",
+            WireBackendTag::Mistral => "mistral",
             WireBackendTag::Local => "local",
         };
         Self {
@@ -1484,6 +1485,9 @@ async fn handle_gateway(
                 serde_json::Value::String(raw_model.clone()),
             );
         }
+        if route.tag == BackendTag::Mistral {
+            openrouter::mistral_gateway_body(&mut forwarded);
+        }
         serde_json::to_vec(&forwarded).unwrap_or_else(|_| request.body.clone())
     };
     let mut builder = state
@@ -1830,6 +1834,7 @@ fn redact_wire_event(event: WireEvent, app: &App, host_token: &str) -> WireEvent
         app.saved.openrouter_key.as_deref().unwrap_or_default(),
         app.saved.openai_key.as_deref().unwrap_or_default(),
         app.saved.opencode_key.as_deref().unwrap_or_default(),
+        app.saved.mistral_key.as_deref().unwrap_or_default(),
         app.saved
             .codex
             .as_ref()
@@ -2133,6 +2138,7 @@ fn handle_actor_request(app: &mut App, admin: &mut super::admin::State, request:
                 BackendTag::OpenAi,
                 BackendTag::OpencodeGo,
                 BackendTag::Codex,
+                BackendTag::Mistral,
                 BackendTag::Local,
             ];
             let backends = tags
@@ -2378,6 +2384,7 @@ fn gateway_route(
         BackendTag::OpenRouter => app.saved.openrouter_key.clone(),
         BackendTag::OpenAi => app.saved.openai_key.clone(),
         BackendTag::OpencodeGo => app.saved.opencode_key.clone(),
+        BackendTag::Mistral => app.saved.mistral_key.clone(),
         BackendTag::Codex => app
             .saved
             .codex
@@ -2546,6 +2553,7 @@ fn parse_backend_tag(value: &str) -> Result<BackendTag, String> {
         "openai" => Ok(BackendTag::OpenAi),
         "opencode" | "opencode-go" | "opencode_go" | "go" => Ok(BackendTag::OpencodeGo),
         "codex" => Ok(BackendTag::Codex),
+        "mistral" | "vibe" => Ok(BackendTag::Mistral),
         "local" => Ok(BackendTag::Local),
         _ => Err(format!("unknown x-nexus-backend {value:?}")),
     }
@@ -2715,6 +2723,8 @@ mod tests {
     fn backend_override_accepts_supported_spellings() {
         assert_eq!(parse_backend_tag("openrouter"), Ok(BackendTag::OpenRouter));
         assert_eq!(parse_backend_tag("OpenCode-Go"), Ok(BackendTag::OpencodeGo));
+        assert_eq!(parse_backend_tag("Mistral"), Ok(BackendTag::Mistral));
+        assert_eq!(parse_backend_tag("vibe"), Ok(BackendTag::Mistral));
         assert!(parse_backend_tag("wat").is_err());
     }
 
@@ -2799,13 +2809,15 @@ mod tests {
     fn wire_event_redacts_provider_and_host_credentials() {
         let mut app = test_app();
         app.saved.openai_key = Some("provider-secret".into());
+        app.saved.mistral_key = Some("mistral-secret".into());
         let event = redact_wire_event(
-            WireEvent::Status("provider-secret host-secret".into()),
+            WireEvent::Status("provider-secret mistral-secret host-secret".into()),
             &app,
             "host-secret",
         );
         let json = serde_json::to_string(&event).unwrap();
         assert!(!json.contains("provider-secret"));
+        assert!(!json.contains("mistral-secret"));
         assert!(!json.contains("host-secret"));
         assert!(json.contains("[redacted]"));
     }
@@ -2833,6 +2845,32 @@ mod tests {
             wire,
             WireEvent::Login(Some(crate::host::wire::WireLoginMsg::Done(Ok(()))))
         );
+    }
+
+    #[test]
+    fn mistral_routes_through_the_gateway_with_its_own_key() {
+        let mut app = test_app();
+        app.saved.mistral_key = Some("mock-mistral-key".into());
+        app.backends.set(
+            BackendTag::Mistral,
+            openrouter::OpenRouter::mistral("mock-mistral-key".into()),
+        );
+        app.models = vec![test_model("mistral-vibe-cli-latest", BackendTag::Mistral)];
+        let wire = OpenAiModel::from(WireModel::from(app.models[0].clone()));
+        assert_eq!(wire.id, "mistral:mistral-vibe-cli-latest");
+        assert_eq!(wire.owned_by, "mistral");
+        for (model, override_tag) in [
+            ("mistral-vibe-cli-latest", None),
+            ("mistral:mistral-vibe-cli-latest", None),
+            ("mistral:mistral-vibe-cli-latest", Some(BackendTag::Mistral)),
+        ] {
+            let route = gateway_route(&app, model, override_tag).expect("Mistral model routes");
+            assert_eq!(route.tag, BackendTag::Mistral);
+            assert_eq!(route.model, "mistral-vibe-cli-latest");
+            assert_eq!(route.key, "mock-mistral-key");
+        }
+        app.saved.mistral_key = None;
+        assert!(gateway_route(&app, "mistral-vibe-cli-latest", None).is_err());
     }
 
     #[test]

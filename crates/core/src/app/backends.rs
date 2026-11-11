@@ -11,6 +11,7 @@ pub struct Backends {
     pub openai: Option<OpenRouter>,
     pub opencode: Option<OpenRouter>,
     pub codex: Option<OpenRouter>,
+    pub mistral: Option<OpenRouter>,
     pub local: Option<OpenRouter>,
 }
 
@@ -20,6 +21,7 @@ impl Backends {
             || self.openai.is_some()
             || self.opencode.is_some()
             || self.codex.is_some()
+            || self.mistral.is_some()
             || self.local.is_some()
     }
 
@@ -34,6 +36,7 @@ impl Backends {
             BackendTag::OpenAi => self.openai.as_ref(),
             BackendTag::OpencodeGo => self.opencode.as_ref(),
             BackendTag::Codex => self.codex.as_ref(),
+            BackendTag::Mistral => self.mistral.as_ref(),
             BackendTag::Local => self.local.as_ref(),
         }
     }
@@ -44,6 +47,7 @@ impl Backends {
             BackendTag::OpenAi => self.openai = Some(provider),
             BackendTag::OpencodeGo => self.opencode = Some(provider),
             BackendTag::Codex => self.codex = Some(provider),
+            BackendTag::Mistral => self.mistral = Some(provider),
             BackendTag::Local => self.local = Some(provider),
         }
     }
@@ -56,6 +60,7 @@ impl Backends {
             BackendTag::OpenAi,
             BackendTag::OpencodeGo,
             BackendTag::Codex,
+            BackendTag::Mistral,
             BackendTag::Local,
         ]
         .into_iter()
@@ -72,6 +77,7 @@ impl Backends {
             BackendTag::OpenAi,
             BackendTag::OpencodeGo,
             BackendTag::Codex,
+            BackendTag::Mistral,
             BackendTag::Local,
         ] {
             if let Some(raw) = composite_id.strip_prefix(tag.key_prefix()) {
@@ -111,6 +117,7 @@ mod tests {
         backends.set(BackendTag::OpenAi, OpenRouter::openai("oa".into()));
         backends.set(BackendTag::OpencodeGo, OpenRouter::opencode_go("go".into()));
         backends.set(BackendTag::Codex, OpenRouter::openai_codex("codex".into()));
+        backends.set(BackendTag::Mistral, OpenRouter::mistral("vibe".into()));
 
         let (provider, raw) = backends.resolve("openai:gpt-4.1-mini").unwrap();
         assert_eq!(provider.backend_tag(), BackendTag::OpenAi);
@@ -123,6 +130,10 @@ mod tests {
         let (provider, raw) = backends.resolve("codex:gpt-5.4-mini").unwrap();
         assert_eq!(provider.backend_tag(), BackendTag::Codex);
         assert_eq!(raw, "gpt-5.4-mini");
+
+        let (provider, raw) = backends.resolve("mistral:mistral-vibe-cli-latest").unwrap();
+        assert_eq!(provider.backend_tag(), BackendTag::Mistral);
+        assert_eq!(raw, "mistral-vibe-cli-latest");
     }
 
     #[test]

@@ -88,10 +88,10 @@ impl AppView {
     }
 
     pub fn move_login_selection(&mut self, delta: i32) {
-        self.login_selected = nexus_core::app::clamp_cursor(self.login_selected, 5, delta);
+        self.login_selected = nexus_core::app::clamp_cursor(self.login_selected, 6, delta);
     }
 
-    /// Enter on a `/login` row: OpenRouter/OpenCode Go/OpenAI activate
+    /// Enter on a `/login` row: OpenRouter/OpenCode Go/OpenAI/Mistral activate
     /// immediately from their env var if set, else drop into the key-paste
     /// popup; Codex has no key, so it starts the device-code login instead,
     /// and the local runtime has none either — it opens `/local`.
@@ -116,6 +116,12 @@ impl AppView {
                 "OpenAI",
             ),
             3 => self.core.start_codex_login(),
+            4 => self.start_key_login(
+                KeyTarget::Mistral,
+                config::MISTRAL_ENV_KEY,
+                "mistral",
+                "Mistral Vibe",
+            ),
             _ => {
                 self.open_local_popup();
                 self.local_from_login = true;
@@ -196,6 +202,7 @@ impl AppView {
             KeyTarget::OpenRouter => "OpenRouter",
             KeyTarget::OpenAi => "OpenAI",
             KeyTarget::OpencodeGo => "OpenCode Go",
+            KeyTarget::Mistral => "Mistral Vibe",
         }
     }
 
@@ -210,11 +217,13 @@ impl AppView {
             ),
             KeyTarget::OpenAi => (BackendTag::OpenAi, OpenRouter::openai(key.clone())),
             KeyTarget::OpencodeGo => (BackendTag::OpencodeGo, OpenRouter::opencode_go(key.clone())),
+            KeyTarget::Mistral => (BackendTag::Mistral, OpenRouter::mistral(key.clone())),
         };
         match target {
             KeyTarget::OpenRouter => self.core.saved.openrouter_key = Some(key),
             KeyTarget::OpenAi => self.core.saved.openai_key = Some(key),
             KeyTarget::OpencodeGo => self.core.saved.opencode_key = Some(key),
+            KeyTarget::Mistral => self.core.saved.mistral_key = Some(key),
         }
         self.core.backends.set(backend_tag, provider);
         self.popup = Popup::None;
@@ -236,6 +245,7 @@ impl AppView {
             KeyTarget::OpenRouter => (KeyTarget::OpenRouter, "openrouter"),
             KeyTarget::OpenAi => (KeyTarget::OpenAi, "openai"),
             KeyTarget::OpencodeGo => (KeyTarget::OpencodeGo, "opencode"),
+            KeyTarget::Mistral => (KeyTarget::Mistral, "mistral"),
         };
         self.activate_key(target, tag, key);
     }

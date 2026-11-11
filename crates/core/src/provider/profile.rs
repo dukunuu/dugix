@@ -80,6 +80,7 @@ mod tests {
             BackendTag::OpenAi,
             BackendTag::OpencodeGo,
             BackendTag::Codex,
+            BackendTag::Mistral,
         ] {
             let profile = profile_for(Some(&model(backend, Some(8_000))), Some(&config));
             assert!(profile.parallel_calls);

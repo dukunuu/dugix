@@ -286,6 +286,7 @@ pub enum WireBackendTag {
     OpenAi,
     OpencodeGo,
     Codex,
+    Mistral,
     Local,
 }
 
@@ -572,6 +573,7 @@ impl From<BackendTag> for WireBackendTag {
             BackendTag::OpenAi => Self::OpenAi,
             BackendTag::OpencodeGo => Self::OpencodeGo,
             BackendTag::Codex => Self::Codex,
+            BackendTag::Mistral => Self::Mistral,
             BackendTag::Local => Self::Local,
         }
     }
