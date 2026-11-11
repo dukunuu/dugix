@@ -156,7 +156,12 @@ impl App {
     pub fn finish_memory_edit(&mut self, space_name: &str, path: &std::path::Path) -> Result<()> {
         let space = self.space_id_by_name(space_name)?;
         let text = std::fs::read_to_string(path)?;
-        let summary = book::apply_edit(self.db.conn(), &space, &book::parse_edit(&text))?;
+        let summary = book::apply_edit(
+            self.db.conn(),
+            &space,
+            &book::parse_edit(&text),
+            book::opened_at(&text),
+        )?;
         let _ = std::fs::remove_file(path);
         if space == self.active_space.id {
             self.refresh_memory_snapshot();
@@ -183,6 +188,7 @@ impl App {
             self.db.conn(),
             &self.active_space.id,
             &book::parse_edit(text),
+            book::opened_at(text),
         )?;
         self.refresh_memory_snapshot();
         self.refresh_toolbox();

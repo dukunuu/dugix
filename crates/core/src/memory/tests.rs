@@ -138,7 +138,7 @@ fn editor_round_trip_applies_a_diff() {
     // Unchanged text keeps its fact.
     let parsed = book::parse_edit(&rendered);
     assert_eq!(
-        book::apply_edit(&conn, SPACE, &parsed).unwrap(),
+        book::apply_edit(&conn, SPACE, &parsed, book::opened_at(&rendered)).unwrap(),
         book::EditSummary::default()
     );
 
@@ -147,7 +147,13 @@ fn editor_round_trip_applies_a_diff() {
         .replace("- uses Neovim\n", "")
         .replace("- tags before publishing\n", "")
         + "\n## Rust\n> conventions\n- uses thiserror\n- tags before publishing\n";
-    let summary = book::apply_edit(&conn, SPACE, &book::parse_edit(&edited)).unwrap();
+    let summary = book::apply_edit(
+        &conn,
+        SPACE,
+        &book::parse_edit(&edited),
+        book::opened_at(&edited),
+    )
+    .unwrap();
     assert_eq!(summary.added, 2); // "deploys from master", "uses thiserror"
     assert_eq!(summary.removed, 2); // "deploys from dev", "uses Neovim"
     assert_eq!(summary.moved, 1); // "tags before publishing" -> Rust
@@ -161,6 +167,7 @@ fn editor_round_trip_applies_a_diff() {
         &conn,
         SPACE,
         &book::parse_edit("## Rust\n- uses thiserror\n- tags before publishing\n"),
+        None,
     )
     .unwrap();
     assert_eq!(summary.chapters_removed, 2);
@@ -178,13 +185,76 @@ fn editor_keeps_long_facts_whole() {
         &chapters(&conn, SPACE).unwrap(),
         &facts(&conn, SPACE).unwrap(),
     );
-    let summary = book::apply_edit(&conn, SPACE, &book::parse_edit(&rendered)).unwrap();
+    let summary = book::apply_edit(
+        &conn,
+        SPACE,
+        &book::parse_edit(&rendered),
+        book::opened_at(&rendered),
+    )
+    .unwrap();
     assert_eq!(summary.added, 0);
     assert_eq!(summary.removed, 0);
     let saved = facts(&conn, SPACE).unwrap();
     assert_eq!(saved.len(), 1);
     assert_eq!(saved[0].id, fact.id);
     assert_eq!(saved[0].text, text);
+}
+
+#[test]
+fn editor_save_keeps_facts_added_while_it_was_open() {
+    let conn = conn();
+    add(&conn, SPACE, ABOUT_YOU, "uses Neovim", None, Some(true)).unwrap();
+    let rendered = book::render_edit(
+        &chapters(&conn, SPACE).unwrap(),
+        &facts(&conn, SPACE).unwrap(),
+    );
+    let late = add(&conn, SPACE, "nexus", "deploys from master", None, None)
+        .unwrap()
+        .fact;
+    let summary = book::apply_edit(
+        &conn,
+        SPACE,
+        &book::parse_edit(&rendered),
+        book::opened_at(&rendered),
+    )
+    .unwrap();
+    assert_eq!(summary.removed, 0);
+    assert!(resolve_fact(&conn, SPACE, &late.id).is_ok());
+}
+
+#[test]
+fn editor_save_still_deletes_a_line_removed_from_the_text() {
+    let conn = conn();
+    let gone = add(&conn, SPACE, "nexus", "deploys from dev", None, None)
+        .unwrap()
+        .fact;
+    let rendered = book::render_edit(
+        &chapters(&conn, SPACE).unwrap(),
+        &facts(&conn, SPACE).unwrap(),
+    );
+    let edited = rendered.replace("- deploys from dev\n", "");
+    let summary = book::apply_edit(
+        &conn,
+        SPACE,
+        &book::parse_edit(&edited),
+        book::opened_at(&edited),
+    )
+    .unwrap();
+    assert_eq!(summary.removed, 1);
+    assert!(resolve_fact(&conn, SPACE, &gone.id).is_err());
+}
+
+#[test]
+fn editor_text_without_an_opened_line_still_deletes() {
+    let conn = conn();
+    let gone = add(&conn, SPACE, "nexus", "deploys from dev", None, None)
+        .unwrap()
+        .fact;
+    let text = "## nexus\n";
+    let summary =
+        book::apply_edit(&conn, SPACE, &book::parse_edit(text), book::opened_at(text)).unwrap();
+    assert_eq!(summary.removed, 1);
+    assert!(resolve_fact(&conn, SPACE, &gone.id).is_err());
 }
 
 #[test]

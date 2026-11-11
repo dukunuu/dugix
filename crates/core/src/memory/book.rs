@@ -222,7 +222,10 @@ const EDIT_HEADER: &str =
 /// The book as Markdown for `$EDITOR`.
 #[must_use]
 pub fn render_edit(chapters: &[Chapter], facts: &[Fact]) -> String {
-    let mut out = format!("{EDIT_HEADER}\n");
+    let mut out = format!(
+        "{EDIT_HEADER}\n<!-- opened {} -->\n",
+        chrono::Utc::now().to_rfc3339()
+    );
     for chapter in chapters {
         let _ = write!(out, "\n## {}", chapter.title);
         if chapter.pinned {
@@ -237,6 +240,19 @@ pub fn render_edit(chapters: &[Chapter], facts: &[Fact]) -> String {
         }
     }
     out
+}
+
+/// When the editor text was rendered, from its `<!-- opened … -->` line.
+#[must_use]
+pub fn opened_at(text: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    let stamp = text.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("<!-- opened ")?
+            .strip_suffix(" -->")
+    })?;
+    chrono::DateTime::parse_from_rfc3339(stamp)
+        .ok()
+        .map(|time| time.with_timezone(&chrono::Utc))
 }
 
 /// One chapter as the user left it in the editor.
@@ -346,7 +362,12 @@ impl std::fmt::Display for EditSummary {
 /// Apply an editor save as a diff: matching lines keep their fact, new lines
 /// are added, a line moved under another heading moves its fact, and
 /// anything no longer present is deleted.
-pub fn apply_edit(conn: &Connection, space: &str, edited: &[EditedChapter]) -> Result<EditSummary> {
+pub fn apply_edit(
+    conn: &Connection,
+    space: &str,
+    edited: &[EditedChapter],
+    opened_at: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<EditSummary> {
     let mut summary = EditSummary::default();
     let mut keep_facts: HashSet<String> = HashSet::new();
     let mut keep_chapters: HashSet<String> = HashSet::new();
@@ -395,14 +416,19 @@ pub fn apply_edit(conn: &Connection, space: &str, edited: &[EditedChapter]) -> R
             }
         }
     }
+    let existed =
+        |created_at: &str| match (opened_at, chrono::DateTime::parse_from_rfc3339(created_at)) {
+            (Some(opened), Ok(created)) => created.with_timezone(&chrono::Utc) <= opened,
+            _ => true,
+        };
     for fact in super::facts(conn, space)? {
-        if !keep_facts.contains(&fact.id) {
+        if !keep_facts.contains(&fact.id) && existed(&fact.created_at) {
             super::delete_fact(conn, space, &fact.id)?;
             summary.removed += 1;
         }
     }
     for chapter in super::chapters(conn, space)? {
-        if !keep_chapters.contains(&chapter.id) {
+        if !keep_chapters.contains(&chapter.id) && existed(&chapter.created_at) {
             super::delete_chapter(conn, &chapter.id)?;
             summary.chapters_removed += 1;
         }

@@ -2491,7 +2491,12 @@ fn memory(space_name: Option<&str>, edit: bool) -> Result<()> {
     std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))?;
     open_editor(&path)?;
     let edited = std::fs::read_to_string(&path)?;
-    let summary = book::apply_edit(&conn, &space_id, &book::parse_edit(&edited))?;
+    let summary = book::apply_edit(
+        &conn,
+        &space_id,
+        &book::parse_edit(&edited),
+        book::opened_at(&edited),
+    )?;
     std::fs::remove_file(&path)?;
     out(summary.to_string());
     Ok(())
