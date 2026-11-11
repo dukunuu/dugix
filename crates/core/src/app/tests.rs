@@ -1,6 +1,88 @@
 use super::*;
 
 #[test]
+fn with_creds_configures_all_backends_and_announces_loading_once() {
+    let saved = config::SavedCreds {
+        openai_key: Some("sk-openai-test".into()),
+        mistral_key: Some("mistral-test".into()),
+        ..Default::default()
+    };
+    let mut app = App::with_creds(Db::open_in_memory().unwrap(), test_space(), saved);
+    let root = app.space.root.clone();
+    assert_eq!(
+        app.backends.configured_tags(),
+        [BackendTag::OpenAi, BackendTag::Mistral]
+    );
+    assert_eq!(app.saved.openai_key.as_deref(), Some("sk-openai-test"));
+    assert_eq!(app.saved.mistral_key.as_deref(), Some("mistral-test"));
+    assert_eq!(app.embedding_model, "openai:text-embedding-3-small");
+    let mut loading = 0;
+    while let Some(event) = app.pop_pending_event() {
+        if let AppEvent::Status(status) = event
+            && status.starts_with("loading models…")
+        {
+            loading += 1;
+        }
+    }
+    assert_eq!(loading, 1);
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn codex_refresh_does_nothing_for_unexpired_credentials() {
+    let saved = config::SavedCreds {
+        codex: Some(config::CodexCredentials {
+            access: "codex-test-access".into(),
+            refresh: "codex-test-refresh".into(),
+            expires: Utc::now().timestamp_millis() + 3_600_000,
+            account_id: "test-account".into(),
+        }),
+        ..Default::default()
+    };
+    let mut app = App::with_creds(Db::open_in_memory().unwrap(), test_space(), saved);
+    let root = app.space.root.clone();
+    app.refresh_codex_in_background();
+    assert!(app.codex_refresh_rx.is_none());
+    assert_eq!(
+        app.saved.codex.as_ref().unwrap().access,
+        "codex-test-access"
+    );
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn codex_refresh_failure_reports_login_hint_and_keeps_stored_credentials() {
+    let saved = config::SavedCreds {
+        codex: Some(config::CodexCredentials {
+            access: "stored-codex-access".into(),
+            refresh: "stored-codex-refresh".into(),
+            expires: 0,
+            account_id: "test-account".into(),
+        }),
+        ..Default::default()
+    };
+    let mut app = App::with_creds(Db::open_in_memory().unwrap(), test_space(), saved);
+    let root = app.space.root.clone();
+    while app.pop_pending_event().is_some() {}
+    let (tx, rx) = mpsc::unbounded_channel();
+    app.codex_refresh_rx = Some(rx);
+    tx.send(Err("offline".into())).unwrap();
+    let event = app.next_event().await;
+    assert!(matches!(event, AppEvent::Status(status) if status ==
+        "Codex sign-in could not refresh (offline) — run /login and pick Codex"));
+    assert!(app.codex_refresh_rx.is_none());
+    let creds = app.saved.codex.as_ref().unwrap();
+    assert_eq!(creds.access, "stored-codex-access");
+    assert_eq!(creds.refresh, "stored-codex-refresh");
+    assert_eq!(creds.expires, 0);
+    assert!(app.backends.configured(BackendTag::Codex));
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn auto_refuses_chat_and_restores_its_device_local_mode() {
     let mut app = app_with_key();
     app.run_command("auto").unwrap();

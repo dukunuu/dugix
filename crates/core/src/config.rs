@@ -221,6 +221,28 @@ pub struct SavedCreds {
     pub host_token: Option<String>,
 }
 
+impl SavedCreds {
+    /// Guess a single key's backend for tests and single-key bootstraps.
+    pub fn from_key(key: Option<&str>) -> Self {
+        use crate::provider::BackendTag;
+        use crate::provider::openrouter::OpenRouter;
+
+        let mut saved = Self::default();
+        if let Some(key) = key {
+            let tag = OpenRouter::from_key_auto(key.to_string()).backend_tag();
+            let slot = match tag {
+                BackendTag::OpenRouter => &mut saved.openrouter_key,
+                BackendTag::OpenAi => &mut saved.openai_key,
+                BackendTag::OpencodeGo => &mut saved.opencode_key,
+                BackendTag::Mistral => &mut saved.mistral_key,
+                BackendTag::Codex | BackendTag::Local => return saved,
+            };
+            *slot = Some(key.to_string());
+        }
+        saved
+    }
+}
+
 /// Write a file that holds credentials, restricting it to the owner.
 ///
 /// `config.toml` carries provider API keys, Codex OAuth tokens, and the host
@@ -321,8 +343,8 @@ pub fn load_system_prompt_overlay() -> String {
 /// Resolve every configured credential from disk + env, with no network
 /// access: Codex creds are returned exactly as stored (no refresh). Read-only
 /// CLI commands (`status`, `usage`, `sessions`, …) use this so they never
-/// touch the network; the TUI and `nexus ask` use `load_all_providers`,
-/// which additionally refreshes a stale Codex token.
+/// touch the network; `load_all_providers` additionally scaffolds and
+/// validates configuration without refreshing tokens.
 pub fn load_creds_offline() -> SavedCreds {
     let stored = load_config_all().unwrap_or_default();
     let host_token = load_host_token().ok().flatten();
@@ -351,10 +373,10 @@ pub fn load_creds_offline() -> SavedCreds {
 /// Resolve every configured credential at once: `$OPENROUTER_API_KEY`/
 /// `$OPENAI_API_KEY`/`$OPENCODE_API_KEY`/`$MISTRAL_API_KEY` fill any slot the
 /// config file leaves empty, Codex creds always come from the config file
-/// (refreshed if stale). Scaffolds an empty config on first run. Never
+/// (without refreshing). Scaffolds an empty config on first run. Never
 /// fails on missing credentials — the app launches regardless and they can
 /// be set in-app with `/login`.
-pub async fn load_all_providers() -> Result<SavedCreds> {
+pub fn load_all_providers() -> Result<SavedCreds> {
     let path = config_path()?;
     if !path.exists() {
         write_provider_config(&Provider::default())?; // scaffold template
@@ -365,11 +387,6 @@ pub async fn load_all_providers() -> Result<SavedCreds> {
     saved.agent = load_agent_config()?;
     if let Some(local) = &saved.local {
         local.validate()?;
-    }
-    if let Some(creds) = saved.codex.take() {
-        let creds = refresh_codex_if_needed(creds).await?;
-        save_codex_credentials(&creds)?;
-        saved.codex = Some(creds);
     }
     Ok(saved)
 }
@@ -475,9 +492,7 @@ fn load_local_config() -> Result<Option<crate::provider::local::LocalConfig>> {
 }
 
 /// The first configured credential in a fixed priority order (openrouter >
-/// openai > opencode > mistral > codex) — used only to seed `App::new`'s "reasonable
-/// defaults" guess at startup; `App::rebuild_all_backends` populates every
-/// configured backend regardless of which one this picks.
+/// openai > opencode > mistral > codex).
 pub fn first_configured(saved: &SavedCreds) -> Option<(&'static str, String)> {
     saved
         .openrouter_key
@@ -507,7 +522,7 @@ pub fn codex_account_id(access_token: &str) -> Result<String> {
     Ok(account.to_string())
 }
 
-async fn refresh_codex_if_needed(creds: CodexCredentials) -> Result<CodexCredentials> {
+pub(crate) async fn refresh_codex_if_needed(creds: CodexCredentials) -> Result<CodexCredentials> {
     if chrono::Utc::now().timestamp_millis() < creds.expires - 60_000 {
         return Ok(creds);
     }
@@ -1193,6 +1208,30 @@ mod tests {
             .count();
         assert_eq!(leftovers, 0);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn saved_creds_from_key_guesses_openrouter() {
+        let saved = SavedCreds::from_key(Some("sk-or-test"));
+        assert_eq!(saved.openrouter_key.as_deref(), Some("sk-or-test"));
+        assert!(saved.openai_key.is_none());
+        assert!(saved.opencode_key.is_none());
+        assert!(saved.mistral_key.is_none());
+        assert!(saved.codex.is_none());
+        assert!(saved.local.is_none());
+        assert!(saved.host_token.is_none());
+    }
+
+    #[test]
+    fn saved_creds_from_no_key_is_empty() {
+        let saved = SavedCreds::from_key(None);
+        assert!(saved.openrouter_key.is_none());
+        assert!(saved.openai_key.is_none());
+        assert!(saved.opencode_key.is_none());
+        assert!(saved.mistral_key.is_none());
+        assert!(saved.codex.is_none());
+        assert!(saved.local.is_none());
+        assert!(saved.host_token.is_none());
     }
 
     #[test]

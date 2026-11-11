@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
         anyhow::bail!("no running Nexus TUI instance");
     }
 
-    let saved = config::load_all_providers().await?;
+    let saved = config::load_all_providers()?;
     let app = nexus_core::boot(saved).await?;
     let mut app = AppView::new(app);
     let (selection_server, selection_requests) = cli::start_selection_server()?;
@@ -83,6 +83,36 @@ async fn main() -> Result<()> {
         );
     }
     app.init(); // fetch models if a key is already present
+    open_start_session(&mut app, selection_prompt, continue_session, selection_chat)?;
+    app.spawn_update_check(); // once a day: is a newer release out? Says so; never installs
+    app.refresh_codex_in_background();
+    let result = events::run(app, &mut terminal, selection_requests).await;
+    // Unix drops the socket and aborts the accept task here; elsewhere
+    // `SelectionServer` is a stub with nothing to release.
+    #[allow(clippy::drop_non_drop)]
+    drop(selection_server);
+    if enhanced {
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::event::PopKeyboardEnhancementFlags
+        );
+    }
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::DisableMouseCapture,
+        crossterm::event::DisableBracketedPaste,
+        crossterm::event::DisableFocusChange
+    );
+    ratatui::restore();
+    result
+}
+
+fn open_start_session(
+    app: &mut AppView,
+    selection_prompt: Option<String>,
+    continue_session: bool,
+    selection_chat: bool,
+) -> Result<()> {
     if let Some(prompt) = selection_prompt {
         // Selection mode is a real TUI launch: submit the protected prompt to
         // the same event loop so the answer streams into the open chat.
@@ -119,24 +149,5 @@ async fn main() -> Result<()> {
             }
         }
     }
-    app.spawn_update_check(); // once a day: is a newer release out? Says so; never installs
-    let result = events::run(app, &mut terminal, selection_requests).await;
-    // Unix drops the socket and aborts the accept task here; elsewhere
-    // `SelectionServer` is a stub with nothing to release.
-    #[allow(clippy::drop_non_drop)]
-    drop(selection_server);
-    if enhanced {
-        let _ = crossterm::execute!(
-            std::io::stdout(),
-            crossterm::event::PopKeyboardEnhancementFlags
-        );
-    }
-    let _ = crossterm::execute!(
-        std::io::stdout(),
-        crossterm::event::DisableMouseCapture,
-        crossterm::event::DisableBracketedPaste,
-        crossterm::event::DisableFocusChange
-    );
-    ratatui::restore();
-    result
+    Ok(())
 }

@@ -1285,6 +1285,8 @@ pub struct App {
     pub login_rx: Option<mpsc::UnboundedReceiver<LoginMsg>>,
     /// Startup update check result (newest published version, or `None` on failure).
     pub update_rx: Option<mpsc::UnboundedReceiver<Option<String>>>,
+    /// Startup Codex refresh result, handled internally so tokens never enter events.
+    codex_refresh_rx: Option<mpsc::UnboundedReceiver<Result<config::CodexCredentials, String>>>,
     /// A running `/swarm` discussion's channel, cancellation handle, and
     /// origin session id (used for targeting the correct progress row).
     pub swarm_rx: Option<mpsc::UnboundedReceiver<swarm::SwarmMsg>>,
@@ -1376,39 +1378,15 @@ pub struct App {
 }
 
 impl App {
+    /// Construct from a single guessed key for tests and single-key bootstraps.
+    pub fn new(db: Db, key: Option<&str>, space: Space) -> Self {
+        Self::with_creds(db, space, config::SavedCreds::from_key(key))
+    }
+
+    /// Construct every configured backend from the saved credentials without network access.
     // Long by design (app bootstrap).
     #[allow(clippy::too_many_lines)]
-    pub fn new(db: Db, key: Option<&str>, space: Space) -> Self {
-        let provider = key.map(|k| OpenRouter::from_key_auto(k.to_string()));
-        // A single bootstrap key (test convenience / a fresh single-backend
-        // config): guess its flavor and seed both `backends` and `saved`
-        // with it. Real app startup (main.rs) overwrites `saved` with the
-        // authoritative on-disk creds right after construction and rebuilds
-        // `backends` from that instead.
-        let mut backends = Backends::default();
-        let mut saved = crate::config::SavedCreds::default();
-        if let (Some(k), Some(p)) = (&key, &provider) {
-            let tag = p.backend_tag();
-            backends.set(tag, p.clone());
-            match tag {
-                crate::provider::BackendTag::OpenRouter => {
-                    saved.openrouter_key = Some((*k).to_string());
-                }
-                crate::provider::BackendTag::OpenAi => saved.openai_key = Some((*k).to_string()),
-                crate::provider::BackendTag::OpencodeGo => {
-                    saved.opencode_key = Some((*k).to_string());
-                }
-                crate::provider::BackendTag::Mistral => saved.mistral_key = Some((*k).to_string()),
-                // No full CodexCredentials from a bare key — fine for the
-                // bootstrap/test path, main.rs always has the real ones.
-                crate::provider::BackendTag::Codex | crate::provider::BackendTag::Local => {}
-            }
-        }
-        let status = if key.is_some() {
-            "loading models…  (/model to pick, /help for commands)".to_string()
-        } else {
-            "no API key — run /login to add OpenRouter, OpenAI, OpenCode, Codex, Mistral or a local model".to_string()
-        };
+    pub fn with_creds(db: Db, space: Space, saved: config::SavedCreds) -> Self {
         // Fall back to a fresh in-memory default row if the db lookup somehow
         // fails — the space name still resolves to real files on disk.
         let active_space = db
@@ -1425,23 +1403,6 @@ impl App {
                 created_at: Utc::now().to_rfc3339(),
             });
         let _ = space.ensure_space_dir(&active_space.name);
-        let default_model_id = |f: fn(&OpenRouter) -> &'static str, fallback: &'static str| {
-            provider.as_ref().map_or_else(
-                || fallback.to_string(),
-                |p| {
-                    let model = f(p);
-                    if model.is_empty() {
-                        String::new()
-                    } else {
-                        format!("{}{}", p.backend_tag().key_prefix(), model)
-                    }
-                },
-            )
-        };
-        let embedding_model = default_model_id(
-            OpenRouter::default_embedding_model,
-            "openai/text-embedding-3-small",
-        );
         let skills_dir = crate::skills::skills_dir(&space.root);
         let skill_dirs = crate::skills::app_skill_roots(&space.root);
         let skills = crate::skills::load_skills_from_dirs(&skill_dirs);
@@ -1464,9 +1425,7 @@ impl App {
                 Some(crate::tools::FilesCtx {
                     db_path: space.db_path(),
                     space_id: active_space.id.clone(),
-                    embedder: backends
-                        .resolve(&embedding_model)
-                        .map(|(p, model)| crate::provider::embedding::Embedder::openai(p, model)),
+                    embedder: None,
                 }),
                 // No apps ctx yet — the app server starts after construction;
                 // main() calls refresh_toolbox() once it's up.
@@ -1477,7 +1436,7 @@ impl App {
         let mut app = Self {
             db,
             space,
-            backends,
+            backends: Backends::default(),
             saved,
             experiments: config::Experiments::default(),
             trace_store: None,
@@ -1526,6 +1485,7 @@ impl App {
             research_abort: None,
             login_rx: None,
             update_rx: None,
+            codex_refresh_rx: None,
             swarm_rx: None,
             swarm_abort: None,
             swarm_session: None,
@@ -1545,7 +1505,7 @@ impl App {
             cache_epoch: 0,
             context_warned: false,
             prompt_datetime: Utc::now().format("%Y-%m-%d %H:%M UTC, %A").to_string(),
-            embedding_model,
+            embedding_model: String::new(),
             embedding_backend: None,
             embedding_status: String::new(),
             embedding_chunks: Vec::new(),
@@ -1612,10 +1572,29 @@ impl App {
             sessions_cache: Vec::new(),
             title_rx: None,
         };
+        app.rebuild_all_backends();
+        app.embedding_model = app
+            .backends
+            .configured_tags()
+            .first()
+            .and_then(|tag| app.backends.get(*tag))
+            .map_or_else(
+                || "openai/text-embedding-3-small".to_string(),
+                |provider| {
+                    let model = provider.default_embedding_model();
+                    if model.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{}{}", provider.backend_tag().key_prefix(), model)
+                    }
+                },
+            );
+        if !app.backends.any() {
+            app.push_status("no API key — run /login to add OpenRouter, OpenAI, OpenCode, Codex, Mistral or a local model".to_string());
+        }
         // Capture the first session snapshot before any request can be built.
         // Subsequent session switches/new chats refresh it explicitly.
         app.refresh_memory_snapshot();
-        app.pending_events.push_back(AppEvent::Status(status));
         app.load_prefs();
         app.load_settings();
         app
@@ -2252,6 +2231,28 @@ impl App {
         });
     }
 
+    /// Refresh a Codex token expiring within a minute without blocking startup.
+    pub fn refresh_codex_in_background(&mut self) {
+        if self.codex_refresh_rx.is_some() {
+            return;
+        }
+        let Some(creds) = self.saved.codex.as_ref() else {
+            return;
+        };
+        if Utc::now().timestamp_millis() < creds.expires - 60_000 {
+            return;
+        }
+        let creds = creds.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.codex_refresh_rx = Some(rx);
+        tokio::spawn(async move {
+            let result = config::refresh_codex_if_needed(creds)
+                .await
+                .map_err(|error| error.to_string());
+            let _ = tx.send(result);
+        });
+    }
+
     /// Say a newer release is out and how to install it; nothing installs
     /// on its own. `None` (failed check) and same/older versions are silent.
     pub fn on_update_check(&mut self, latest: Option<String>) {
@@ -2602,6 +2603,29 @@ impl App {
                     None => std::future::pending().await,
                 }
             } => AppEvent::UpdateCheck(r.flatten()),
+            r = async {
+                match self.codex_refresh_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                self.codex_refresh_rx = None;
+                if let Some(result) = r {
+                    match result.and_then(|creds| {
+                        config::save_codex_credentials(&creds).map_err(|error| error.to_string())?;
+                        Ok(creds)
+                    }) {
+                        Ok(creds) => {
+                            self.saved.codex = Some(creds);
+                            self.rebuild_all_backends();
+                        }
+                        Err(error) => self.push_status(format!(
+                            "Codex sign-in could not refresh ({error}) — run /login and pick Codex"
+                        )),
+                    }
+                }
+                self.pending_events.pop_front().unwrap_or_else(|| AppEvent::Status(String::new()))
+            },
             r = async {
                 match self.swarm_rx.as_mut() {
                     Some(rx) => rx.recv().await,

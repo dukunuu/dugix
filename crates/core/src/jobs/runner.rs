@@ -39,7 +39,7 @@ impl DaemonLock {
 
 /// Boot exactly the ordinary CLI app, then run this device's job.
 pub async fn run_once(job: &Job) -> Result<JobRun> {
-    let saved = crate::config::load_all_providers().await?;
+    let saved = crate::config::load_all_providers()?;
     let mut app = crate::boot(saved).await?;
     let _lock = DaemonLock::acquire(&app.space.root)?;
     run_with_app(&mut app, job).await

@@ -1003,7 +1003,7 @@ fn launch_studio(path: Option<&Path>) -> Result<()> {
 /// Boot the same `App` the TUI boots (creds, backends, app server, toolbox)
 /// and apply the shared `--model` / `--space` overrides.
 async fn build_app(model: Option<&str>, space_name: Option<&str>) -> Result<app::App> {
-    let saved = config::load_all_providers().await?;
+    let saved = config::load_all_providers()?;
     let mut app = nexus_core::boot(saved).await?;
     // Connectors connect in the background; a headless turn has no UI to
     // update later, so give the configured ones a moment before the first
@@ -2932,9 +2932,10 @@ async fn host(options: HostOptions) -> Result<()> {
     // credential template when no config exists yet, and `ensure_host_token`
     // creates the file. Minting the token first would leave a first-ever
     // `nexus host` run with a config holding nothing but `host_token`.
-    let saved = config::load_all_providers().await?;
+    let saved = config::load_all_providers()?;
     let token = config::ensure_host_token()?;
     let mut app = nexus_core::boot(saved).await?;
+    app.refresh_codex_in_background();
     app.init();
     let web_dir = std::env::var_os("NEXUS_WEB_DIR").map_or_else(
         || std::path::PathBuf::from("web/dist"),
