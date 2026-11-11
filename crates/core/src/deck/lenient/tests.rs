@@ -214,3 +214,41 @@ fn known_mistakes_get_a_one_line_fix() {
     assert!(hint("$.n", "unknown field `colour`").is_some());
     assert!(hint("$.n", "something nobody has seen").is_none());
 }
+
+#[test]
+fn flat_update_fields_fold_into_fields() {
+    let mut context = Context::for_new_deck();
+    let mut ops = vec![
+        json!({"op": "update_node", "id": "b1", "base_hash": "h", "text": "Case B", "text_style": "lead"}),
+        json!({"op": "update_slide", "slide": "s1", "fill": "accent2"}),
+    ];
+    context.ops(&mut ops);
+    assert_eq!(
+        ops[0],
+        json!({"op": "update_node", "id": "b1", "base_hash": "h", "fields": {"text": "Case B", "text_style": "lead"}})
+    );
+    assert_eq!(
+        ops[1],
+        json!({"op": "update_slide", "id": "s1", "fields": {"fill": "accent2"}})
+    );
+    assert!(
+        notes_of(&context).contains("fields"),
+        "{}",
+        notes_of(&context)
+    );
+}
+
+#[test]
+fn a_missing_part_stays_missing_so_the_error_names_it() {
+    let mut context = Context::for_new_deck();
+    let mut ops = vec![
+        json!({"op": "insert_node", "parent": "s1"}),
+        json!({"op": "set_layout", "id": "s1"}),
+        json!({"op": "set_text_style", "name": "lead"}),
+        json!({"op": "set_transition", "slide": "s1"}),
+        json!({"op": "set_animation", "id": "b1"}),
+    ];
+    let before = ops.clone();
+    context.ops(&mut ops);
+    assert_eq!(ops, before);
+}

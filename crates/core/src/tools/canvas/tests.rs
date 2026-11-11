@@ -411,3 +411,20 @@ async fn doc_creates_and_edits_tell_the_terminal_which_block_to_show() {
     .await;
     assert!(f.tools.deck_link.lock().unwrap().changed.is_empty());
 }
+
+#[tokio::test]
+async fn doc_replace_text_accepts_block_old_and_new_and_says_so() {
+    let f = Fixture::new();
+    create(&f).await;
+    let base = doc(&f);
+    let paragraph = &base.blocks[3].id;
+    let edited = call(&f, "edit", json!({"path":"docs/report.doc.json","revision":base.revision(),"ops":[{"op":"replace_text","block":paragraph,"old":"carefully","new":"confidently"}]})).await;
+    assert!(edited.starts_with("edited doc"), "{edited}");
+    assert!(edited.contains("Ship **confidently**."), "{edited}");
+    assert!(
+        edited.contains("block → id")
+            && edited.contains("old → find")
+            && edited.contains("new → replace"),
+        "{edited}"
+    );
+}

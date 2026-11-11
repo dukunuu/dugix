@@ -163,7 +163,8 @@ impl ToolBox {
     }
 
     fn doc_edit(&self, relative: &str, path: &Path, before: &Doc, v: &Value) -> Result<String> {
-        let ops = v["ops"].as_array().context("ops must be an array")?.clone();
+        let mut ops = v["ops"].as_array().context("ops must be an array")?.clone();
+        let aliased = doc_op_aliases(&mut ops);
         let rebased = doc_revision(path, before, v["revision"].as_str(), &ops)?;
         let resolver = |slug: &str| crate::design::load(&self.space_files_dir, slug);
         let prepared =
@@ -188,6 +189,9 @@ impl ToolBox {
         );
         if let Some(rebased) = rebased {
             let _ = writeln!(out, "{rebased}");
+        }
+        if !aliased.is_empty() {
+            let _ = writeln!(out, "read as: {}", aliased.join(", "));
         }
         let mut counts = BTreeMap::<String, usize>::new();
         for op in &prepared.ops {
@@ -558,4 +562,31 @@ fn doc_revision(
         "rebased: touched blocks unchanged since {given}; applied to revision {}",
         short(&current.revision())
     )))
+}
+
+/// Field names models commonly reach for, read as the documented ones:
+/// `block` for `id`, and `old`/`new` for `replace_text`'s `find`/`replace`.
+/// Only renames into a field the op lacks; returns what was renamed.
+fn doc_op_aliases(ops: &mut [Value]) -> Vec<String> {
+    let mut renamed = BTreeSet::new();
+    for op in ops.iter_mut() {
+        let replace_text = op["op"] == "replace_text";
+        let Some(map) = op.as_object_mut() else {
+            continue;
+        };
+        let pairs: &[(&str, &str)] = if replace_text {
+            &[("block", "id"), ("old", "find"), ("new", "replace")]
+        } else {
+            &[("block", "id")]
+        };
+        for &(alias, field) in pairs {
+            if !map.contains_key(field)
+                && let Some(value) = map.remove(alias)
+            {
+                map.insert(field.into(), value);
+                renamed.insert(format!("{alias} → {field}"));
+            }
+        }
+    }
+    renamed.into_iter().collect()
 }
