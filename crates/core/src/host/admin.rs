@@ -138,11 +138,6 @@ pub(super) fn dispatch(
             if input.space_id != app.active_space.id {
                 bail!("active space changed; refresh settings");
             }
-            // A removed key gets a clear error; other failures stay generic so
-            // secrets and credential-bearing URLs are not echoed back.
-            if crate::app::is_removed_setting(&input.key) {
-                bail!("{}", crate::app::removed_setting_message(&input.key));
-            }
             app.set_setting(&input.key, input.value.trim())
                 .map_err(|_| anyhow!("setting could not be saved; check the value"))?;
             Ok(json!({ "ok": true }))
@@ -324,10 +319,7 @@ mod tests {
             let error = put(&mut app, &mut state, removed, "x")
                 .unwrap_err()
                 .to_string();
-            assert!(
-                error.contains(removed) && error.contains("removed"),
-                "{removed}: {error}"
-            );
+            assert_eq!(error, "setting could not be saved; check the value");
             assert!(
                 app.db.setting(removed).is_none(),
                 "{removed} must not be stored"

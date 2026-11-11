@@ -19,7 +19,7 @@ use crate::provider::ModelPricing;
 pub(crate) mod chats;
 mod files;
 mod jobs;
-mod schema;
+pub(crate) mod migrations;
 mod sessions;
 mod subagents;
 mod sync_state;
@@ -32,10 +32,8 @@ pub use files::{
     search_chunks, search_citations, search_session_sources, semantic_chunks,
     semantic_chunks_for_identity, stage_content, vec_to_blob,
 };
-#[cfg(test)]
-use schema::SCHEMA_VERSION;
-use schema::has_column;
-pub use schema::migrate_cache;
+use migrations::has_column;
+pub use migrations::migrate_cache;
 pub use sync_state::SyncState;
 pub(crate) use usage::UsageLog;
 pub use usage::{
@@ -307,13 +305,18 @@ pub fn answer_decision(conn: &Connection, id: i64, answer: &str) -> Result<()> {
 // only if the db ever lives on slow/remote storage.
 pub struct Db {
     conn: Connection,
+    upgrade_notes: Vec<String>,
 }
 
 impl Db {
     pub fn open(path: &std::path::Path) -> Result<Self> {
-        let conn = open_attached(path).with_context(|| format!("opening db {}", path.display()))?;
-        let mut db = Self { conn };
-        db.migrate()?;
+        let conn = open_attached(path)?;
+        let upgrade_notes = migrations::migrate_durable(&conn)?;
+        let mut db = Self {
+            conn,
+            upgrade_notes,
+        };
+        db.ensure_invariants()?;
         chats::install_cleanup(&db.conn)?;
         Ok(db)
     }
@@ -324,10 +327,28 @@ impl Db {
         apply_pragmas(&conn);
         conn.execute_batch("ATTACH DATABASE ':memory:' AS cache")?;
         migrate_cache(&conn, "cache")?;
-        let mut db = Db { conn };
-        db.migrate()?;
+        let upgrade_notes = migrations::migrate_durable(&conn)?;
+        let mut db = Db {
+            conn,
+            upgrade_notes,
+        };
+        db.ensure_invariants()?;
         chats::install_cleanup(&db.conn)?;
         Ok(db)
+    }
+
+    /// Drain user-facing notes produced by database upgrades.
+    pub fn take_upgrade_notes(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.upgrade_notes)
+    }
+
+    fn ensure_invariants(&mut self) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO spaces (id, name, created_at) VALUES (?1, ?2, ?3)",
+            (DEFAULT_SPACE, DEFAULT_SPACE, Utc::now().to_rfc3339()),
+        )?;
+        self.migrate_watch_jobs()?;
+        Ok(())
     }
 
     /// The underlying connection — crate-internal access for the sync

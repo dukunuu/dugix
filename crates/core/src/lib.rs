@@ -72,12 +72,11 @@ pub async fn boot(saved: config::SavedCreds) -> Result<app::App> {
             Ok(())
         })();
     }
-    let prompt_note = config::migrate_system_prompt_overlay();
     let mut app = app::App::new(db, key.as_deref(), space);
-    app.system_prompt_overlay = config::load_system_prompt_overlay();
-    if let Some(note) = prompt_note {
+    for note in app.db.take_upgrade_notes() {
         app.push_status(note);
     }
+    app.system_prompt_overlay = config::load_system_prompt_overlay();
     app.saved = saved;
     // Connectors connect in the background; the TUI never waits for them.
     app.connectors =

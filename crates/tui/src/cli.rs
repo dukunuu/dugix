@@ -2474,10 +2474,6 @@ fn memory(space_name: Option<&str>, edit: bool) -> Result<()> {
         .map(|s| s.id)
         .with_context(|| format!("no space named {name:?}"))?;
     let conn = db::open_conn(&space.db_path())?;
-    let legacy = space.memory_path(&name);
-    if legacy.exists() {
-        memory::import_legacy(&conn, &space_id, &legacy)?;
-    }
     let text = book::render_edit(
         &memory::chapters(&conn, &space_id)?,
         &memory::facts(&conn, &space_id)?,
@@ -2491,7 +2487,7 @@ fn memory(space_name: Option<&str>, edit: bool) -> Result<()> {
         return Ok(());
     }
     space.ensure_space_dir(&name)?;
-    let path = legacy.with_file_name("memory.edit.md");
+    let path = space.memory_path(&name).with_file_name("memory.edit.md");
     std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))?;
     open_editor(&path)?;
     let edited = std::fs::read_to_string(&path)?;

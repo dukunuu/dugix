@@ -18,9 +18,6 @@ impl App {
     /// fast: an unknown key or an invalid value for a constrained key is an
     /// error, never a silent no-op reported as success.
     pub fn set_setting(&mut self, key: &str, value: &str) -> Result<()> {
-        if is_removed_setting(key) {
-            bail!("{}", removed_setting_message(key));
-        }
         if !SETTING_KEYS.contains(&key) {
             bail!("unknown setting: {key}");
         }
@@ -66,44 +63,6 @@ const SETTING_KEYS: [&str; 18] = [
     "popup_sizes",
     "image_viewer",
 ];
-
-/// Per-feature model settings that earlier builds accepted and that are now
-/// automatic. Stored values are ignored on read (other devices' sync data may
-/// still carry them) and rejected on set.
-const REMOVED_SETTING_KEYS: [&str; 10] = [
-    "helper_model",
-    "memory_model",
-    "transcriber_model",
-    "ocr_model",
-    "ocr_engine",
-    "local_ocr_model",
-    "ocr_images",
-    "embedding_model",
-    "image_gen_model",
-    "video_gen_model",
-];
-
-/// Whether `key` is one of the removed per-feature model settings.
-#[must_use]
-pub fn is_removed_setting(key: &str) -> bool {
-    REMOVED_SETTING_KEYS.contains(&key)
-}
-
-/// The error for setting a removed key, naming what replaced it.
-#[must_use]
-pub fn removed_setting_message(key: &str) -> String {
-    let now = match key {
-        "helper_model" | "memory_model" | "transcriber_model" | "ocr_model" => {
-            "background jobs use the session model"
-        }
-        "ocr_engine" | "local_ocr_model" | "ocr_images" => {
-            "images are embedded directly; there is no OCR"
-        }
-        "embedding_model" => "embeddings are chosen automatically",
-        _ => "media generation uses the active backend's default model",
-    };
-    format!("setting {key} was removed: {now}")
-}
 
 /// Narrowest and widest the conversation column can be set to, in cells.
 pub const COLUMN_WIDTH_MIN: u16 = 60;

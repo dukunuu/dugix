@@ -53,8 +53,8 @@ mod scripts;
 mod sessions;
 mod settings;
 pub use settings::{
-    COLUMN_WIDTH_MAX, COLUMN_WIDTH_MIN, POPUP_IDS, POPUP_SIZE_MAX, POPUP_SIZE_MIN,
-    is_removed_setting, popup_size, removed_setting_message, with_popup_size,
+    COLUMN_WIDTH_MAX, COLUMN_WIDTH_MIN, POPUP_IDS, POPUP_SIZE_MAX, POPUP_SIZE_MIN, popup_size,
+    with_popup_size,
 };
 mod connectors;
 mod skills_popup;

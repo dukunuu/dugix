@@ -51,14 +51,8 @@ fn panel_state_round_trips_across_a_db_reopen() {
 }
 
 #[test]
-fn migration_adds_the_tables_to_an_older_db_and_deleting_a_session_drops_its_states() {
+fn deleting_a_session_drops_its_panel_states() {
     let path = temp_db_path();
-    {
-        let db = Db::open(&path).unwrap();
-        db.conn()
-            .execute_batch("DROP TABLE panel_states; DROP TABLE pinned_panels;")
-            .unwrap();
-    }
     let db = Db::open(&path).unwrap();
     let space = db.default_space_id().unwrap();
     let session = db

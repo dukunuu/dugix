@@ -3247,16 +3247,14 @@ async fn finish_stream_strips_inline_think_tags_into_reasoning() {
 }
 
 #[test]
-fn legacy_memory_file_moves_into_the_book() {
+fn memory_file_is_not_imported_on_session_refresh() {
     let mut a = app_with_key();
     a.space.ensure_space_dir(&a.active_space.name).unwrap();
     let path = a.space.memory_path(&a.active_space.name);
     std::fs::write(&path, "1. likes rust\n2. uses vim\n").unwrap();
     a.refresh_memory_snapshot();
-    assert!(!path.exists());
-    let prompt = a.system_prompt();
-    assert!(prompt.contains("### About you"));
-    assert!(prompt.contains("] likes rust"));
+    assert!(path.exists());
+    assert!(!a.system_prompt().contains("] likes rust"));
 }
 
 #[test]
@@ -5997,19 +5995,18 @@ fn removed_model_settings_are_ignored_on_read_and_rejected_on_set() {
         );
     }
 
-    // Setting them is an error that names the replacement, and stores nothing.
+    // Retired keys are unknown settings and store nothing.
     for (key, _) in removed {
         let error = a.set_setting(key, "new").unwrap_err().to_string();
-        assert!(error.contains(key) && error.contains("removed"), "{error}");
-        assert!(is_removed_setting(key));
+        assert_eq!(error, format!("unknown setting: {key}"));
     }
     assert_eq!(a.db.setting("ocr_model").as_deref(), Some("x/ocr"));
     assert_eq!(a.db.setting("ocr_images").as_deref(), Some("true"));
-    assert!(
+    assert_eq!(
         a.set_setting("ocr_images", "false")
             .unwrap_err()
-            .to_string()
-            .contains("images are embedded directly; there is no OCR")
+            .to_string(),
+        "unknown setting: ocr_images"
     );
     // Unknown keys are still just unknown.
     assert!(

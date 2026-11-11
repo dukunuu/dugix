@@ -78,37 +78,6 @@ pub fn short(id: &str) -> &str {
     id.get(..SHORT_ID).unwrap_or(id)
 }
 
-/// Create the tables on an existing or fresh durable db.
-pub fn migrate(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS memory_chapters (
-            id          TEXT PRIMARY KEY,
-            space_id    TEXT NOT NULL,
-            title       TEXT NOT NULL,
-            description TEXT NOT NULL DEFAULT '',
-            pinned      INTEGER NOT NULL DEFAULT 0,
-            tidied_at   TEXT,
-            created_at  TEXT NOT NULL,
-            updated_at  TEXT NOT NULL,
-            deleted_at  TEXT
-        );
-        CREATE INDEX IF NOT EXISTS idx_memory_chapters_space
-            ON memory_chapters(space_id);
-        CREATE TABLE IF NOT EXISTS memories (
-            id          TEXT PRIMARY KEY,
-            space_id    TEXT NOT NULL,
-            chapter_id  TEXT NOT NULL,
-            text        TEXT NOT NULL,
-            created_at  TEXT NOT NULL,
-            updated_at  TEXT NOT NULL,
-            deleted_at  TEXT
-        );
-        CREATE INDEX IF NOT EXISTS idx_memories_space ON memories(space_id);
-        CREATE INDEX IF NOT EXISTS idx_memories_chapter ON memories(chapter_id);",
-    )?;
-    Ok(())
-}
-
 fn now() -> String {
     Utc::now().to_rfc3339()
 }
@@ -655,6 +624,9 @@ pub fn last_change<'a>(chapter: &'a Chapter, facts: &'a [Fact]) -> &'a str {
         .max()
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+use crate::db::migrations::migrate_durable as migrate;
 
 #[cfg(test)]
 mod tests;

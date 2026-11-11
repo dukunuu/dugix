@@ -317,12 +317,11 @@ async fn text_diff_fallback_ignores_run_paths_and_notifies_when_the_answer_chang
 }
 
 #[test]
-fn legacy_watch_migration_is_guarded_idempotent_and_survives_cache_loss() {
+fn watch_rows_become_jobs_idempotently_and_survive_cache_loss() {
     let fixture = Fixture::new();
     let path = fixture.root.join("legacy.db");
     let db = Db::open(&path).unwrap();
-    db.conn().execute_batch("ALTER TABLE jobs DROP COLUMN kind; ALTER TABLE jobs DROP COLUMN topic;
-        INSERT INTO watches VALUES ('watch-1', 'default', 'topic', 12, 'session', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');").unwrap();
+    db.conn().execute_batch("INSERT INTO watches VALUES ('watch-1', 'default', 'topic', 12, 'session', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');").unwrap();
     drop(db);
     for _ in 0..2 {
         let db = Db::open(&path).unwrap();

@@ -1,0 +1,91 @@
+table chunk_embeddings
+  file_id: TEXT not_null=true default=None pk=1
+  identity: TEXT not_null=true default=Some("''") pk=0
+  location: TEXT not_null=true default=Some("''") pk=0
+  seq: INTEGER not_null=true default=None pk=2
+  text: TEXT not_null=true default=Some("''") pk=0
+  vec: BLOB not_null=true default=None pk=0
+table decisions
+  action: TEXT not_null=false default=None pk=0
+  at: TEXT not_null=false default=None pk=0
+  by: TEXT not_null=false default=None pk=0
+  class: TEXT not_null=false default=None pk=0
+  cost: REAL not_null=false default=None pk=0
+  id: INTEGER not_null=false default=None pk=1
+  p_in_scope: REAL not_null=false default=None pk=0
+  risk: TEXT not_null=false default=None pk=0
+  session_id: TEXT not_null=false default=None pk=0
+  summary: TEXT not_null=false default=None pk=0
+  tool: TEXT not_null=false default=None pk=0
+  user_answer: TEXT not_null=false default=None pk=0
+  verdict: TEXT not_null=false default=None pk=0
+CREATE VIRTUAL TABLE file_chunks USING fts5( file_id UNINDEXED, seq UNINDEXED, location UNINDEXED, text );
+table file_index_state
+  extractor: INTEGER not_null=true default=Some("0") pk=0
+  file_id: TEXT not_null=false default=None pk=1
+  mtime: INTEGER not_null=true default=Some("0") pk=0
+  status: TEXT not_null=true default=Some("''") pk=0
+  updated_at: TEXT not_null=true default=None pk=0
+CREATE VIRTUAL TABLE message_chunks USING fts5( message_id UNINDEXED, seq UNINDEXED, text );
+table message_embeddings
+  identity: TEXT not_null=true default=None pk=3
+  message_id: TEXT not_null=true default=None pk=1
+  seq: INTEGER not_null=true default=None pk=2
+  vec: BLOB not_null=true default=None pk=0
+table message_index
+  message_id: TEXT not_null=false default=None pk=1
+table model_prices
+  backend: TEXT not_null=true default=None pk=0
+  cache_read_price: REAL not_null=false default=None pk=0
+  cache_write_price: REAL not_null=false default=None pk=0
+  completion_price: REAL not_null=true default=None pk=0
+  model_id: TEXT not_null=false default=None pk=1
+  prompt_price: REAL not_null=true default=None pk=0
+  updated_at: TEXT not_null=true default=None pk=0
+table session_masks
+  mask_through: INTEGER not_null=true default=None pk=0
+  session_id: TEXT not_null=false default=None pk=1
+  updated_at: TEXT not_null=true default=None pk=0
+table session_workspaces
+  mode: TEXT not_null=false default=None pk=0
+  root: TEXT not_null=true default=None pk=0
+  session_id: TEXT not_null=false default=None pk=1
+  updated_at: TEXT not_null=true default=None pk=0
+table subagent_runs
+  cost: REAL not_null=false default=None pk=0
+  finished_at: TEXT not_null=false default=None pk=0
+  id: TEXT not_null=false default=None pk=1
+  max_steps: INTEGER not_null=true default=None pk=0
+  model: TEXT not_null=true default=None pk=0
+  number: INTEGER not_null=true default=None pk=0
+  prompt: TEXT not_null=true default=None pk=0
+  review: TEXT not_null=false default=None pk=0
+  rows: TEXT not_null=true default=None pk=0
+  secs: REAL not_null=true default=None pk=0
+  session_id: TEXT not_null=true default=None pk=0
+  started_at: TEXT not_null=true default=None pk=0
+  status: TEXT not_null=true default=None pk=0
+  steps: INTEGER not_null=true default=None pk=0
+  tokens: INTEGER not_null=true default=None pk=0
+  writable: INTEGER not_null=true default=None pk=0
+  index subagent_runs_session on subagent_runs(session_id, started_at) unique=false
+table tool_events
+  action: TEXT not_null=true default=None pk=0
+  at: TEXT not_null=true default=None pk=0
+  error_kind: TEXT not_null=false default=None pk=0
+  id: INTEGER not_null=false default=None pk=1
+  latency_ms: INTEGER not_null=true default=None pk=0
+  ok: INTEGER not_null=true default=None pk=0
+  result_chars: INTEGER not_null=true default=None pk=0
+  session_id: TEXT not_null=true default=None pk=0
+  tool: TEXT not_null=true default=None pk=0
+  index tool_events_at on tool_events(at) unique=false
+table watch_jobs
+  job_id: TEXT not_null=true default=None pk=0
+  watch_id: TEXT not_null=false default=None pk=1
+table web_cache
+  fetched_at: TEXT not_null=true default=None pk=0
+  text: TEXT not_null=true default=None pk=0
+  title: TEXT not_null=false default=None pk=0
+  url: TEXT not_null=true default=None pk=0
+  url_norm: TEXT not_null=false default=None pk=1

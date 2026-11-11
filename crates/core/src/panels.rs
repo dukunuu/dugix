@@ -48,34 +48,6 @@ pub struct Pinned {
     pub updated_at: String,
 }
 
-/// Create the tables on an existing or fresh durable db.
-/// # Errors
-/// Returns database failures.
-pub fn migrate(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS panel_states (
-            session_id TEXT NOT NULL,
-            panel_key  TEXT NOT NULL,
-            record     TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            PRIMARY KEY (session_id, panel_key)
-        );
-        CREATE TABLE IF NOT EXISTS pinned_panels (
-            id         TEXT PRIMARY KEY,
-            space_id   TEXT NOT NULL,
-            name       TEXT NOT NULL,
-            title      TEXT NOT NULL,
-            program    TEXT NOT NULL,
-            record     TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_pinned_panels_space
-            ON pinned_panels(space_id, name);",
-    )?;
-    Ok(())
-}
-
 /// Save (or replace) one panel's state record within a conversation.
 /// # Errors
 /// Rejects oversized records and returns database failures.

@@ -37,7 +37,6 @@ impl App {
     /// or switches, never mid-session: a fact saved during a chat is already
     /// in its transcript.
     pub fn refresh_memory_snapshot(&mut self) {
-        self.import_legacy_memory();
         let conn = self.db.conn();
         let space = &self.active_space.id;
         let chapters = memory::chapters(conn, space).unwrap_or_default();
@@ -51,43 +50,6 @@ impl App {
             })
             .count();
         self.bump_cache_epoch();
-    }
-
-    /// Move every space's pre-db `memory.md` into the book, once.
-    fn import_legacy_memory(&mut self) {
-        let Ok(spaces) = self.db.list_spaces() else {
-            return;
-        };
-        let mut total = 0;
-        let mut imported_spaces = 0;
-        for space in spaces {
-            let path = self.space.memory_path(&space.name);
-            if !path.exists() {
-                continue;
-            }
-            match memory::import_legacy(self.db.conn(), &space.id, &path) {
-                Ok(0) => {}
-                Ok(n) => {
-                    total += n;
-                    imported_spaces += 1;
-                }
-                Err(error) => {
-                    self.push_status(format!("memory import failed for {}: {error}", space.name));
-                }
-            }
-        }
-        if total > 0 {
-            self.push_status(if imported_spaces == 1 {
-                format!(
-                    "memory moved into the database · {total} facts in \"{}\"",
-                    memory::ABOUT_YOU
-                )
-            } else {
-                format!(
-                    "memory moved into the database · {total} facts across {imported_spaces} spaces"
-                )
-            });
-        }
     }
 
     /// The table of contents frozen for the active cache epoch.

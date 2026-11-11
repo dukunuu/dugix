@@ -76,6 +76,7 @@ Other structural facts worth knowing before editing:
   LWW — a new durable table needs a registry entry there. Every connection is
   opened through `db::open_conn` so it gets WAL plus a busy timeout; the TUI,
   `nexus host`, and per-call tool connections all share the file.
+  Schema changes are new steps appended in `crates/core/src/db/migrations.rs`; a shipped step is never edited; regenerate `crates/core/tests/fixtures/schema-snapshots/` with `NEXUS_UPDATE_SNAPSHOTS=1` and review it.
 - **`nexus_core::boot()`** is the single bootstrap (credentials → space → db →
   appserver → toolbox) shared by `main.rs`, `cli.rs`, and the host. Don't
   hand-roll app construction in a new frontend path.

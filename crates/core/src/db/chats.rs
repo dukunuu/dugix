@@ -11,25 +11,6 @@ pub(crate) const INDEX_BATCH: usize = 16;
 pub(crate) const EMBED_BATCH: usize = 32;
 pub(crate) const CHUNK_TITLE: &str = "chat";
 
-pub(super) fn migrate(conn: &Connection, schema: &str) -> Result<()> {
-    conn.execute_batch(&format!(
-        "CREATE TABLE IF NOT EXISTS {schema}.message_index (
-            message_id TEXT PRIMARY KEY
-        );
-        CREATE VIRTUAL TABLE IF NOT EXISTS {schema}.message_chunks USING fts5(
-            message_id UNINDEXED, seq UNINDEXED, text
-        );
-        CREATE TABLE IF NOT EXISTS {schema}.message_embeddings (
-            message_id TEXT NOT NULL,
-            seq INTEGER NOT NULL,
-            identity TEXT NOT NULL,
-            vec BLOB NOT NULL,
-            PRIMARY KEY (message_id, seq, identity)
-        );"
-    ))?;
-    Ok(())
-}
-
 // TEMP triggers belong to the connection, not the durable schema. They also
 // cover sync's direct SQL deletes and edits made through tool connections.
 pub(super) fn install_cleanup(conn: &Connection) -> Result<()> {

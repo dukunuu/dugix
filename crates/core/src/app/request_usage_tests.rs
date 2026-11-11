@@ -51,44 +51,17 @@ impl Drop for Fixture {
 }
 
 #[test]
-fn current_version_dbs_gain_the_usage_purpose_columns() {
-    // A db already at SCHEMA_VERSION skips the gated legacy column adds, so
-    // a db created before `kind`/`tools` existed must still get them.
-    let root = std::env::temp_dir().join(format!("nexus-usage-columns-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
-    let path = root.join("nexus.db");
-    drop(Db::open(&path).unwrap());
-    let conn = rusqlite::Connection::open(&path).unwrap();
-    conn.execute_batch(
-        "ALTER TABLE usage_log DROP COLUMN kind; ALTER TABLE usage_log DROP COLUMN tools;
-         INSERT INTO usage_log(sync_id,created_at,session_id,backend,model,prompt_tokens,completion_tokens)
-         VALUES ('u1','2026-10-26T08:00:00Z','s','Codex','gpt-6-luna',10,2);",
-    )
-    .unwrap();
-    drop(conn);
-    let db = Db::open(&path).unwrap();
-    let rows = db.usage_for_session("s").unwrap();
-    assert_eq!(rows.len(), 1);
-    assert!(rows[0].kind.is_none());
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn legacy_usage_migration_order_and_session_totals() {
+fn usage_rows_order_and_session_totals() {
     let root = std::env::temp_dir().join(format!("nexus-usage-migration-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("nexus.db");
-    let conn = rusqlite::Connection::open(&path).unwrap();
-    conn.execute_batch("CREATE TABLE usage_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL,
-        session_id TEXT, space_id TEXT, backend TEXT NOT NULL, model TEXT NOT NULL,
-        prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER NOT NULL,
-        cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
-        cost REAL);
-        INSERT INTO usage_log(created_at,session_id,backend,model,prompt_tokens,completion_tokens)
-        VALUES ('2020-01-01T12:00:00Z','old','Codex','unknown',10,2);").unwrap();
-    drop(conn);
     let db = Db::open(&path).unwrap();
+    db.conn()
+        .execute_batch(
+            "INSERT INTO usage_log(sync_id,created_at,session_id,backend,model,prompt_tokens,completion_tokens,kind,tools)
+             VALUES ('u-old','2020-01-01T12:00:00Z','old','Codex','unknown',10,2,NULL,NULL);",
+        )
+        .unwrap();
     let rows = db.usage_for_session("old").unwrap();
     assert_eq!(rows.len(), 1);
     assert!(rows[0].kind.is_none());
