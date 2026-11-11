@@ -45,8 +45,6 @@ pub struct Chapter {
     pub description: String,
     /// Pinned chapters are listed in full in every prompt.
     pub pinned: bool,
-    /// Unused since `/memory tidy` became a chat turn; kept so sync with older peers still applies.
-    pub tidied_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
@@ -94,7 +92,7 @@ fn clean(text: &str, max: usize, what: &str) -> Result<String> {
 }
 
 const CHAPTER_COLUMNS: &str =
-    "id, space_id, title, description, pinned, tidied_at, created_at, updated_at, deleted_at";
+    "id, space_id, title, description, pinned, created_at, updated_at, deleted_at";
 const FACT_COLUMNS: &str = "id, space_id, chapter_id, text, created_at, updated_at, deleted_at";
 
 fn chapter_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Chapter> {
@@ -104,10 +102,9 @@ fn chapter_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Chapter> {
         title: r.get(2)?,
         description: r.get(3)?,
         pinned: r.get::<_, i64>(4)? != 0,
-        tidied_at: r.get(5)?,
-        created_at: r.get(6)?,
-        updated_at: r.get(7)?,
-        deleted_at: r.get(8)?,
+        created_at: r.get(5)?,
+        updated_at: r.get(6)?,
+        deleted_at: r.get(7)?,
     })
 }
 
@@ -215,7 +212,6 @@ pub fn ensure_chapter(
         title,
         description: description.unwrap_or_default(),
         pinned: pinned.unwrap_or(false),
-        tidied_at: None,
         created_at: stamp.clone(),
         updated_at: stamp,
         deleted_at: None,
@@ -223,7 +219,7 @@ pub fn ensure_chapter(
     conn.execute(
         &format!(
             "INSERT INTO memory_chapters ({CHAPTER_COLUMNS})
-             VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, NULL)"
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)"
         ),
         params![
             chapter.id,
@@ -543,11 +539,10 @@ pub fn restore(conn: &Connection, snapshot: &Snapshot) -> Result<()> {
         conn.execute(
             &format!(
                 "INSERT INTO memory_chapters ({CHAPTER_COLUMNS})
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                  ON CONFLICT(id) DO UPDATE SET title = excluded.title,
                      description = excluded.description, pinned = excluded.pinned,
-                     tidied_at = excluded.tidied_at, updated_at = excluded.updated_at,
-                     deleted_at = excluded.deleted_at"
+                     updated_at = excluded.updated_at, deleted_at = excluded.deleted_at"
             ),
             params![
                 c.id,
@@ -555,7 +550,6 @@ pub fn restore(conn: &Connection, snapshot: &Snapshot) -> Result<()> {
                 c.title,
                 c.description,
                 i64::from(c.pinned),
-                c.tidied_at,
                 c.created_at,
                 stamp,
                 c.deleted_at

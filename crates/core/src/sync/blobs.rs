@@ -159,7 +159,7 @@ fn copy_atomic(source: &Path, target: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Copy the local blobs of a changeset's manifest into `dest/blobs/` —
+/// Copy the local blobs of a changeset's manifest into `dest/blobs/by-hash/` —
 /// the transport's blob channel. Never re-sends identical content: the
 /// receiver hash-checks before pulling.
 pub fn export_blobs(db: &Db, space: &Space, cs: &Changeset, dest: &Path) -> Result<usize> {
@@ -168,11 +168,6 @@ pub fn export_blobs(db: &Db, space: &Space, cs: &Changeset, dest: &Path) -> Resu
         let Some(src) = blob_source_path(db, space, fc)? else {
             continue;
         };
-        let target = dest.join("blobs").join(&fc.space_id).join(&fc.name);
-        copy_atomic(&src, &target).with_context(|| format!("exporting blob {}", src.display()))?;
-        // The legacy name-based path remains for older peers. The
-        // content-addressed copy is what prevents two simultaneous senders
-        // from overwriting each other's payload when they use one mailbox.
         if valid_component(&fc.hash) {
             let by_hash = dest.join("blobs").join("by-hash").join(&fc.hash);
             copy_atomic(&src, &by_hash)
@@ -183,22 +178,13 @@ pub fn export_blobs(db: &Db, space: &Space, cs: &Changeset, dest: &Path) -> Resu
     Ok(n)
 }
 
-/// Pull one blob from `src/blobs/<space_id>/<name>` into `target`, after
+/// Pull one blob from `src/blobs/by-hash/<hash>` into `target`, after
 /// verifying the source's content hash matches the manifest (a stale or
 /// mismatched payload is never applied).
-pub(super) fn pull_blob(
-    src: &Path,
-    space_id: &str,
-    name: &str,
-    hash: &str,
-    target: &Path,
-) -> Result<bool> {
-    let content_addressed =
-        valid_component(hash).then(|| src.join("blobs").join("by-hash").join(hash));
-    let legacy = src.join("blobs").join(space_id).join(name);
-    let candidate = content_addressed
-        .filter(|path| file_matches(path, hash))
-        .or_else(|| file_matches(&legacy, hash).then_some(legacy));
+pub(super) fn pull_blob(src: &Path, hash: &str, target: &Path) -> Result<bool> {
+    let candidate = valid_component(hash)
+        .then(|| src.join("blobs").join("by-hash").join(hash))
+        .filter(|path| file_matches(path, hash));
     let Some(candidate) = candidate else {
         return Ok(false);
     };
@@ -208,8 +194,7 @@ pub(super) fn pull_blob(
 
 // ── zip bundles (the ssh transport's blob channel) ──
 
-/// Write a changeset plus its blobs as a zip: `changeset.json`, legacy
-/// `blobs/<space_id>/<name>` entries, and content-addressed
+/// Write a changeset plus its blobs as a zip: `changeset.json` and
 /// `blobs/by-hash/<hash>` entries. Returns how many blobs were included.
 pub fn write_bundle(
     db: &Db,
@@ -228,9 +213,6 @@ pub fn write_bundle(
         let Some(src) = blob_source_path(db, space, fc)? else {
             continue;
         };
-        zip.start_file(format!("blobs/{}/{}", fc.space_id, fc.name), opts)?;
-        let mut f = std::fs::File::open(&src)?;
-        std::io::copy(&mut f, &mut zip)?;
         if valid_component(&fc.hash) && content_hashes.insert(fc.hash.clone()) {
             zip.start_file(format!("blobs/by-hash/{}", fc.hash), opts)?;
             let mut content = std::fs::File::open(&src)?;
@@ -264,7 +246,10 @@ pub fn unpack_bundle(src: &Path, dest_dir: &Path) -> Result<Changeset> {
         if components.len() != 2 || !components.iter().all(|c| valid_component(c)) {
             bail!("unsafe path in bundle: {name}");
         }
-        let dest = dest_dir.join("blobs").join(rel);
+        if components[0] != "by-hash" {
+            continue;
+        }
+        let dest = dest_dir.join("blobs").join("by-hash").join(components[1]);
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("creating {}", parent.display()))?;

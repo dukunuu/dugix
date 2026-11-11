@@ -6,10 +6,9 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cursor {
     /// Mutable rows: the cursor is an opaque JSON tuple containing
-    /// `(updated_at, pk…)`. Legacy bare `updated_at` cursors remain readable;
-    /// rows that never got a version are never exported. Including the
-    /// primary key prevents a row created with the same timestamp as the
-    /// last acknowledged row from being skipped forever.
+    /// `(updated_at, pk…)`. Rows that never got a version are never exported.
+    /// Including the primary key prevents a row created with the same
+    /// timestamp as the last acknowledged row from being skipped forever.
     UpdatedAt,
     /// Append-only rows: cursor is a `(col1, col2)` row-value tuple
     /// (e.g. messages `(created_at, id)`), encoded as `"a|b"`.
@@ -50,7 +49,6 @@ pub const TABLES: &[TableSpec] = &[
             "space_id",
             "compact_summary",
             "compact_through",
-            "web_mode", // retired; kept for older peers (see db.rs)
             "swarm_mode",
             "kind",
             "research_parent_id",
@@ -65,7 +63,6 @@ pub const TABLES: &[TableSpec] = &[
             "space_id",
             "compact_summary",
             "compact_through",
-            "web_mode",
             "swarm_mode",
             "kind",
             "research_parent_id",
@@ -278,7 +275,6 @@ pub const TABLES: &[TableSpec] = &[
             "title",
             "description",
             "pinned",
-            "tidied_at",
             "created_at",
             "updated_at",
             "deleted_at",
@@ -289,7 +285,6 @@ pub const TABLES: &[TableSpec] = &[
             "title",
             "description",
             "pinned",
-            "tidied_at",
             "created_at",
             "updated_at",
             "deleted_at",
@@ -430,24 +425,24 @@ fn encode_updated_cursor(updated_at: &str, keys: &[String]) -> String {
     .to_string()
 }
 
-/// Decode a mutable-row cursor. Cursors written before the primary-key
-/// tiebreak was added were bare timestamps; treating those as an empty key
-/// tuple is backwards-compatible and may produce one safe duplicate export.
+/// Decode a mutable-row cursor. Invalid cursors restart the export.
 pub(super) fn decode_updated_cursor(cursor: &str, key_count: usize) -> (String, Vec<String>) {
     if let Ok(serde_json::Value::Array(parts)) = serde_json::from_str(cursor)
         && let (Some(serde_json::Value::String(updated_at)), Some(serde_json::Value::Array(keys))) =
             (parts.first(), parts.get(1))
+        && parts.len() == 2
+        && !updated_at.is_empty()
+        && keys.len() == key_count
+        && keys.iter().all(serde_json::Value::is_string)
     {
-        let mut keys = keys
+        let keys = keys
             .iter()
             .filter_map(serde_json::Value::as_str)
             .map(str::to_string)
-            .take(key_count)
-            .collect::<Vec<_>>();
-        keys.resize(key_count, String::new());
+            .collect();
         return (updated_at.clone(), keys);
     }
-    (cursor.to_string(), vec![String::new(); key_count])
+    (String::new(), vec![String::new(); key_count])
 }
 
 /// Cursor comparisons are table-aware: the AUTOINCREMENT tables compare
@@ -487,12 +482,12 @@ pub(super) fn valid_cursor(table: &str, cursor: &str) -> bool {
                 let Some(serde_json::Value::Array(keys)) = parts.get(1) else {
                     return false;
                 };
-                !updated_at.is_empty()
+                parts.len() == 2
+                    && !updated_at.is_empty()
                     && keys.len() == spec.pk.len()
                     && keys.iter().all(serde_json::Value::is_string)
             } else {
-                // Cursors written by older versions were bare timestamps.
-                !cursor.trim().is_empty()
+                false
             }
         }
         Cursor::Tuple(_) => {
@@ -544,8 +539,8 @@ pub(super) fn row_position(spec: &TableSpec, row: &serde_json::Value) -> String 
 }
 
 /// A value that must be a single path component — names flow into
-/// `spaces/<name>/files/<name>` and `blobs/<space_id>/<name>`, so they
-/// must not smuggle separators or `..`.
+/// `spaces/<name>/files/<name>` and hashes into `blobs/by-hash/<hash>`, so
+/// they must not smuggle separators or `..`.
 pub(super) fn valid_component(name: &str) -> bool {
     !name.is_empty()
         && name != "."

@@ -3,10 +3,10 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use rusqlite::{Connection, OptionalExtension as _, params_from_iter};
 
-use crate::db::{DEFAULT_SPACE, Db};
+use crate::db::{DEFAULT_SPACE, Db, migrations::durable_schema_version};
 use crate::space::Space;
 
 use super::blobs::{file_matches, pull_blob};
@@ -59,9 +59,9 @@ fn lww_wins_against(id: &str, updated: &str, local_id: &str, local_updated: &str
 /// Apply one changeset: rows (per the registry), tombstones, file blobs,
 /// and the embedded ack. Returns the summary plus the reply cursors — the
 /// receiver's new pull cursors per table, to be acked back to the sender.
-/// `blob_source`, when given, is a directory whose legacy
-/// `blobs/<space_id>/<name>` or content-addressed `blobs/by-hash/<hash>` path
-/// holds the sender's payloads; missing blobs are reported instead.
+/// `blob_source`, when given, is a directory whose content-addressed
+/// `blobs/by-hash/<hash>` path holds the sender's payloads; missing blobs are
+/// reported instead.
 // Long by design: one step per sync rule, in registry order.
 #[allow(clippy::too_many_lines)]
 pub fn apply_changeset(
@@ -70,6 +70,14 @@ pub fn apply_changeset(
     cs: &Changeset,
     blob_source: Option<&Path>,
 ) -> Result<(ApplySummary, Vec<PeerCursor>)> {
+    let ours = durable_schema_version();
+    if cs.schema != ours {
+        bail!(
+            "{} runs a different nexus version (schema {}, this device {ours}) — update nexus on both devices, then sync again",
+            cs.device_name,
+            cs.schema
+        );
+    }
     let my_id = db.device_id()?;
     let mut summary = ApplySummary::default();
     let mut by_table: HashMap<&str, Vec<&serde_json::Value>> = HashMap::new();
@@ -225,7 +233,7 @@ pub fn apply_changeset(
             continue;
         }
         let pulled = match blob_source {
-            Some(src) => match pull_blob(src, &fc.space_id, &fc.name, &fc.hash, &target) {
+            Some(src) => match pull_blob(src, &fc.hash, &target) {
                 Ok(true) => {
                     summary.files_pulled += 1;
                     true

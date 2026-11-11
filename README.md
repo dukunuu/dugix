@@ -109,6 +109,7 @@ for the task format and held-out-task policy.
 OpenAI-compatible `/v1/chat/completions` gateway. `/v1/tools/run` uses a
 JSON-RPC 2.0 envelope, for example
 `{"jsonrpc":"2.0","id":1,"method":"tools/run","params":{"name":"read_file","arguments":{...}}}`.
+Devices must run the same nexus version to sync.
 Sync clients POST metadata first, then upload/download each manifest blob by
 `space_id`, `name`, and `hash`. The host token is generated once and stored in
 `config.toml` (see [Configuration](#configuration)) as `[provider].host_token`; provider API

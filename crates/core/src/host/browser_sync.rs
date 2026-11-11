@@ -87,11 +87,7 @@ impl Drop for Scratch {
 fn pack(app: &App, changeset: &crate::sync::Changeset) -> Result<Vec<u8>> {
     let mut size = 0u64;
     for file in &changeset.files {
-        size = size.saturating_add(
-            u64::try_from(file.size)
-                .unwrap_or(u64::MAX)
-                .saturating_mul(2),
-        );
+        size = size.saturating_add(u64::try_from(file.size).unwrap_or(u64::MAX));
     }
     if size > MAX_EXPANDED {
         bail!("bundle is too large; use direct host sync");

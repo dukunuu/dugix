@@ -3,7 +3,7 @@
 use anyhow::{Result, bail};
 use rusqlite::params_from_iter;
 
-use crate::db::Db;
+use crate::db::{Db, migrations::durable_schema_version};
 
 use super::registry::{
     Cursor, SYNC_TOMBSTONES, TABLES, TableSpec, decode_updated_cursor, valid_cursor,
@@ -19,6 +19,7 @@ use super::{Changeset, FileChange, PeerCursor, RowChange, Tombstone};
 pub fn build_changeset(db: &Db, peer_id: Option<&str>, name: &str) -> Result<Changeset> {
     let device_id = db.device_id()?;
     let mut cs = Changeset {
+        schema: durable_schema_version(),
         device_id,
         device_name: name.to_string(),
         ack: None,
@@ -80,7 +81,10 @@ pub fn build_changeset(db: &Db, peer_id: Option<&str>, name: &str) -> Result<Cha
         }
     }
     let cursor = push_cursor(SYNC_TOMBSTONES);
-    let c = cursor.as_deref().unwrap_or("0");
+    let c = cursor
+        .as_deref()
+        .filter(|c| valid_cursor(SYNC_TOMBSTONES, c))
+        .unwrap_or("0");
     let mut stmt = db.conn().prepare(&format!(
         "SELECT id, table_name, row_id, deleted_at FROM {SYNC_TOMBSTONES} WHERE id > ?1 ORDER BY id"
     ))?;
@@ -126,6 +130,7 @@ pub(super) fn select_rows(
     spec: &TableSpec,
     cursor: Option<&str>,
 ) -> Result<Vec<serde_json::Value>> {
+    let cursor = cursor.filter(|c| valid_cursor(spec.name, c));
     let cols = spec.columns.join(", ");
     let (sql, params): (String, Vec<rusqlite::types::Value>) = match spec.cursor {
         Cursor::UpdatedAt => {

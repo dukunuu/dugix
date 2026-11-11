@@ -22,16 +22,29 @@ struct Ctx<'a> {
     notes: Vec<String>,
 }
 
-const DURABLE: &[Step] = &[Step {
-    target: 4,
-    name: "durable v1 baseline",
-    run: durable_v1,
-}];
+const DURABLE: &[Step] = &[
+    Step {
+        target: 4,
+        name: "durable v1 baseline",
+        run: durable_v1,
+    },
+    Step {
+        target: 5,
+        name: "drop columns kept for older peers",
+        run: drop_older_peer_columns,
+    },
+];
 const CACHE: &[Step] = &[Step {
     target: 1,
     name: "cache v1 baseline",
     run: cache_v1,
 }];
+
+/// The current version of the durable database schema.
+#[must_use]
+pub fn durable_schema_version() -> i64 {
+    DURABLE.last().map_or(0, |step| step.target)
+}
 
 fn version(conn: &Connection, schema: &str) -> Result<i64> {
     Ok(
@@ -163,6 +176,14 @@ fn durable_v1(tx: &Transaction<'_>, ctx: &mut Ctx<'_>) -> Result<()> {
          );",
     )?;
     import_memory(tx, ctx)?;
+    Ok(())
+}
+
+fn drop_older_peer_columns(tx: &Transaction<'_>, _ctx: &mut Ctx<'_>) -> Result<()> {
+    tx.execute_batch(
+        "ALTER TABLE main.sessions DROP COLUMN web_mode;
+         ALTER TABLE main.memory_chapters DROP COLUMN tidied_at;",
+    )?;
     Ok(())
 }
 

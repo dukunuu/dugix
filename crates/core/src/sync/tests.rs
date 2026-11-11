@@ -185,6 +185,7 @@ fn db_state(db: &Db) -> Vec<crate::db::SyncState> {
 #[test]
 fn changeset_serde_roundtrip() {
     let cs = Changeset {
+        schema: crate::db::migrations::durable_schema_version(),
         device_id: "dev-1".to_string(),
         device_name: "laptop".to_string(),
         ack: Some(vec![PeerCursor {
@@ -220,16 +221,16 @@ fn cursor_positions_compare_table_aware() {
     // AUTOINCREMENT cursors are numeric: "10" > "9" as ids.
     assert!(position_gt("citations", "10", "9"));
     assert!(position_gt("sync_tombstones", "10", "9"));
-    // RFC3339 cursors compare lexically.
+    // `updated_at` cursors compare by time, then key.
     assert!(position_gt(
         "sessions",
-        "2026-02-01T00:00:00Z",
-        "2026-01-01T00:00:00Z"
+        r#"["2026-02-01T00:00:00Z",["a"]]"#,
+        r#"["2026-01-01T00:00:00Z",["a"]]"#
     ));
     assert!(!position_gt(
         "sessions",
-        "2026-01-01T00:00:00Z",
-        "2026-01-01T00:00:00Z"
+        r#"["2026-01-01T00:00:00Z",["a"]]"#,
+        r#"["2026-01-01T00:00:00Z",["a"]]"#
     ));
 }
 
@@ -248,6 +249,7 @@ fn unsafe_components_are_rejected() {
 fn warned_rows_do_not_advance_their_table_cursor() {
     let pair = Pair::new();
     let changeset = Changeset {
+        schema: crate::db::migrations::durable_schema_version(),
         device_id: "peer".to_string(),
         device_name: "peer".to_string(),
         ack: None,
@@ -1153,7 +1155,13 @@ fn bundle_roundtrip_carries_changeset_and_blobs() {
     assert_eq!(back.device_id, cs.device_id);
     assert_eq!(back.rows.len(), cs.rows.len());
     assert_eq!(
-        std::fs::read(unpacked.join("blobs").join(&sid).join("f.txt")).unwrap(),
+        std::fs::read(
+            unpacked
+                .join("blobs")
+                .join("by-hash")
+                .join(&cs.files[0].hash)
+        )
+        .unwrap(),
         b"payload"
     );
 }
@@ -1169,6 +1177,7 @@ fn bundle_rejects_escaping_paths() {
     serde_json::to_writer(
         &mut zip,
         &Changeset {
+            schema: crate::db::migrations::durable_schema_version(),
             device_id: "x".to_string(),
             device_name: "x".to_string(),
             ack: None,
@@ -1229,6 +1238,7 @@ fn acks_are_only_honored_for_this_device() {
     }));
     // A forged ack addressed to someone else is ignored.
     let forged = Changeset {
+        schema: crate::db::migrations::durable_schema_version(),
         device_id: b.device_id().unwrap(),
         device_name: "b".to_string(),
         ack: Some(vec![PeerCursor {
@@ -1251,6 +1261,7 @@ fn malformed_ack_does_not_poison_peer_cursor() {
     let a = &pair.a;
     let b = &pair.b;
     let forged = Changeset {
+        schema: crate::db::migrations::durable_schema_version(),
         device_id: b.device_id().unwrap(),
         device_name: "b".to_string(),
         ack: Some(vec![PeerCursor {
@@ -1299,4 +1310,163 @@ fn push_cursor_advances_only_on_ack() {
     assert!(state.iter().any(|st| {
         st.peer_id == bid && st.table_name == "sessions" && st.push_cursor.is_some()
     }));
+}
+
+#[test]
+fn different_or_missing_schema_is_refused_without_changes() {
+    let ours = crate::db::migrations::durable_schema_version();
+    for schema in [Some(ours - 1), Some(ours + 1), None] {
+        let pair = Pair::new();
+        let local = session(&pair.b, "keep local");
+        let remote = session(&pair.a, "remote");
+        pair.a.add_user_message(&remote, "remote message").unwrap();
+        crate::memory::add(
+            pair.a.conn(),
+            DEFAULT_SPACE,
+            "Tools",
+            "uses Rust",
+            None,
+            None,
+        )
+        .unwrap();
+        write_blob(&pair.space_a(), "default", "remote.txt", b"remote");
+        pair.a
+            .upsert_file(DEFAULT_SPACE, "remote.txt", &sha256_hex(b"remote"), 6, "ok")
+            .unwrap();
+        let mut changeset = build_changeset(&pair.a, None, "laptop").unwrap();
+        assert_eq!(changeset.schema, ours);
+        changeset.tombstones.push(Tombstone {
+            origin_id: 1,
+            table_name: "sessions".to_string(),
+            row_id: local,
+            deleted_at: "2099-01-01T00:00:00Z".to_string(),
+        });
+        export_blobs(&pair.a, &pair.space_a(), &changeset, &pair.dir).unwrap();
+        let mut json = serde_json::to_value(&changeset).unwrap();
+        if let Some(schema) = schema {
+            json["schema"] = schema.into();
+        } else {
+            json.as_object_mut().unwrap().remove("schema");
+        }
+        let changeset: Changeset = serde_json::from_value(json).unwrap();
+        let theirs = schema.unwrap_or(0);
+        assert_eq!(changeset.schema, theirs);
+        let row_counts = || {
+            let mut tables = pair
+                .b
+                .conn()
+                .prepare("SELECT name FROM main.sqlite_schema WHERE type = 'table' ORDER BY name")
+                .unwrap();
+            tables
+                .query_map([], |row| row.get::<_, String>(0))
+                .unwrap()
+                .map(|name| {
+                    let name = name.unwrap();
+                    let count = pair
+                        .b
+                        .conn()
+                        .query_row(
+                            &format!("SELECT count(*) FROM main.\"{name}\""),
+                            [],
+                            |row| row.get::<_, i64>(0),
+                        )
+                        .unwrap();
+                    (name, count)
+                })
+                .collect::<Vec<_>>()
+        };
+        let counts_before = row_counts();
+        let rows_before = dump(&pair.b);
+        let error =
+            apply_changeset(&pair.b, &pair.space_b(), &changeset, Some(&pair.dir)).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "laptop runs a different nexus version (schema {theirs}, this device {ours}) — update nexus on both devices, then sync again"
+            )
+        );
+        assert_eq!(row_counts(), counts_before);
+        assert_eq!(dump(&pair.b), rows_before);
+        assert!(!pair.b_root.exists());
+    }
+}
+
+#[test]
+fn invalid_cursors_resend_rows_and_are_not_acked() {
+    let pair = Pair::new();
+    let id = session(&pair.a, "resend");
+    for cursor in [
+        "2099-01-01T00:00:00Z",
+        "[\"2099-01-01T00:00:00Z\",[],\"extra\"]",
+        "not a cursor",
+    ] {
+        pair.a
+            .set_sync_state("peer", "sessions", Some(cursor), Some(cursor))
+            .unwrap();
+        assert!(build_ack(&pair.a, "peer").unwrap().is_empty());
+        let changeset = build_changeset(&pair.a, Some("peer"), "a").unwrap();
+        assert!(changeset.rows.iter().any(|row| row.row["id"] == id));
+        let mut reply = build_changeset(&pair.b, None, "b").unwrap();
+        reply.ack = Some(vec![PeerCursor {
+            peer_id: pair.a.device_id().unwrap(),
+            table_name: "sessions".to_string(),
+            cursor: cursor.to_string(),
+        }]);
+        let (summary, _) = apply_changeset(&pair.a, &pair.space_a(), &reply, None).unwrap();
+        assert_eq!(summary.acks_applied, 0);
+        assert!(
+            summary
+                .warnings
+                .iter()
+                .any(|w| w.contains("invalid cursor"))
+        );
+    }
+}
+
+#[test]
+fn exports_and_bundles_contain_only_content_addressed_blobs() {
+    let pair = Pair::new();
+    let hash = sha256_hex(b"payload");
+    for name in ["first.txt", "second.txt"] {
+        write_blob(&pair.space_a(), "default", name, b"payload");
+        pair.a
+            .upsert_file(DEFAULT_SPACE, name, &hash, 7, "ok")
+            .unwrap();
+    }
+    let changeset = build_changeset(&pair.a, None, "a").unwrap();
+    assert_eq!(
+        export_blobs(&pair.a, &pair.space_a(), &changeset, &pair.dir).unwrap(),
+        2
+    );
+    let directories = std::fs::read_dir(pair.dir.join("blobs"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(directories, [std::ffi::OsString::from("by-hash")]);
+    let bundle = pair.dir.join("by-hash.zip");
+    assert_eq!(
+        write_bundle(
+            &pair.a,
+            &pair.space_a(),
+            &changeset,
+            std::fs::File::create(&bundle).unwrap(),
+        )
+        .unwrap(),
+        2
+    );
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(&bundle).unwrap()).unwrap();
+    assert_eq!(archive.len(), 2);
+    assert!(archive.by_name("changeset.json").is_ok());
+    assert!(archive.by_name(&format!("blobs/by-hash/{hash}")).is_ok());
+    let unpacked = pair.dir.join("unpacked-by-hash");
+    let back = unpack_bundle(&bundle, &unpacked).unwrap();
+    assert_eq!(back, changeset);
+    let (summary, _) = apply_changeset(&pair.b, &pair.space_b(), &back, Some(&unpacked)).unwrap();
+    assert_eq!(summary.files_pulled, 2);
+    for name in ["first.txt", "second.txt"] {
+        assert_eq!(
+            std::fs::read(pair.space_b().files_dir("default").join(name)).unwrap(),
+            b"payload"
+        );
+    }
 }

@@ -74,6 +74,9 @@ use crate::space::Space;
 /// sent to. Serde JSON over the wire (or inside a zip bundle with blobs).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Changeset {
+    /// The sender's durable database schema version; must match the receiver's.
+    #[serde(default)]
+    pub schema: i64,
     /// The sender (from `device_meta`, created on first sync).
     pub device_id: String,
     /// "laptop" — for the receiver's log/status.
@@ -86,8 +89,7 @@ pub struct Changeset {
     /// Deletes that actually happened on the sender.
     pub tombstones: Vec<Tombstone>,
     /// File metadata — the blobs themselves follow via the transport's
-    /// blob channel (`blobs/<space_id>/<name>` plus the content-addressed
-    /// `blobs/by-hash/<hash>` path under a sync dir or inside a zip bundle).
+    /// blob channel (`blobs/by-hash/<hash>` under a sync dir or inside a zip bundle).
     pub files: Vec<FileChange>,
     pub generated_at: String,
 }

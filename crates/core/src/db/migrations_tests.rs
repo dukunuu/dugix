@@ -170,7 +170,7 @@ fn assert_snapshot(file: &str, actual: &str) {
 #[test]
 fn fresh_schemas_match_snapshots() {
     let db = Db::open_in_memory().unwrap();
-    assert_eq!(version(db.conn(), "main").unwrap(), 4);
+    assert_eq!(version(db.conn(), "main").unwrap(), 5);
     assert_eq!(version(db.conn(), "cache").unwrap(), 1);
     assert_snapshot("durable.txt", &schema(db.conn(), "main"));
     assert_snapshot("cache.txt", &schema(db.conn(), "cache"));
@@ -184,7 +184,7 @@ fn durable_fixtures_reach_the_fresh_schema_and_preserve_rows() {
         let root = TempRoot::new();
         root.fixture(fixture);
         let db = Db::open(&root.db_path()).unwrap();
-        assert_eq!(version(db.conn(), "main").unwrap(), 4);
+        assert_eq!(version(db.conn(), "main").unwrap(), 5);
         let actual = schema_ignoring_nullability(db.conn(), "main", FIXTURE_NULLABILITY_VARIANTS);
         assert_eq!(actual, expected);
         assert_snapshot("durable.txt", &actual);
@@ -301,7 +301,7 @@ fn unsupported_durable_versions_have_exact_errors() {
         drop(conn);
         let error = Db::open(&root.db_path()).err().unwrap().to_string();
         let expected = if v == 99 {
-            "nexus.db was written by a newer nexus (schema 99, this build knows up to 4); update nexus".into()
+            "nexus.db was written by a newer nexus (schema 99, this build knows up to 5); update nexus".into()
         } else {
             format!(
                 "nexus.db is from a nexus older than 0.1.42 (schema {v}); install nexus-chat 0.1.42 once to upgrade it, then this version"
@@ -412,4 +412,62 @@ fn dropping_the_old_web_cache_exposes_the_device_cache() {
         cache_get(db.conn(), "url").unwrap().unwrap().1,
         "device cache"
     );
+}
+
+#[test]
+fn durable_step_five_preserves_sessions_and_chapters() {
+    let fresh = Db::open_in_memory().unwrap();
+    assert_eq!(durable_schema_version(), 5);
+    assert_eq!(version(fresh.conn(), "main").unwrap(), 5);
+    let expected = schema_ignoring_nullability(fresh.conn(), "main", FIXTURE_NULLABILITY_VARIANTS);
+    assert_snapshot("durable.txt", &expected);
+    for fixture in [DEV, RELEASED] {
+        let root = TempRoot::new();
+        root.fixture(fixture);
+        let conn = Connection::open(root.db_path()).unwrap();
+        run(&conn, &DURABLE[..1], &mut context("main", "nexus.db")).unwrap();
+        assert_eq!(version(&conn, "main").unwrap(), 4);
+        conn.execute_batch(
+            "INSERT INTO sessions (id, title, model, space_id, created_at, updated_at)
+             VALUES ('kept-session', 'Keep this session', 'm', 'space-1', 'created', 'updated');
+             INSERT INTO memory_chapters (id, space_id, title, description, pinned, created_at, updated_at)
+             VALUES ('kept-chapter', 'space-1', 'Tools', 'Keep this chapter', 1, 'created', 'updated');",
+        )
+        .unwrap();
+        assert_eq!(
+            run(&conn, DURABLE, &mut context("main", "nexus.db")).unwrap(),
+            1
+        );
+        assert_eq!(version(&conn, "main").unwrap(), 5);
+        assert_eq!(
+            schema_ignoring_nullability(&conn, "main", FIXTURE_NULLABILITY_VARIANTS),
+            expected
+        );
+        let session: (String, String, String, String, String) = conn
+            .query_row(
+                "SELECT title, model, space_id, created_at, updated_at FROM sessions WHERE id = 'kept-session'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            session,
+            (
+                "Keep this session".into(),
+                "m".into(),
+                "space-1".into(),
+                "created".into(),
+                "updated".into()
+            )
+        );
+        let chapter = crate::memory::find_chapter(&conn, "space-1", "Tools")
+            .unwrap()
+            .unwrap();
+        assert_eq!(chapter.id, "kept-chapter");
+        assert_eq!(chapter.description, "Keep this chapter");
+        assert!(chapter.pinned);
+        assert_eq!(chapter.created_at, "created");
+        assert_eq!(chapter.updated_at, "updated");
+        assert_eq!(chapter.deleted_at, None);
+    }
 }
