@@ -210,9 +210,14 @@ impl Embedder {
         let mut images = false;
         let vectors = match &self.backend {
             Backend::OpenAi(provider) => {
-                provider
+                let vectors = provider
                     .embed(&self.model, vec![self.query_text("probe")])
-                    .await?
+                    .await?;
+                images = provider
+                    .embed_values(&self.model, vec![compatible_item(&probe_image()?)])
+                    .await
+                    .is_ok_and(|v| v.len() == 1 && v[0].len() == vectors[0].len());
+                vectors
             }
             Backend::Ollama { client, base } => {
                 // /tags supplies the manifest digest; /show supplies model capabilities.
@@ -377,6 +382,14 @@ impl Embedder {
                 count,
                 Some(profile.identity.dimension),
             )?
+        } else if let Backend::OpenAi(provider) = &self.backend
+            && inputs
+                .iter()
+                .any(|input| matches!(input, EmbedInput::Image { .. }))
+        {
+            provider
+                .embed_values(&self.model, inputs.iter().map(compatible_item).collect())
+                .await?
         } else {
             let texts = inputs
                 .into_iter()
@@ -401,6 +414,19 @@ impl Embedder {
             .embed(vec![EmbedInput::Text(self.query_text(query))])
             .await?
             .remove(0))
+    }
+}
+
+fn compatible_item(input: &EmbedInput) -> Value {
+    match input {
+        EmbedInput::Text(text) => Value::String(text.clone()),
+        EmbedInput::Image { bytes, mime } => {
+            let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+            json!({"content": [{
+                "type": "image_url",
+                "image_url": {"url": format!("data:{mime};base64,{b64}")}
+            }]})
+        }
     }
 }
 

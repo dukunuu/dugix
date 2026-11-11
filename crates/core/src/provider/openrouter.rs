@@ -1073,7 +1073,7 @@ impl OpenRouter {
 
     pub const fn default_embedding_model(&self) -> &'static str {
         match self.flavor {
-            ProviderFlavor::OpenRouter => "openai/text-embedding-3-small",
+            ProviderFlavor::OpenRouter => "google/gemini-embedding-2",
             ProviderFlavor::OpenAi => "text-embedding-3-small",
             // Codex and Go's bundled models are all chat/coding models, no embeddings.
             ProviderFlavor::OpenAiCodex | ProviderFlavor::OpencodeGo => "",
@@ -1619,8 +1619,22 @@ impl OpenRouter {
     /// Embed `inputs` with `model` (OpenAI-format /embeddings endpoint);
     /// returns one vector per input, in order.
     pub async fn embed(&self, model: &str, inputs: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        self.embed_values(
+            model,
+            inputs.into_iter().map(serde_json::Value::String).collect(),
+        )
+        .await
+    }
+
+    /// Embed text or multimodal `inputs` with `model` (OpenAI-format /embeddings endpoint);
+    /// returns one vector per input, in order.
+    pub async fn embed_values(
+        &self,
+        model: &str,
+        inputs: Vec<serde_json::Value>,
+    ) -> Result<Vec<Vec<f32>>> {
         if let Some(delegate) = self.openrouter_delegate_for_model(model) {
-            return Box::pin(delegate.embed(model, inputs)).await;
+            return Box::pin(delegate.embed_values(model, inputs)).await;
         }
         let (base, model) = self.opencode_route(model);
         let count = inputs.len();

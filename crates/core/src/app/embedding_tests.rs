@@ -252,7 +252,7 @@ async fn default_is_local_only_when_reachable() {
     let mock = MockOllama::start(false).await;
     let mut app = app_with_key();
     point_at(&mut app, &mock.endpoint);
-    assert_eq!(app.embedding_model, "openai/text-embedding-3-small");
+    assert_eq!(app.embedding_model, "google/gemini-embedding-2");
     app.discover_embeddings();
     drain(&mut app).await;
     assert_eq!(app.embedding_model, "local:embeddinggemma-2:270m");
@@ -266,7 +266,7 @@ async fn default_is_local_only_when_reachable() {
 
     // A stored `embedding_model` row (an older build's explicit choice, or one
     // synced from another device) is ignored: discovery still runs and wins.
-    for stored_choice in ["", "openai/text-embedding-3-small"] {
+    for stored_choice in ["", "google/gemini-embedding-2"] {
         let mut stale = app_with_key();
         point_at(&mut stale, &mock.endpoint);
         stale
@@ -288,7 +288,7 @@ async fn default_is_local_only_when_reachable() {
     point_at(&mut unreachable, &dead);
     unreachable.discover_embeddings();
     drain(&mut unreachable).await;
-    assert_eq!(unreachable.embedding_model, "openai/text-embedding-3-small");
+    assert_eq!(unreachable.embedding_model, "google/gemini-embedding-2");
 
     // Reachable server without the model installed: behave as before.
     mock.state.lock().unwrap().installed = false;
@@ -296,7 +296,7 @@ async fn default_is_local_only_when_reachable() {
     point_at(&mut missing, &mock.endpoint);
     missing.discover_embeddings();
     drain(&mut missing).await;
-    assert_eq!(missing.embedding_model, "openai/text-embedding-3-small");
+    assert_eq!(missing.embedding_model, "google/gemini-embedding-2");
 }
 
 #[tokio::test]

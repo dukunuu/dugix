@@ -369,8 +369,9 @@ ollama pull embeddinggemma-2       # multimodal tag
 Ollama answers on `http://127.0.0.1:11434` (or the endpoint in `[local]` when
 the runtime is Ollama) and has one of those two tags installed, Nexus uses it
 (`embeddinggemma-2:270m` is preferred). Otherwise it uses the signed-in
-backend's own embedding model (OpenRouter and OpenAI have one), and where the
-backend has none (Codex, OpenCode Go) search is keyword-only. `/files` shows
+backend's own embedding model (OpenRouter uses `google/gemini-embedding-2` to
+embed text and image files directly; OpenAI uses text-only `text-embedding-3-small`),
+and where the backend has none (Codex, OpenCode Go) search is keyword-only. `/files` shows
 which. A `local:` choice never falls back to a cloud embedder; if Ollama is
 down, search degrades to keywords with the reason, and `/files` shows
 `embeddings: not reachable — is `ollama serve` running?`.

@@ -145,6 +145,168 @@ impl MockOllama {
     }
 }
 
+struct MockOpenAi {
+    embedder: Embedder,
+    requests: Arc<Mutex<Vec<Value>>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for MockOpenAi {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+impl MockOpenAi {
+    async fn start(images: bool) -> Self {
+        use tokio::io::AsyncBufReadExt as _;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let shared = requests.clone();
+        let task = tokio::spawn(async move {
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    break;
+                };
+                let mut stream = tokio::io::BufReader::new(stream);
+                let mut headers = String::new();
+                loop {
+                    let mut line = String::new();
+                    if stream.read_line(&mut line).await.unwrap() == 0 {
+                        return;
+                    }
+                    if line == "\r\n" {
+                        break;
+                    }
+                    headers.push_str(&line);
+                }
+                assert_eq!(headers.split_whitespace().nth(1), Some("/v1/embeddings"));
+                assert!(!headers.to_lowercase().contains("authorization:"));
+                let length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().unwrap())
+                    })
+                    .unwrap();
+                let mut bytes = vec![0; length];
+                stream.read_exact(&mut bytes).await.unwrap();
+                let body: Value = serde_json::from_slice(&bytes).unwrap();
+                shared.lock().unwrap().push(body.clone());
+                let inputs = body["input"].as_array().unwrap();
+                let (status, response) = if !images && inputs.iter().any(Value::is_object) {
+                    (400, json!({"error": "image input not supported"}))
+                } else {
+                    let data = inputs
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .map(|(index, input)| {
+                            let vector = if input.is_string() {
+                                vec![3, 0]
+                            } else {
+                                vec![0, 2]
+                            };
+                            json!({"index": index, "embedding": vector})
+                        })
+                        .collect::<Vec<_>>();
+                    (200, json!({"data": data}))
+                };
+                let body = response.to_string();
+                let response = format!(
+                    "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream
+                    .get_mut()
+                    .write_all(response.as_bytes())
+                    .await
+                    .unwrap();
+            }
+        });
+        Self {
+            embedder: Embedder::openai(
+                OpenRouter::local(&endpoint).unwrap(),
+                "google/gemini-embedding-2".into(),
+            ),
+            requests,
+            task,
+        }
+    }
+}
+
+#[tokio::test]
+async fn openai_compatible_probe_detects_image_support() {
+    let mock = MockOpenAi::start(true).await;
+    mock.embedder.prepare().await.unwrap();
+    assert!(mock.embedder.supports_images());
+    assert!(mock.embedder.status().ends_with(" · images"));
+    assert_eq!(mock.embedder.identity().unwrap().dimension, 2);
+    let requests = mock.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["input"], json!(["probe"]));
+    assert_eq!(requests[1]["model"], "google/gemini-embedding-2");
+    assert_eq!(requests[1]["input"].as_array().unwrap().len(), 1);
+    let image = &requests[1]["input"][0];
+    assert_eq!(image["content"][0]["type"], "image_url");
+    let url = image["content"][0]["image_url"]["url"].as_str().unwrap();
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(url.strip_prefix("data:image/png;base64,").unwrap())
+        .unwrap();
+    let decoded = image::load_from_memory(&bytes).unwrap();
+    assert_eq!((decoded.width(), decoded.height()), (64, 64));
+}
+
+#[tokio::test]
+async fn openai_compatible_probe_without_image_support_stays_text_only() {
+    let mock = MockOpenAi::start(false).await;
+    mock.embedder.prepare().await.unwrap();
+    assert!(!mock.embedder.supports_images());
+    assert!(mock.embedder.status().ends_with(" · text only"));
+    assert_eq!(mock.embedder.query("beach").await.unwrap(), vec![1.0, 0.0]);
+    let requests = mock.requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[1]["input"][0]["content"][0]["type"], "image_url");
+    assert_eq!(requests[2]["input"], json!(["beach"]));
+}
+
+#[tokio::test]
+async fn openai_compatible_embeds_image_inputs_as_content_parts() {
+    let mock = MockOpenAi::start(true).await;
+    let EmbedInput::Image { bytes, mime } = png_input(&image::RgbImage::new(32, 24)).unwrap()
+    else {
+        panic!()
+    };
+    let vectors = mock
+        .embedder
+        .embed(vec![
+            EmbedInput::Text("file: notes.txt\nbody".into()),
+            EmbedInput::Image {
+                bytes: bytes.clone(),
+                mime,
+            },
+        ])
+        .await
+        .unwrap();
+    assert_eq!(vectors, vec![vec![1.0, 0.0], vec![0.0, 1.0]]);
+    let requests = mock.requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    let inputs = requests[2]["input"].as_array().unwrap();
+    assert_eq!(inputs.len(), 2);
+    assert_eq!(inputs[0], "file: notes.txt\nbody");
+    let content = inputs[1]["content"].as_array().unwrap();
+    assert_eq!(content.len(), 1);
+    assert_eq!(content[0]["type"], "image_url");
+    let url = content[0]["image_url"]["url"].as_str().unwrap();
+    let sent = base64::engine::general_purpose::STANDARD
+        .decode(url.strip_prefix("data:image/png;base64,").unwrap())
+        .unwrap();
+    assert_eq!(sent, bytes);
+}
+
 #[tokio::test]
 async fn native_probe_prefixes_images_and_digest() {
     let mock = MockOllama::start(true).await;
