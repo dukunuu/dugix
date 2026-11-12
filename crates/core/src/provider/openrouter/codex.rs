@@ -807,6 +807,7 @@ pub(super) fn parse_codex_catalog(body: &serde_json::Value) -> Vec<Model> {
                 supports_video_generation: false,
                 backend: crate::provider::BackendTag::Codex,
                 pricing: None,
+                aliases: Vec::new(),
             })
         })
         .collect()
@@ -858,6 +859,7 @@ pub(super) fn codex_fallback_models() -> Vec<Model> {
         supports_video_generation: false,
         backend: crate::provider::BackendTag::Codex,
         pricing: None,
+        aliases: Vec::new(),
     };
     let full = [E::Low, E::Medium, E::High, E::XHigh, E::Max];
     vec![

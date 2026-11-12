@@ -3,7 +3,7 @@
 use serde::Deserialize;
 
 use super::{MISTRAL_VIBE_FAST_MODEL, MISTRAL_VIBE_MODEL};
-use crate::provider::{Model, ReasoningEffort};
+use crate::provider::{BackendTag, Model, ModelPricing, ReasoningEffort};
 
 /// Mistral's `/v1/models`: one card per id *and* per alias, with the context
 /// window in `max_context_length` and capabilities as flags.
@@ -69,7 +69,13 @@ pub(super) fn parse_mistral_catalog(catalog: MistralModelsResponse) -> Vec<Model
     }
     let mut models: Vec<Model> = groups
         .into_iter()
-        .map(|(_, m)| Model {
+        .map(|(names, m)| Model {
+            aliases: {
+                let mut aliases: Vec<String> =
+                    names.into_iter().filter(|name| *name != m.id).collect();
+                aliases.sort();
+                aliases
+            },
             name: m.id.clone(),
             reasoning_efforts: if m.capabilities.reasoning {
                 ReasoningEffort::HIGH_AND_NONE.to_vec()
@@ -80,7 +86,7 @@ pub(super) fn parse_mistral_catalog(catalog: MistralModelsResponse) -> Vec<Model
             supports_images: m.capabilities.vision,
             supports_image_generation: false,
             supports_video_generation: false,
-            backend: crate::provider::BackendTag::Mistral,
+            backend: BackendTag::Mistral,
             id: m.id,
             pricing: None,
         })
@@ -100,13 +106,60 @@ pub(super) fn parse_mistral_catalog(catalog: MistralModelsResponse) -> Vec<Model
                 supports_images: true,
                 supports_image_generation: false,
                 supports_video_generation: false,
-                backend: crate::provider::BackendTag::Mistral,
+                backend: BackendTag::Mistral,
                 pricing: None,
+                aliases: Vec::new(),
             });
         }
     }
     models.sort_by(|a, b| a.id.cmp(&b.id));
     models
+}
+
+/// Give Mistral models their `OpenRouter` twin's price. Mistral serves
+/// floating names (`mistral-vibe-cli-latest`) and spells versions with dashes
+/// (`glm-5-2`), so match its dated and versioned aliases against `OpenRouter`
+/// ids with punctuation ignored, most specific alias first.
+pub fn price_mistral_models(models: &mut [Model]) {
+    let squash = |s: &str| -> String {
+        s.chars()
+            .filter(char::is_ascii_alphanumeric)
+            .map(|c| c.to_ascii_lowercase())
+            .collect()
+    };
+    // `:batch`/`:free` variants and `~…-latest` routers aren't the plain price.
+    let twins: Vec<(String, String, ModelPricing)> = models
+        .iter()
+        .filter(|m| {
+            m.backend == BackendTag::OpenRouter && !m.id.contains(':') && !m.id.starts_with('~')
+        })
+        .filter_map(|m| {
+            let price = m.pricing?;
+            let name = m.id.rsplit('/').next().unwrap_or(&m.id);
+            Some((squash(name), squash(&m.id), price))
+        })
+        .collect();
+    let twin_price = |name: &str| {
+        let key = squash(name);
+        twins
+            .iter()
+            .filter(|(bare, full, _)| *bare == key || *full == key)
+            .min_by_key(|(_, full, _)| full.len())
+            .map(|(_, _, price)| *price)
+    };
+    for model in models
+        .iter_mut()
+        .filter(|m| m.backend == BackendTag::Mistral && m.pricing.is_none())
+    {
+        // `-latest` names float between versions; longer names are more specific
+        // (`mistral-medium-3-5` over `mistral-medium-3` in the same group).
+        let mut names: Vec<&str> = std::iter::once(model.id.as_str())
+            .chain(model.aliases.iter().map(String::as_str))
+            .filter(|name| !name.ends_with("-latest"))
+            .collect();
+        names.sort_by(|a, b| b.len().cmp(&a.len()).then(a.cmp(b)));
+        model.pricing = names.into_iter().find_map(twin_price);
+    }
 }
 
 /// Fit a chat-completions body to Mistral's validation, which rejects unknown

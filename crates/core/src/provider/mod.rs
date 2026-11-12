@@ -141,6 +141,9 @@ pub struct Model {
     /// USD per 1M tokens from the catalog (`OpenRouter` only; other backends
     /// report no prices). `None` = cost unknown.
     pub pricing: Option<ModelPricing>,
+    /// Other names the backend accepts for this model (Mistral lists dated and
+    /// versioned names), used to find its `OpenRouter` price.
+    pub aliases: Vec<String>,
 }
 
 /// Sampling + reasoning parameters for a completion request.

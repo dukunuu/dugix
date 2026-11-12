@@ -66,6 +66,7 @@ mod tests {
             supports_video_generation: false,
             backend,
             pricing: None,
+            aliases: Vec::new(),
         }
     }
 

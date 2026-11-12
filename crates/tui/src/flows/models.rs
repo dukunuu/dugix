@@ -453,6 +453,7 @@ mod tests {
                 supports_video_generation: false,
                 backend: BackendTag::OpenRouter,
                 pricing: None,
+                aliases: Vec::new(),
             },
             Model {
                 id: "b/two".into(),
@@ -464,6 +465,7 @@ mod tests {
                 supports_video_generation: false,
                 backend: BackendTag::OpenRouter,
                 pricing: None,
+                aliases: Vec::new(),
             },
         ];
         a
@@ -485,6 +487,7 @@ mod tests {
                 supports_video_generation: false,
                 backend: BackendTag::OpenRouter,
                 pricing: None,
+                aliases: Vec::new(),
             },
             Model {
                 id: "no-reasoning".into(),
@@ -496,6 +499,7 @@ mod tests {
                 supports_video_generation: false,
                 backend: BackendTag::OpenRouter,
                 pricing: None,
+                aliases: Vec::new(),
             },
         ];
         a.model_focus = ModelPanel::Available;
@@ -549,6 +553,7 @@ mod tests {
             supports_video_generation: false,
             backend: BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         }];
         a.model_focus = ModelPanel::Available;
         a.avail_selected = 0;
@@ -580,6 +585,7 @@ mod tests {
             supports_video_generation: false,
             backend: BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         }];
         a.model_focus = ModelPanel::Available;
         a.avail_selected = 0;
@@ -613,6 +619,7 @@ mod tests {
             supports_video_generation: false,
             backend: BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         }];
         a.model_focus = ModelPanel::Available;
         a.avail_selected = 0;
@@ -639,6 +646,7 @@ mod tests {
             supports_video_generation: false,
             backend: BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         }];
         a.model_focus = ModelPanel::Available;
         a.avail_selected = 0;
@@ -686,6 +694,7 @@ mod tests {
                 supports_video_generation: false,
                 backend: BackendTag::OpenRouter,
                 pricing: None,
+                aliases: Vec::new(),
             },
             Model {
                 id: "b/two".into(),
@@ -697,6 +706,7 @@ mod tests {
                 supports_video_generation: false,
                 backend: BackendTag::OpenRouter,
                 pricing: None,
+                aliases: Vec::new(),
             },
             Model {
                 id: "c/three".into(),
@@ -708,6 +718,7 @@ mod tests {
                 supports_video_generation: false,
                 backend: BackendTag::OpenRouter,
                 pricing: None,
+                aliases: Vec::new(),
             },
         ];
         // three is favorite; two was used more recently than one.

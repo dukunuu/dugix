@@ -1058,6 +1058,87 @@ fn mistral_catalog_keeps_tool_chat_models_once_and_adds_vibe_names() {
 }
 
 #[test]
+fn mistral_models_take_the_price_of_their_most_specific_openrouter_twin() {
+    use crate::provider::{BackendTag, ModelPricing};
+    let price = |prompt: f64| ModelPricing {
+        prompt,
+        completion: prompt * 2.0,
+        cache_read: None,
+        cache_write: None,
+    };
+    let model = |backend, id: &str, aliases: &[&str], pricing| Model {
+        id: id.into(),
+        name: id.into(),
+        reasoning_efforts: Vec::new(),
+        context_length: None,
+        supports_images: false,
+        supports_image_generation: false,
+        supports_video_generation: false,
+        backend,
+        pricing,
+        aliases: aliases.iter().map(|a| (*a).to_string()).collect(),
+    };
+    let router = |id: &str, prompt| model(BackendTag::OpenRouter, id, &[], Some(price(prompt)));
+    let mistral = |id: &str, aliases: &[&str]| model(BackendTag::Mistral, id, aliases, None);
+    // Live shapes from 2026-11-12: the Medium 3.5 group also answers to the
+    // older `mistral-medium-3`, and hosted GLM/DeepSeek spell dots as dashes.
+    let mut models = vec![
+        router("mistralai/mistral-medium-3", 0.4),
+        router("mistralai/mistral-medium-3-5", 1.5),
+        router("mistralai/mistral-medium-3-5:batch", 0.75),
+        router("z-ai/glm-5.2", 0.7),
+        router("deepseek/deepseek-v4.1-flash-1017", 0.02),
+        router("~deepseek/deepseek-v4-flash-latest", 9.0),
+        mistral(
+            "mistral-vibe-cli-latest",
+            &[
+                "mistral-medium-3",
+                "mistral-medium-3-5",
+                "mistral-medium-latest",
+            ],
+        ),
+        mistral("glm-5-2", &["zai-glm-5-2"]),
+        mistral("deepseek-v4-1-flash-1017", &[]),
+        mistral("labs-leanstral-1-5", &[]),
+    ];
+    price_mistral_models(&mut models);
+    let prompt = |id: &str| {
+        models
+            .iter()
+            .find(|m| m.backend == BackendTag::Mistral && m.id == id)
+            .and_then(|m| m.pricing)
+            .map(|p| p.prompt)
+    };
+    assert_eq!(prompt("mistral-vibe-cli-latest"), Some(1.5));
+    assert_eq!(prompt("glm-5-2"), Some(0.7));
+    assert_eq!(prompt("deepseek-v4-1-flash-1017"), Some(0.02));
+    assert_eq!(prompt("labs-leanstral-1-5"), None);
+}
+
+#[test]
+fn mistral_catalog_keeps_each_groups_other_names_as_aliases() {
+    let group = ["mistral-large-latest", "mistral-large-2512"];
+    let data: Vec<serde_json::Value> = group
+        .iter()
+        .map(|id| {
+            serde_json::json!({
+                "id": id,
+                "aliases": group.iter().filter(|a| *a != id).collect::<Vec<_>>(),
+                "capabilities": {"completion_chat": true, "function_calling": true}
+            })
+        })
+        .collect();
+    let catalog: MistralModelsResponse =
+        serde_json::from_value(serde_json::json!({"object": "list", "data": data})).unwrap();
+    let models = parse_mistral_catalog(catalog);
+    let large = models
+        .iter()
+        .find(|m| m.id == "mistral-large-latest")
+        .unwrap();
+    assert_eq!(large.aliases, ["mistral-large-2512"]);
+}
+
+#[test]
 fn mistral_moves_system_images_to_user_messages_without_losing_context() {
     let image = "data:image/png;base64,AA==";
     let history = [

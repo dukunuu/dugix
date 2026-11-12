@@ -381,6 +381,7 @@ impl App {
                 Err(errors.join("; "))
             } else {
                 merged.sort_by(|a, b| a.id.cmp(&b.id));
+                crate::provider::openrouter::price_mistral_models(&mut merged);
                 Ok(merged)
             };
             let _ = tx.send(result);

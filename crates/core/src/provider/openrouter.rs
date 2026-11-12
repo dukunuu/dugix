@@ -160,7 +160,7 @@ mod stream;
 mod video;
 
 pub use codex::{CodexChatStreamAdapter, chat_body_to_codex_body, codex_response_to_chat};
-pub use mistral::mistral_gateway_body;
+pub use mistral::{mistral_gateway_body, price_mistral_models};
 pub(crate) use stream::{merge_usage, parse_usage_value};
 pub use video::normalize_video_params;
 
@@ -1123,6 +1123,7 @@ impl OpenRouter {
                     backend: crate::provider::BackendTag::OpenRouter,
                     id,
                     pricing: None,
+                    aliases: Vec::new(),
                 }
             })
             .collect())
@@ -1157,6 +1158,7 @@ impl OpenRouter {
                     backend: crate::provider::BackendTag::OpenRouter,
                     id,
                     pricing: None,
+                    aliases: Vec::new(),
                 }
             })
             .collect())
@@ -1201,6 +1203,7 @@ impl OpenRouter {
                     supports_video_generation,
                     backend: self.backend_tag(),
                     pricing: m.pricing.and_then(|p| p.usd_per_million()),
+                    aliases: Vec::new(),
                 }
             })
             .collect();

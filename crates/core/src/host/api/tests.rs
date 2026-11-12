@@ -201,6 +201,7 @@ fn test_model(id: &str, backend: BackendTag) -> crate::provider::Model {
         supports_video_generation: false,
         backend,
         pricing: None,
+        aliases: Vec::new(),
     }
 }
 
@@ -261,6 +262,7 @@ async fn host_http_auth_models_command_and_snapshot_are_hermetic() {
         supports_video_generation: false,
         backend: BackendTag::OpenAi,
         pricing: None,
+        aliases: Vec::new(),
     }];
     let mut server = HostServer::bind(app, HostConfig::new(0, "host-secret"))
         .await
@@ -642,6 +644,7 @@ data: [DONE]
         supports_video_generation: false,
         backend: BackendTag::OpenAi,
         pricing: None,
+        aliases: Vec::new(),
     }];
     let mut server = HostServer::bind(
         app,

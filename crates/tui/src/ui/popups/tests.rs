@@ -1467,6 +1467,7 @@ fn picker_app(ids: &[&str]) -> AppView {
             supports_video_generation: false,
             backend: nexus_core::provider::BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         })
         .collect();
     app.open_model_picker();
@@ -1561,6 +1562,7 @@ fn status_bar_names_the_model_and_keeps_the_space_tag_beside_the_gauge() {
         supports_video_generation: false,
         backend: nexus_core::provider::BackendTag::Local,
         pricing: None,
+        aliases: Vec::new(),
     }];
     app.core.current_model = Some("local:org/Big-Model-7B".into());
     app.core.active_space.name = "work".into();

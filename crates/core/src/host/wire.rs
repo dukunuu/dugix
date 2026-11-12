@@ -817,6 +817,7 @@ mod tests {
                 cache_read: Some(0.3),
                 cache_write: Some(3.0),
             }),
+            aliases: Vec::new(),
         };
         let app = AppEvent::Models(Some(Ok(vec![model])));
         assert_eq!(

@@ -2038,6 +2038,7 @@ mod tests {
                 supports_video_generation: false,
                 backend: nexus_core::provider::BackendTag::OpenRouter,
                 pricing: None,
+                aliases: Vec::new(),
             })
             .collect();
         app.core.set_setting("popup_sizes", "model:60x50").unwrap();

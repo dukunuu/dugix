@@ -559,6 +559,7 @@ fn search_backend_is_the_session_model() {
             supports_image_generation: false,
             supports_video_generation: false,
             pricing: None,
+            aliases: Vec::new(),
         })
         .collect();
     let (provider, model) = app.session_backend().unwrap();

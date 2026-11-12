@@ -42,6 +42,7 @@ fn app(db: Db, root: std::path::PathBuf) -> App {
         supports_video_generation: false,
         backend: BackendTag::OpenRouter,
         pricing: None,
+        aliases: Vec::new(),
     }];
     app.current_model = Some("a/one".into());
     app

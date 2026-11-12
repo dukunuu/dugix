@@ -1269,6 +1269,7 @@ pub fn app_with_key() -> App {
             supports_video_generation: false,
             backend: BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         },
         Model {
             id: "b/two".into(),
@@ -1280,6 +1281,7 @@ pub fn app_with_key() -> App {
             supports_video_generation: false,
             backend: BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         },
     ];
     a
@@ -2208,6 +2210,7 @@ fn effort_accepted_follows_the_models_own_list() {
             supports_video_generation: false,
             backend: BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         },
         Model {
             id: "dumb".into(),
@@ -2219,6 +2222,7 @@ fn effort_accepted_follows_the_models_own_list() {
             supports_video_generation: false,
             backend: BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         },
     ];
     assert!(a.effort_accepted("claude", "minimal"));
@@ -3421,6 +3425,7 @@ async fn history_carries_markdown_images_as_data_urls_for_vision_models() {
             supports_video_generation: false,
             backend: BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         },
         Model {
             id: "txt/model".into(),
@@ -3432,6 +3437,7 @@ async fn history_carries_markdown_images_as_data_urls_for_vision_models() {
             supports_video_generation: false,
             backend: BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         },
     ];
 
@@ -3472,6 +3478,7 @@ async fn space_images_are_chosen_by_content_not_extension() {
         supports_video_generation: false,
         backend: BackendTag::OpenRouter,
         pricing: None,
+        aliases: Vec::new(),
     }];
     a.current_model = Some("vis/model".into());
     let history = a.build_history();
@@ -5892,6 +5899,7 @@ fn catalog_model(backend: BackendTag, id: &str) -> Model {
         supports_video_generation: false,
         backend,
         pricing: None,
+        aliases: Vec::new(),
     }
 }
 

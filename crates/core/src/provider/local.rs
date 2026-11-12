@@ -259,6 +259,7 @@ impl LocalConfig {
                 supports_image_generation: false,
                 supports_video_generation: false,
                 pricing: None,
+                aliases: Vec::new(),
             })
             .collect())
     }

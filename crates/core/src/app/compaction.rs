@@ -800,6 +800,7 @@ mod tests {
                 supports_video_generation: false,
                 backend: crate::provider::BackendTag::OpenRouter,
                 pricing: None,
+                aliases: Vec::new(),
             }];
             a.settings.compact_threshold = threshold;
             a.experiments.compaction_budget_tokens = budget;
