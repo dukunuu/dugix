@@ -279,6 +279,8 @@ impl Line {
 
 /// What the terminal and the `canvas` tool share about the open canvas; the link is
 /// per terminal, not per conversation, so this holds no session.
+// Independent once-per-session flags, not a state machine.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Default)]
 pub struct Context {
     /// The deck, slide and selected blocks studio last reported.
@@ -292,6 +294,8 @@ pub struct Context {
     pub art_shown: bool,
     /// The independent, deferred doc field reference has been returned.
     pub doc_schema_shown: bool,
+    /// The sheet op reference has been returned.
+    pub sheet_schema_shown: bool,
     /// Registered comment turns, keyed by chat task id; the bridge drains results.
     pub turns: HashMap<u64, Option<TurnOutcome>>,
     /// Wakes the terminal's event loop when `changed` grows.

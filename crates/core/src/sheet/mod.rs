@@ -6,6 +6,7 @@ pub mod interchange;
 pub mod model;
 pub mod ops;
 pub mod read;
+pub mod render;
 pub mod storage;
 pub mod validate;
 

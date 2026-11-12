@@ -553,3 +553,50 @@ fn xlsx_roundtrip_keeps_inputs_formulas_styles_and_geometry() {
     );
     assert_eq!(checked(&imported), imported);
 }
+
+#[test]
+fn tab_ranges_parse_excel_quotes_and_reject_bad_ranges() {
+    use address::{Range, TabRange};
+    for (text, tab, range) in [
+        ("A1:F20", None, "A1:F20"),
+        ("B:B", None, "B:B"),
+        ("2:4", None, "2:4"),
+        ("Data!A1:C9", Some("Data"), "A1:C9"),
+        ("'Q3 plan'!A1:C9", Some("Q3 plan"), "A1:C9"),
+        ("'O''Brien!'!B2", Some("O'Brien!"), "B2"),
+    ] {
+        let parsed: TabRange = text.parse().unwrap();
+        assert_eq!(parsed.tab.as_deref(), tab);
+        assert_eq!(parsed.range, range.parse::<Range>().unwrap());
+    }
+    for text in [
+        "",
+        "!A1",
+        "''!A1",
+        "'Plan!A1",
+        "'Plan'A1",
+        "Data!",
+        "Q3 plan!A1",
+        "O'Brien!A1",
+        "Data!C9:A1",
+        "Data!A1!B2",
+    ] {
+        assert!(text.parse::<TabRange>().is_err(), "{text}");
+    }
+}
+
+#[test]
+fn sheet_both_read_shows_formula_and_display_within_budget() {
+    let sheet = edits(
+        &blank(),
+        json!([
+            {"op":"set_cells","tab":"Sheet1","at":"A2","values":[["=B2*10","3","plain"]]}
+        ]),
+    );
+    let workbook = Workbook::load(&sheet).unwrap();
+    let text = read_range(&workbook, &sheet, "Sheet1", "A2:C2", Show::Both, 200);
+    assert!(text.contains("=B2*10 → 30\t3\tplain"), "{text}");
+    let small = read_range(&workbook, &sheet, "Sheet1", "A1:C100", Show::Both, 60);
+    assert!(small.chars().count() <= 60);
+    assert!(small.contains("more: rows"));
+}

@@ -182,6 +182,56 @@ impl fmt::Display for Range {
     }
 }
 
+/// A range optionally qualified by an Excel tab name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TabRange {
+    pub tab: Option<String>,
+    pub range: Range,
+}
+
+impl FromStr for TabRange {
+    type Err = anyhow::Error;
+
+    fn from_str(text: &str) -> Result<Self> {
+        let (tab, range) = if let Some(quoted) = text.strip_prefix('\'') {
+            let mut chars = quoted.char_indices().peekable();
+            let mut name = String::new();
+            let range = loop {
+                let (index, ch) = chars.next().ok_or_else(|| anyhow!("unclosed tab quote"))?;
+                if ch != '\'' {
+                    name.push(ch);
+                } else if chars.peek().is_some_and(|(_, ch)| *ch == '\'') {
+                    chars.next();
+                    name.push('\'');
+                } else {
+                    break quoted[index + 1..]
+                        .strip_prefix('!')
+                        .ok_or_else(|| anyhow!("quoted tab must be followed by ! and a range"))?;
+                }
+            };
+            (Some(name), range)
+        } else if let Some((name, range)) = text.split_once('!') {
+            ensure!(
+                !name.chars().any(|c| c.is_whitespace() || c == '\''),
+                "tab names with spaces or apostrophes must be quoted"
+            );
+            (Some(name.to_string()), range)
+        } else {
+            (None, text)
+        };
+        ensure!(
+            tab.as_ref().is_none_or(|name| !name.is_empty()),
+            "empty tab name"
+        );
+        Ok(Self {
+            tab,
+            range: range
+                .parse()
+                .map_err(|e| anyhow!("invalid range {range:?}: {e}"))?,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 pub enum Show {
     Values,
     Formulas,
+    Both,
 }
 
 fn flat(text: &str) -> String {
@@ -108,10 +109,16 @@ pub fn read_range(
                 let formula = tab
                     .cells
                     .get(&key)
-                    .filter(|c| show == Show::Formulas && c.input.starts_with('='));
+                    .filter(|c| show != Show::Values && c.input.starts_with('='));
                 let value = formula.map_or_else(
                     || workbook.value(&tab.name, &key).display,
-                    |c| c.input.clone(),
+                    |c| {
+                        if show == Show::Both {
+                            format!("{} → {}", c.input, workbook.value(&tab.name, &key).display)
+                        } else {
+                            c.input.clone()
+                        }
+                    },
                 );
                 line.push('\t');
                 // Do not build a giant line merely to decide it cannot fit.

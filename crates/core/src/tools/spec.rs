@@ -1398,7 +1398,7 @@ pub(super) static TASK: ToolSpec = ToolSpec {
 
 pub(super) static CANVAS: ToolSpec = ToolSpec {
     name: "canvas",
-    purpose: "Draft writing as a doc (Markdown), presentations as a deck. Space files: docs/*.doc.json or decks/*.deck.json; kind from path or create.kind (default deck). Decks: choose the look first (design op=list, create.design); build slides with add_slide{layout,slots,after?}; use color roles and named styles; fix taste: and design: lines. Edit directly when asked, comment when reviewing or unsure. One file per request: edit it, no variants or probes. Never invent data, sources or images (src: https or space file). Decks: /studio, 1920x1080 px, auto-layout; view after layout changes. Docs: read outline or blocks; view pages; export docx/pdf/md/html. Atomic ops; ids/hashes automatic. Field references arrive with results. Comments: anchor to a block; one issue, two sentences with why; attach ops for fixes; at most 8, worst first; respect intent and facts; answer the thread.",
+    purpose: "Docs: writing (Markdown); decks: slides; sheets: tables; kind from path or create.kind (default deck). Decks: pick a look first (design op=list, create.design); add_slide{layout,slots,after?}; color roles, named styles; fix taste:/design: lines; /studio 1920x1080 px auto-layout; view after layout edits. Edit when asked, comment when reviewing/unsure. One file per request, no variants/probes. Never invent data/sources/images (src: https or space file). Docs: read outline/blocks, view pages, export docx/pdf/md/html. Sheets: inputs only (=formula); read range before editing; edits list error cells. Atomic ops; ids/hashes automatic; field refs in results. Comments: block anchor; one issue, two sentences with why; attach fix ops; max 8, worst first; respect intent/facts; answer threads.",
     selector: Some("action"),
     params: &[
         Param {
@@ -1409,7 +1409,7 @@ pub(super) static CANVAS: ToolSpec = ToolSpec {
         Param {
             name: "path",
             kind: Kind::Str,
-            doc: "decks/name.deck.json or docs/name.doc.json",
+            doc: "decks/name.deck.json, docs/name.doc.json, sheets/name.sheet.json",
         },
         Param {
             name: "slides",
@@ -1458,13 +1458,18 @@ pub(super) static CANVAS: ToolSpec = ToolSpec {
         },
         Param {
             name: "kind",
-            kind: Kind::Enum(&["deck", "doc"]),
+            kind: Kind::Enum(&["deck", "doc", "sheet"]),
             doc: "create kind",
         },
         Param {
             name: "markdown",
             kind: Kind::StrOrEmpty,
             doc: "doc source",
+        },
+        Param {
+            name: "range",
+            kind: Kind::Str,
+            doc: "sheet: A1:C9, B:B, 2:4, 'Tab'!A1",
         },
         Param {
             name: "blocks",
@@ -1479,7 +1484,7 @@ pub(super) static CANVAS: ToolSpec = ToolSpec {
         Param {
             name: "format",
             kind: Kind::Str,
-            doc: "doc: md; deck: pptx|pdf|png|html|json",
+            doc: "doc: md; deck: pptx|pdf|png|html|json; sheet: csv|xlsx",
         },
         Param {
             name: "design",
@@ -1517,7 +1522,7 @@ pub(super) static CANVAS: ToolSpec = ToolSpec {
             name: "read",
             summary: "Outline/tree, revision, threads",
             required: &["path"],
-            optional: &["slides", "blocks"],
+            optional: &["slides", "blocks", "range"],
             read_only: true,
             internal: "deck_read",
         },
@@ -1525,7 +1530,7 @@ pub(super) static CANVAS: ToolSpec = ToolSpec {
             name: "view",
             summary: "Deck slides: studio focus or sheet",
             required: &["path"],
-            optional: &["slides"],
+            optional: &["slides", "range"],
             read_only: true,
             internal: "deck_view",
         },
@@ -1573,7 +1578,7 @@ pub(super) static CANVAS: ToolSpec = ToolSpec {
             name: "export",
             summary: "Save a file in exports/",
             required: &["path"],
-            optional: &["format", "text", "template"],
+            optional: &["format", "text", "template", "range"],
             read_only: false,
             internal: "deck_export",
         },

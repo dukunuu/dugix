@@ -192,6 +192,27 @@ impl Workbook {
         })
     }
 
+    /// Error values in the selected rectangles, including calculated spill cells.
+    pub(crate) fn errors_in(&self, tab: &str, ranges: &[Rect]) -> Result<Vec<(Address, String)>> {
+        let index = self.tab_index(tab)?;
+        let mut errors = Vec::new();
+        for cell in self.model.get_all_cells() {
+            if cell.index != index {
+                continue;
+            }
+            let address = Address {
+                row: uint(cell.row),
+                col: uint(cell.column),
+            };
+            if ranges.iter().any(|rect| rect.contains(address))
+                && let ValueKind::Error(error) = self.value_at(index, address)?.kind
+            {
+                errors.push((address, error));
+            }
+        }
+        Ok(errors)
+    }
+
     fn tab_index(&self, name: &str) -> Result<u32> {
         self.source
             .iter()
