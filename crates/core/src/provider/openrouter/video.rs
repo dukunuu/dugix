@@ -1,8 +1,5 @@
 //! Video generation parameter validation.
 
-/// Validate basic video generation parameters against known model capabilities.
-/// Returns `Ok` if the params look valid, or a descriptive error message if not.
-/// This is a best-effort check — the API is the final authority.
 pub fn normalize_video_params(
     model: &str,
     duration: u32,

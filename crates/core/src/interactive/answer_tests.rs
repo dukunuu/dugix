@@ -65,8 +65,6 @@ fn validation_counts_all_message_steps_including_called_actions() {
                 } else if answer_involved {
                     assert!(Document::parse(&data.to_string()).is_err());
                 } else {
-                    // Two sends predate answers: they still parse and fail
-                    // transactionally when activated.
                     let mut ui = Session::new(Document::parse(&data.to_string()).unwrap()).unwrap();
                     assert!(ui.activate("pick").is_err());
                 }

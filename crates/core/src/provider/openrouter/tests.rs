@@ -650,8 +650,7 @@ fn codex_fallback_lists_the_current_models() {
 #[allow(clippy::too_many_lines)]
 fn opencode_context_fallback_covers_every_live_catalog_id() {
     // The live endpoints serve exactly these ids today; each must have a
-    // known context window, or that model silently shows no context size
-    // again. When opencode adds a model, add it to the table first.
+    // known context window. When opencode adds a model, add it to the table first.
     let zen_ids = [
         "big-pickle",
         "claude-fable-5",
@@ -1324,10 +1323,8 @@ fn truncate_error_body_caps_long_text_with_ellipsis() {
     assert_eq!(out.chars().count(), 301); // 300 chars + the ellipsis marker
 }
 
-/// One golden usage payload per provider family, each asserting the same
-/// normalized invariant. This is the regression net for the convention:
-/// adding a backend whose shape is not covered here should fail loudly
-/// rather than silently reporting a clamped rate.
+/// One golden usage payload per provider family, all asserting the same
+/// normalized invariant.
 #[test]
 fn every_provider_family_normalizes_to_one_prompt_convention() {
     struct Case {
@@ -1375,8 +1372,7 @@ fn every_provider_family_normalizes_to_one_prompt_convention() {
             payload: r#"{"input_tokens":100,"output_tokens":20,
                 "cache_read_input_tokens":700,"cache_creation_input_tokens":200}"#,
             // The provider's 100 is the fresh remainder; the real prompt
-            // is 100 + 700 + 200. Before normalization this produced
-            // 700/100 = 700%, clamped to a convincing 100%.
+            // is 100 + 700 + 200.
             prompt: 1000,
             read: 700,
             write: 200,

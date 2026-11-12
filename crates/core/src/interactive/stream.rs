@@ -16,8 +16,7 @@ pub fn component_signatures() -> String {
     library::signatures()
 }
 
-/// Incremental parser for one streamed UI program. Completed statement ASTs are
-/// cached; source replacement resets them. No actions are executed by parsing.
+/// Incremental parser for one streamed UI program; source replacement resets cached statements.
 #[derive(Default)]
 pub struct StreamParser {
     source: String,
@@ -26,9 +25,8 @@ pub struct StreamParser {
     error: Option<String>,
 }
 impl StreamParser {
-    /// Update the accumulated program and return its validated display snapshot.
-    /// Incomplete new definitions can render; incomplete redefinitions cannot
-    /// replace completed ones. Unsupported or malformed elements remain inert.
+    /// Update the program and return its validated display snapshot; incomplete
+    /// new definitions can render, but incomplete redefinitions cannot replace completed ones.
     #[must_use]
     pub fn set(&mut self, source: &str) -> Option<Document> {
         if source.len() > MAX_SOURCE {
@@ -58,11 +56,8 @@ impl StreamParser {
         }
         let tail = &source[self.consumed..];
         if self.error.is_none() && !empty(tail) {
-            // The unfinished statement is often mid-token (`@`, a half-typed
-            // `true`, an empty row just opened), which fails or validates with
-            // the element left out. Also try it cut back to each of its last
-            // argument boundaries and keep the longest that shows the most, so
-            // nothing already on screen disappears.
+            // The unfinished statement is often mid-token, so also try it cut
+            // back to each argument boundary and keep the longest that shows the most.
             let whole = (format!("{tail}{suffix}"), suffix.is_empty());
             let trimmed = syntax::argument_cuts(tail)
                 .into_iter()
@@ -172,8 +167,7 @@ pub(super) fn program_state(
     library::materialize(&symbols, mode, state, results)
 }
 
-/// The statements of a finished program that parse, rejoined as source; a
-/// statement that does not parse is left out like any other broken piece.
+/// The statements of a finished program that parse, rejoined as source.
 pub(super) fn parseable(source: &str) -> String {
     let (mut ends, _) = syntax::boundaries(source);
     if ends.last() != Some(&source.len()) {
@@ -218,8 +212,6 @@ fn statements(source: &str) -> Result<BTreeMap<String, (String, Expr)>> {
 
 /// Merge a completed patch by statement name and validate it atomically.
 /// A top-level null deletes; unreachable value statements are pruned.
-/// # Errors
-/// Returns syntax, reference, schema or budget failures without changing input.
 pub fn merge_program(source: &str, patch: &str) -> Result<String> {
     let program = merge_statements(source, patch)?;
     Document::parse(&program)?;

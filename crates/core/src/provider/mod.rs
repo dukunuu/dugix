@@ -8,13 +8,7 @@ pub mod serve;
 use serde::{Deserialize, Serialize};
 
 /// Whether a model id belongs to a family that caches only when the request
-/// marks an explicit breakpoint.
-///
-/// Matched on the id rather than the backend: every backend here routes to
-/// several vendors, and it is the vendor behind the id that decides. Ids
-/// arrive bare (`anthropic/claude-…`) or wire-prefixed
-/// (`openrouter:anthropic/claude-…`), so the vendor segment is matched
-/// wherever it sits.
+/// marks an explicit breakpoint. Matched on the id because the vendor decides.
 #[must_use]
 pub fn model_needs_cache_breakpoints(model: &str) -> bool {
     model.split(':').any(|segment| {
@@ -24,9 +18,7 @@ pub fn model_needs_cache_breakpoints(model: &str) -> bool {
     })
 }
 
-/// A tool the model may call, in `OpenAI` function-calling shape. Serde
-/// derives so a remote `ToolExecutor` can ship the same wire
-/// shape without churning this type.
+/// A tool the model may call, in `OpenAI` function-calling shape.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDef {
     pub name: String,
@@ -43,9 +35,7 @@ pub struct ToolCall {
     pub arguments: String,
 }
 
-/// Which configured backend a `Model` came from — every backend's models
-/// are merged into one list (`App::models`), so this is how a pick routes
-/// back to the right one at request time.
+/// Which configured backend a `Model` came from, so a pick routes back to it.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum BackendTag {
     OpenRouter,
@@ -71,10 +61,8 @@ impl BackendTag {
         }
     }
 
-    /// Prefix used to key favorites/last-used/current-model/etc. for this
-    /// backend's models — bare (no prefix) for ``OpenRouter`` so existing
-    /// users' saved data keeps working untouched; the other three are
-    /// visually tagged since their raw ids can collide (e.g. two "gpt-4.1"s).
+    /// Prefix used to key per-backend model data; bare for `OpenRouter` because
+    /// raw ids can collide across backends.
     pub const fn key_prefix(self) -> &'static str {
         match self {
             Self::OpenRouter => "",
@@ -111,11 +99,8 @@ impl BackendTag {
     }
 }
 
-/// A reasoning/thinking effort value a model accepts, in cycle order.
-/// Provider catalogs expose different subsets per model, so this enum covers
-/// every effort currently present in those catalogs. `None` is the explicit
-/// wire-level disable value; absence from `ChatParams` still means "do not
-/// send a reasoning parameter".
+/// A reasoning/thinking effort value a model accepts, in cycle order. `None`
+/// is the explicit wire-level disable; absence means send no parameter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ReasoningEffort {
     None,
@@ -184,7 +169,7 @@ impl ReasoningEffort {
     pub const HIGH_AND_NONE: &'static [Self] = &[Self::High, Self::None];
 }
 
-/// Per-token catalog prices in USD per 1M tokens.
+/// Catalog prices in USD per 1M tokens.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ModelPricing {
     pub prompt: f64,
@@ -240,19 +225,13 @@ pub struct ChatParams {
     pub tool_result_cap: Option<usize>,
     /// Device-local recording context; absent unless chat training is enabled.
     pub trace: Option<crate::trace::TraceContext>,
-    /// The `ChatGPT` backend's `x-codex-turn-state` sticky-routing token,
-    /// captured from the first response of a turn and echoed on its later
-    /// requests so a tool loop stays on the worker holding its cache. One
-    /// per turn: `ChatParams` is built fresh for every turn.
+    /// The `ChatGPT` backend's sticky-routing token, captured from the first
+    /// response of a turn and echoed so a tool loop stays on its cache worker.
     pub codex_turn_state: std::sync::Arc<std::sync::OnceLock<String>>,
 }
 
-/// A message sent to the completions API. `tool_calls` (assistant requesting
-/// tools) and `tool_call_id` (a tool's result) are only set on those two
-/// message shapes; wire format follows the `OpenAI` function-calling schema.
-/// `images` (data URLs) are set for user messages with attachments when the
-/// active model supports vision; when non-empty, `content` serializes as an
-/// `OpenAI` vision parts array instead of a plain string.
+/// A message sent to the completions API; `tool_calls`/`tool_call_id` mark the
+/// two tool shapes, and `images` makes `content` an `OpenAI` vision parts array.
 #[derive(Debug, Clone, Default)]
 pub struct ChatMessage {
     pub role: String,
@@ -263,13 +242,8 @@ pub struct ChatMessage {
     pub tool_calls: Option<Vec<ToolCall>>,
     pub tool_call_id: Option<String>,
     pub images: Vec<String>,
-    /// Mark this message as the end of a cacheable prefix.
-    ///
-    /// Providers split into two camps here too. Most cache automatically;
-    /// Anthropic-family models cache nothing unless the request marks where
-    /// the stable prefix ends, which is why those models sat at a flat 0% hit
-    /// rate. Set only for backends that need it — see
-    /// `App::wants_explicit_cache_breakpoints`.
+    /// Mark this message as the end of a cacheable prefix. Anthropic-family
+    /// models cache nothing unless the request marks where the stable prefix ends.
     pub cache_breakpoint: bool,
 }
 
@@ -349,15 +323,8 @@ impl Serialize for ChatMessage {
     }
 }
 
-/// Which convention the provider used for its prompt-token count, recorded at
-/// the parse boundary so nothing downstream has to guess.
-///
-/// Providers split into two camps. Most (`OpenAI`, Codex Responses,
-/// `DeepSeek`-compatible) report a prompt total that *includes* the cached
-/// tokens. Anthropic-shaped payloads report `input_tokens` alongside
-/// `cache_read_input_tokens`/`cache_creation_input_tokens`, where the input
-/// count *excludes* both. A ratio computed without knowing which is which is
-/// meaningless.
+/// Which convention the provider used for its prompt-token count. Most report
+/// a total including cached tokens; Anthropic-shaped payloads exclude them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PromptConvention {
@@ -367,9 +334,7 @@ pub enum PromptConvention {
     /// The provider reported them separately; `prompt_tokens` here is the sum
     /// this crate computed, not the number the provider sent.
     NormalizedFromExclusive,
-    /// No recognized cache fields were present, so no claim is made. Cache
-    /// ratios are withheld rather than reported as zero. Also the landing
-    /// place for a spelling this build does not know.
+    /// No recognized cache fields, so cache ratios are withheld rather than zero.
     #[serde(other)]
     Unknown,
 }
@@ -426,12 +391,8 @@ pub struct Usage {
 }
 
 impl Usage {
-    /// Fraction of this request's prompt served from cache, 0.0..=1.0.
-    ///
-    /// `None` when there is nothing honest to report: no prompt tokens, or a
-    /// payload whose convention could not be identified. Deliberately *not*
-    /// clamped — a ratio above 1.0 means the normalization missed a provider
-    /// shape, and clamping it to a plausible 100% would hide that.
+    /// Fraction of this request's prompt served from cache, 0.0..=1.0. `None`
+    /// when no prompt tokens or the convention is unknown; deliberately not clamped.
     #[allow(clippy::cast_precision_loss)] // token counts are too large for u32; a ratio loses nothing meaningful
     pub fn cache_hit_rate(&self) -> Option<f64> {
         if self.prompt_tokens == 0 || !self.prompt_convention.ratio_is_meaningful() {
@@ -454,24 +415,16 @@ pub struct Completion {
     pub usage: Option<Usage>,
 }
 
-/// Rebuild the tool-result dedup state — `(tool, arguments) → latest full
-/// result` — from a wire history produced by `build_history`. Both that
-/// replay and the live tool loop apply the same rule ("keep the first full
-/// copy of a (tool, arguments, result) triple; replace later identical
-/// copies with `tool_result_unchanged_note`"), and the loop seeds its map
-/// from the incoming history so its compression decisions match what the
-/// next turn's replay will rebuild — which keeps the prompt-cache prefix
-/// continuous across turns. Note messages (marked with
-/// `TOOL_RESULT_OMITTED_PREFIX` or `TOOL_RESULT_MASKED_PREFIX`) never update
-/// the map, exactly as in the replay.
+/// Rebuild the tool-result dedup map from a wire history produced by
+/// `build_history`, so the live loop's compression matches the next replay and
+/// keeps the prompt-cache prefix continuous. Note messages never update the map.
 pub fn seed_tool_result_dedup(
     messages: &[ChatMessage],
 ) -> std::collections::HashMap<(String, String), String> {
     use std::collections::HashMap;
     let mut seen: HashMap<(String, String), String> = HashMap::new();
-    // Assistant tool_calls arrive immediately before their tool results, in
-    // order (build_history emits one pair per row; the loop emits the call
-    // batch then its results) — a FIFO queue pairs them up.
+    // Assistant tool_calls arrive immediately before their tool results, so a
+    // FIFO queue pairs them up.
     let mut pending: std::collections::VecDeque<(String, String)> =
         std::collections::VecDeque::new();
     for msg in messages {

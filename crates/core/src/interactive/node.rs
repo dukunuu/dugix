@@ -33,7 +33,7 @@ pub enum Tone {
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Frame {
-    /// Rounded corners (the legacy default).
+    /// Rounded corners.
     #[default]
     Rounded,
     /// Double-line border.
@@ -84,7 +84,6 @@ pub enum Mark {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ColumnItem {
-    /// Item text.
     pub text: String,
     /// Optional semantic marker.
     #[serde(default)]
@@ -665,8 +664,7 @@ pub(super) fn image_ok(src: Option<&str>, alt: Option<&str>) -> Result<()> {
     Ok(())
 }
 impl Node {
-    /// Whether this text field is a multiline `Textarea` rather than a
-    /// single-line `Input`. Every frontend branches on this one predicate.
+    /// Whether this text field is a multiline `Textarea`.
     #[must_use]
     pub fn is_textarea(&self) -> bool {
         matches!(self, Self::Input { rows, .. } if *rows > 1)

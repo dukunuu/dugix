@@ -1,9 +1,5 @@
 //! Canvas: shapes on a fixed 0–100 grid (origin top-left, y down) with
-//! declarative keyframe animation. Still data, not code — a frontend asks for
-//! the shapes at its clock time ([`Session::canvas_frame`]) and rasterizes them.
-//!
-//! Positions use both axes' 0–100 units. Circle radii and ray lengths use
-//! height units, so a frontend can keep circles round on any width.
+//! keyframe animation. Circle radii and ray lengths use height units.
 
 use super::{Document, Node, Session, Tone, item_count, line_ok, spend};
 use anyhow::{Result, ensure};
@@ -79,9 +75,7 @@ const fn accent() -> Tone {
 pub enum Shape {
     /// A circle centred on `x`,`y`; `r` in height units.
     Circle {
-        /// Centre x.
         x: Value,
-        /// Centre y.
         y: Value,
         /// Radius in height units.
         r: Value,
@@ -100,13 +94,9 @@ pub enum Shape {
     },
     /// An axis-aligned rectangle from its top-left corner.
     Rect {
-        /// Left edge.
         x: Value,
-        /// Top edge.
         y: Value,
-        /// Width.
         w: Value,
-        /// Height.
         h: Value,
         /// Theme role.
         #[serde(default = "accent")]
@@ -123,13 +113,9 @@ pub enum Shape {
     },
     /// A segment between two points.
     Line {
-        /// Start x.
         x1: Value,
-        /// Start y.
         y1: Value,
-        /// End x.
         x2: Value,
-        /// End y.
         y2: Value,
         /// Theme role.
         #[serde(default = "accent")]
@@ -143,9 +129,7 @@ pub enum Shape {
     },
     /// A segment from a point at an angle — clock hands, spokes, needles.
     Ray {
-        /// Start x.
         x: Value,
-        /// Start y.
         y: Value,
         /// Length in height units.
         len: Value,
@@ -164,9 +148,7 @@ pub enum Shape {
     /// Part of a circle's outline: `sweep` degrees clockwise from `start`
     /// (degrees clockwise from twelve o'clock); `r` in height units.
     Arc {
-        /// Centre x.
         x: Value,
-        /// Centre y.
         y: Value,
         /// Radius in height units.
         r: Value,
@@ -186,9 +168,7 @@ pub enum Shape {
     },
     /// A single point.
     Dot {
-        /// X.
         x: Value,
-        /// Y.
         y: Value,
         /// Theme role.
         #[serde(default = "accent")]
@@ -221,9 +201,7 @@ pub enum Shape {
     Label {
         /// Text template.
         text: String,
-        /// Centre x.
         x: Value,
-        /// Row y.
         y: Value,
         /// Theme role.
         #[serde(default = "accent")]
@@ -242,9 +220,7 @@ pub enum Shape {
 pub enum Drawn {
     /// Circle; `r` in height units.
     Circle {
-        /// Centre.
         x: f64,
-        /// Centre.
         y: f64,
         /// Radius in height units.
         r: f64,
@@ -253,33 +229,18 @@ pub enum Drawn {
     },
     /// Rectangle from its top-left corner.
     Rect {
-        /// Left.
         x: f64,
-        /// Top.
         y: f64,
-        /// Width.
         w: f64,
-        /// Height.
         h: f64,
         /// Filled.
         fill: bool,
     },
     /// Segment.
-    Line {
-        /// Start.
-        x1: f64,
-        /// Start.
-        y1: f64,
-        /// End.
-        x2: f64,
-        /// End.
-        y2: f64,
-    },
+    Line { x1: f64, y1: f64, x2: f64, y2: f64 },
     /// Polar segment; `len` in height units.
     Ray {
-        /// Start.
         x: f64,
-        /// Start.
         y: f64,
         /// Length in height units.
         len: f64,
@@ -288,9 +249,7 @@ pub enum Drawn {
     },
     /// Arc of a circle; `r` in height units, angles clockwise from twelve.
     Arc {
-        /// Centre.
         x: f64,
-        /// Centre.
         y: f64,
         /// Radius in height units.
         r: f64,
@@ -300,15 +259,9 @@ pub enum Drawn {
         sweep: f64,
     },
     /// Point.
-    Dot {
-        /// X.
-        x: f64,
-        /// Y.
-        y: f64,
-    },
+    Dot { x: f64, y: f64 },
     /// Closed polygon.
     Poly {
-        /// Vertices.
         points: Vec<(f64, f64)>,
         /// Filled.
         fill: bool,
@@ -317,15 +270,12 @@ pub enum Drawn {
     Label {
         /// Rendered text.
         text: String,
-        /// Centre x.
         x: f64,
-        /// Row y.
         y: f64,
     },
 }
 
 impl Shape {
-    /// Theme role.
     #[must_use]
     pub fn tone(&self) -> Tone {
         match self {
@@ -431,8 +381,7 @@ fn sample(values: &[f64], p: f64, ease: Ease) -> f64 {
 }
 
 impl Session {
-    /// Seconds since the frontend first showed this panel; drives canvas
-    /// animation. Presentation only: never state, never saved.
+    /// Seconds since the frontend first showed this panel; presentation only, never saved.
     #[must_use]
     pub fn clock(&self) -> f64 {
         self.clock
@@ -443,10 +392,8 @@ impl Session {
             self.clock = seconds.max(0.0);
         }
     }
-    /// Shapes at the current clock, in drawing order, with their index in
-    /// `shapes` and their tones. Shapes switched off (`on` below one half) are
-    /// omitted; a shape whose numbers fail to evaluate is skipped rather than
-    /// blanking the canvas.
+    /// Shapes at the current clock, in drawing order; off shapes are omitted and
+    /// a shape whose numbers fail to evaluate is skipped rather than blanking the canvas.
     #[must_use]
     pub fn canvas_frame(&self, shapes: &[Shape]) -> Vec<(usize, Drawn, Tone)> {
         shapes

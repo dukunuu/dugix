@@ -39,18 +39,11 @@ struct MistralCapabilities {
     reasoning: bool,
 }
 
-/// Mistral models usable in a tool-calling chat, one per alias group.
-///
-/// The catalog also lists embedding, OCR, moderation and FIM-only models,
-/// and repeats each model under every alias (`mistral-small-latest` and
-/// `mistral-small-2603`); the `-latest` name is kept since it follows new
-/// releases. The two Vibe-metered names are added when the catalog lacks them.
+/// Mistral models usable in a tool-calling chat, one per alias group; the two
+/// Vibe-metered names are added when the catalog lacks them.
 pub(super) fn parse_mistral_catalog(catalog: MistralModelsResponse) -> Vec<Model> {
-    // The catalog lists a model once per name and each card's `aliases`
-    // names the rest of its group: Medium 3.5 appears under eight names,
-    // three of them `-latest`. Show each group once, under the Vibe name
-    // when it has one (that name bills against the plan), else a `-latest`
-    // name, else the shortest.
+    // Show each alias group once, preferring the Vibe name (it bills against
+    // the plan), then a `-latest` name, then the shortest.
     let rank = |id: &str| {
         let vibe = id == MISTRAL_VIBE_MODEL || id == MISTRAL_VIBE_FAST_MODEL;
         (!vibe, !id.ends_with("-latest"), id.len(), id.to_string())
@@ -116,14 +109,9 @@ pub(super) fn parse_mistral_catalog(catalog: MistralModelsResponse) -> Vec<Model
     models
 }
 
-/// Fit a chat-completions body to Mistral's validation, which rejects what
-/// other backends ignore: unknown message fields (`reasoning_content`,
-/// `cache_control`) and tool-call ids that aren't 9 ASCII alphanumerics.
-/// Ids from Mistral already fit and pass through; ids recorded on another
-/// backend (`call_…`) map to a stable stand-in, the same on the assistant
-/// call and its tool result, so a session can switch to Mistral mid-way.
-/// System image chunks move to adjacent user messages: Mistral accepts
-/// images there, but only text in system messages.
+/// Fit a chat-completions body to Mistral's validation, which rejects unknown
+/// message fields and tool-call ids that are not 9 ASCII alphanumerics. System
+/// image chunks move to adjacent user messages, where Mistral accepts images.
 pub(super) fn mistral_body(body: &mut serde_json::Value) {
     let Some(messages) = body
         .get_mut("messages")

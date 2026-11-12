@@ -37,8 +37,6 @@ pub struct Document {
 
 impl Document {
     /// Parse and validate all controls, expressions and action paths.
-    /// # Errors
-    /// Rejects unknown constructs, oversized data, cycles and invalid bindings.
     pub fn parse(source: &str) -> Result<Self> {
         Self::check(source).map_err(|errors| {
             anyhow::anyhow!(
@@ -85,8 +83,6 @@ impl Document {
     }
 
     /// Check authored JSON, reporting up to ten located errors without executing actions.
-    /// # Errors
-    /// Returns syntax, schema, binding or budget errors.
     pub fn check(source: &str) -> std::result::Result<Self, Vec<CheckError>> {
         let mut errors = Vec::new();
         check_result(
@@ -107,13 +103,8 @@ impl Document {
         Ok(document)
     }
 
-    /// A finished program's document, leaving out its broken pieces the way
-    /// `OpenUI` does: a component, list item or statement that fails is dropped
-    /// and the rest renders. Returns the problems that caused anything to be
-    /// left out (empty when the program is valid).
-    /// # Errors
-    /// Returns the check errors when nothing usable remains: no valid root, no
-    /// surviving element, or a legacy JSON document.
+    /// A finished program's document with broken pieces dropped, plus the
+    /// problems that caused anything to be left out.
     pub fn recover(source: &str) -> std::result::Result<(Self, Vec<CheckError>), Vec<CheckError>> {
         let errors = match Self::check(source) {
             Ok(document) => return Ok((document, Vec::new())),
@@ -151,9 +142,8 @@ impl Document {
         self.salvaged
     }
 
-    /// Validated, inert snapshot of the complete elements received so far.
-    /// An unfinished or invalid element never enters the preview. Random initial
-    /// state uses its first choice until the final document is initialized.
+    /// Validated, inert snapshot of the complete elements received so far;
+    /// random initial state uses its first choice.
     #[must_use]
     pub fn preview(source: &str) -> Option<Self> {
         if source.len() > MAX_SOURCE {
@@ -830,12 +820,10 @@ impl Document {
         Ok((sends, answers))
     }
 
-    /// Document title.
     #[must_use]
     pub fn title(&self) -> &str {
         &self.title
     }
-    /// Document frame style.
     #[must_use]
     pub const fn frame(&self) -> Frame {
         self.frame
@@ -885,7 +873,6 @@ impl Document {
             })
             .sum()
     }
-    /// Number of named actions.
     #[must_use]
     pub fn action_count(&self) -> usize {
         self.actions.len()

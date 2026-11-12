@@ -92,8 +92,7 @@ fn response_usage_to_chat(usage: &serde_json::Value) -> serde_json::Value {
 }
 
 /// Translate a native Codex Responses SSE stream into Chat Completions SSE
-/// frames. The adapter intentionally emits only `data:` frames, allowing the
-/// host to preserve the normal `OpenAI` streaming contract for SDK clients.
+/// `data:` frames for gateway clients.
 pub struct CodexChatStreamAdapter {
     buffer: Vec<u8>,
     id: String,
@@ -124,11 +123,7 @@ impl CodexChatStreamAdapter {
     }
 
     /// Feed raw upstream bytes and return complete translated SSE frames.
-    ///
-    /// Bytes are buffered, not decoded on arrival: a chunk boundary can fall
-    /// inside a multi-byte character, and decoding each chunk on its own would
-    /// turn that character into replacement bytes in both halves. Only whole
-    /// SSE blocks — which end at an ASCII separator — are decoded.
+    /// Bytes are buffered because a chunk boundary can split a multi-byte character.
     pub fn push_bytes(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
         self.buffer.extend_from_slice(bytes);
         let mut frames = Vec::new();
@@ -383,11 +378,8 @@ pub(super) fn codex_input(messages: &[ChatMessage]) -> Vec<serde_json::Value> {
                 Some(calls) => {
                     let mut items = Vec::with_capacity(calls.len() + usize::from(!m.content.is_empty()));
                     if !m.content.is_empty() {
-                        // Chat Completions permits visible assistant text next
-                        // to tool calls. Keep it when translating the same
-                        // history to Responses input; dropping it would make
-                        // a later Codex request differ from the conversation
-                        // the user saw.
+                        // Keep visible assistant text next to tool calls so a later
+                        // Codex request matches the conversation the user saw.
                         items.push(serde_json::json!({
                             "role": "assistant",
                             "content": [{ "type": "output_text", "text": m.content, "annotations": [] }],
@@ -456,9 +448,7 @@ pub(super) fn remember_turn_state(response: &reqwest::Response, params: &ChatPar
     }
 }
 
-/// Cache affinity for the `ChatGPT` backend, as the Codex CLI sends it: the
-/// backend routes on the `session-id` header (the body's `prompt_cache_key`
-/// alone left gpt-6 requests on different workers with ~0% reuse), plus the
+/// Cache affinity for the `ChatGPT` backend: the `session-id` header, plus the
 /// turn's sticky-routing token once the first response has set it.
 pub(super) fn codex_cache_headers(
     mut headers: reqwest::header::HeaderMap,
@@ -758,18 +748,14 @@ pub(super) fn accumulate_codex_tool_calls(acc: &mut BTreeMap<usize, ToolCall>, d
     }
 }
 
-/// Pull usage out of a Codex Responses `response.completed` event. Everything
-/// beneath `response.usage` is handled by the shared parser, so the Responses
-/// shape gets the same normalization and field coverage as every other backend.
+/// Pull usage out of a Codex Responses `response.completed` event.
 pub(super) fn codex_usage(data: &str) -> Option<Usage> {
     let v: serde_json::Value = serde_json::from_str(data).ok()?;
     v.get("response")?.get("usage").and_then(parse_usage_value)
 }
 
-/// Models from a `/codex/models` response: the picker-visible entries plus
-/// `gpt-reserve` (the alias `ChatGPT` serves after a model's usage limit), in
-/// the catalog's own order. Efforts this app can't drive — `ultra`, which
-/// delegates through the Codex CLI's own agent tools — are left out.
+/// Models from a `/codex/models` response: picker-visible entries plus
+/// `gpt-reserve`, leaving out efforts this app cannot drive.
 pub(super) fn parse_codex_catalog(body: &serde_json::Value) -> Vec<Model> {
     let Some(entries) = body.get("models").and_then(serde_json::Value::as_array) else {
         return Vec::new();

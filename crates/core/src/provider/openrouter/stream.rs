@@ -128,22 +128,15 @@ pub(super) fn accumulate_tool_calls(acc: &mut BTreeMap<usize, ToolCall>, data: &
     }
 }
 
-/// Pull the `usage` object from an SSE chunk, if present. Returns `None`
-/// when the chunk carries no real accounting: absent, `null`, or all-zero
-/// usage objects (several providers echo `"usage":null` on every chunk and
-/// report real numbers only in the final one — emitting a zero event would
-/// log garbage rows and clobber the last cache hit rate).
+/// Pull the `usage` object from an SSE chunk, if present; `None` for absent,
+/// `null` or all-zero usage (providers echo nulls until the final chunk).
 pub(super) fn parse_usage(data: &str) -> Option<Usage> {
     let v: serde_json::Value = serde_json::from_str(data).ok()?;
     v.get("usage").and_then(parse_usage_value)
 }
 
-/// Parse a provider usage object — the one place raw usage JSON becomes a
-/// [`Usage`], for every backend and both streaming and non-streaming calls.
-///
-/// Providers disagree about what their prompt count means. This normalizes all
-/// of them to one invariant: `prompt_tokens` is the **total** prompt, of which
-/// the cache buckets are subsets. See [`PromptConvention`].
+/// Parse a provider usage object into a [`Usage`], normalizing every backend to
+/// one invariant: `prompt_tokens` is the total prompt, cache buckets are subsets.
 pub(crate) fn parse_usage_value(value: &serde_json::Value) -> Option<Usage> {
     let u = value.as_object()?;
     let get = |k: &str| u.get(k).and_then(json_u64).unwrap_or(0);
@@ -219,9 +212,8 @@ pub(crate) fn parse_usage_value(value: &serde_json::Value) -> Option<Usage> {
             let read = inclusive_read.max(exclusive_read);
             let write = inclusive_write.max(exclusive_write);
             if read + write > reported_prompt {
-                // Backstop for a shape not recognized above: buckets larger
-                // than the total prove the count excluded them. This case used
-                // to be clamped into a plausible-looking 100% hit rate.
+                // Backstop for an unrecognized shape: buckets larger than the
+                // total prove the count excluded them.
                 (
                     reported_prompt + read + write,
                     read,
@@ -262,9 +254,8 @@ pub(crate) fn merge_usage(slot: &mut Option<Usage>, next: Usage) {
             ..previous
         },
         // Otherwise take whichever object accounts for more of the request,
-        // whole. Merging field-by-field (what this did before) could pair a
-        // cache count from one frame with a prompt total from another and
-        // produce a ratio no single response ever reported.
+        // whole; field-by-field merging could pair a cache count with a prompt
+        // total from another frame and produce a ratio no response reported.
         Some(previous) => {
             let keep_next = next.prompt_tokens + next.completion_tokens
                 >= previous.prompt_tokens + previous.completion_tokens;
@@ -296,9 +287,7 @@ fn json_f64(value: &serde_json::Value) -> Option<f64> {
 }
 
 /// The trailing chunk of an `OpenCode` Zen/Go stream carries the request's
-/// billed cost as a string (`"cost":"0.0012"`) with no usage object — the
-/// only accounting those endpoints send for models that report no usage.
-/// Other providers don't emit it, so this returns `None` for them.
+/// billed cost as a string with no usage object; other providers omit it.
 pub(super) fn parse_stream_cost(data: &str) -> Option<f64> {
     let v: serde_json::Value = serde_json::from_str(data).ok()?;
     v.get("cost").and_then(json_f64)
@@ -318,11 +307,8 @@ pub(super) fn wire_text(v: &serde_json::Value) -> Option<String> {
     }
 }
 
-/// Extract an SSE event block's `data:` payload — possibly spread across
-/// several `data:` lines, joined by `\n` per the SSE spec (Codex never
-/// actually does this, but it costs nothing to handle). Ignores any
-/// `event:`/`id:`/comment lines in the block; we key off the JSON payload's
-/// own `"type"` field instead of the SSE `event:` name.
+/// Extract an SSE event block's `data:` payload, joining multiple `data:` lines
+/// with `\n` per the spec and ignoring `event:`/`id:`/comment lines.
 pub(super) fn sse_event_data(event_block: &str) -> String {
     event_block
         .lines()

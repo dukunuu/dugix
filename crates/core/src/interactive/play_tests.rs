@@ -134,7 +134,6 @@ fn array_builtins_edit_lists_without_going_out_of_bounds() {
         json!(["a", "b"])
     );
     assert_eq!(run("slice", &[list, json!(5), json!(2)]), json!([]));
-    // Through the language: a to-do list that grows and shrinks.
     let mut session = session(
         r#"root = Panel("Todo", [Text("Items: " + @Count($todos)), Buttons([Button("Add", @Set($todos, @Append($todos, "new"))), Button("Drop first", @Set($todos, @Remove($todos, 0)))])])
 $todos = ["milk", "eggs"]"#,

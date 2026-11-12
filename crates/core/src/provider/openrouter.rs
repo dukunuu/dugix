@@ -28,29 +28,21 @@ use crate::trace::{TraceResponse, TraceStep, TraceToolResult};
 const OPENROUTER_BASE: &str = "https://openrouter.ai/api/v1";
 const OPENAI_BASE: &str = "https://api.openai.com/v1";
 const CODEX_BASE: &str = "https://chatgpt.com/backend-api";
-/// The Codex CLI release whose catalog shape `parse_codex_catalog` reads; the
-/// backend filters its model list by this version, so newer models stay
-/// hidden from an older one. A newer installed CLI's version wins
-/// (`codex_client_version`).
+/// The Codex CLI release whose catalog shape `parse_codex_catalog` reads; a
+/// newer installed CLI's version wins (`codex_client_version`).
 const CODEX_CLIENT_VERSION: &str = "0.163.0";
 /// The general Zen catalog: free-tier and pay-per-token models, plus
 /// whatever a Go subscription adds. This is the default/fallback base.
 const OPENCODE_ZEN_BASE: &str = "https://opencode.ai/zen/v1";
-/// The flat-fee Go-subscription bundle — a *different* endpoint from Zen's
-/// general catalog, even though it's the same account key. Requests for a
-/// Go-bundled model must go here, not to Zen general, or they'd be billed
-/// per-token instead of covered by the flat $10/mo.
+/// The flat-fee Go-subscription bundle, a different endpoint from Zen's general
+/// catalog; sending a Go model to Zen bills it per-token instead.
 const OPENCODE_GO_BASE: &str = "https://opencode.ai/zen/go/v1";
-/// Prefix on a Model id (from `list_models`) marking it as a flat-fee Go
-/// model rather than a general Zen one — stripped before it's ever sent to
-/// the API; only used to pick which of the two bases above to hit.
+/// Prefix on a `Model` id marking a flat-fee Go model; stripped before sending.
 const OPENCODE_GO_PREFIX: &str = "go:";
 /// Mistral's API. A Vibe plan key (Code > Vibe CLI) and a console key both
 /// authenticate here; the plan budget meters the `mistral-vibe-cli-*` names.
 const MISTRAL_BASE: &str = "https://api.mistral.ai/v1";
-/// The names Mistral meters against a Vibe plan, as the Vibe CLI sends them:
-/// `-latest` is the main coding model (Mistral Medium 3.5 as of 2026-11),
-/// `-fast` the small utility one. `/v1/models` may not list them, so
+/// The names Mistral meters against a Vibe plan; `/v1/models` may omit them, so
 /// `parse_mistral_catalog` adds whichever is missing.
 const MISTRAL_VIBE_MODEL: &str = "mistral-vibe-cli-latest";
 const MISTRAL_VIBE_FAST_MODEL: &str = "mistral-vibe-cli-fast";
@@ -78,11 +70,8 @@ pub fn gateway_route(tag: crate::provider::BackendTag, model: &str) -> (&'static
     (base_url(tag), model.to_string())
 }
 
-/// Context windows for `OpenCode` Zen's general catalog (`/zen/v1/models`),
-/// keyed by raw model id. The Zen `/models` endpoint returns no context
-/// metadata (only `id/created/owned_by`), so without this table every `OpenCode`
-/// model would show no context size. Values mirror the models.dev catalog
-/// that opencode itself uses for these ids.
+/// Context windows for `OpenCode` Zen's general catalog, keyed by raw model id;
+/// its `/models` endpoint returns no context metadata.
 const OPENCODE_ZEN_CONTEXT: &[(&str, u64)] = &[
     ("big-pickle", 200_000),
     ("claude-fable-5", 1_000_000),
@@ -147,10 +136,8 @@ const OPENCODE_ZEN_CONTEXT: &[(&str, u64)] = &[
     ("qwen3.6-plus", 262_144),
 ];
 
-/// Context windows for the flat-fee Go bundle (`/zen/go/v1/models`), keyed by
-/// raw model id. Kept separate from `OPENCODE_ZEN_CONTEXT` because the *same
-/// id* can have a different window on each endpoint (e.g. qwen3.6-plus:
-/// 262k on Zen general vs 1M on Go; minimax-m3: 512k vs 1M).
+/// Context windows for the flat-fee Go bundle, keyed by raw model id; the same
+/// id can have a different window on each endpoint.
 const OPENCODE_GO_CONTEXT: &[(&str, u64)] = &[
     ("deepseek-v4-flash", 1_000_000),
     ("deepseek-v4-pro", 1_000_000),
@@ -178,9 +165,7 @@ const OPENCODE_GO_CONTEXT: &[(&str, u64)] = &[
     ("qwen3.7-plus", 1_000_000),
     ("qwen3.8-max", 1_000_000),
 ];
-/// Hard cap on tool round-trips per response, so a model that keeps calling
-/// tools can't loop forever. The default for interactive chat; background
-/// jobs (e.g. deep-research searcher agents) pass their own smaller budget.
+/// Hard cap on tool round-trips per response, so a model cannot loop forever.
 pub const MAX_TOOL_ITERS: usize = 100;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -188,13 +173,10 @@ enum ProviderFlavor {
     OpenRouter,
     OpenAi,
     OpenAiCodex,
-    /// `OpenCode` Go: a low-cost subscription bundling several open coding
-    /// models behind a fully OpenAI-compatible endpoint — no special
-    /// request/response handling needed, unlike Codex.
+    /// `OpenCode` Go: a low-cost subscription behind a fully OpenAI-compatible endpoint.
     OpencodeGo,
-    /// Mistral: OpenAI-shaped chat completions, but strict about request
-    /// fields and tool-call ids (`mistral_body`), with its own model cards
-    /// (`parse_mistral_catalog`) and thinking as typed content chunks.
+    /// Mistral: OpenAI-shaped chat completions, but strict about request fields
+    /// and tool-call ids (`mistral_body`), with its own model cards.
     Mistral,
 }
 
@@ -220,7 +202,6 @@ use stream::{
 };
 use video::check_video_params;
 
-// Test modules reach moved helpers through `use super::*`.
 #[cfg(test)]
 use codex::CODEX_TURN_STATE;
 #[cfg(test)]
@@ -254,9 +235,7 @@ pub struct DecisionsUsage {
     pub cost: Option<f64>,
 }
 
-/// Everything needed to generate a video: model, prompt, params, optional
-/// frame/reference images, and provider-specific options keyed by provider
-/// slug (e.g. `{"alibaba": {"parameters": {"video": "data:..."}}}`),
+/// Everything needed to generate a video, including provider-specific options
 /// passed through as `provider.options` in the request body.
 pub struct VideoRequest {
     pub model: String,
@@ -283,13 +262,8 @@ impl ProviderFlavor {
         }
     }
 
-    /// The reasoning effort values this model accepts, in cycle order.
-    /// Empty = the model has no reasoning/thinking mode.
-    ///
-    /// A catalog-provided `reasoning.supported_efforts` list is authoritative
-    /// and wins for every backend that exposes it. Family rules are only
-    /// fallbacks for catalogs that report the `reasoning` parameter without
-    /// enumerating its accepted values.
+    /// The reasoning effort values this model accepts, in cycle order; empty
+    /// means no reasoning mode. A catalog-provided `supported_efforts` list wins.
     fn reasoning_efforts(self, m: &ModelEntry) -> Vec<ReasoningEffort> {
         use ReasoningEffort as E;
         if let Some(supported) = m
@@ -401,14 +375,8 @@ impl ProviderFlavor {
         }
     }
 
-    /// Add the cache-lane key for backends that route on it.
-    ///
-    /// `OpenAI`, `OpenCode` Zen/Go and Mistral accept `prompt_cache_key` to
-    /// keep one conversation's requests on a single cache lane (Mistral's
-    /// chat completions cache only reliably hits with it). `OpenRouter` uses
-    /// `session_id` for sticky upstream routing with a 10-minute inactivity
-    /// window. Codex carries it too: the Responses body keeps it, and the
-    /// request sends it as the `session-id` header the `ChatGPT` backend routes on.
+    /// Add the cache-lane key for backends that route on it: `prompt_cache_key`
+    /// for `OpenAI`/`OpenCode`/Mistral, `session_id` for `OpenRouter` sticky routing.
     fn add_prompt_cache_key(self, obj: &mut serde_json::Map<String, serde_json::Value>, key: &str) {
         match self {
             Self::OpenRouter => {
@@ -528,9 +496,7 @@ struct ModelEntry {
     pricing: Option<CatalogPricing>,
 }
 
-/// `OpenRouter` catalog pricing, in USD **per token** (stringly-typed in the
-/// API: gpt-5 reports `1.25e-06`, i.e. $1.25/M). Only the `OpenRouter` flavor
-/// reports it; others default to absent.
+/// `OpenRouter` catalog pricing, in USD per token (stringly-typed in the API).
 #[derive(Deserialize, Clone)]
 struct CatalogPricing {
     #[serde(default)]
@@ -544,11 +510,8 @@ struct CatalogPricing {
 }
 
 impl CatalogPricing {
-    /// Prices in USD per 1M tokens — the unit every cost calculation in this
-    /// codebase uses (see `Db::request_cost`) — or `None` when either base
-    /// token rate is absent or unparsable. Cache rates are optional: when a
-    /// catalog omits one, the regular prompt rate applies. The API reports
-    /// per-token values, so scale to per-1M once here.
+    /// Prices in USD per 1M tokens, or `None` when either base rate is absent;
+    /// cache rates are optional. The API reports per-token values, scaled here.
     fn usd_per_million(&self) -> Option<ModelPricing> {
         let parse = |value: Option<&str>| value?.parse::<f64>().ok().map(|v| v * 1e6);
         Some(ModelPricing {
@@ -581,7 +544,6 @@ fn entry_supports_images(e: &ModelEntry) -> bool {
         .is_some_and(|a| a.input_modalities.iter().any(|m| m == "image"))
 }
 
-/// Whether the catalog entry generates image output.
 fn entry_supports_image_gen(e: &ModelEntry) -> bool {
     // The API's output_modalities field is authoritative when populated.
     if e.architecture
@@ -590,9 +552,8 @@ fn entry_supports_image_gen(e: &ModelEntry) -> bool {
     {
         return true;
     }
-    // Fallback: match known image-generation model name patterns.
-    // These are specific enough to avoid catching chat models from the same
-    // provider, unlike broad provider-prefix matching.
+    // Fallback: known image-generation name patterns, specific enough to avoid
+    // catching chat models from the same provider.
     let id = &e.id;
     id.contains("/flux")
         || id.contains("dall-e")
@@ -682,11 +643,8 @@ mod local_tests {
     }
 }
 
-/// `OpenRouter` app attribution (openrouter.ai/docs/app-attribution): every
-/// request names the app so its usage is registered under nexus-chat.
-/// `HTTP-Referer` is the required identifier; the title (current header plus
-/// the legacy `X-Title`) names it and the category files it. Sent only to
-/// `OpenRouter`, never to `OpenAI`, Codex or local servers.
+/// `OpenRouter` app attribution; sent only to `OpenRouter`, never to `OpenAI`,
+/// Codex or local servers.
 pub(crate) const OPENROUTER_ATTRIBUTION: [(&str, &str); 4] = [
     ("HTTP-Referer", env!("CARGO_PKG_REPOSITORY")),
     ("X-OpenRouter-Title", "nexus-chat"),
@@ -790,11 +748,8 @@ impl OpenRouter {
         }
     }
 
-    /// Connect to an explicitly configured OpenAI-compatible inference server.
-    /// Cloud credentials are never reused for this endpoint.
-    ///
-    /// # Errors
-    /// Returns an error for non-HTTP URLs, embedded credentials, queries or fragments.
+    /// Connect to an explicitly configured OpenAI-compatible inference server;
+    /// cloud credentials are never reused for this endpoint.
     pub fn local(endpoint: &str) -> Result<Self> {
         let url = reqwest::Url::parse(endpoint).context("invalid local inference URL")?;
         anyhow::ensure!(
@@ -812,9 +767,6 @@ impl OpenRouter {
     }
 
     /// Build a separate local backend with command-based model discovery.
-    ///
-    /// # Errors
-    /// Returns an error if the runtime configuration is invalid.
     pub fn configured_local(config: super::local::LocalConfig) -> Result<Self> {
         config.validate()?;
         let mut provider = Self::local(config.endpoint())?;
@@ -881,9 +833,8 @@ impl OpenRouter {
         }
     }
 
-    /// True when this client points at a user-configured local inference
-    /// server rather than a hosted backend. Local runtimes are the ones
-    /// that may leave Harmony framing in `content` (see `provider::harmony`).
+    /// True when this client points at a user-configured local inference server;
+    /// local runtimes may leave Harmony framing in `content`.
     const fn is_local(&self) -> bool {
         self.endpoint.is_some()
     }
@@ -902,9 +853,6 @@ impl OpenRouter {
     }
 
     /// Submit one non-streaming wave to the `OpenRouter` Decisions API.
-    ///
-    /// # Errors
-    /// Returns provider, timeout, HTTP or response parsing errors.
     pub async fn decide(&self, body: &serde_json::Value) -> Result<DecisionsResponse> {
         anyhow::ensure!(self.is_openrouter(), "decisions require OpenRouter");
         let base = self.api_base().trim_end_matches("/v1");
@@ -935,9 +883,7 @@ impl OpenRouter {
         self.flavor == ProviderFlavor::OpenRouter
     }
 
-    /// Generate a video via `OpenRouter`'s `/api/v1/videos` endpoint.
-    /// Submits the job, polls every 10s (up to 6 min), downloads on completion.
-    /// Returns `(mp4_bytes, cost_in_usd)`.
+    /// Generate a video, polling every 10s (up to 6 min); returns `(mp4_bytes, cost)`.
     // Long by design (request assembly + polling).
     #[allow(clippy::too_many_lines)]
     pub async fn generate_video(&self, req: VideoRequest) -> Result<(Vec<u8>, f64)> {
@@ -1103,14 +1049,9 @@ impl OpenRouter {
         anyhow::bail!("video generation timed out after 6 minutes");
     }
 
-    /// The "auto" helper model for `tag`: the cheap model every background job
-    /// (memory, compaction, image descriptions, vision OCR, the auto-approval
-    /// judge) uses when the user hasn't picked one. This is the one place the
-    /// per-backend choice lives. Empty means the backend has no cheap option
-    /// of its own (local runtimes serve whatever the user installed), so the
-    /// caller falls back to the session's chat model on that backend. These
-    /// are floors: `App::newest_listed` upgrades each to the newest version
-    /// of the same family the live catalog lists (`gpt-6-luna` → `gpt-6.1-luna`).
+    /// The cheap model background jobs use when the user has not picked one;
+    /// empty means fall back to the session's chat model. These are floors that
+    /// `App::newest_listed` upgrades to the newest listed version.
     #[must_use]
     pub const fn default_helper_for(tag: crate::provider::BackendTag) -> &'static str {
         use crate::provider::BackendTag;
@@ -1237,7 +1178,6 @@ impl OpenRouter {
         let mut models = self.fetch_models_from(self.api_base()).await?;
         if self.flavor == ProviderFlavor::OpenRouter {
             // The general catalog is not authoritative for generation models.
-            // Merge OpenRouter's dedicated catalogs into the existing picker.
             let (images, videos) =
                 tokio::join!(self.fetch_image_models(), self.fetch_video_models(),);
             merge_generation_models(&mut models, images.unwrap_or_default());
@@ -1359,10 +1299,8 @@ impl OpenRouter {
                 }
             })
             .collect();
-        // The OpenCode Zen endpoints return no context metadata at all; fill
-        // in the known windows per endpoint (the same id can differ between
-        // the general catalog and the Go bundle — see the table comments).
-        // An API-provided value always wins over the fallback table.
+        // The OpenCode Zen endpoints return no context metadata; fill in the
+        // known windows, letting an API-provided value win.
         for m in &mut models {
             if m.context_length.is_none() {
                 m.context_length = Self::opencode_context_fallback(base, &m.id);
@@ -1372,9 +1310,7 @@ impl OpenRouter {
         Ok(models)
     }
 
-    /// Fallback context window for an `OpenCode` model id, keyed by endpoint
-    /// (Zen general vs Go bundle). `None` for non-OpenCode bases and for ids
-    /// not in the table.
+    /// Fallback context window for an `OpenCode` model id, keyed by endpoint.
     fn opencode_context_fallback(base: &str, id: &str) -> Option<u64> {
         let table = match base {
             OPENCODE_ZEN_BASE => OPENCODE_ZEN_CONTEXT,
@@ -1392,9 +1328,8 @@ impl OpenRouter {
             .map(|completion| completion.text)
     }
 
-    /// One-shot completion with the provider's usage object when available.
-    /// Keeping usage attached to the text lets background workflow stages use
-    /// the same cache accounting as the interactive stream.
+    /// One-shot completion with the provider's usage object when available, so
+    /// background stages share the interactive stream's cache accounting.
     pub async fn complete_with_usage(
         &self,
         model: &str,
@@ -1540,9 +1475,8 @@ impl OpenRouter {
         })
     }
 
-    /// Generate an image via `OpenRouter`'s dedicated `/api/v1/images` endpoint.
-    /// Returns `(decoded_bytes, file_extension)` — the caller should use the
-    /// returned extension (e.g. `"png"`, `"jpg"`, `"webp"`) for the saved file.
+    /// Generate an image via `OpenRouter`'s dedicated `/api/v1/images` endpoint,
+    /// returning `(decoded_bytes, file_extension)` for the saved file.
     pub async fn generate_image(
         &self,
         model: &str,
@@ -1627,7 +1561,6 @@ impl OpenRouter {
         Ok((bytes, ext.to_string()))
     }
 
-    /// Detect image MIME type from magic bytes.
     fn detect_image_mime(data: &[u8]) -> &'static str {
         if data.len() < 4 {
             return "image/png";
@@ -1710,10 +1643,8 @@ impl OpenRouter {
         super::embedding::indexed_vectors(&v, count, None)
     }
 
-    /// Start a streaming completion. Spawns a task that pushes tokens over the
-    /// returned channel; the UI loop drains it alongside keypresses. If the
-    /// model calls a tool, the task runs it via `toolbox` and continues the
-    /// conversation, bounded by `max_tool_iters` round-trips.
+    /// Start a streaming completion, running tool calls through `toolbox` for
+    /// at most `max_tool_iters` round-trips.
     pub fn stream_chat(
         &self,
         model: String,
@@ -1753,10 +1684,8 @@ impl OpenRouter {
         max_tool_iters: usize,
         tx: &mpsc::UnboundedSender<StreamEvent>,
     ) -> Result<()> {
-        // Interactive chat persists accounting in App (including its two-event
-        // compatibility path and the usage sub-agents forward on `tx`), so
-        // neither its rounds nor its sub-agents log here; other callers'
-        // sub-agents log independently.
+        // Interactive chat persists its own accounting in App, so neither its
+        // rounds nor its sub-agents log here.
         let app_logs = self.app_logs_usage();
         let toolbox = toolbox
             .clone()
@@ -1767,13 +1696,8 @@ impl OpenRouter {
                 tx.clone(),
             )))
             .unwrap_or(toolbox);
-        // Dedup state for tool results: (tool, arguments) → latest full
-        // result. Seeded from the incoming history (which `build_history`
-        // already deduped with the same rule), so a result that duplicates
-        // anything the model has seen — this turn or earlier turns — is
-        // compressed before it ever enters the context, and the wire
-        // history stays byte-identical to what the next turn's replay will
-        // rebuild (prompt-cache continuity).
+        // Dedup state for tool results, seeded from the incoming history so the
+        // wire history stays byte-identical to the next turn's replay.
         let mut seen_results = super::seed_tool_result_dedup(&messages);
         let stream_provider = if app_logs {
             self.clone().logged(None, "")
@@ -1781,10 +1705,8 @@ impl OpenRouter {
             self.clone()
         };
         for iter in 0..=max_tool_iters {
-            // Keep the tool schema stable while the loop grows. On the final
-            // request, disable selection without removing the schemas or
-            // appending a transient budget prompt; the next turn can still
-            // reconstruct the same message prefix.
+            // Keep the tool schema stable on the final request so the next turn
+            // can reconstruct the same message prefix.
             let request_len = messages.len();
             let started = std::time::Instant::now();
             let finish = stream_provider
@@ -1812,11 +1734,8 @@ impl OpenRouter {
                         tool_calls: Some(calls.clone()),
                         ..Default::default()
                     });
-                    // Parallel calls the model issued in one response run in
-                    // waves of non-conflicting effects: reads, fetches and
-                    // writes to different files overlap instead of stacking,
-                    // while writes to the same file and program runs keep
-                    // their order. Results are zipped back into call order.
+                    // Parallel calls run in waves of non-conflicting effects;
+                    // results are zipped back into call order.
                     let pending: Vec<(String, String)> = calls
                         .iter()
                         .map(|call| (call.name.clone(), call.arguments.clone()))
@@ -1834,12 +1753,8 @@ impl OpenRouter {
                             arguments: call.arguments.clone(),
                             result: result.clone(),
                         });
-                        // A result byte-identical to an earlier call with
-                        // the same tool and arguments (e.g. re-reading an
-                        // unchanged file) is replaced by a one-line note so
-                        // the duplicate never re-enters the context. The
-                        // transcript above still carries the full result and
-                        // the db stores it; `build_history` applies the same
+                        // A byte-identical result for the same tool and arguments is
+                        // replaced by a one-line note; `build_history` applies the same
                         // rule on replay, keeping the cache prefix intact.
                         let key = (call.name.clone(), call.arguments.clone());
                         // Compare capped content, as seeded from replayed history.
@@ -1873,10 +1788,8 @@ impl OpenRouter {
                             tool_call_id: Some(call.id.clone()),
                             ..Default::default()
                         });
-                        // If the model supports images, load image references
-                        // from the tool result and inject them as a user
-                        // message so the vision model can see them on the
-                        // next stream request.
+                        // Inject image references from the tool result so the
+                        // vision model can see them on the next request.
                         if toolbox.supports_images()
                             && let Some(files_dir) = toolbox.space_files_dir()
                             && let Some(imgs) = extract_tool_images(&result, &files_dir)
@@ -2007,10 +1920,8 @@ impl OpenRouter {
         tools: &[ToolDef],
         disable_tool_choice: bool,
     ) -> serde_json::Value {
-        // A local runtime that leaves Harmony framing in `content` also
-        // refuses to take it back ("you have passed a message containing
-        // <|channel|> tags"), which wedges every later turn of a session
-        // recorded before the demux existed. Repair the replay.
+        // A local runtime that leaves Harmony framing in `content` refuses to
+        // take it back, so repair the replay.
         let repaired = self
             .is_local()
             .then(|| harmony::sanitize_history(messages))
@@ -2190,13 +2101,8 @@ impl OpenRouter {
                     }
                 }
                 Err(reqwest_eventsource::Error::StreamEnded) => break,
-                // These two variants carry the actual HTTP response, but
-                // their `Display` is close to useless ("Invalid header
-                // value: \"\"" when Content-Type is simply absent — no
-                // status, no body shown). Read the response through instead
-                // so the real reason (an auth/entitlement error page, a
-                // rate limit, etc.) reaches the user rather than a
-                // header-parsing artifact.
+                // These variants carry the HTTP response, but their `Display` is
+                // useless; read the response through so the real reason reaches the user.
                 Err(
                     reqwest_eventsource::Error::InvalidStatusCode(_, response)
                     | reqwest_eventsource::Error::InvalidContentType(_, response),
@@ -2227,11 +2133,8 @@ impl OpenRouter {
                 tx,
             );
         }
-        // The stream isn't finished at [DONE]: OpenCode sends the trailing
-        // cost chunk ({"choices":[],"cost":"…"}) AFTER it, and for
-        // no-usage (zen free) models that chunk is the entire accounting.
-        // Drain it with a cap so a peer that keeps the connection open
-        // after [DONE] can't hang the turn.
+        // OpenCode sends its trailing cost chunk after [DONE]; drain it with a
+        // cap so a peer that keeps the connection open cannot hang the turn.
         if done {
             loop {
                 let next = tokio::time::timeout(std::time::Duration::from_secs(3), es.next()).await;
@@ -2254,9 +2157,7 @@ impl OpenRouter {
                 }
             }
         }
-        // Surface exactly one accounting event for this provider request.
-        // Keeping it at the request boundary prevents the app from treating
-        // several partial/cost chunks as separate requests.
+        // One accounting event per provider request, not per partial/cost chunk.
         if let Some(usage) = usage {
             let _ = tx.send(StreamEvent::Usage(usage));
         }
@@ -2278,10 +2179,8 @@ impl OpenRouter {
         }
     }
 
-    /// For `OpenCode` Go: pick the base to hit and the raw model id to send,
-    /// stripping the `go:` tag `list_models` adds to flat-fee Go models. A
-    /// no-op (returns the flavor's default base, id unchanged) for every
-    /// other flavor and for untagged (general Zen) `OpenCode` ids.
+    /// For `OpenCode` Go, pick the base and strip the `go:` tag from flat-fee
+    /// model ids; a no-op for every other flavor.
     fn opencode_route(&self, model: &str) -> (&str, String) {
         if self.flavor == ProviderFlavor::OpencodeGo
             && let Some(stripped) = model.strip_prefix(OPENCODE_GO_PREFIX)
@@ -2370,10 +2269,8 @@ impl OpenRouter {
         });
         let obj = body.as_object_mut().unwrap();
         if let Some(key) = &params.prompt_cache_key {
-            // The Codex Responses route uses the public Responses API cache
-            // key field when it is available. Without it, GPT-5.6+ can route
-            // identical prefixes to different cache workers and report no
-            // reuse even though the full input is stable.
+            // Without this, GPT-5.6+ can route identical prefixes to different
+            // cache workers and report no reuse.
             obj.insert("prompt_cache_key".into(), serde_json::json!(key));
         }
         if let Some(t) = params.temperature {
@@ -2388,14 +2285,8 @@ impl OpenRouter {
         if !tools.is_empty() {
             obj.insert("tools".into(), serde_json::json!(codex_tools(tools)));
         }
-        // Not reqwest_eventsource here: it gates the whole response on a
-        // strict Content-Type == "text/event-stream" check, and ChatGPT's
-        // backend has been observed sending a genuine SSE body (starting
-        // with a real "event: response.created" line) under a Content-Type
-        // that check doesn't accept — the crate then reports the situation
-        // as an opaque "invalid header value" and discards the (valid) body
-        // entirely. Reading the response as a raw byte stream and splitting
-        // on blank lines ourselves doesn't care what Content-Type says.
+        // Not reqwest_eventsource: ChatGPT's backend sends genuine SSE under a
+        // Content-Type that crate rejects, discarding the valid body.
         let response = self
             .client
             .post(format!("{}/codex/responses", self.flavor.base()))
@@ -2425,10 +2316,8 @@ impl OpenRouter {
         'stream: while let Some(chunk) = stream.next().await {
             let chunk = chunk.context("reading Codex stream")?;
             buf.push_str(&String::from_utf8_lossy(&chunk));
-            // SSE events are separated by a blank line; a "data:" line's
-            // content (possibly spread across several, joined by \n per the
-            // spec — Codex never does this in practice, but handle it) is
-            // the payload we care about.
+            // SSE events are separated by a blank line; a "data:" line's content
+            // (possibly spread across several, joined by \n) is the payload.
             while let Some(end) = buf.find("\n\n") {
                 let event_block: String = buf.drain(..end + 2).collect();
                 let data = sse_event_data(&event_block);
@@ -2501,13 +2390,8 @@ fn truncate_error_body(body: &str) -> String {
     truncated
 }
 
-/// Pull `(content, reasoning)` deltas out of one SSE data chunk. ``OpenRouter`` puts
-/// thinking tokens in `delta.reasoning`, separate from the visible `delta.content`.
-/// Dispatch demultiplexed Harmony spans the way the provider should have
-/// sent them: visible text as tokens, chain-of-thought as reasoning, and an
-/// unparsed `commentary` call as a real tool call. Calls are appended after
-/// any the runtime *did* parse, so a server that handles Harmony itself
-/// never sees a duplicate.
+/// Dispatch demultiplexed Harmony spans as tokens, reasoning, and tool calls;
+/// calls are appended after any the runtime parsed so none is duplicated.
 fn route_harmony(
     pieces: Vec<Piece>,
     content_acc: &mut String,
@@ -2533,10 +2417,8 @@ fn route_harmony(
     }
 }
 
-/// Scan a tool result string for `![...](file)` image references, load the
-/// files from `files_dir`, resize large images to avoid hitting API size
-/// limits, and return data URLs for the synthetic user message.
-/// Returns `None` when no references found.
+/// Load `![...](file)` image references from a tool result as data URLs,
+/// resizing large images to stay under API size limits.
 pub(crate) fn extract_tool_images(
     result: &str,
     files_dir: &std::path::Path,
@@ -2584,12 +2466,9 @@ pub(crate) fn extract_tool_images(
     Some(ImagesForTool { urls, description })
 }
 
-/// Return a JPEG-compressed version of the image if it exceeds 1 MB, so the
-/// API request doesn't get rejected for being too large. Keeps the original
-/// if it's already small enough.
+/// Return a JPEG-compressed version of an image over 1 MB, else the original.
 fn resize_for_api(bytes: &[u8], _files_dir: &std::path::Path) -> Vec<u8> {
-    // ponytail: 1 MB threshold — large enough for readable text, small
-    // enough to avoid 400s from provider byte limits.
+    // 1 MB is large enough for readable text and small enough for provider limits.
     if bytes.len() < 1_000_000 {
         return bytes.to_vec();
     }
@@ -2619,11 +2498,8 @@ fn resize_for_api(bytes: &[u8], _files_dir: &std::path::Path) -> Vec<u8> {
     bytes.to_vec()
 }
 
-/// The history with one system message, first: the leading system block
-/// (prompt, space images, compaction digest) merged into it, and any later
-/// system note (nexus-ui errors) sent as a `[nexus]` user message instead.
-/// The merged prefix is the same every turn, so a local prompt cache still
-/// reuses it. `None` when the history already has that shape.
+/// The history with one leading system message: later system notes become
+/// `[nexus]` user messages, and the stable prefix keeps local prompt caching.
 fn single_leading_system(messages: &[ChatMessage]) -> Option<Vec<ChatMessage>> {
     let leading = messages.iter().take_while(|m| m.role == "system").count();
     let later = messages[leading..].iter().any(|m| m.role == "system");

@@ -15,7 +15,6 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct Tab {
     /// Label template.
     pub label: String,
-    /// Child nodes.
     pub view: Vec<Node>,
 }
 
@@ -25,7 +24,6 @@ pub struct Tab {
 pub struct Section {
     /// Heading template.
     pub title: String,
-    /// Child nodes.
     pub view: Vec<Node>,
     /// Initial expansion state.
     #[serde(default)]
@@ -337,9 +335,7 @@ pub(super) fn lang_ok(lang: &str) -> Result<()> {
     Ok(())
 }
 
-/// Persisted local presentation state: selected tabs, open sections, table
-/// sort/page/filter, quiz questions and revealed answers. Everything is
-/// re-validated against the program on restore.
+/// Persisted local presentation state, re-validated against the program on restore.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ViewSnapshot {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -512,8 +508,6 @@ impl Session {
             .min(items.len().saturating_sub(1))
     }
     /// Switch to a tab, updating its optional binding transactionally.
-    /// # Errors
-    /// Rejects non-tabs and invalid resulting bindings.
     pub fn select_tab(&mut self, node: usize, tab: usize) -> Result<()> {
         let Some(Node::Tabs { items, key }) = self.document.node(node) else {
             bail!("not tabs");
@@ -551,8 +545,6 @@ impl Session {
         }
     }
     /// Toggle a declared section.
-    /// # Errors
-    /// Rejects missing sections.
     pub fn expand_section(&mut self, node: usize, section: usize) -> Result<()> {
         ensure!(
             self.section_default(node, section).is_some(),
@@ -615,8 +607,6 @@ impl Session {
         })
     }
     /// Submit current bound values through the form's action.
-    /// # Errors
-    /// Rejects incomplete forms or failed actions without changing state.
     pub fn submit_form(&mut self, node: usize) -> Result<Option<String>> {
         ensure!(
             self.form_valid(node),
@@ -629,8 +619,6 @@ impl Session {
         self.activate(&action)
     }
     /// Set a rating, clamped to its declared scale.
-    /// # Errors
-    /// Rejects non-ratings or invalid resulting bindings.
     pub fn rate(&mut self, node: usize, value: u16) -> Result<()> {
         let Some(Node::Rating { key, max, .. }) = self.document.node(node) else {
             bail!("not a rating");
@@ -642,8 +630,6 @@ impl Session {
         Ok(())
     }
     /// Set a slider from a pointer fraction, snapping to its step.
-    /// # Errors
-    /// Rejects non-sliders and invalid resulting bindings.
     pub fn slide(&mut self, node: usize, fraction: f64) -> Result<()> {
         let Some(Node::Slider {
             key,
@@ -706,8 +692,6 @@ impl Session {
         rows
     }
     /// Sort by a column, toggling direction on a repeated selection.
-    /// # Errors
-    /// Rejects tables without sorting or unknown columns.
     pub fn sort_table(&mut self, node: usize, column: usize) -> Result<()> {
         ensure!(
             matches!(self.document.node(node), Some(Node::Table { columns, sortable: true, .. }) if column < columns.len()),
@@ -725,8 +709,6 @@ impl Session {
         Ok(())
     }
     /// Change the table page, clamped to filtered data.
-    /// # Errors
-    /// Rejects tables without pagination.
     pub fn page_table(&mut self, node: usize, forward: bool) -> Result<()> {
         let Some(Node::Table {
             page_size: Some(size),
@@ -750,8 +732,6 @@ impl Session {
         Ok(())
     }
     /// Edit the local table filter without changing bound selection.
-    /// # Errors
-    /// Rejects tables without search or invalid text.
     pub fn search_table(&mut self, node: usize, query: String, editing: bool) -> Result<()> {
         ensure!(
             matches!(

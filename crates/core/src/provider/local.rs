@@ -138,9 +138,6 @@ impl LocalConfig {
     }
 
     /// Validate settings without executing commands or contacting a server.
-    ///
-    /// # Errors
-    /// Rejects invalid URLs, empty discovery commands and context windows below 2,048 tokens.
     pub fn validate(&self) -> Result<()> {
         super::openrouter::OpenRouter::local(self.endpoint())?;
         if let Some(context_length) = self.context_length {
@@ -160,12 +157,8 @@ impl LocalConfig {
         Ok(())
     }
 
-    /// Switch to `provider`, carrying over the settings that still apply: a
-    /// custom endpoint, discovery command, context window and KV-cache settings
-    /// are written for one runtime, so they survive re-selecting it and are
-    /// dropped when the runtime changes.
-    /// The memory budget describes the machine rather than the runtime, so it
-    /// always carries.
+    /// Switch to `provider`, carrying over runtime-specific settings only when
+    /// re-selecting the same runtime; the memory budget describes the machine.
     #[must_use]
     pub fn for_runtime(provider: LocalRuntime, current: Option<&Self>) -> Self {
         let carried = current.filter(|config| config.provider == provider);
@@ -182,11 +175,7 @@ impl LocalConfig {
     }
 
     /// Parse a `/local` argument: `off` disables local inference,
-    /// `<runtime> [endpoint]` selects one. An explicit endpoint replaces the
-    /// carried-over one; omitting it keeps whatever the runtime already had.
-    ///
-    /// # Errors
-    /// Rejects unknown runtimes, extra arguments and invalid endpoints.
+    /// `<runtime> [endpoint]` selects one; an explicit endpoint replaces the carried-over one.
     pub fn from_spec(spec: &str, current: Option<&Self>) -> Result<Option<Self>> {
         let mut words = spec.split_whitespace();
         let runtime = words.next().context("expected a runtime, or `off`")?;
@@ -233,9 +222,6 @@ impl LocalConfig {
     }
 
     /// List installed models through the selected runtime's command.
-    ///
-    /// # Errors
-    /// Reports missing executables, timeouts, oversized output and invalid catalogs.
     pub async fn list_models(&self) -> Result<Vec<Model>> {
         self.validate()?;
         let command = self.command();
@@ -372,10 +358,8 @@ fn parse_ollama(output: &str) -> Result<Vec<String>> {
         .collect())
 }
 
-/// `edge0 models` prints one flush-left `<tier>  (port …)` line per
-/// registered tier, each followed by indented detail lines. Only the
-/// flush-left lines name a model, and the first one must be flush left —
-/// anything else means we are not reading `edge0 models` output.
+/// `edge0 models` prints one flush-left `<tier>  (port …)` line per tier,
+/// followed by indented detail lines; only flush-left lines name a model.
 fn parse_edge0(output: &str) -> Result<Vec<String>> {
     let mut lines = output.lines().filter(|line| !line.trim().is_empty());
     anyhow::ensure!(

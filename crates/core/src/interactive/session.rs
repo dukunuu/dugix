@@ -47,8 +47,6 @@ pub(super) struct Effects {
 
 impl Session {
     /// Initialize scalar state; random choices happen once, not during drawing.
-    /// # Errors
-    /// Returns invalid initial bindings or values.
     pub fn new(document: Document) -> Result<Self> {
         let mut state = Map::new();
         for (key, value) in &document.state {
@@ -360,7 +358,6 @@ impl Session {
         }
     }
 
-    /// Validated view description.
     #[must_use]
     pub const fn document(&self) -> &Document {
         &self.document
@@ -371,14 +368,10 @@ impl Session {
         self.state.get(key).map_or_else(String::new, scalar_text)
     }
     /// Interpolate bounded plain text.
-    /// # Errors
-    /// Fails when expansion exceeds the text budget or a field is unknown.
     pub fn text(&self, template: &str) -> Result<String> {
         expand(template, &self.state)
     }
     /// Edit only a declared string input. No markup or terminal escapes.
-    /// # Errors
-    /// Rejects undeclared inputs and oversized/invalid text.
     pub fn input(&mut self, key: &str, value: String) -> Result<()> {
         ensure!(
             self.document
@@ -393,21 +386,15 @@ impl Session {
         self.commit(next)
     }
     /// Evaluate a numeric presentation expression against current state.
-    /// # Errors
-    /// Rejects invalid arithmetic or nonnumeric results.
     pub fn number(&self, expression: &Value) -> Result<f64> {
         number(&eval(expression, &self.state, &mut 1024)?)
     }
     /// Evaluate progress, clamped to a nonnegative maximum.
-    /// # Errors
-    /// Rejects invalid numeric expressions.
     pub fn progress(&self, value: &Value, max: &Value) -> Result<(f64, f64)> {
         let max = self.number(max)?.max(0.0);
         Ok((self.number(value)?.clamp(0.0, max), max))
     }
     /// Flip a declared checklist or toggle field, without running an action.
-    /// # Errors
-    /// Rejects undeclared controls or invalid resulting bindings.
     pub fn toggle(&mut self, key: &str) -> Result<()> {
         ensure!(
             self.document
@@ -426,8 +413,6 @@ impl Session {
         self.commit(next)
     }
     /// Cycle one select node, wrapping within its fixed options.
-    /// # Errors
-    /// Rejects non-select nodes or invalid resulting bindings.
     pub fn cycle(&mut self, node: usize, forward: bool) -> Result<()> {
         let Some(Node::Select { key, options, .. }) = self.document.node(node) else {
             bail!("not a select control");
@@ -454,8 +439,6 @@ impl Session {
         self.commit(next)
     }
     /// Adjust one stepper locally by its step, clamping at either bound.
-    /// # Errors
-    /// Rejects non-stepper nodes or invalid resulting bindings.
     pub fn step(&mut self, node: usize, forward: bool) -> Result<()> {
         let Some(
             Node::Stepper {
@@ -492,8 +475,6 @@ impl Session {
             .unwrap_or(0)
     }
     /// Select a table row locally, clamping to the table's data bounds.
-    /// # Errors
-    /// Rejects nodes without row selection or invalid resulting bindings.
     pub fn select_row(&mut self, node: usize, row: usize) -> Result<()> {
         let Some(Node::Table {
             select: Some(key),
@@ -522,8 +503,6 @@ impl Session {
     }
     /// Execute an action transactionally. At most one explicit message is
     /// returned; the frontend decides when/how to send it as plain user text.
-    /// # Errors
-    /// Bad arithmetic, excessive work or invalid resulting state rolls back.
     pub fn activate(&mut self, action: &str) -> Result<Option<String>> {
         ensure!(
             !self.document.answers(action),
@@ -533,8 +512,6 @@ impl Session {
     }
     /// Activate a button, capturing its rendered label before any state changes.
     /// Answer messages are single-line labels, without the review-message prefix.
-    /// # Errors
-    /// Rejects non-buttons, invalid rendered answer labels or failed actions.
     pub fn activate_button(&mut self, node: usize, item: usize) -> Result<Option<String>> {
         let Some(Node::Buttons { items, .. }) = self.document.node(node) else {
             bail!("answer actions require a button");
@@ -674,8 +651,6 @@ impl Session {
     }
 
     /// Replace a program after a completed edit, retaining surviving state names.
-    /// # Errors
-    /// Invalid merged programs leave this session unchanged.
     pub fn patch(&mut self, patch: &str) -> Result<()> {
         let source = self
             .document
@@ -702,8 +677,6 @@ impl Session {
     }
 
     /// Install a validated program revision, retaining surviving state names.
-    /// # Errors
-    /// Invalid revisions leave the previous document and state untouched.
     pub fn replace_program(&mut self, source: &str) -> Result<()> {
         self.replace_document(Document::parse(source)?)
     }
@@ -764,8 +737,6 @@ impl Session {
 
     /// Schedule at most one call. The host supplies visibility, focus and stream
     /// readiness by calling this only when all three permit execution.
-    /// # Errors
-    /// Returns argument validation and budget failures, without running a tool.
     pub fn next_data_call(
         &mut self,
         now: std::time::Instant,
@@ -782,8 +753,6 @@ impl Session {
 
     /// Apply a completion only to its live revision and current arguments.
     /// Awaited mutation actions continue only on success; failure drops the tail.
-    /// # Errors
-    /// Invalid result-derived views retain their last valid rendering.
     pub fn finish_data_call(
         &mut self,
         call: &live::Call,
@@ -837,8 +806,6 @@ impl Session {
 
     /// Consume a pending URL, opening it only when explicitly confirmed.
     /// The injected opener lets frontends and tests control OS interaction.
-    /// # Errors
-    /// Returns opener failures; the pending confirmation is always consumed.
     pub fn confirm_url(
         &mut self,
         confirmed: bool,

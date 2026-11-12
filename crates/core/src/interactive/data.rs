@@ -246,7 +246,6 @@ pub(super) fn evaluate(op: &str, args: &[Value]) -> Result<Value> {
     })
 }
 
-/// The list-editing built-ins: `append`, `remove`, `replace`, `slice`.
 fn edit_list(op: &str, items: &[Value], args: &[Value]) -> Value {
     match op {
         "append" => {
@@ -285,8 +284,7 @@ fn edit_list(op: &str, items: &[Value], args: &[Value]) -> Value {
     }
 }
 
-/// An array index from a number, counting from the end when negative;
-/// `None` when out of range.
+/// An array index; negative counts from the end, out of range is `None`.
 fn position(value: &Value, len: usize) -> Option<usize> {
     #[allow(clippy::cast_possible_truncation)]
     let n = numeric(value).trunc() as i64;

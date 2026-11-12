@@ -103,8 +103,6 @@ fn prompt_example_is_valid_and_generic() {
         .split("\n```")
         .next()
         .unwrap();
-    // The example is a small app: state, a stepper, a checklist, a progress
-    // bar computed from state, and a primary action that proposes a message.
     let mut ui = session(source);
     assert_eq!(ui.value("days"), "5");
     let message = ui.activate_button(3, 0).unwrap().unwrap();

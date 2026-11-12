@@ -276,12 +276,9 @@ fn spend_postfix(budget: &mut usize) -> Result<()> {
     Ok(())
 }
 
-/// Statement boundaries and the minimal suffix for a pending string/call.
-/// Comments and delimiters in strings cannot corrupt the boundary scan.
-/// Byte offsets, in order, where an unfinished statement can be cut back to a
-/// whole argument: just before each `,` or operator and just after each opening bracket,
-/// never inside a string or comment (except before a half-written `{{` template), and only inside brackets still open at
-/// the end, so finished arguments are never cut.
+/// Byte offsets where an unfinished statement can be cut back to a whole
+/// argument: before each `,` or operator, after each opening bracket, never
+/// inside a string or comment, and only inside brackets still open at the end.
 pub(super) fn argument_cuts(source: &str) -> Vec<usize> {
     // (offset, index of the bracket that encloses it)
     let mut cuts: Vec<(usize, usize)> = Vec::new();

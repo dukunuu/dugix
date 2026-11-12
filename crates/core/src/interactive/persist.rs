@@ -1,6 +1,5 @@
 //! Saving and restoring a panel's state, plus the pure helpers the saved-panel
-//! and `OpenUrl` surfaces share. Nothing here touches a database or the screen:
-//! frontends store the encoded record wherever they own durable storage.
+//! and `OpenUrl` surfaces share; nothing here touches a database or the screen.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -15,8 +14,7 @@ use super::{Session, ViewSnapshot, https_url};
 /// Largest encoded record that is saved or accepted back. Records can arrive
 /// from a synced peer, so the bound applies on both sides.
 pub const MAX_RECORD: usize = 48 * 1024;
-/// The only record format written so far. Newer formats are ignored, not
-/// guessed at; older ones would be upgraded in `PanelSnapshot::decode`.
+/// The only record format written; newer formats are rejected, not guessed at.
 const FORMAT: u8 = 1;
 const MAX_HELD: usize = 32;
 
@@ -37,8 +35,7 @@ pub struct PanelSnapshot {
 }
 
 impl PanelSnapshot {
-    /// Serialize within [`MAX_RECORD`], dropping the query cache before giving
-    /// up on the state itself. `None` means the state alone is too large.
+    /// Serialize within [`MAX_RECORD`], dropping the query cache first.
     #[must_use]
     pub fn encode(&self) -> Option<String> {
         let full = serde_json::to_string(self).ok()?;
@@ -54,9 +51,7 @@ impl PanelSnapshot {
             .filter(|text| text.len() <= MAX_RECORD)
     }
 
-    /// Parse a stored record, upgrading older formats.
-    /// # Errors
-    /// Rejects oversized, malformed and newer-format records.
+    /// Parse a stored record, rejecting oversized, malformed and newer formats.
     pub fn decode(text: &str) -> Result<Self> {
         ensure!(text.len() <= MAX_RECORD, "saved panel state is too large");
         let snapshot: Self = serde_json::from_str(text)?;
@@ -69,7 +64,6 @@ impl PanelSnapshot {
 }
 
 impl Session {
-    /// Capture the panel's restorable state.
     #[must_use]
     pub fn snapshot(&self) -> PanelSnapshot {
         let mut state = self.state.clone();
@@ -84,11 +78,8 @@ impl Session {
         }
     }
 
-    /// Re-apply a saved state to this freshly built panel. Names the program no
-    /// longer declares are held for a replayed patch; anything that fails
-    /// validation leaves the panel exactly as it was.
-    /// # Errors
-    /// Returns the validation failure for values the program now rejects.
+    /// Re-apply a saved state; undeclared names are held for a replayed patch,
+    /// and a validation failure leaves the panel exactly as it was.
     pub fn restore(&mut self, snapshot: &PanelSnapshot) -> Result<()> {
         ensure!(snapshot.v == FORMAT, "unsupported saved panel state");
         let mut state = self.state.clone();
@@ -155,9 +146,7 @@ fn same_kind(default: &Value, saved: &Value) -> bool {
 }
 
 /// Stable identity of a panel within one conversation: a hash of its source
-/// plus how many identical panels precede it. Unlike a transcript position it
-/// survives compaction rows and deleted messages, and it is the same on every
-/// synced device.
+/// plus its occurrence. It survives compaction and is the same on every device.
 #[must_use]
 pub fn panel_key(source: &str, occurrence: usize) -> String {
     let digest = Sha256::digest(source.as_bytes());
@@ -169,10 +158,7 @@ pub fn panel_key(source: &str, occurrence: usize) -> String {
 }
 
 /// The host a validated HTTPS URL points at, lowercased and punycoded, with
-/// the port appended when it is not 443. This is what confirmation shows and
-/// what "always allow for this host" keys on.
-/// # Errors
-/// Rejects anything but an HTTPS URL without credentials.
+/// the port appended when it is not 443; this is what "always allow for this host" keys on.
 pub fn url_host(url: &str) -> Result<String> {
     https_url(url)?;
     let parsed = reqwest::Url::parse(url)?;

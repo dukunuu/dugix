@@ -167,7 +167,6 @@ q = Query("files", {action:"read",name:"a"}, {text:"Defaults"}, 1)"#;
 fn saved_names_wait_for_a_replayed_patch_that_declares_them() {
     let base = "root = Panel(\"Todo\", [Text(\"Items\")])\n$count = 1";
     let patch = "root = Panel(\"Todo\", [Text(\"Items\"), Text($note)])\n$note = \"fresh\"";
-    // The patched panel was edited, saved, and then reloaded from its original source.
     let mut edited = session(base);
     edited.patch(patch).unwrap();
     edited.input("note", "kept".into()).unwrap_err();

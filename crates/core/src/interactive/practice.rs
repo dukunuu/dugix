@@ -1,7 +1,5 @@
-//! Practice components: a code editor bound to string state, single-choice
-//! lists that mark the right answer once picked, and quizzes that show one
-//! question at a time with a revealable answer. Cursor and scroll are local
-//! presentation state; only the edited text is state the panel sends.
+//! Practice components: a code editor, single-choice lists that mark the right
+//! answer, and quizzes. Cursor and scroll are local; only edited text is panel state.
 
 use super::components::lang_ok;
 use super::{Document, MAX_TEXT, Node, Session, binding_ok, item_count, line_ok, text_ok};
@@ -283,8 +281,6 @@ impl Session {
         Ok((key.clone(), usize::from(*rows)))
     }
     /// Start or stop editing; starting puts the caret at the end the first time.
-    /// # Errors
-    /// Rejects non-editors.
     pub fn set_editing(&mut self, node: usize, editing: bool) -> Result<()> {
         let (key, rows) = self.editor_binding(node)?;
         let text = self.value(&key);
@@ -301,8 +297,6 @@ impl Session {
         Ok(())
     }
     /// Put the caret at a visible `(row, column)` and start editing.
-    /// # Errors
-    /// Rejects non-editors.
     pub fn place_cursor(&mut self, node: usize, row: usize, column: usize) -> Result<()> {
         let (key, rows) = self.editor_binding(node)?;
         let text = self.value(&key);
@@ -313,8 +307,6 @@ impl Session {
         Ok(())
     }
     /// Apply one editing key transactionally; the text stays valid state.
-    /// # Errors
-    /// Rejects non-editors and text past the 4 KiB budget.
     pub fn edit_code(&mut self, node: usize, key: &EditorKey) -> Result<()> {
         let (field, rows) = self.editor_binding(node)?;
         let text = self.value(&field);
@@ -335,8 +327,6 @@ impl Session {
     }
     /// Replace the code and caret in one step (a frontend editor applied a
     /// whole command, such as a vim change), with `edit_code`'s budget.
-    /// # Errors
-    /// Rejects non-editors and text past the 4 KiB budget.
     pub fn set_code(&mut self, node: usize, text: &str, cursor: usize) -> Result<()> {
         let (field, rows) = self.editor_binding(node)?;
         if text != self.value(&field) {
@@ -362,8 +352,6 @@ impl Session {
         }
     }
     /// Pick one option of a choice list.
-    /// # Errors
-    /// Rejects non-choices and unknown options.
     pub fn choose(&mut self, node: usize, option: usize) -> Result<()> {
         let Some(Node::Choice { key, options, .. }) = self.document.node(node) else {
             bail!("not a choice");
@@ -390,8 +378,6 @@ impl Session {
             .min(items.len().saturating_sub(1))
     }
     /// Show another question, updating its optional binding transactionally.
-    /// # Errors
-    /// Rejects non-quizzes and invalid resulting bindings.
     pub fn select_question(&mut self, node: usize, question: usize) -> Result<()> {
         let Some(Node::Quiz { items, key }) = self.document.node(node) else {
             bail!("not a quiz");
@@ -416,8 +402,6 @@ impl Session {
             .contains(&(node, self.question(node)))
     }
     /// Show or hide the current question's answer.
-    /// # Errors
-    /// Rejects questions without an answer or explanation.
     pub fn reveal(&mut self, node: usize) -> Result<()> {
         let question = self.question(node);
         ensure!(

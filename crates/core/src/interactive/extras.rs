@@ -1,6 +1,5 @@
-//! Phase-7 components: Number, Gauge, Heatmap, Md, Tree, Board and Diagram.
-//! Display-only except Tree, whose branches expand like Accordion sections
-//! (keyed by each branch's preorder index).
+//! Number, Gauge, Heatmap, Md, Tree, Board and Diagram. Display-only except
+//! Tree, whose branches expand like Accordion sections.
 
 use super::{Document, MAX_TEXT, Node, Session, item_count, line_ok, text_ok};
 use anyhow::{Result, ensure};
@@ -54,8 +53,6 @@ pub fn flatten(branches: &[Branch]) -> Vec<(usize, &Branch)> {
 
 impl Session {
     /// Evaluate a data expression against current state.
-    /// # Errors
-    /// Rejects invalid expressions.
     pub fn evaluate(&self, expression: &Value) -> Result<Value> {
         super::eval(expression, &self.state, &mut 4096)
     }

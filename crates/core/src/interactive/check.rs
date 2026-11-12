@@ -41,8 +41,7 @@ pub(super) enum Step {
         #[serde(default)]
         context: Option<Value>,
     },
-    /// Sends the clicked button's label. Models often add the label here
-    /// too; it is accepted and ignored — the button's label is what's sent.
+    /// The clicked button's label is sent; a model-supplied label is ignored.
     Answer {
         #[serde(default)]
         #[allow(dead_code)]

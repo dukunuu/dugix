@@ -87,9 +87,6 @@ impl Embedder {
     }
 
     /// Use the configured local endpoint; a trailing `/v1` is removed for native APIs.
-    ///
-    /// # Errors
-    /// Rejects unsafe endpoints and HTTP client construction failures.
     pub fn ollama(endpoint: &str, model: String) -> Result<Self> {
         OpenRouter::local(endpoint)?;
         Ok(Self {
@@ -195,9 +192,6 @@ impl Embedder {
     }
 
     /// Probe with synthetic content only; never sends a space's data during discovery.
-    ///
-    /// # Errors
-    /// Reports unavailable runtimes, missing models and invalid responses.
     pub async fn prepare(&self) -> Result<()> {
         self.profile.get_or_try_init(|| self.probe()).await?;
         Ok(())
@@ -353,9 +347,6 @@ impl Embedder {
     }
 
     /// Embed already formatted documents or validated image inputs.
-    ///
-    /// # Errors
-    /// Rejects unsupported modalities, over-budget text and malformed vectors.
     pub async fn embed(&self, inputs: Vec<EmbedInput>) -> Result<Vec<Vec<f32>>> {
         ensure!(!inputs.is_empty(), "empty embedding batch");
         self.prepare().await?;
@@ -406,9 +397,6 @@ impl Embedder {
     }
 
     /// Query formatting is applied here, exactly once, never in transport code.
-    ///
-    /// # Errors
-    /// Same as [`Self::embed`].
     pub async fn query(&self, query: &str) -> Result<Vec<f32>> {
         Ok(self
             .embed(vec![EmbedInput::Text(self.query_text(query))])
@@ -577,11 +565,7 @@ fn validate_vectors(
 }
 
 /// Bound compressed size and decoded allocations, then convert to RGB PNG.
-/// Google's processor uses 16px patches pooled 3x3, at most 280 soft tokens;
-/// a 768px square uses 256 pooled patches. The runtime retains final preprocessing.
-///
-/// # Errors
-/// Rejects oversized, unsupported or malformed images.
+/// Google's processor uses 16px patches pooled 3x3, at most 280 soft tokens.
 pub fn image_input(path: &Path) -> Result<EmbedInput> {
     ensure!(
         std::fs::metadata(path)?.len() <= 20 * 1024 * 1024,

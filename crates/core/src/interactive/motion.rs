@@ -1,8 +1,5 @@
 //! Presentation motion on the panel clock: bound values glide to new targets
-//! and charts draw in the first time a panel shows. Off by default, so
-//! streaming previews, exports and tests always see final values; a
-//! frontend turns it on for live panels (and leaves it off under
-//! reduce-motion). Never state, never saved.
+//! and charts draw in. Off by default, so previews, exports and tests see final values.
 
 use super::{Node, Session};
 use std::collections::HashMap;
@@ -12,7 +9,6 @@ const GLIDE: f64 = 0.25;
 /// How long a chart or canvas takes to draw in.
 const DRAW_IN: f64 = 0.4;
 
-/// One displayed value easing from `from` to `to`, starting at `since`.
 #[derive(Clone, Copy, Debug)]
 struct Glide {
     from: f64,
@@ -32,7 +28,6 @@ impl Glide {
     }
 }
 
-/// Glides keyed by (node index, item) — presentation state for one session.
 #[derive(Debug, Default)]
 pub(super) struct Motion {
     on: bool,
@@ -47,13 +42,11 @@ impl Session {
             self.motion.glides.borrow_mut().clear();
         }
     }
-    /// Whether motion is on.
     #[must_use]
     pub fn motion(&self) -> bool {
         self.motion.on
     }
-    /// The value to draw for `key` now that its target is `target`: the
-    /// target itself on first sight, then a glide whenever it changes.
+    /// The value to draw for `key`: the target on first sight, then a glide.
     #[must_use]
     pub fn eased(&self, key: (usize, usize), target: f64) -> f64 {
         if !self.motion.on || !target.is_finite() {

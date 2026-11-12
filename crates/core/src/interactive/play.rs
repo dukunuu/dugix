@@ -1,7 +1,5 @@
 //! Panels that run on their own: timers (`@Every`), key bindings (`@Keys`)
-//! and clickable canvas shapes. Still local data: timer and key actions may
-//! only change panel state, so nothing sends, answers, opens a URL or runs a
-//! tool without the user pressing a real control.
+//! and clickable canvas shapes. Timer and key actions may only change panel state.
 
 use super::{Document, Effects, Session, Shape, Step};
 use anyhow::{Result, ensure};
@@ -25,8 +23,7 @@ pub struct Timer {
     pub action: String,
 }
 
-/// Whether `key` may be bound: arrows, space, a–z and 0–9. Tab, Enter and
-/// Esc stay with navigation.
+/// Whether `key` may be bound; Tab, Enter and Esc stay with navigation.
 fn bindable(key: &str) -> bool {
     matches!(key, "left" | "right" | "up" | "down" | "space")
         || (key.len() == 1
@@ -36,12 +33,10 @@ fn bindable(key: &str) -> bool {
 }
 
 impl Document {
-    /// Declared timers.
     #[must_use]
     pub fn timers(&self) -> &[Timer] {
         &self.timers
     }
-    /// The action bound to `key`, if any.
     #[must_use]
     pub fn key_action(&self, key: &str) -> Option<&str> {
         self.keys.get(key).map(String::as_str)
@@ -114,17 +109,11 @@ pub(super) struct Schedule {
 }
 
 impl Session {
-    /// Whether this panel runs timers.
     #[must_use]
     pub fn has_timers(&self) -> bool {
         !self.document.timers.is_empty()
     }
-    /// Run every timer that has come due by `now` (seconds since the panel
-    /// was first shown). A timer that fell behind — the panel was off screen —
-    /// runs once and resumes its rhythm rather than replaying the backlog.
-    /// Returns whether any timer ran.
-    /// # Errors
-    /// Returns a failing timer's error; later timers still run next tick.
+    /// Run every timer due by `now`; a timer that fell behind runs once, not the backlog.
     pub fn tick(&mut self, now: f64) -> Result<bool> {
         let timers = self.document.timers.clone();
         self.schedule.due.resize(timers.len(), f64::NAN);
@@ -160,8 +149,6 @@ impl Session {
         self.commit(next)
     }
     /// Run the action bound to `key`; whether one was bound.
-    /// # Errors
-    /// Returns the action's error.
     pub fn press_key(&mut self, key: &str) -> Result<bool> {
         let Some(action) = self.document.key_action(key).map(str::to_string) else {
             return Ok(false);
@@ -170,8 +157,6 @@ impl Session {
         Ok(true)
     }
     /// Run a clickable shape's action, like a button press.
-    /// # Errors
-    /// Rejects shapes without actions; returns the action's error.
     pub fn activate_shape(&mut self, node: usize, shape: usize) -> Result<Option<String>> {
         let Some(super::Node::Canvas { shapes, .. }) = self.document.node(node) else {
             anyhow::bail!("not a canvas");
