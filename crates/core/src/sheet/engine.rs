@@ -9,11 +9,18 @@ use anyhow::{Result, anyhow, bail, ensure};
 use ironcalc::base::{
     ClipboardData, Model, UserModel,
     cell::CellValue,
-    expressions::types::Area,
+    expressions::{
+        parser::{Node as Formula, new_parser_english, stringify::to_english_string},
+        types::{Area, CellReferenceRC},
+    },
     formatter::parser::Parser,
     types::{Alignment, CellType, Color, HorizontalAlignment, MergedCell, Style},
 };
-use std::{cmp::Ordering, collections::BTreeMap, io::Cursor};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, HashMap},
+    io::Cursor,
+};
 
 /// Evaluated cell type, independent of the spreadsheet engine.
 #[derive(Clone, Debug, PartialEq)]
@@ -455,6 +462,16 @@ impl Workbook {
                 let tab = self.source.remove(index as usize);
                 self.source.insert(next as usize, tab);
             }
+            Op::Copy {
+                tab,
+                from,
+                to_tab,
+                to,
+                cut,
+            } => {
+                self.copy_cells(tab, from, to_tab.as_deref().unwrap_or(tab), to, *cut)?;
+            }
+            Op::Fill { tab, from, to } => self.fill_cells(tab, from, to)?,
             Op::Sort {
                 tab,
                 range,
@@ -465,6 +482,243 @@ impl Workbook {
             _ => bail!("not an engine edit"),
         }
         self.model.evaluate();
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn copy_cells(
+        &mut self,
+        tab: &str,
+        from: &str,
+        to_tab: &str,
+        to: &str,
+        cut: bool,
+    ) -> Result<()> {
+        let source = self.tab_index(tab)?;
+        let target = self.tab_index(to_tab)?;
+        let rect = from.parse::<Range>()?.bounds();
+        let to: Address = to.parse()?;
+        ensure!(
+            rect.cell_count() <= super::validate::MAX_CELLS as u64,
+            "copy exceeds stored cell limit"
+        );
+        ensure!(
+            to.row + rect.end.row - rect.start.row <= MAX_ROWS
+                && to.col + rect.end.col - rect.start.col <= MAX_COLS,
+            "paste extends beyond Excel limits"
+        );
+        let mut data = BTreeMap::new();
+        for row in rect.start.row..=rect.end.row {
+            let row_data = copy_row(&self.model, source, rect, row)?;
+            data.extend(row_data);
+        }
+        let mut user = UserModel::from_model(ic(Model::from_bytes(&self.model.to_bytes(), "en"))?);
+        ic(user.set_selected_sheet(target))?;
+        ic(user.set_selected_cell(int(to.row), int(to.col)))?;
+        ic(user.paste_from_clipboard(
+            source,
+            (
+                int(rect.start.row),
+                int(rect.start.col),
+                int(rect.end.row),
+                int(rect.end.col),
+            ),
+            &data.into_iter().collect(),
+            cut,
+        ))?;
+        let original = self.source[source as usize].cells.clone();
+        if cut {
+            self.source[source as usize]
+                .cells
+                .retain(|key, _| !rect.contains(key.parse().expect("validated address")));
+        }
+        for row in rect.start.row..=rect.end.row {
+            for col in rect.start.col..=rect.end.col {
+                let from = Address { row, col }.to_string();
+                let key = Address {
+                    row: to.row + row - rect.start.row,
+                    col: to.col + col - rect.start.col,
+                }
+                .to_string();
+                let cells = &mut self.source[target as usize].cells;
+                if let Some(cell) = original.get(&from) {
+                    cells.insert(key, cell.clone());
+                } else {
+                    cells.remove(&key);
+                }
+            }
+        }
+        let mut next = ic(Model::from_bytes(&user.to_bytes(), "en"))?;
+        if cut && source != target {
+            let moved = Cut {
+                source,
+                target,
+                rect,
+                to,
+                names: self.source.iter().map(|t| t.name.clone()).collect(),
+            };
+            let mut parser = new_parser_english(moved.names.clone(), vec![], HashMap::default());
+            let target_rect = Rect {
+                start: to,
+                end: Address {
+                    row: to.row + rect.end.row - rect.start.row,
+                    col: to.col + rect.end.col - rect.start.col,
+                },
+            };
+            for cell in self.model.get_all_cells() {
+                let a = Address {
+                    row: uint(cell.row),
+                    col: uint(cell.column),
+                };
+                let inside = cell.index == source && rect.contains(a);
+                if !inside && cell.index == target && target_rect.contains(a) {
+                    continue;
+                }
+                let Some(formula) =
+                    ic(self
+                        .model
+                        .get_cell_formula(cell.index, cell.row, cell.column))?
+                else {
+                    continue;
+                };
+                let old = CellReferenceRC {
+                    sheet: moved.names[cell.index as usize].clone(),
+                    row: cell.row,
+                    column: cell.column,
+                };
+                let (index, row, column) = if inside {
+                    (
+                        target,
+                        int(to.row + a.row - rect.start.row),
+                        int(to.col + a.col - rect.start.col),
+                    )
+                } else {
+                    (cell.index, cell.row, cell.column)
+                };
+                let new = CellReferenceRC {
+                    sheet: moved.names[index as usize].clone(),
+                    row,
+                    column,
+                };
+                let mut ast = parser.parse(formula.trim_start_matches('='), &old);
+                moved.rewrite(&mut ast, &old, &new);
+                ic(next.set_user_input(
+                    index,
+                    row,
+                    column,
+                    format!("={}", to_english_string(&ast, &new)),
+                ))?;
+            }
+        }
+        self.model = next;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn fill_cells(&mut self, tab: &str, from: &str, to: &str) -> Result<()> {
+        let index = self.tab_index(tab)?;
+        let from = from.parse::<Range>()?.bounds();
+        let to = to.parse::<Range>()?.bounds();
+        let down =
+            from.start == to.start && from.end.col == to.end.col && to.end.row > from.end.row;
+        let right =
+            from.start == to.start && from.end.row == to.end.row && to.end.col > from.end.col;
+        ensure!(down || right, "fill must extend the source down or right");
+        ensure!(
+            to.cell_count() <= super::validate::MAX_CELLS as u64,
+            "fill exceeds stored cell limit"
+        );
+        let seeds = if down && from.start.col == from.end.col {
+            (from.start.row..=from.end.row)
+                .map(|row| Address {
+                    row,
+                    col: from.start.col,
+                })
+                .collect::<Vec<_>>()
+        } else if right && from.start.row == from.end.row {
+            (from.start.col..=from.end.col)
+                .map(|col| Address {
+                    row: from.start.row,
+                    col,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let numbers: Option<Vec<f64>> = seeds
+            .iter()
+            .map(|a| {
+                let cell = self.source[index as usize].cells.get(&a.to_string())?;
+                cell.input.parse::<f64>().ok()
+            })
+            .collect();
+        let series = numbers.as_ref().is_some_and(|n| {
+            n.len() >= 2
+                && n.windows(2)
+                    .all(|w| (w[1] - w[0] - (n[1] - n[0])).abs() < 1e-10)
+        });
+        if series {
+            let mut user =
+                UserModel::from_model(ic(Model::from_bytes(&self.model.to_bytes(), "en"))?);
+            if down {
+                ic(user.auto_fill_rows(&area(index, from), int(to.end.row)))?;
+            } else {
+                ic(user.auto_fill_columns(&area(index, from), int(to.end.col)))?;
+            }
+            self.source[index as usize].cells.retain(|key, _| {
+                let a = key.parse().expect("validated address");
+                !to.contains(a) || from.contains(a)
+            });
+            self.model = ic(Model::from_bytes(&user.to_bytes(), "en"))?;
+        } else {
+            let mut user =
+                UserModel::from_model(ic(Model::from_bytes(&self.model.to_bytes(), "en"))?);
+            user.pause_evaluation();
+            ic(user.set_selected_sheet(index))?;
+            let original = self.source[index as usize].cells.clone();
+            for row in to.start.row..=to.end.row {
+                for col in to.start.col..=to.end.col {
+                    let target = Address { row, col };
+                    if from.contains(target) {
+                        continue;
+                    }
+                    let source = Address {
+                        row: from.start.row
+                            + (row - from.start.row) % (from.end.row - from.start.row + 1),
+                        col: from.start.col
+                            + (col - from.start.col) % (from.end.col - from.start.col + 1),
+                    };
+                    let data = copy_row(
+                        &self.model,
+                        index,
+                        Rect {
+                            start: source,
+                            end: source,
+                        },
+                        source.row,
+                    )?;
+                    ic(user.set_selected_cell(int(row), int(col)))?;
+                    ic(user.paste_from_clipboard(
+                        index,
+                        (
+                            int(source.row),
+                            int(source.col),
+                            int(source.row),
+                            int(source.col),
+                        ),
+                        &data,
+                        false,
+                    ))?;
+                    let cells = &mut self.source[index as usize].cells;
+                    if let Some(cell) = original.get(&source.to_string()) {
+                        cells.insert(target.to_string(), cell.clone());
+                    } else {
+                        cells.remove(&target.to_string());
+                    }
+                }
+            }
+            self.model = ic(Model::from_bytes(&user.to_bytes(), "en"))?;
+        }
         Ok(())
     }
 
@@ -596,6 +850,115 @@ impl Workbook {
             ironcalc::export::save_xlsx_to_writer(&workbook.model, Cursor::new(Vec::new()))?
                 .into_inner(),
         )
+    }
+}
+
+// IronCalc's clipboard API moves observers within a sheet. For a cross-tab
+// cut, re-express references in the original AST against the new tab as well.
+struct Cut {
+    source: u32,
+    target: u32,
+    rect: Rect,
+    to: Address,
+    names: Vec<String>,
+}
+
+impl Cut {
+    fn point(&self, sheet: u32, row: i32, col: i32) -> (u32, i32, i32) {
+        if sheet == self.source
+            && row >= int(self.rect.start.row)
+            && row <= int(self.rect.end.row)
+            && col >= int(self.rect.start.col)
+            && col <= int(self.rect.end.col)
+        {
+            (
+                self.target,
+                row + int(self.to.row) - int(self.rect.start.row),
+                col + int(self.to.col) - int(self.rect.start.col),
+            )
+        } else {
+            (sheet, row, col)
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn rewrite(&self, node: &mut Formula, old: &CellReferenceRC, new: &CellReferenceRC) {
+        match node {
+            Formula::ReferenceKind {
+                sheet_name,
+                sheet_index,
+                absolute_row,
+                absolute_column,
+                row,
+                column,
+            } => {
+                let r = *row + if *absolute_row { 0 } else { old.row };
+                let c = *column + if *absolute_column { 0 } else { old.column };
+                let (sheet, r, c) = self.point(*sheet_index, r, c);
+                *sheet_index = sheet;
+                *sheet_name = (sheet_name.is_some() || self.names[sheet as usize] != new.sheet)
+                    .then(|| self.names[sheet as usize].clone());
+                *row = r - if *absolute_row { 0 } else { new.row };
+                *column = c - if *absolute_column { 0 } else { new.column };
+            }
+            Formula::RangeKind {
+                sheet_name,
+                sheet_index,
+                absolute_row1,
+                absolute_column1,
+                row1,
+                column1,
+                absolute_row2,
+                absolute_column2,
+                row2,
+                column2,
+            } => {
+                let r1 = *row1 + if *absolute_row1 { 0 } else { old.row };
+                let c1 = *column1 + if *absolute_column1 { 0 } else { old.column };
+                let r2 = *row2 + if *absolute_row2 { 0 } else { old.row };
+                let c2 = *column2 + if *absolute_column2 { 0 } else { old.column };
+                let a = self.point(*sheet_index, r1, c1);
+                let b = self.point(*sheet_index, r2, c2);
+                let (sheet, r1, c1, r2, c2) =
+                    if a.0 == self.target && b.0 == self.target && *sheet_index == self.source {
+                        (self.target, a.1, a.2, b.1, b.2)
+                    } else {
+                        (*sheet_index, r1, c1, r2, c2)
+                    };
+                *sheet_index = sheet;
+                *sheet_name = (sheet_name.is_some() || self.names[sheet as usize] != new.sheet)
+                    .then(|| self.names[sheet as usize].clone());
+                *row1 = r1 - if *absolute_row1 { 0 } else { new.row };
+                *column1 = c1 - if *absolute_column1 { 0 } else { new.column };
+                *row2 = r2 - if *absolute_row2 { 0 } else { new.row };
+                *column2 = c2 - if *absolute_column2 { 0 } else { new.column };
+            }
+            Formula::OpRangeKind { left, right }
+            | Formula::OpConcatenateKind { left, right }
+            | Formula::OpSumKind { left, right, .. }
+            | Formula::OpProductKind { left, right, .. }
+            | Formula::OpPowerKind { left, right }
+            | Formula::CompareKind { left, right, .. } => {
+                self.rewrite(left, old, new);
+                self.rewrite(right, old, new);
+            }
+            Formula::FunctionKind { args, .. } | Formula::NamedFunctionKind { args, .. } => {
+                for arg in args {
+                    self.rewrite(arg, old, new);
+                }
+            }
+            Formula::LambdaDefKind { body, .. } => self.rewrite(body, old, new),
+            Formula::LambdaCallKind { lambda, args } => {
+                self.rewrite(lambda, old, new);
+                for arg in args {
+                    self.rewrite(arg, old, new);
+                }
+            }
+            Formula::ImplicitIntersection { child, .. }
+            | Formula::SpillRangeOperator { child }
+            | Formula::UnaryKind { right: child, .. } => self.rewrite(child, old, new),
+            _ => {}
+        }
     }
 }
 

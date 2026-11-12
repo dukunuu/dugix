@@ -19,8 +19,10 @@ pub fn resolve(files: &Path, relative: &str) -> Result<(Kind, PathBuf)> {
         Kind::Deck
     } else if relative.starts_with("docs/") && relative.ends_with(".doc.json") {
         Kind::Doc
+    } else if relative.starts_with("sheets/") && relative.ends_with(".sheet.json") {
+        Kind::Sheet
     } else {
-        bail!("that is not a deck or doc of this space");
+        bail!("that is not a deck, doc or sheet of this space");
     };
     ensure!(relative.len() <= 400, "path too long");
     let mut path = files.canonicalize()?;
@@ -91,6 +93,35 @@ fn read_deck(path: &Path) -> Result<Deck> {
         .map_err(|e| anyhow::anyhow!("{}: {}", e[0].path, e[0].message))
 }
 
+/// Read a checked sheet, including one outside the space chosen in a dialog.
+pub fn read_sheet(path: &Path) -> Result<crate::sheet::Sheet> {
+    ensure!(
+        std::fs::metadata(path)?.len() <= crate::sheet::validate::MAX_SOURCE as u64,
+        "sheet exceeds 32 MiB"
+    );
+    crate::sheet::Sheet::check(&std::fs::read_to_string(path)?)
+        .map_err(|e| anyhow::anyhow!("{e:?}"))
+}
+
+/// CSV for a selected tab (first by default), or a complete XLSX workbook.
+pub fn sheet_output(
+    sheet: &crate::sheet::Sheet,
+    format: &str,
+    tab: Option<&str>,
+) -> Result<deck::export::Export> {
+    export_extension(Kind::Sheet, format)?;
+    let bytes = match format {
+        "csv" => crate::sheet::interchange::export_csv(sheet, tab.unwrap_or(&sheet.tabs[0].name))?,
+        "xlsx" => crate::sheet::interchange::export_xlsx(sheet)?,
+        _ => unreachable!("checked format"),
+    };
+    Ok(deck::export::Export {
+        bytes,
+        file_name: export_file_name(&sheet.title, format),
+        warnings: vec![],
+    })
+}
+
 fn read_doc(path: &Path) -> Result<Doc> {
     Doc::check(&std::fs::read_to_string(path)?)
         .map_err(|e| anyhow::anyhow!("{}: {}", e[0].path, e[0].message))
@@ -120,6 +151,15 @@ fn write_over(files: &Path, path: &Path, kind: Kind, source: &Edited) -> Result<
             }
             Ok(())
         }
+        (Kind::Sheet, Edited::Sheet(next)) => {
+            let next = crate::sheet::validate::checked(next)?;
+            let _ = deck::history::record_before_write_for::<crate::sheet::Sheet>(
+                path,
+                &next.revision(),
+                Who::User,
+            );
+            deck::write_atomic(path, &serde_json::to_vec_pretty(&next)?)
+        }
         _ => bail!("mismatched document kind"),
     }
 }
@@ -127,6 +167,7 @@ fn write_over(files: &Path, path: &Path, kind: Kind, source: &Edited) -> Result<
 enum Edited {
     Deck(Deck),
     Doc(Doc),
+    Sheet(crate::sheet::Sheet),
 }
 
 /// The file keeps its name, so links and the model's references to it keep working.
@@ -140,6 +181,11 @@ pub fn rename(files: &Path, relative: &str, title: &str) -> Result<()> {
             Edited::Deck(deck)
         }
         Kind::Doc => Edited::Doc(retitled_doc(&read_doc(&path)?, &title)?),
+        Kind::Sheet => {
+            let mut sheet = read_sheet(&path)?;
+            sheet.title = title;
+            Edited::Sheet(sheet)
+        }
     };
     write_over(files, &path, kind, &next)
 }
@@ -151,6 +197,7 @@ pub fn duplicate(files: &Path, relative: &str) -> Result<String> {
     let suffix = match kind {
         Kind::Deck => ".deck.json",
         Kind::Doc => ".doc.json",
+        Kind::Sheet => ".sheet.json",
     };
     let copy_title =
         |title: &str| title_ok(&format!("{title} copy")).unwrap_or_else(|_| "Untitled copy".into());
@@ -165,6 +212,11 @@ pub fn duplicate(files: &Path, relative: &str) -> Result<String> {
         Kind::Doc => {
             let doc = read_doc(&path)?;
             serde_json::to_vec_pretty(&retitled_doc(&doc, &copy_title(&doc.title))?)?
+        }
+        Kind::Sheet => {
+            let mut sheet = read_sheet(&path)?;
+            sheet.title = copy_title(&sheet.title);
+            serde_json::to_vec_pretty(&sheet)?
         }
     };
     let name = path.file_name().context("file name")?.to_string_lossy();
@@ -209,6 +261,12 @@ fn history_folder(kind: Kind, path: &Path) -> Option<PathBuf> {
             name.strip_suffix(".deck.json")?,
             path.parent()?.to_path_buf(),
         ),
+        Kind::Sheet => (
+            name.strip_suffix(".sheet.json")?,
+            path.ancestors()
+                .find(|p| p.file_name().is_some_and(|n| n == "sheets"))?
+                .to_path_buf(),
+        ),
         Kind::Doc => (
             name.strip_suffix(".doc.json")?,
             path.ancestors()
@@ -246,11 +304,13 @@ pub fn delete(files: &Path, relative: &str) -> Result<PathBuf> {
     let renders = match kind {
         Kind::Deck => "decks",
         Kind::Doc => "docs",
+        Kind::Sheet => "sheets",
     };
     let stem = name.to_string_lossy();
     let stem = stem
         .strip_suffix(".deck.json")
         .or_else(|| stem.strip_suffix(".doc.json"))
+        .or_else(|| stem.strip_suffix(".sheet.json"))
         .unwrap_or(&stem);
     let cache = root.join(renders).join(".renders").join(stem);
     if cache.is_dir() && !cache.is_symlink() {
@@ -340,6 +400,12 @@ fn asset_references(kind: Kind, source: &str) -> Result<Vec<String>> {
                 add(&font.file);
             }
         }
+        Kind::Sheet => {
+            let sheet = crate::sheet::Sheet::check(source).map_err(|e| anyhow::anyhow!("{e:?}"))?;
+            for font in &sheet.theme.font_files {
+                add(&font.file);
+            }
+        }
         Kind::Doc => {
             let doc = Doc::check(source)
                 .map_err(|e| anyhow::anyhow!("{}: {}", e[0].path, e[0].message))?;
@@ -370,6 +436,7 @@ pub fn save_copy(source: &Path, destination: &Path) -> Result<SavedCopy> {
     let suffix = match kind {
         Kind::Deck => ".deck.json",
         Kind::Doc => ".doc.json",
+        Kind::Sheet => ".sheet.json",
     };
     let name = destination
         .file_name()
@@ -483,6 +550,11 @@ pub fn export_extension(kind: Kind, word: &str) -> Result<&'static str> {
     Ok(match kind {
         Kind::Deck => word.parse::<deck::export::Format>()?.extension(),
         Kind::Doc => word.parse::<doc::export::Format>()?.extension(),
+        Kind::Sheet => match word {
+            "csv" => "csv",
+            "xlsx" => "xlsx",
+            _ => bail!("sheet export format is csv or xlsx"),
+        },
     })
 }
 
@@ -496,6 +568,7 @@ pub fn export_file(
     let (kind, path) = resolve(files, relative)?;
     match kind {
         Kind::Deck => deck_output(files, &read_deck(&path)?, &path, word.parse()?, template),
+        Kind::Sheet => sheet_output(&read_sheet(&path)?, word, None),
         Kind::Doc => doc_output(
             files,
             &read_doc(&path)?,

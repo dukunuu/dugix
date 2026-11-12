@@ -175,7 +175,8 @@ fn cells_svg(
     Ok(())
 }
 
-fn png(sheet: &Sheet, tab: &Tab, rect: Rect, assets: Option<&Path>) -> Result<Vec<u8>> {
+/// Draw a bounded grid window as PNG, using the workbook's copied theme.
+pub fn png(sheet: &Sheet, tab: &Tab, rect: Rect, assets: Option<&Path>) -> Result<Vec<u8>> {
     let theme = theme(sheet);
     let mut xs = vec![44.0];
     for col in rect.start.col..=rect.end.col {

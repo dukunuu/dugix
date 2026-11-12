@@ -106,7 +106,33 @@ impl Backend {
     pub(super) fn history_event(&self) -> Result<Event> {
         let entries = self.history_entries()?;
         let mut versions = Vec::with_capacity(entries.len());
-        if let Some(session) = &self.doc {
+        if let Some(session) = &self.sheet {
+            let loaded: Vec<Option<nexus_core::sheet::Sheet>> =
+                entries.iter().map(|e| e.load_for().ok()).collect();
+            for (i, entry) in entries.iter().enumerate() {
+                let next = loaded
+                    .get(i + 1)
+                    .and_then(Option::as_ref)
+                    .unwrap_or(&session.sheet);
+                let summary = loaded[i].as_ref().map_or_else(
+                    || "unreadable version".into(),
+                    |kept| {
+                        let count = nexus_core::sheet::read::changed_cells(kept, next).len();
+                        if count == 0 && kept.title != next.title {
+                            "Renamed it".into()
+                        } else {
+                            format!("Changed {count} cells")
+                        }
+                    },
+                );
+                versions.push(Version {
+                    id: id_of(entry),
+                    at: rfc3339(&entry.stamp),
+                    who: entry.who.clone(),
+                    summary,
+                });
+            }
+        } else if let Some(session) = &self.doc {
             let loaded: Vec<Option<Doc>> =
                 entries.iter().map(|e| e.load_for::<Doc>().ok()).collect();
             for (i, entry) in entries.iter().enumerate() {
@@ -158,17 +184,26 @@ impl Backend {
     /// One kept version, for the page to show in place of the current one.
     pub(super) fn history_preview(&self, id: &str) -> Result<Event> {
         let entry = self.history_entry(id)?;
-        if self.doc.is_some() {
+        if self.sheet.is_some() {
+            Ok(Event::HistoryPreview {
+                id: id.into(),
+                deck: None,
+                doc: None,
+                sheet: Some(entry.load_for()?),
+            })
+        } else if self.doc.is_some() {
             Ok(Event::HistoryPreview {
                 id: id.into(),
                 deck: None,
                 doc: Some(entry.load_for::<Doc>()?),
+                sheet: None,
             })
         } else {
             Ok(Event::HistoryPreview {
                 id: id.into(),
                 deck: Some(entry.load()?),
                 doc: None,
+                sheet: None,
             })
         }
     }
@@ -176,6 +211,10 @@ impl Backend {
     /// The kept deck to restore, checked like any edit.
     pub(super) fn history_deck(&self, id: &str) -> Result<Deck> {
         self.history_entry(id)?.load()
+    }
+
+    pub(super) fn history_sheet(&self, id: &str) -> Result<nexus_core::sheet::Sheet> {
+        self.history_entry(id)?.load_for()
     }
 
     pub(super) fn history_doc(&self, id: &str) -> Result<Doc> {

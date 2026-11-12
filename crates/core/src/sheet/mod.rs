@@ -2,6 +2,7 @@
 //! edits, bounded read views, history, and byte-oriented interchange.
 pub mod address;
 pub mod engine;
+pub mod feedback;
 pub mod interchange;
 pub mod model;
 pub mod ops;
@@ -39,5 +40,7 @@ impl Sheet {
     }
 }
 
+#[cfg(test)]
+mod grid_tests;
 #[cfg(test)]
 mod tests;

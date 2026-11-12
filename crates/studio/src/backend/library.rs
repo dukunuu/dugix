@@ -151,7 +151,10 @@ impl Backend {
         // The open file changes through the window's own undo history.
         let title = title.trim();
         ensure!(!title.is_empty(), "the title is empty");
-        if self.doc.is_some() {
+        if self.sheet.is_some() {
+            let ops = vec![serde_json::json!({"op": "set_title", "title": title})];
+            self.execute(Command::SheetApply { ops })
+        } else if self.doc.is_some() {
             let ops = vec![serde_json::json!({"op": "set_title", "title": title})];
             self.execute(Command::DocApply { ops })
         } else {
@@ -182,6 +185,7 @@ impl Backend {
     /// The open file was deleted: back to an empty, not-yet-saved deck behind the library.
     fn reset_to_home(&mut self) -> Result<()> {
         self.doc = None;
+        self.sheet = None;
         self.path = super::new_path(&self.files_dir)?;
         self.deck = Deck::new_from_layouts("Untitled");
         self.fetcher = nexus_core::remote_image::Fetcher::new(super::asset_root(&self.path)?);
@@ -213,7 +217,9 @@ impl Backend {
     }
 
     fn current_file(&self) -> (FileKind, PathBuf) {
-        let kind = if self.doc.is_some() {
+        let kind = if self.sheet.is_some() {
+            FileKind::Sheet
+        } else if self.doc.is_some() {
             FileKind::Doc
         } else {
             FileKind::Deck
@@ -316,6 +322,7 @@ impl Backend {
             .extension()
             .map(|e| e.to_string_lossy().to_ascii_lowercase());
         if name.ends_with(".deck.json")
+            || name.ends_with(".sheet.json")
             || name.ends_with(".doc.json")
             || extension.as_deref() == Some("pptx")
         {
@@ -327,7 +334,40 @@ impl Backend {
         if matches!(extension.as_deref(), Some("docx" | "dotx" | "md")) {
             return self.import_document(&chosen);
         }
-        bail!("choose a .deck.json, .doc.json, .pptx, .docx or .md file")
+        if matches!(extension.as_deref(), Some("csv" | "xlsx")) {
+            return self.import_sheet(&chosen);
+        }
+        bail!("choose a .deck.json, .doc.json, .sheet.json, .pptx, .docx, .md, .csv or .xlsx file")
+    }
+
+    fn import_sheet(&mut self, source: &Path) -> Result<Event> {
+        let title = source
+            .file_stem()
+            .map_or_else(|| "Imported".into(), |s| s.to_string_lossy().into_owned());
+        let base = self.blank_sheet(&title)?;
+        let bytes = super::read_bounded(source, nexus_core::sheet::validate::MAX_SOURCE)?;
+        let mut sheet = if source
+            .extension()
+            .is_some_and(|s| s.eq_ignore_ascii_case("csv"))
+        {
+            let slug = base.design.as_deref().unwrap_or("nexus");
+            let design = nexus_core::design::load(&self.files_dir, slug)?;
+            nexus_core::sheet::interchange::import_csv(&bytes, &source.to_string_lossy(), &design)?
+        } else {
+            nexus_core::sheet::interchange::import_xlsx(&bytes, &title)?
+        };
+        sheet.title.clone_from(&title);
+        sheet.theme = base.theme;
+        sheet.design = base.design;
+        sheet.design_rev = base.design_rev;
+        let path = self.new_sheet_path(&title)?;
+        super::atomic_write(&path, &serde_json::to_vec_pretty(&sheet)?)?;
+        self.enter_sheet(path, sheet)?;
+        *self.doc_notice.borrow_mut() = Some(format!(
+            "Imported {}",
+            source.file_name().unwrap_or_default().to_string_lossy()
+        ));
+        Ok(self.sheet_event())
     }
 
     fn import_document(&mut self, source: &Path) -> Result<Event> {
@@ -405,6 +445,10 @@ impl Backend {
         let title = match kind {
             FileKind::Deck if open => self.deck.title.clone(),
             FileKind::Deck => read_deck_noted(&file)?.0.title,
+            FileKind::Sheet => match self.sheet.as_ref().filter(|_| open) {
+                Some(session) => session.sheet.title.clone(),
+                None => files::read_sheet(&file)?.title,
+            },
             FileKind::Doc => match self.doc.as_ref().filter(|_| open) {
                 Some(session) => session.doc.title.clone(),
                 None => doc::read_doc(&file)?.title,
@@ -438,6 +482,13 @@ impl Backend {
         let open = nexus_core::deck::same_file(file, &self.path);
         let chosen = files::with_extension(chosen, extension);
         let output = match kind {
+            FileKind::Sheet => {
+                let sheet = match self.sheet.as_ref().filter(|_| open) {
+                    Some(session) => session.sheet.clone(),
+                    None => files::read_sheet(file)?,
+                };
+                files::sheet_output(&sheet, word, None)?
+            }
             FileKind::Deck => {
                 let deck = if open {
                     self.deck.clone()
@@ -474,13 +525,18 @@ impl Backend {
             }
             self.save()?;
         }
-        let (kind, title) = match self.doc.as_ref() {
-            Some(session) => (FileKind::Doc, session.doc.title.clone()),
-            None => (FileKind::Deck, self.deck.title.clone()),
+        let (kind, title) = if let Some(session) = &self.sheet {
+            (FileKind::Sheet, session.sheet.title.clone())
+        } else {
+            match self.doc.as_ref() {
+                Some(session) => (FileKind::Doc, session.doc.title.clone()),
+                None => (FileKind::Deck, self.deck.title.clone()),
+            }
         };
         let suffix = match kind {
             FileKind::Deck => "deck.json",
             FileKind::Doc => "doc.json",
+            FileKind::Sheet => "sheet.json",
         };
         Ok((
             Ask::Save {

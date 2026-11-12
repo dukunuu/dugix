@@ -22,7 +22,9 @@ const button = (className, label, iconName, text) => {
 
 const DECK_FORMATS = [['pptx', 'PowerPoint', '.pptx'], ['pdf', 'PDF', '.pdf'], ['png', 'PNG images', '.zip'], ['html', 'Web presentation', '.html'], ['json', 'Deck JSON', '.json']];
 const DOC_FORMATS = [['docx', 'Word', '.docx'], ['pdf', 'PDF', '.pdf'], ['md', 'Markdown', '.md'], ['html', 'Web page', '.html']];
-const KIND_LABEL = { deck: 'Deck', doc: 'Doc' };
+const SHEET_FORMATS = [['xlsx', 'Excel', '.xlsx'], ['csv', 'CSV', '.csv']];
+const KIND_LABEL = { deck: 'Deck', doc: 'Doc', sheet: 'Sheet' };
+const KIND_ICON = { deck: 'file-deck', doc: 'file-doc', sheet: 'node-table' };
 
 const platform = () => navigator.userAgentData?.platform || navigator.platform || '';
 export const revealLabel = () => /mac/i.test(platform()) ? 'Reveal in Finder' : /win/i.test(platform()) ? 'Show in Explorer' : 'Show in folder';
@@ -38,7 +40,7 @@ export function ago(iso, now = Date.now()) {
   if (seconds < 2592000) return unit(Math.floor(seconds / 86400), 'day');
   return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
-const count = item => `${item.count} ${item.kind === 'deck' ? 'slide' : 'block'}${item.count === 1 ? '' : 's'}`;
+const count = item => `${item.count} ${item.kind === 'deck' ? 'slide' : item.kind === 'sheet' ? 'cell' : 'block'}${item.count === 1 ? '' : 's'}`;
 
 /**
  * `command(cmd, complete)` sends one IPC command through the live mode's queue.
@@ -51,7 +53,7 @@ export function libraryController({ command, toast: modeToast }) {
     awaiting: false, home: false, shownForHome: false, selected: null,
   };
   let menu = null, renaming = null, lastFocus = null, toastTimer = 0, freshTimer = 0;
-  const inertTargets = () => ['#topbar', 'main', '#doc-app'].map(s => document.querySelector(s)).filter(Boolean);
+  const inertTargets = () => ['#topbar', 'main', '#doc-app', '#sheet-app'].map(s => document.querySelector(s)).filter(Boolean);
 
   // -- the shell -------------------------------------------------------------------------------
 
@@ -60,12 +62,13 @@ export function libraryController({ command, toast: modeToast }) {
   brand.append('nexus ', el('span', '', 'studio'));
   const openFile = button('lib-action', 'Open a file from disk', 'folder', 'Open…');
   const newDoc = button('lib-action', 'New doc', 'file-doc', 'New doc');
+  const newSheet = button('lib-action', 'New sheet', 'node-table', 'New sheet');
   const newDeck = button('lib-action primary', 'New deck', 'plus', 'New deck');
-  openFile.title = 'Open a deck, doc, PowerPoint, Word or Markdown file';
-  newDoc.title = 'New doc'; newDeck.title = 'New deck';
+  openFile.title = 'Open a deck, doc, sheet, PowerPoint, Word, Excel, CSV or Markdown file';
+  newDoc.title = 'New doc'; newSheet.title = 'New sheet'; newDeck.title = 'New deck';
   const close = button('icon-button lib-close', 'Close the library', 'x');
   close.title = 'Close (Esc)';
-  top.append(brand, el('span', 'spacer'), openFile, newDoc, newDeck, close);
+  top.append(brand, el('span', 'spacer'), openFile, newDoc, newSheet, newDeck, close);
 
   const scroll = el('div', 'lib-scroll');
   const page = el('div', 'lib-page');
@@ -80,7 +83,7 @@ export function libraryController({ command, toast: modeToast }) {
   const tabs = el('div', 'lib-tabs');
   tabs.setAttribute('role', 'group'); tabs.setAttribute('aria-label', 'Show');
   const tabButtons = {};
-  for (const [id, label] of [['all', 'All'], ['deck', 'Decks'], ['doc', 'Docs']]) {
+  for (const [id, label] of [['all', 'All'], ['deck', 'Decks'], ['doc', 'Docs'], ['sheet', 'Sheets']]) {
     const tab = button('lib-tab', null, null);
     tab.dataset.filter = id;
     tab.append(el('span', '', label), el('span', 'lib-tab-count'));
@@ -90,7 +93,7 @@ export function libraryController({ command, toast: modeToast }) {
   head.append(title, counter, el('span', 'spacer'), searchBox, tabs);
   const grid = el('div', 'lib-grid');
   grid.setAttribute('role', 'list');
-  grid.setAttribute('aria-label', 'Decks and docs');
+  grid.setAttribute('aria-label', 'Decks, docs and sheets');
   const empty = el('div', 'lib-empty');
   page.append(head, grid, empty);
   scroll.append(page);
@@ -123,9 +126,10 @@ export function libraryController({ command, toast: modeToast }) {
     if (event.event !== 'Library') command({ command: 'Library' });
   });
   const open = item => { state.awaiting = true; command({ command: 'LibraryOpen', path: item.relative }); };
-  const create = kind => { state.awaiting = true; command({ command: kind === 'deck' ? 'NewDeck' : 'NewDoc', title: 'Untitled' }); };
+  const create = kind => { state.awaiting = true; command({ command: { deck: 'NewDeck', doc: 'NewDoc', sheet: 'NewSheet' }[kind], title: 'Untitled' }); };
   newDeck.addEventListener('click', () => create('deck'));
   newDoc.addEventListener('click', () => create('doc'));
+  newSheet.addEventListener('click', () => create('sheet'));
   openFile.addEventListener('click', () => { state.awaiting = true; command({ command: 'OpenDialog' }); });
   close.addEventListener('click', () => hide());
 
@@ -154,7 +158,7 @@ export function libraryController({ command, toast: modeToast }) {
     return state.items.filter(i => (state.filter === 'all' || i.kind === state.filter) && (!q || i.title.toLowerCase().includes(q)));
   }
   function renderTabs() {
-    const totals = { all: state.items.length, deck: state.items.filter(i => i.kind === 'deck').length, doc: state.items.filter(i => i.kind === 'doc').length };
+    const totals = { all: state.items.length, deck: state.items.filter(i => i.kind === 'deck').length, doc: state.items.filter(i => i.kind === 'doc').length, sheet: state.items.filter(i => i.kind === 'sheet').length };
     for (const [id, tab] of Object.entries(tabButtons)) {
       tab.setAttribute('aria-pressed', String(state.filter === id));
       tab.querySelector('.lib-tab-count').textContent = String(totals[id]);
@@ -170,7 +174,7 @@ export function libraryController({ command, toast: modeToast }) {
     opener.setAttribute('aria-label', `Open ${item.title}, ${KIND_LABEL[item.kind].toLowerCase()}, ${count(item)}, ${ago(item.modified)}`);
     const thumb = el('span', `lib-thumb ${item.kind}`);
     const placeholder = el('span', 'lib-placeholder');
-    placeholder.append(icon(item.kind === 'deck' ? 'file-deck' : 'file-doc'));
+    placeholder.append(icon(KIND_ICON[item.kind]));
     thumb.append(placeholder);
     if (item.thumb) {
       const image = el('img');
@@ -211,13 +215,13 @@ export function libraryController({ command, toast: modeToast }) {
     if (!empty.hidden) {
       if (!total) {
         empty.append(icon('library'), el('h2', '', 'Nothing in your library yet'),
-          el('p', '', 'Decks and docs you make here, or ask nexus to draft in the conversation, collect in this list.'));
+          el('p', '', 'Decks, docs and sheets you make here, or ask nexus to draft in the conversation, collect in this list.'));
         const actions = el('div', 'lib-empty-actions');
         const doc = button('', null, 'file-doc', 'New doc'), deck = button('primary', null, 'plus', 'New deck');
         doc.addEventListener('click', () => create('doc')); deck.addEventListener('click', () => create('deck'));
         actions.append(doc, deck); empty.append(actions);
       } else {
-        const what = state.filter === 'all' ? 'decks or docs' : state.filter === 'deck' ? 'decks' : 'docs';
+        const what = state.filter === 'all' ? 'decks or docs' : `${state.filter}s`;
         const q = state.query.trim();
         empty.append(icon('search'), el('h2', '', q ? `No ${what} match “${q}”` : `No ${what} yet`));
         const reset = button('', null, null, q ? 'Clear search' : 'Show everything');
@@ -289,13 +293,13 @@ export function libraryController({ command, toast: modeToast }) {
     });
     exportRow.setAttribute('aria-haspopup', 'true'); exportRow.setAttribute('aria-expanded', 'false');
     exportRow.append(icon('chevron'));
-    for (const [format, label, hint] of item.kind === 'deck' ? DECK_FORMATS : DOC_FORMATS) {
+    for (const [format, label, hint] of { deck: DECK_FORMATS, doc: DOC_FORMATS, sheet: SHEET_FORMATS }[item.kind]) {
       const r = row(label, null, act(() => exportItem(item, format)), 'sub');
       r.append(el('span', 'lib-hint', hint));
       sub.append(r);
     }
     node.append(
-      row('Open', `file-${item.kind}`, act(() => open(item))),
+      row('Open', KIND_ICON[item.kind], act(() => open(item))),
       row(revealLabel(), 'reveal', act(() => reveal(item))),
       row('Duplicate', 'copy', act(() => duplicate(item))),
       row('Rename', 'rename', act(() => beginRename(item, cardNode))),

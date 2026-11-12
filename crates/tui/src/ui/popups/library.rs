@@ -50,10 +50,13 @@ const DOC_FORMATS: &[(char, &str, &str)] = &[
     ('h', "html", "html"),
 ];
 
+const SHEET_FORMATS: &[(char, &str, &str)] = &[('c', "csv", "csv"), ('x', "xlsx", "xlsx")];
+
 fn formats(kind: Kind) -> &'static [(char, &'static str, &'static str)] {
     match kind {
         Kind::Deck => DECK_FORMATS,
         Kind::Doc => DOC_FORMATS,
+        Kind::Sheet => SHEET_FORMATS,
     }
 }
 
@@ -99,13 +102,14 @@ fn rows(app: &AppView, width: usize) -> Vec<ListItem<'static>> {
         .iter()
         .map(|entry| {
             let tag = match entry.kind {
-                Kind::Deck => "deck",
-                Kind::Doc => "doc ",
+                Kind::Deck => "deck ",
+                Kind::Doc => "doc  ",
+                Kind::Sheet => "sheet",
             };
             let title = Line::from(vec![
                 Span::styled(format!("{tag}  "), dim),
                 Span::styled(
-                    chrome::truncate(&entry.title, width.saturating_sub(6)),
+                    chrome::truncate(&entry.title, width.saturating_sub(7)),
                     Style::default().fg(app.theme.fg),
                 ),
             ]);

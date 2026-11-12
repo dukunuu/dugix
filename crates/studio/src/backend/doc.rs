@@ -150,9 +150,14 @@ impl Backend {
 
     #[must_use]
     pub fn title(&self) -> &str {
-        self.doc
-            .as_ref()
-            .map_or(self.deck.title.as_str(), |s| s.doc.title.as_str())
+        self.sheet.as_ref().map_or_else(
+            || {
+                self.doc
+                    .as_ref()
+                    .map_or(self.deck.title.as_str(), |s| s.doc.title.as_str())
+            },
+            |s| s.sheet.title.as_str(),
+        )
     }
 
     pub(super) fn session(&self) -> Result<&DocSession> {
@@ -311,6 +316,7 @@ impl Backend {
         self.deck_stamp = stamp(&self.path);
         self.load_notes.clear();
         self.import_warnings.clear();
+        self.sheet = None;
         self.doc = Some(DocSession::new(doc));
         self.load_doc_feedback()?;
         self.hello();
@@ -734,13 +740,20 @@ impl Backend {
     /// Switch to another document; `None` when the command is not a switch.
     pub(super) fn switch_document(&mut self, command: &Command) -> Result<Option<Event>> {
         match command {
+            Command::Open { path } if super::sheet::is_sheet_path(path) => {
+                self.open_sheet_file(absolute(path)?)?;
+            }
+            Command::NewSheet { title } => self.new_sheet(title)?,
             Command::Open { path } if is_doc_path(path) => {
                 self.open_doc_file(absolute(path)?)?;
             }
             Command::NewDoc { title } => self.new_doc(title)?,
-            Command::Open { .. } | Command::NewDeck { .. } if self.doc.is_some() => {
+            Command::Open { .. } | Command::NewDeck { .. }
+                if self.doc.is_some() || self.sheet.is_some() =>
+            {
                 // Leaving doc mode: the deck path re-enters it with a clean slate.
                 let leaving = self.doc.take();
+                let leaving_sheet = self.sheet.take();
                 let result = match command {
                     Command::Open { path } => self.open_path(absolute(path)?),
                     Command::NewDeck { title } => self.new_deck_file(title),
@@ -748,12 +761,15 @@ impl Backend {
                 };
                 if let Err(error) = result {
                     self.doc = leaving;
+                    self.sheet = leaving_sheet;
                     return Err(error);
                 }
             }
             _ => return Ok(None),
         }
-        self.known_revision = if let Some(session) = &self.doc {
+        self.known_revision = if let Some(session) = &self.sheet {
+            session.sheet.revision()
+        } else if let Some(session) = &self.doc {
             session.doc.revision()
         } else {
             self.deck.revision()

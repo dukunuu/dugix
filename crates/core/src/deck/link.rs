@@ -9,7 +9,7 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
-pub const VERSION: u8 = 2;
+pub const VERSION: u8 = 3;
 
 /// What a message is about: a slide deck or a flowing document.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -17,6 +17,7 @@ pub const VERSION: u8 = 2;
 pub enum Kind {
     Deck,
     Doc,
+    Sheet,
 }
 
 impl Kind {
@@ -29,6 +30,12 @@ impl Kind {
             .is_some_and(|name| name.ends_with(".doc.json"))
         {
             Self::Doc
+        } else if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".sheet.json"))
+        {
+            Self::Sheet
         } else {
             Self::Deck
         }
@@ -72,6 +79,19 @@ pub enum Message {
         range: Option<crate::doc::feedback::Range>,
         quote: String,
         text: String,
+    },
+    SheetComment {
+        path: PathBuf,
+        thread: String,
+        tab: String,
+        range: String,
+        quote: String,
+        text: String,
+    },
+    SheetFocus {
+        path: PathBuf,
+        tab: String,
+        range: String,
     },
     Reply {
         #[serde(rename = "path", alias = "deck_path")]
@@ -159,6 +179,7 @@ impl Message {
             | Self::DocFocus { deck_path, .. }
             | Self::Open { deck_path }
             | Self::Activity { deck_path, .. } => Some(deck_path),
+            Self::SheetComment { path, .. } | Self::SheetFocus { path, .. } => Some(path),
             Self::Theme { .. } | Self::Bye => None,
         }
     }
@@ -168,6 +189,7 @@ impl Message {
     pub fn kind(&self) -> Option<Kind> {
         match self {
             Self::DocComment { .. } | Self::DocFocus { .. } => Some(Kind::Doc),
+            Self::SheetComment { .. } | Self::SheetFocus { .. } => Some(Kind::Sheet),
             Self::Comment { .. } | Self::Focus { .. } => Some(Kind::Deck),
             other => other.path().map(Kind::of_path),
         }
@@ -178,6 +200,28 @@ impl Message {
             ensure!(path.as_os_str().len() <= 4096, "link path too long");
         }
         match self {
+            Self::SheetComment {
+                thread,
+                tab,
+                range,
+                quote,
+                text,
+                ..
+            } => {
+                ensure!(
+                    thread.chars().count() <= 128 && tab.chars().count() <= 128,
+                    "comment id too long"
+                );
+                let _: crate::sheet::address::Range = range.parse()?;
+                ensure!(
+                    quote.chars().count() <= 2000 && text.chars().count() <= 2000,
+                    "comment too long"
+                );
+            }
+            Self::SheetFocus { tab, range, .. } => {
+                ensure!(tab.chars().count() <= 128, "focus tab too long");
+                let _: crate::sheet::address::Range = range.parse()?;
+            }
             Self::Activity {
                 thread_id, detail, ..
             } => {
@@ -229,15 +273,20 @@ impl Line {
             message,
         })?;
         // The doc payloads are the `Comment` and `Focus` of a doc envelope.
-        let line = [("DocComment", "Comment"), ("DocFocus", "Focus")]
-            .iter()
-            .fold(line, |line, (rust, wire)| {
-                line.replacen(
-                    &format!("\"type\":\"{rust}\""),
-                    &format!("\"type\":\"{wire}\""),
-                    1,
-                )
-            });
+        let line = [
+            ("DocComment", "Comment"),
+            ("DocFocus", "Focus"),
+            ("SheetComment", "Comment"),
+            ("SheetFocus", "Focus"),
+        ]
+        .iter()
+        .fold(line, |line, (rust, wire)| {
+            line.replacen(
+                &format!("\"type\":\"{rust}\""),
+                &format!("\"type\":\"{wire}\""),
+                1,
+            )
+        });
         Ok(line + "\n")
     }
 
@@ -255,11 +304,14 @@ impl Line {
             ),
             None => anyhow::bail!("link message has no version"),
         }
-        if value.get("kind").and_then(serde_json::Value::as_str) == Some("doc") {
+        let kind = value.get("kind").and_then(serde_json::Value::as_str);
+        if matches!(kind, Some("doc" | "sheet")) {
             let wire = value.get("type").and_then(serde_json::Value::as_str);
-            let rust = match wire {
-                Some("Comment") => Some("DocComment"),
-                Some("Focus") => Some("DocFocus"),
+            let rust = match (kind, wire) {
+                (Some("doc"), Some("Comment")) => Some("DocComment"),
+                (Some("doc"), Some("Focus")) => Some("DocFocus"),
+                (Some("sheet"), Some("Comment")) => Some("SheetComment"),
+                (Some("sheet"), Some("Focus")) => Some("SheetFocus"),
                 _ => None,
             };
             if let Some(rust) = rust {
@@ -333,7 +385,7 @@ mod tests {
             let line = Line::encode(message.clone()).unwrap();
             assert_eq!(Line::decode(&line).unwrap(), message);
         }
-        let future = r#"{"version":2,"type":"Activity","deck_path":"a","thread_id":"t","state":"thinking","detail":"future"}"#;
+        let future = r#"{"version":3,"type":"Activity","deck_path":"a","thread_id":"t","state":"thinking","detail":"future"}"#;
         assert!(matches!(
             Line::decode(future).unwrap(),
             Message::Activity {
@@ -380,14 +432,14 @@ mod tests {
             let line = Line::encode(message.clone()).unwrap();
             assert_eq!(line.lines().count(), 1);
             assert_eq!(Line::decode(&line).unwrap(), message);
-            assert!(Line::decode(&line.replace("\"version\":2", "\"version\":1")).is_err());
+            assert!(Line::decode(&line.replace("\"version\":3", "\"version\":2")).is_err());
         }
     }
 
     #[test]
     fn lines_are_tagged_bounded_and_strict() {
         let line = Line::encode(Message::Bye).unwrap();
-        assert_eq!(line, "{\"version\":2,\"type\":\"Bye\"}\n");
+        assert_eq!(line, "{\"version\":3,\"type\":\"Bye\"}\n");
         let comment = Line::encode(Message::Comment {
             deck_path: "decks/a.deck.json".into(),
             thread_id: "t".into(),
@@ -408,7 +460,7 @@ mod tests {
             assert!(Line::decode(bad).is_err(), "{bad}");
         }
         let huge = format!(
-            "{{\"version\":2,\"type\":\"Reply\",\"deck_path\":\"a\",\"thread_id\":\"t\",\"text\":\"{}\"}}",
+            "{{\"version\":3,\"type\":\"Reply\",\"deck_path\":\"a\",\"thread_id\":\"t\",\"text\":\"{}\"}}",
             "x".repeat(70_000)
         );
         assert!(Line::decode(&huge).is_err());
@@ -422,7 +474,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             hello,
-            "{\"version\":2,\"kind\":\"deck\",\"type\":\"Hello\",\"path\":\"decks/a.deck.json\"}\n"
+            "{\"version\":3,\"kind\":\"deck\",\"type\":\"Hello\",\"path\":\"decks/a.deck.json\"}\n"
         );
         let open = Line::encode(Message::Open {
             deck_path: "docs/q3.doc.json".into(),
@@ -436,7 +488,7 @@ mod tests {
 
     #[test]
     fn the_old_path_name_is_still_accepted_on_input() {
-        let line = r#"{"version":2,"kind":"deck","type":"Open","deck_path":"decks/a.deck.json"}"#;
+        let line = r#"{"version":3,"kind":"deck","type":"Open","deck_path":"decks/a.deck.json"}"#;
         assert_eq!(
             Line::decode(line).unwrap(),
             Message::Open {
@@ -444,9 +496,9 @@ mod tests {
             }
         );
         // Both spellings of a missing kind are fine; a wrong one is not.
-        let bare = r#"{"version":2,"type":"Hello","path":"docs/a.doc.json"}"#;
+        let bare = r#"{"version":3,"type":"Hello","path":"docs/a.doc.json"}"#;
         assert!(Line::decode(bare).is_ok());
-        let wrong = r#"{"version":2,"kind":"deck","type":"Hello","path":"docs/a.doc.json"}"#;
+        let wrong = r#"{"version":3,"kind":"deck","type":"Hello","path":"docs/a.doc.json"}"#;
         assert!(
             Line::decode(wrong)
                 .unwrap_err()
@@ -507,7 +559,7 @@ mod tests {
             assert_eq!(Line::decode(&line).unwrap(), focus);
         }
         // A deck comment keeps its slide and point.
-        let deck = r#"{"version":2,"kind":"deck","type":"Comment","path":"decks/a.deck.json","thread_id":"t","slide":"s1","block":null,"point":[1,2],"text":"x"}"#;
+        let deck = r#"{"version":3,"kind":"deck","type":"Comment","path":"decks/a.deck.json","thread_id":"t","slide":"s1","block":null,"point":[1,2],"text":"x"}"#;
         assert!(matches!(
             Line::decode(deck).unwrap(),
             Message::Comment { .. }
@@ -524,11 +576,36 @@ mod tests {
     }
 
     #[test]
+    fn sheet_comments_and_focus_use_sheet_envelopes() {
+        for message in [
+            Message::SheetComment {
+                path: "sheets/a.sheet.json".into(),
+                thread: "t".into(),
+                tab: "Sheet1".into(),
+                range: "B4:C9".into(),
+                quote: "42".into(),
+                text: "Check this\nplease".into(),
+            },
+            Message::SheetFocus {
+                path: "sheets/a.sheet.json".into(),
+                tab: "Sheet1".into(),
+                range: "B2:C5".into(),
+            },
+        ] {
+            let line = Line::encode(message.clone()).unwrap();
+            assert!(line.contains("\"kind\":\"sheet\""));
+            assert!(!line.contains("SheetComment") && !line.contains("SheetFocus"));
+            assert_eq!(Line::decode(&line).unwrap(), message);
+        }
+        assert!(Line::decode(r#"{"version":2,"kind":"sheet","type":"Focus","path":"a.sheet.json","tab":"Sheet1","range":"B4"}"#).unwrap_err().to_string().contains("update nexus-studio"));
+    }
+
+    #[test]
     fn a_peer_on_another_version_is_told_to_update() {
-        let old = r#"{"version":1,"type":"Hello","deck_path":"decks/a.deck.json"}"#;
+        let old = r#"{"version":2,"type":"Hello","deck_path":"decks/a.deck.json"}"#;
         let error = Line::decode(old).unwrap_err().to_string();
         assert!(error.contains("update nexus-studio"), "{error}");
-        let new = r#"{"version":3,"type":"Bye"}"#;
+        let new = r#"{"version":4,"type":"Bye"}"#;
         let error = Line::decode(new).unwrap_err().to_string();
         assert!(
             error.contains("update nexus") && !error.contains("nexus-studio"),

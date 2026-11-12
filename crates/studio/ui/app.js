@@ -48,7 +48,7 @@ function pump() {
 }
 function command(build, complete) { queue.push({ build:typeof build === 'function' ? build : () => build, complete, barrier:typeof build === 'function' || !['Focus','ListFonts','Load'].includes(build.command) }); pump(); }
 // The library sends through whichever mode is live (doc mode has its own queue).
-const library = libraryController({ command:(cmd, complete) => (docUi ? docUi.api.command(cmd, complete) : command(cmd, complete)), toast });
+const library = libraryController({ command:(cmd, complete) => ((docUi || sheetUi) ? (docUi || sheetUi).api.command(cmd, complete) : command(cmd, complete)), toast });
 let gesture, authoritative;
 function rollback() {
   gesture = null; state.scrubbing = false;
@@ -227,25 +227,36 @@ function handleEvent(event, reply) {
   }
   finished?.complete?.(event); pump();
 }
-// Doc mode lives in ./doc/doc.js, loaded when the backend opens a doc. Its
-// events go there; a deck event brings the deck UI back.
+// Doc mode lives in ./doc/doc.js and sheet mode in ./sheet/sheet.js, each loaded when the
+// backend opens a file of that kind. Their events go there; a deck event brings the deck UI back.
 const DOC_EVENTS = new Set(['Doc', 'DocFeedback', 'DocPreview', 'DocFocus', 'Pages', 'Highlights', 'DocSource']);
+const SHEET_EVENTS = new Set(['Sheet', 'SheetValues', 'SheetFeedback', 'SheetFocus']);
 const SHARED_EVENTS = new Set(['Asset', 'Exported', 'Saved', 'Revealed', 'Error', 'Theme', 'Designs', 'TemplateImported', 'Library', 'Idle', 'History', 'HistoryPreview']);
-let docUi = null, docQueue = Promise.resolve();
+let docUi = null, sheetUi = null, docQueue = Promise.resolve();
+function leaveDoc() { docUi?.unmount(); docUi = null; document.body.classList.remove('doc-mode'); }
+function leaveSheet() { sheetUi?.unmount(); sheetUi = null; document.body.classList.remove('sheet-mode'); }
 function route(event, reply) {
-  if (docUi && event.event === 'Deck') {
-    docQueue = docQueue.then(() => { docUi?.unmount(); docUi = null; document.body.classList.remove('doc-mode'); handleEvent(event, reply); });
+  if ((docUi || sheetUi) && event.event === 'Deck') {
+    docQueue = docQueue.then(() => { leaveDoc(); leaveSheet(); handleEvent(event, reply); });
     return;
   }
-  if (DOC_EVENTS.has(event.event) || (docUi && SHARED_EVENTS.has(event.event))) {
+  const isDoc = DOC_EVENTS.has(event.event), isSheet = SHEET_EVENTS.has(event.event);
+  if (isDoc || isSheet || ((docUi || sheetUi) && SHARED_EVENTS.has(event.event))) {
     if (reply) pending = null;
     docQueue = docQueue.then(async () => {
-      if (!docUi) {
+      if (isDoc && sheetUi) leaveSheet();
+      if (isSheet && docUi) leaveDoc();
+      if (isDoc && !docUi) {
         const module = await import('./doc/doc.js');
         docUi = module.mount({ applyTheme, ask, library });
         document.body.classList.add('doc-mode');
       }
-      docUi.handle(event, reply);
+      if (isSheet && !sheetUi) {
+        const module = await import('./sheet/sheet.js');
+        sheetUi = module.mount({ applyTheme, ask, library });
+        document.body.classList.add('sheet-mode');
+      }
+      (docUi || sheetUi).handle(event, reply);
     });
     return;
   }
@@ -434,6 +445,7 @@ pathDialog.addEventListener('close', () => { if (pathDialog.returnValue === 'ok'
 $('#rename-deck').onclick = () => { deckMenu(false); ask('Rename deck', 'Title', 'Give this project a name.', state.deck.title, value => { const title = value.trim(); if (title) command(() => ({ command:'Save', deck:{ ...state.deck, title } })); }); };
 $('#open-deck').onclick = () => { deckMenu(false); command({ command:'OpenDialog' }); };
 $('#new-doc').onclick = () => { deckMenu(false); ask('New doc', 'Title', 'Created in your active space’s files/docs folder.', 'Untitled', title => command({ command:'NewDoc', title })); };
+$('#new-sheet').onclick = () => { deckMenu(false); ask('New sheet', 'Title', 'Created in your active space’s files/sheets folder.', 'Untitled', title => command({ command:'NewSheet', title })); };
 $('#save-copy').onclick = () => { deckMenu(false); command({ command:'SaveCopy' }); };
 $('#open-library').onclick = () => library.show();
 $('#new-deck').onclick = () => { deckMenu(false); ask('New deck', 'Title', 'Created in your active space’s files/decks folder.', 'Untitled', title => command({ command:'NewDeck', title })); };
@@ -451,7 +463,7 @@ let plainFile = false;
 const quickExport = () => { try { return localStorage.getItem('nexus-quick-export') === '1'; } catch { return false; } };
 const exportCommand = format => ({ command:quickExport() ? 'Export' : 'ExportAs', format, ...(plainFile ? { template:'none' } : {}) });
 $('#add-template').onclick = () => chooseTemplate(command);
-templateDrop(command, toast, undefined, () => !docUi);
+templateDrop(command, toast, undefined, () => !docUi && !sheetUi);
 $('#export-template').onclick = () => { plainFile = !plainFile; $('#export-template').setAttribute('aria-checked', String(state.template && !plainFile)); };
 $('#export-quick').onclick = () => { try { localStorage.setItem('nexus-quick-export', quickExport() ? '0' : '1'); } catch { /* storage may be unavailable */ } syncQuick(); };
 function syncQuick() { $('#export-quick').setAttribute('aria-checked', String(quickExport())); }
@@ -476,7 +488,7 @@ document.addEventListener('keydown', event => {
   } else if (event.key === 'Tab') exportMenu(false);
 });
 document.addEventListener('keydown', event => {
-  if (docUi) return; // doc mode has its own keys
+  if (docUi || sheetUi) return; // doc and sheet modes have their own keys
   if (playback.key(event)) return;
   const key = event.key.toLowerCase(), mod = event.metaKey || event.ctrlKey, editingField = event.target.closest('input,textarea,select,[contenteditable]');
   if (mod && key === '\\') { event.preventDefault(); if (event.shiftKey) toggleLeft(); else properties(); return; }

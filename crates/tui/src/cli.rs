@@ -361,8 +361,8 @@ pub enum Command {
     },
     /// List the decks and docs of the active space, newest first.
     Library {
-        /// Only decks or only docs.
-        #[arg(long, value_parser = ["deck", "doc"])]
+        /// Only decks, docs or sheets.
+        #[arg(long, value_parser = ["deck", "doc", "sheet"])]
         kind: Option<String>,
         /// Emit JSON instead of the human-readable list.
         #[arg(long)]

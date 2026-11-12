@@ -10,7 +10,8 @@ fn wanted(kind: Option<&str>) -> Result<Option<Kind>> {
         None => None,
         Some("deck") => Some(Kind::Deck),
         Some("doc") => Some(Kind::Doc),
-        Some(other) => anyhow::bail!("--kind is deck or doc, not {other:?}"),
+        Some("sheet") => Some(Kind::Sheet),
+        Some(other) => anyhow::bail!("--kind is deck, doc or sheet, not {other:?}"),
     })
 }
 
@@ -41,10 +42,11 @@ pub fn lines(
         .iter()
         .map(|entry| {
             format!(
-                "{:<4}  {:<path_width$}  {:>10}  {:>14}  {}",
+                "{:<5}  {:<path_width$}  {:>10}  {:>14}  {}",
                 match entry.kind {
                     Kind::Deck => "deck",
                     Kind::Doc => "doc",
+                    Kind::Sheet => "sheet",
                 },
                 entry.relative,
                 entry.count_label(),
@@ -125,9 +127,9 @@ mod tests {
         assert_eq!(
             text,
             [
-                "doc   docs/memo.doc.json           2 blocks    1 minute ago  Q3 memo",
-                "deck  decks/launch.deck.json        1 slide     3 hours ago  Launch review",
-                "deck  decks/talks/old.deck.json     1 slide      9 days ago  Old talk",
+                "doc    docs/memo.doc.json           2 blocks    1 minute ago  Q3 memo",
+                "deck   decks/launch.deck.json        1 slide     3 hours ago  Launch review",
+                "deck   decks/talks/old.deck.json     1 slide      9 days ago  Old talk",
             ]
         );
     }

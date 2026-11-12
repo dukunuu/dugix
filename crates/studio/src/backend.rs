@@ -24,6 +24,7 @@ mod fonts;
 mod highlight;
 mod history;
 mod library;
+mod sheet;
 pub use library::Answer;
 mod templates;
 use nexus_core::deck::link::{ActivityState, Message as LinkMessage};
@@ -116,6 +117,31 @@ pub enum Command {
     DismissEdit {
         owner: String,
         edit: String,
+    },
+    NewSheet {
+        title: String,
+    },
+    SheetApply {
+        ops: Vec<serde_json::Value>,
+    },
+    SheetValues {
+        tab: String,
+        range: String,
+    },
+    SheetCommentCreate {
+        tab: String,
+        range: String,
+        text: String,
+        send: bool,
+    },
+    SheetFocus {
+        tab: String,
+        range: String,
+    },
+    SheetExport {
+        format: String,
+        path: Option<PathBuf>,
+        tab: Option<String>,
     },
     NewDoc {
         title: String,
@@ -234,6 +260,35 @@ pub enum Event {
     Focus {
         slide: String,
     },
+    Sheet {
+        sheet: nexus_core::sheet::Sheet,
+        revision: String,
+        relative: String,
+        values: Vec<sheet::CellValue>,
+        threads: Vec<nexus_core::sheet::feedback::Thread>,
+        linked: bool,
+        activities: BTreeMap<String, ThreadActivity>,
+        changed: Vec<String>,
+        notice: Option<String>,
+        colors: ThemeColors,
+        can_undo: bool,
+        can_redo: bool,
+        home: bool,
+    },
+    SheetValues {
+        tab: String,
+        range: String,
+        values: Vec<sheet::CellValue>,
+    },
+    SheetFeedback {
+        threads: Vec<nexus_core::sheet::feedback::Thread>,
+        activities: BTreeMap<String, ThreadActivity>,
+        notes: Vec<String>,
+    },
+    SheetFocus {
+        tab: String,
+        range: String,
+    },
     Doc {
         doc: nexus_core::doc::Doc,
         colors: ThemeColors,
@@ -314,6 +369,7 @@ pub enum Event {
         id: String,
         deck: Option<Deck>,
         doc: Option<nexus_core::doc::Doc>,
+        sheet: Option<nexus_core::sheet::Sheet>,
     },
     DocSource {
         markdown: String,
@@ -349,6 +405,7 @@ pub struct Backend {
     pub deck: Deck,
     /// Set while a doc is open; `deck` is then a placeholder.
     doc: Option<doc::DocSession>,
+    sheet: Option<sheet::SheetSession>,
     path: PathBuf,
     files_dir: PathBuf,
     recent: PathBuf,
@@ -406,6 +463,7 @@ impl Backend {
         let no_path_given = path.is_none();
         let chosen = path.or(remembered.as_deref());
         let opens_doc = chosen.is_some_and(doc::is_doc_path);
+        let opens_sheet = chosen.is_some_and(sheet::is_sheet_path);
         let path = match chosen {
             Some(path) if opens_doc => absolute(path)?,
             Some(path) if is_pptx(path) => {
@@ -417,7 +475,7 @@ impl Backend {
             Some(path) => absolute(path)?,
             None => new_path(files_dir)?,
         };
-        let (deck, load_notes) = if path.exists() && !opens_doc {
+        let (deck, load_notes) = if path.exists() && !opens_doc && !opens_sheet {
             read_deck_noted(&path)?
         } else {
             (Deck::new_from_layouts("Untitled"), Vec::new())
@@ -426,6 +484,7 @@ impl Backend {
             fetcher: Fetcher::new(asset_root(&path)?),
             deck,
             doc: None,
+            sheet: None,
             path,
             files_dir: files_dir.into(),
             recent,
@@ -450,6 +509,10 @@ impl Backend {
             listing: std::cell::RefCell::default(),
             doc_notice: std::cell::RefCell::default(),
         };
+        if opens_sheet {
+            backend.open_sheet_file(backend.path.clone())?;
+            return Ok(backend);
+        }
         if opens_doc {
             let doc = if backend.path.exists() {
                 doc::read_doc(&backend.path)?
@@ -474,6 +537,9 @@ impl Backend {
     }
 
     pub fn event(&self) -> Event {
+        if self.sheet.is_some() {
+            return self.sheet_event();
+        }
         if self.doc.is_some() {
             return self.doc_event();
         }
@@ -592,13 +658,17 @@ impl Backend {
             // The file wins: when the deck changed under the page, show that
             // instead of applying an edit made against the old one. Doc requests
             // that only report leave the file check to the 500 ms poll.
-            let guarded = self.doc.is_none()
+            let guarded = (self.doc.is_none() && self.sheet.is_none())
                 || Self::doc_mutates(&command)
+                || Self::sheet_mutates(&command)
                 || matches!(command, Command::Load {});
             if guarded && let (Some(mut event), true) = self.sync()? {
                 match &mut event {
                     Event::Deck { notice, .. } if !matches!(command, Command::Load {}) => {
                         *notice = Some("The deck changed on disk first, so your last action was not applied. Undo takes the change back.".into());
+                    }
+                    Event::Sheet { notice, .. } if Self::sheet_mutates(&command) => {
+                        *notice = Some("The sheet changed on disk first, so your last action was not applied. Undo takes the change back.".into());
                     }
                     Event::Doc { notice, .. } if Self::doc_mutates(&command) => {
                         *notice = Some("The doc changed on disk first, so your last action was not applied. Undo takes the change back.".into());
@@ -641,6 +711,15 @@ impl Backend {
         if let Some(event) = self.switch_document(&command)? {
             return Ok(event);
         }
+        if self.sheet.is_some()
+            && !matches!(
+                command,
+                Command::History {} | Command::HistoryPreview { .. }
+            )
+        {
+            return self.sheet_execute(command);
+        }
+        Self::refuse_sheet_command(&command)?;
         match &command {
             Command::Highlight { blocks } => {
                 return Ok(Event::Highlights {
@@ -808,6 +887,9 @@ impl Backend {
 
     /// What changed on disk, and whether the deck itself was reloaded.
     fn sync(&mut self) -> Result<(Option<Event>, bool)> {
+        if self.sheet.is_some() {
+            return self.sheet_sync();
+        }
         if self.doc.is_some() {
             return self.doc_sync();
         }
@@ -899,6 +981,11 @@ impl Backend {
                 }
                 Ok(self.event())
             }
+            LinkMessage::SheetFocus { path, tab, range }
+                if self.sheet.is_some() && same_file(&path, &self.path) =>
+            {
+                Ok(Event::SheetFocus { tab, range })
+            }
             message @ LinkMessage::DocFocus { .. } if self.doc.is_some() => {
                 Ok(self.doc_receive_link(&message))
             }
@@ -972,6 +1059,8 @@ impl Backend {
         atomic_write(&self.recent, &serde_json::to_vec(&path)?)?;
         self.path = path;
         self.deck = deck;
+        self.doc = None;
+        self.sheet = None;
         self.fetcher = Fetcher::new(root);
         self.known_revision = self.deck.revision();
         self.undo.clear();
@@ -1341,6 +1430,24 @@ fn embedded(path: &str) -> Option<(&'static str, &'static str)> {
         "/doc/syntax.js" => ("text/javascript", include_str!("../ui/doc/syntax.js")),
         "/doc/source.js" => ("text/javascript", include_str!("../ui/doc/source.js")),
         "/doc/vim.js" => ("text/javascript", include_str!("../ui/doc/vim.js")),
+        "/popup.js" => ("text/javascript", include_str!("../ui/popup.js")),
+        "/threads.js" => ("text/javascript", include_str!("../ui/threads.js")),
+        "/sheet/sheet.css" => (
+            "text/css; charset=utf-8",
+            include_str!("../ui/sheet/sheet.css"),
+        ),
+        "/sheet/sheet.js" => ("text/javascript", include_str!("../ui/sheet/sheet.js")),
+        "/sheet/model.js" => ("text/javascript", include_str!("../ui/sheet/model.js")),
+        "/sheet/keys.js" => ("text/javascript", include_str!("../ui/sheet/keys.js")),
+        "/sheet/grid.js" => ("text/javascript", include_str!("../ui/sheet/grid.js")),
+        "/sheet/interact.js" => ("text/javascript", include_str!("../ui/sheet/interact.js")),
+        "/sheet/editor.js" => ("text/javascript", include_str!("../ui/sheet/editor.js")),
+        "/sheet/menus.js" => ("text/javascript", include_str!("../ui/sheet/menus.js")),
+        "/sheet/clipboard.js" => ("text/javascript", include_str!("../ui/sheet/clipboard.js")),
+        "/sheet/toolbar.js" => ("text/javascript", include_str!("../ui/sheet/toolbar.js")),
+        "/sheet/tabs.js" => ("text/javascript", include_str!("../ui/sheet/tabs.js")),
+        "/sheet/comments.js" => ("text/javascript", include_str!("../ui/sheet/comments.js")),
+        "/sheet/glyphs.js" => ("text/javascript", include_str!("../ui/sheet/glyphs.js")),
         _ => return None,
     })
 }
@@ -1355,6 +1462,8 @@ mod doc_tests;
 mod font_tests;
 #[cfg(test)]
 mod library_tests;
+#[cfg(test)]
+mod sheet_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

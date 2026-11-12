@@ -3,6 +3,47 @@ use super::tests::Fixture;
 use super::*;
 use crate::sheet::{self, Sheet, ValueKind, Workbook};
 
+#[tokio::test]
+async fn sheets_comments_suggestions_replies_and_resolve_are_listed_on_read() {
+    let f = Fixture::new();
+    create(&f).await;
+    edit(
+        &f,
+        json!([{"op":"set_cells","tab":"Sheet1","at":"B4","values":[["=2+3"]]}]),
+    )
+    .await;
+    let result = call(&f, "comment", json!({"path":PATH,"range":"B4","text":"Check this\nMore detail", "ops":[{"op":"set_cells","tab":"Sheet1","at":"B4","values":[["6"]]}]})).await;
+    assert!(result.contains("commented"), "{result}");
+    let path = f.file(PATH);
+    let threads = sheet::feedback::load(&path).unwrap();
+    let thread = &threads[0];
+    assert_eq!(thread.anchor.quote, "5");
+    assert_eq!(thread.anchor.range, "B4");
+    assert_eq!(thread.messages[0].edits.len(), 1);
+    assert_eq!(load(&f).tabs[0].cells["B4"].input, "=2+3");
+    let read = call(&f, "read", json!({"path":PATH})).await;
+    assert!(
+        read.contains(&thread.id) && read.contains("Sheet1!B4") && read.contains("Check this"),
+        "{read}"
+    );
+    let reply = call(
+        &f,
+        "comment",
+        json!({"path":PATH,"thread":thread.id,"text":"Reviewed"}),
+    )
+    .await;
+    assert!(reply.contains("commented"), "{reply}");
+    assert_eq!(sheet::feedback::load(&path).unwrap()[0].messages.len(), 2);
+    let resolved = call(&f, "resolve", json!({"path":PATH,"thread":thread.id})).await;
+    assert!(resolved.contains("resolved thread"), "{resolved}");
+    assert!(sheet::feedback::load(&path).unwrap()[0].resolved.is_some());
+    assert!(
+        !call(&f, "read", json!({"path":PATH}))
+            .await
+            .contains(&thread.id)
+    );
+}
+
 const PATH: &str = "sheets/q3-budget.sheet.json";
 
 async fn call(f: &Fixture, action: &str, mut v: Value) -> String {
@@ -288,13 +329,11 @@ async fn sheets_history_export_and_unavailable_actions() {
     .await;
     assert!(restored.starts_with("restored"), "{restored}");
     assert_eq!(load(&f), base);
-    for action in ["comment", "resolve", "fonts"] {
-        let error = call(
-            &f,
-            action,
-            json!({"path":PATH,"text":"review","thread":"t1"}),
-        )
-        .await;
-        assert!(error.contains("not available for sheets yet"), "{error}");
-    }
+    let error = call(
+        &f,
+        "fonts",
+        json!({"path":PATH,"text":"review","thread":"t1"}),
+    )
+    .await;
+    assert!(error.contains("not available for sheets yet"), "{error}");
 }
