@@ -87,7 +87,6 @@ pub use snapshot::{
 };
 pub use subagents::{SubagentRow, SubagentRun, SubagentStatus};
 pub use swarm::{SwarmUpdate, parse_persona_editor};
-pub use watches::due_watches;
 
 #[cfg(test)]
 use chat::split_inline_reasoning;
@@ -301,7 +300,6 @@ pub enum Popup {
     Files,
     Apps,
     InteractiveUi,
-    Watch,
     ResearchLive,
     Swarm,
     Connectors,
@@ -338,12 +336,6 @@ pub enum AppsMode {
     ConfirmDelete,
     EditFile,
     RenamePanel,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum WatchMode {
-    Browse,
-    ConfirmDelete,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]

@@ -11,7 +11,7 @@ use tui_textarea::TextArea;
 use nexus_core::app::{
     App, AppEvent, AppsMode, CopyOption, FilesMode, FilesTab, ImagesMode, KeyTarget, ModelPanel,
     MouseTarget, PendingEditor, Popup, ScriptsMode, SessionMode, SettingsField, SkillsMode,
-    SpaceMode, SwarmPopupMode, WatchMode,
+    SpaceMode, SwarmPopupMode,
 };
 use nexus_core::db::Space as SpaceRow;
 use nexus_core::provider::BackendTag;
@@ -252,8 +252,6 @@ pub struct AppView {
     pub apps_mode: AppsMode,
     pub apps_edit: String,
     pub pinned_apps: Vec<nexus_core::panels::Pinned>,
-    pub watch_selected: usize,
-    pub watch_mode: WatchMode,
     pub swarm_selected: usize,
     pub swarm_popup_mode: SwarmPopupMode,
     pub skills_mode: SkillsMode,
@@ -482,8 +480,6 @@ impl AppView {
             apps_mode: AppsMode::Browse,
             apps_edit: String::new(),
             pinned_apps: Vec::new(),
-            watch_selected: 0,
-            watch_mode: WatchMode::Browse,
             swarm_selected: 0,
             swarm_popup_mode: SwarmPopupMode::Browse,
             skills_mode: SkillsMode::Browse,

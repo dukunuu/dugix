@@ -23,7 +23,6 @@ pub mod space;
 pub mod subagents;
 pub mod swarm;
 pub mod usage;
-pub mod watches;
 
 #[cfg(test)]
 mod library_tests;

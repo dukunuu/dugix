@@ -1,4 +1,4 @@
-//! `nexus chat`, `nexus research`, `nexus jobs` and `nexus watch`.
+//! `nexus chat`, `nexus research` and `nexus jobs`.
 
 use anyhow::{Context as _, Result, bail};
 
@@ -7,7 +7,7 @@ use nexus_core::db;
 use nexus_core::space;
 
 use super::ask::build_app;
-use super::{JobsCmd, WatchCmd, out, short_id, truncate};
+use super::{JobsCmd, out, short_id};
 
 pub(super) async fn chat(
     model: Option<String>,
@@ -137,69 +137,6 @@ pub(super) async fn jobs(cmd: JobsCmd) -> Result<()> {
             }
         }
         JobsCmd::Daemon => jobs::daemon(&mut build_app(None, None).await?).await?,
-    }
-    Ok(())
-}
-
-pub(super) async fn watch(cmd: WatchCmd) -> Result<()> {
-    match cmd {
-        WatchCmd::List => watch_list(),
-        WatchCmd::Run { watch, all } => watch_run(watch.as_deref(), all).await,
-    }
-}
-
-fn watch_list() -> Result<()> {
-    let space = space::Space::open()?;
-    let db = db::Db::open(&space.db_path())?;
-    let watches = db.list_all_watches()?;
-    if watches.is_empty() {
-        out("no watches yet — create one in the TUI with /watches");
-        return Ok(());
-    }
-    let spaces = db.list_spaces()?;
-    let now = chrono::Utc::now();
-    for w in watches {
-        let space_name = spaces
-            .iter()
-            .find(|s| s.id == w.space_id)
-            .map_or("?", |s| s.name.as_str());
-        let due = match &w.last_run_at {
-            None => "due now (never run)".to_string(),
-            Some(t) => {
-                let next = chrono::DateTime::parse_from_rfc3339(t).map_or(now, |last| {
-                    last.with_timezone(&chrono::Utc) + chrono::Duration::hours(w.interval_hours)
-                });
-                if next <= now {
-                    "due now".to_string()
-                } else {
-                    format!("next {}", next.format("%Y-%m-%d %H:%M"))
-                }
-            }
-        };
-        out(format!(
-            "{:<10} {:<8} {:<32} every {:>3}h  {:<19}  session {}",
-            short_id(&w.id),
-            truncate(space_name, 8),
-            truncate(&w.topic, 32),
-            w.interval_hours,
-            due,
-            short_id(&w.session_id),
-        ));
-    }
-    Ok(())
-}
-
-async fn watch_run(watch_ref: Option<&str>, all: bool) -> Result<()> {
-    let mut app = build_app(None, None).await?;
-    let ran = app.watch_run_headless(watch_ref, all, false).await?;
-    for (topic, outcome) in ran {
-        out(format!("\n## {topic}\n"));
-        out(outcome.report);
-        eprintln!(
-            "watch \"{topic}\" → session {} (id {})",
-            outcome.session_title,
-            short_id(&outcome.session_id)
-        );
     }
     Ok(())
 }

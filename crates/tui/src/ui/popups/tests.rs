@@ -1406,80 +1406,6 @@ mod usage_render_tests {
     }
 }
 
-/// Watch-picker key-flow tests: TUI keys (ui/popups/watches.rs) driving core
-/// state through the popup.
-mod watch_popup_tests {
-    use crate::app_view::AppView;
-    use nexus_core::app::{App, WatchMode};
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
-
-    fn test_space() -> Space {
-        Space {
-            root: std::env::temp_dir().join(format!("nexus-watch-test-{}", uuid::Uuid::new_v4())),
-        }
-    }
-
-    #[test]
-    fn watch_picker_ctrl_d_confirms_with_a_second_press() {
-        let db = Db::open_in_memory().unwrap();
-        let mut a = AppView::new(App::new(db, Some("k"), test_space()));
-        let space = a.active_space.id.clone();
-        let session = a.db.create_session("watch", "a/b", &space, "chat").unwrap();
-        let _ =
-            a.db.create_watch(&space, "rust async", 24, &session.id)
-                .unwrap();
-        a.open_watch_picker().unwrap();
-
-        crate::ui::popups::watches::handle_key(
-            &mut a,
-            crossterm::event::KeyEvent::new(
-                crossterm::event::KeyCode::Char('d'),
-                crossterm::event::KeyModifiers::CONTROL,
-            ),
-        )
-        .unwrap();
-        assert_eq!(a.watch_mode, WatchMode::ConfirmDelete);
-
-        crate::ui::popups::watches::handle_key(
-            &mut a,
-            crossterm::event::KeyEvent::new(
-                crossterm::event::KeyCode::Char('d'),
-                crossterm::event::KeyModifiers::CONTROL,
-            ),
-        )
-        .unwrap();
-        assert_eq!(a.watch_mode, WatchMode::Browse);
-        assert!(a.caches.watches.is_empty());
-        assert!(a.db.list_watches(&space).unwrap().is_empty());
-    }
-
-    #[test]
-    fn watch_picker_escape_cancels_delete_confirmation() {
-        let db = Db::open_in_memory().unwrap();
-        let mut a = AppView::new(App::new(db, Some("k"), test_space()));
-        let space = a.active_space.id.clone();
-        let session = a.db.create_session("watch", "a/b", &space, "chat").unwrap();
-        let _ =
-            a.db.create_watch(&space, "rust async", 24, &session.id)
-                .unwrap();
-        a.open_watch_picker().unwrap();
-        a.watch_mode = WatchMode::ConfirmDelete;
-
-        crate::ui::popups::watches::handle_key(
-            &mut a,
-            crossterm::event::KeyEvent::new(
-                crossterm::event::KeyCode::Esc,
-                crossterm::event::KeyModifiers::empty(),
-            ),
-        )
-        .unwrap();
-
-        assert_eq!(a.watch_mode, WatchMode::Browse);
-        assert_eq!(a.caches.watches.len(), 1);
-    }
-}
-
 /// The popups' Ctrl+X handlers close the popup themselves:
 /// `stop_research`/`stop_swarm` are domain calls and never touch view state.
 mod stop_closes_popup_tests {
@@ -2132,7 +2058,6 @@ fn every_popup_renders_at_the_minimum_resize_size_without_panicking() {
             Popup::Skills,
             Popup::Files,
             Popup::Apps,
-            Popup::Watch,
             Popup::ResearchLive,
             Popup::Swarm,
             Popup::Usage,
@@ -2149,7 +2074,7 @@ fn every_popup_renders_at_the_minimum_resize_size_without_panicking() {
                 .set_setting(
                     "popup_sizes",
                     "model:20x20,session:20x20,copy:20x20,key:20x20,settings:20x20,space:20x20,\
-                     skills:20x20,files:20x20,apps:20x20,watches:20x20,\
+                     skills:20x20,files:20x20,apps:20x20,\
                      research:20x20,swarm:20x20,usage:20x20,jobs:20x20,harness:20x20,\
                      procs:20x20,login:20x20,local:20x20,help:20x20,connectors:20x20",
                 )

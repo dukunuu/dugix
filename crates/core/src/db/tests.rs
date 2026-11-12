@@ -1270,39 +1270,63 @@ fn gate_reply_round_trip() {
     assert_eq!(last.content, "the second option");
 }
 
-#[test]
-fn create_list_touch_delete_watch_roundtrip() {
-    let db = Db::open_in_memory().unwrap();
-    let id = db
-        .create_watch("space-1", "rust async runtimes", 24, "sess-1")
-        .unwrap();
-    let watches = db.list_watches("space-1").unwrap();
-    assert_eq!(watches.len(), 1);
-    assert_eq!(watches[0].topic, "rust async runtimes");
-    assert_eq!(watches[0].interval_hours, 24);
-    assert!(watches[0].last_run_at.is_none());
+fn research_job(
+    db: &Db,
+    space_id: &str,
+    topic: &str,
+    interval_hours: i64,
+    session_id: &str,
+) -> crate::jobs::Job {
+    let job = crate::jobs::Job {
+        id: uuid::Uuid::new_v4().to_string(),
+        space_id: space_id.into(),
+        session_id: session_id.into(),
+        device_id: db.device_id().unwrap(),
+        spec: crate::jobs::research::spec(topic, Some(interval_hours * 60)),
+        enabled: 1,
+        last_run_at: None,
+        updated_at: Utc::now().to_rfc3339(),
+    };
+    db.save_job(&job).unwrap();
+    job
+}
 
-    db.touch_watch(&id, "2026-07-07T00:00:00+00:00").unwrap();
-    let watches = db.list_watches("space-1").unwrap();
+#[test]
+fn create_list_touch_delete_research_job_roundtrip() {
+    let db = Db::open_in_memory().unwrap();
+    let mut job = research_job(&db, "space-1", "rust async runtimes", 24, "sess-1");
+    let jobs = db.list_jobs().unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].spec.kind, "research");
+    assert_eq!(jobs[0].spec.topic.as_deref(), Some("rust async runtimes"));
+    assert_eq!(jobs[0].spec.interval_minutes, 1440);
+    assert!(jobs[0].last_run_at.is_none());
+
+    job.last_run_at = Some("2026-07-07T00:00:00+00:00".into());
+    job.updated_at = Utc::now().to_rfc3339();
+    db.save_job(&job).unwrap();
+    let jobs = db.list_jobs().unwrap();
     assert_eq!(
-        watches[0].last_run_at.as_deref(),
+        jobs[0].last_run_at.as_deref(),
         Some("2026-07-07T00:00:00+00:00")
     );
 
-    db.delete_watch(&id).unwrap();
-    assert!(db.list_watches("space-1").unwrap().is_empty());
+    job.enabled = -1;
+    job.updated_at = Utc::now().to_rfc3339();
+    db.save_job(&job).unwrap();
+    assert!(db.list_jobs().unwrap().is_empty());
 }
 
 #[test]
 #[allow(clippy::similar_names)]
-fn list_all_watches_returns_watches_from_all_spaces() {
+fn list_jobs_returns_research_jobs_from_all_spaces() {
     let db = Db::open_in_memory().unwrap();
 
-    let id1 = db.create_watch("space-a", "topic-1", 24, "sess-1").unwrap();
-    let id2 = db.create_watch("space-b", "topic-2", 48, "sess-2").unwrap();
-    let id3 = db.create_watch("space-a", "topic-3", 12, "sess-3").unwrap();
+    let id1 = research_job(&db, "space-a", "topic-1", 24, "sess-1").id;
+    let id2 = research_job(&db, "space-b", "topic-2", 48, "sess-2").id;
+    let id3 = research_job(&db, "space-a", "topic-3", 12, "sess-3").id;
 
-    let all_watches = db.list_all_watches().unwrap();
+    let all_watches = db.list_jobs().unwrap();
     assert_eq!(all_watches.len(), 3);
     assert!(
         all_watches
@@ -1320,11 +1344,17 @@ fn list_all_watches_returns_watches_from_all_spaces() {
             .any(|w| w.id == id3 && w.space_id == "space-a")
     );
 
-    let space_a_watches = db.list_watches("space-a").unwrap();
+    let space_a_watches: Vec<_> = all_watches
+        .iter()
+        .filter(|job| job.space_id == "space-a")
+        .collect();
     assert_eq!(space_a_watches.len(), 2);
     assert!(space_a_watches.iter().all(|w| w.space_id == "space-a"));
 
-    let space_b_watches = db.list_watches("space-b").unwrap();
+    let space_b_watches: Vec<_> = all_watches
+        .iter()
+        .filter(|job| job.space_id == "space-b")
+        .collect();
     assert_eq!(space_b_watches.len(), 1);
     assert!(space_b_watches.iter().all(|w| w.space_id == "space-b"));
 }
@@ -1433,13 +1463,17 @@ fn every_mutable_table_bumps_updated_at_on_mutation() {
     db.rename_file(&fid, "g.txt").unwrap();
     assert!(read("files", &fid) > before);
 
-    let wid = db.create_watch(&space, "topic", 24, &sid).unwrap();
-    let before = read("watches", &wid);
-    db.touch_watch(&wid, "2026-01-01T00:00:00Z").unwrap();
-    assert!(read("watches", &wid) > before);
-    let before = read("watches", &wid);
-    db.set_watch_session(&wid, "other-session").unwrap();
-    assert!(read("watches", &wid) > before);
+    let mut job = research_job(&db, &space, "topic", 24, &sid);
+    let before = read("jobs", &job.id);
+    job.last_run_at = Some("2026-01-01T00:00:00Z".into());
+    job.updated_at = Utc::now().to_rfc3339();
+    db.save_job(&job).unwrap();
+    assert!(read("jobs", &job.id) > before);
+    let before = read("jobs", &job.id);
+    job.session_id = "other-session".into();
+    job.updated_at = Utc::now().to_rfc3339();
+    db.save_job(&job).unwrap();
+    assert!(read("jobs", &job.id) > before);
 
     let url = "https://x.test/";
     add_session_sources(db.raw(), &sid, &[url.to_string()]).unwrap();
@@ -1539,9 +1573,20 @@ fn delete_paths_write_tombstones_for_sync() {
     db.delete_file(&fid).unwrap();
     assert_eq!(tombstones("files"), vec![fid]);
 
-    let wid = db.create_watch(&space, "topic", 24, &sid).unwrap();
-    db.delete_watch(&wid).unwrap();
-    assert_eq!(tombstones("watches"), vec![wid]);
+    let mut job = research_job(&db, &space, "topic", 24, &sid);
+    job.enabled = -1;
+    job.updated_at = Utc::now().to_rfc3339();
+    db.save_job(&job).unwrap();
+    assert!(db.list_jobs().unwrap().is_empty());
+    assert!(tombstones("jobs").is_empty());
+    assert_eq!(
+        db.raw()
+            .query_row("SELECT enabled FROM jobs WHERE id = ?1", [&job.id], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+        -1
+    );
 
     let sp = db.create_space("doomed").unwrap();
     db.delete_space(&sp.id).unwrap();

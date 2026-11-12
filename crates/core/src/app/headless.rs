@@ -4,7 +4,7 @@ use std::io::Write as _;
 
 use anyhow::{Context as _, Result, anyhow, bail};
 
-use crate::db::{Watch, stage_content};
+use crate::db::stage_content;
 use crate::provider::{StreamEvent, Usage};
 
 use super::{App, AppCommand, AppEvent};
@@ -318,68 +318,6 @@ impl App {
             session_id: session.id,
             session_title: session.title,
         })
-    }
-
-    /// Run selected watches sequentially and return their reports by topic.
-    pub async fn watch_run_headless(
-        &mut self,
-        watch_ref: Option<&str>,
-        all: bool,
-        quiet: bool,
-    ) -> Result<Vec<(String, ResearchOutcome)>> {
-        let _lock = crate::jobs::DaemonLock::acquire(&self.space.root)?;
-        let jobs = self.db.list_jobs().context("listing research jobs")?;
-        let watches: Vec<Watch> = jobs
-            .iter()
-            .filter(|job| job.spec.kind == "research")
-            .map(crate::jobs::research::watch)
-            .collect();
-        let targets: Vec<Watch> = match (watch_ref, all) {
-            (Some(r), _) => {
-                let w = watches
-                    .iter()
-                    .find(|w| w.id.starts_with(r) || w.topic.contains(r))
-                    .ok_or_else(|| {
-                        anyhow!("no watch matching {r:?} — `nexus watch list` shows them")
-                    })?;
-                vec![w.clone()]
-            }
-            (None, true) => watches,
-            (None, false) => crate::jobs::due(&jobs, chrono::Utc::now(), &self.db.device_id()?)
-                .iter()
-                .filter(|job| job.spec.kind == "research")
-                .map(crate::jobs::research::watch)
-                .collect(),
-        };
-        if targets.is_empty() {
-            bail!("no watches to run — `nexus watch list` shows them");
-        }
-        let mut ran = Vec::new();
-        for w in targets {
-            note(quiet, format!("watch: {} …", w.topic));
-            let job = jobs
-                .iter()
-                .find(|job| job.id == w.id)
-                .context("research job missing")?;
-            let run = crate::jobs::run_with_app(self, job).await?;
-            if run.status != "done" {
-                bail!("watch {}: {} — {}", w.topic, run.status, run.summary);
-            }
-            let report = run.summary;
-            let session = self
-                .db
-                .get_session(&run.id)?
-                .context("watch session vanished")?;
-            ran.push((
-                w.topic,
-                ResearchOutcome {
-                    report,
-                    session_id: session.id,
-                    session_title: session.title,
-                },
-            ));
-        }
-        Ok(ran)
     }
 }
 

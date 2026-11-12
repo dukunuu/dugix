@@ -634,7 +634,7 @@ fn insert_file_row(conn: &Connection, row: &serde_json::Value) -> Result<()> {
 fn row_version_for_tombstone(db: &Db, table: &str, row_id: &str) -> Result<Option<String>> {
     let conn = db.conn();
     let (table, id_column, version_column, id) = match table {
-        "sessions" | "model_prefs" | "spaces" | "files" | "watches" | "pinned_panels" => {
+        "sessions" | "model_prefs" | "spaces" | "files" | "pinned_panels" => {
             (table, "id", "updated_at", row_id)
         }
         "app_settings" => (table, "key", "updated_at", row_id),
@@ -716,7 +716,6 @@ fn apply_tombstone(
             | "sessions"
             | "messages"
             | "files"
-            | "watches"
             | "usage_log"
             | "citations"
             | "swarm_personas"
@@ -812,10 +811,6 @@ fn apply_tombstone(
                 let blob = space.files_dir(&space_name).join(&name);
                 let _ = std::fs::remove_file(blob);
             }
-            Ok(true)
-        }
-        "watches" => {
-            conn.execute("DELETE FROM watches WHERE id = ?1", [&t.row_id])?;
             Ok(true)
         }
         "pinned_panels" => {

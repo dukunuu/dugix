@@ -316,9 +316,18 @@ async fn text_diff_fallback_ignores_run_paths_and_notifies_when_the_answer_chang
 fn watch_rows_become_jobs_idempotently_and_survive_cache_loss() {
     let fixture = Fixture::new();
     let path = fixture.root.join("legacy.db");
-    let db = Db::open(&path).unwrap();
-    db.conn().execute_batch("INSERT INTO watches VALUES ('watch-1', 'default', 'topic', 12, 'session', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');").unwrap();
-    drop(db);
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(include_str!("../db/migrations/durable_v1.sql"))
+        .unwrap();
+    conn.execute_batch(
+        "ALTER TABLE sessions DROP COLUMN web_mode;
+         ALTER TABLE memory_chapters DROP COLUMN tidied_at;
+         PRAGMA user_version = 5;
+         INSERT INTO watches VALUES ('watch-1', 'default', 'topic', 12, 'session',
+          '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');",
+    )
+    .unwrap();
+    drop(conn);
     for _ in 0..2 {
         let db = Db::open(&path).unwrap();
         let jobs = db.list_jobs().unwrap();
@@ -339,25 +348,43 @@ fn watch_rows_become_jobs_idempotently_and_survive_cache_loss() {
             .len(),
             1
         );
-        assert_eq!(db.list_all_watches().unwrap().len(), 1);
-        db.conn()
-            .execute("DELETE FROM cache.watch_jobs", [])
+        let legacy_tables: i64 = db
+            .conn()
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM main.sqlite_schema WHERE name = 'watches')
+                 + (SELECT COUNT(*) FROM cache.sqlite_schema WHERE name = 'watch_jobs')",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
+        assert_eq!(legacy_tables, 0);
+        drop(db);
+        std::fs::remove_file(crate::db::cache_path_for(&path)).unwrap();
     }
 }
 
 #[test]
-fn research_kind_and_topic_sync_and_deleted_migrations_stay_deleted() {
+fn research_kind_and_topic_sync_and_deleted_jobs_stay_deleted() {
     let fixture = Fixture::new();
     let session = fixture
         .app
         .db
         .create_session("watch", "local:fake", "default", "research")
         .unwrap();
-    let id = fixture
+    let id = uuid::Uuid::new_v4().to_string();
+    fixture
         .app
         .db
-        .create_watch("default", "topic", 24, &session.id)
+        .save_job(&Job {
+            id: id.clone(),
+            space_id: "default".into(),
+            session_id: session.id,
+            device_id: fixture.app.db.device_id().unwrap(),
+            spec: research::spec("topic", Some(1440)),
+            enabled: 1,
+            last_run_at: None,
+            updated_at: Utc::now().to_rfc3339(),
+        })
         .unwrap();
     let changes = crate::sync::build_changeset(&fixture.app.db, None, "owner").unwrap();
     let row = changes.rows.iter().find(|row| row.table == "jobs").unwrap();
@@ -376,7 +403,7 @@ fn research_kind_and_topic_sync_and_deleted_migrations_stay_deleted() {
 }
 
 #[tokio::test]
-async fn slash_watch_creates_research_job_and_direct_watch_runner_remains_compatible() {
+async fn slash_watch_creates_research_job_and_direct_research_runner_reuses_it() {
     let mut fixture = Fixture::new();
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
@@ -389,10 +416,12 @@ async fn slash_watch_creates_research_job_and_direct_watch_runner_remains_compat
     assert_eq!(job.spec.topic.as_deref(), Some("topic"));
     assert_eq!(job.spec.interval_minutes, 1440);
     fixture.app.stop_research();
-    let watch = fixture.app.db.list_all_watches().unwrap().pop().unwrap();
-    assert!(fixture.app.run_one_watch(&watch));
-    let updated = fixture.app.db.list_all_watches().unwrap().pop().unwrap();
-    assert_ne!(updated.session_id, watch.session_id);
+    assert!(fixture.app.run_research_job(&job));
+    let jobs = fixture.app.db.list_jobs().unwrap();
+    assert_eq!(jobs.len(), 1);
+    let updated = &jobs[0];
+    assert_eq!(updated.id, job.id);
+    assert_ne!(updated.session_id, job.session_id);
     assert_eq!(fixture.app.db.list_job_runs().unwrap().len(), 2);
     fixture.app.stop_research();
 }

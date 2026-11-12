@@ -40,9 +40,10 @@ nexus clip --copy "Explain this and list surprising facts" # browser-text shortc
 nexus chat                                             # bare REPL, one session
 nexus research "impact of EU AI Act on startups"       # deep research (survey + plan gates)
 nexus research --approve "..."                        # skip the gates, run unattended
-nexus watch list                                       # standing research watches
-nexus watch run                                        # run the due watches (cron-friendly)
-nexus watch run <id> --all                             # force-run one / every watch
+nexus jobs list                                      # agent and research jobs
+nexus jobs run <id>                                   # run a job now
+nexus jobs run-due                                    # run due jobs (cron-friendly)
+nexus jobs daemon                                    # schedule repeating jobs
 nexus usage [--range 24h|7d|30d|all] [--by-day]        # token/cache/cost analytics
 nexus usage --json                                     # same, machine-readable
 nexus usage --session <id> [--json]                     # every request and session total
@@ -435,12 +436,15 @@ Chat search is available in chat and agent mode, never in research searcher tool
 - **Deep research** (`/research <topic>`): a conversational scoping survey →
   a plan of questions with why/angles/sources briefs → parallel searcher
   agents → synthesis → critic → verifier → writer, with a live activity view
-  and `/steer` mid-run. `/research! <topic>` runs ungated. The finished report
+  and `/steer` mid-run. `/research! <topic>` runs ungated. Both create a one-off
+  research job listed in `/jobs`; press `r` there to run it again. The finished report
   is saved as `research-<topic>-<time>.md` in the space files and as a doc in
   the **Library**, so it opens in studio to edit, comment on and export
 - **Swarm** (`/swarm`): a moderator-conducted multi-persona roundtable that
   iterates toward consensus
-- **Watches** (`/watch`): standing research jobs that re-run daily (`nexus jobs daemon`, or `nexus watch run` from cron)
+- **Watches** (`/watch <topic>`): research jobs that start immediately and repeat daily
+  through `nexus jobs daemon` (or `nexus jobs run-due` from cron). `/watch` opens
+  `/jobs`, where `w` toggles a research job between one-off and daily repeats
 - **Spaces**: per-project context (instructions, memory, imported files,
   scripts, apps) with embeddings-backed semantic file search
 - **Memory**: a book per space — chapters of short facts the model saves with
@@ -611,9 +615,9 @@ Type `/` in the composer for autocomplete. Aliases in parentheses.
 | `/space` (`project`, `workspace`) | switch spaces |
 | `/model` (`llm`) | pick a model, set reasoning effort |
 | `/login` (`key`) | log into a backend |
-| `/research <topic>` | conversational deep research (see above) |
+| `/research <topic>` | create and run a one-off research job, listed in `/jobs` |
 | `/research! <topic>` | same, no survey/approval gates |
-| `/watch` | standing research, re-runs every 24h |
+| `/watch [topic]` | create and run a daily research job; blank opens `/jobs` (`w` toggles daily) |
 | `/swarm` (`panel`) | multi-persona roundtable |
 | `/files` (`images`, `scripts`, …) | browse space files / images / scripts; `Ctrl+N` imports through the system Open panel, `/` finds files on this machine (Spotlight on macOS, `~/` for a path), and files dropped on it import at once |
 | `/apps` (`webapps`) | view web apps and pinned interactive panels |

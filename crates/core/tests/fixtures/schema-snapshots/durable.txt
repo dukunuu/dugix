@@ -176,11 +176,3 @@ table usage_log
   index idx_usage_log_model on usage_log(model) unique=false
   index idx_usage_log_session on usage_log(session_id, created_at) unique=false
   index idx_usage_log_sync_id on usage_log(sync_id) unique=true
-table watches
-  id: TEXT not_null=false default=None pk=1
-  interval_hours: INTEGER not_null=true default=None pk=0
-  last_run_at: TEXT not_null=false default=None pk=0
-  session_id: TEXT not_null=true default=None pk=0
-  space_id: TEXT not_null=true default=None pk=0
-  topic: TEXT not_null=true default=None pk=0
-  updated_at: TEXT not_null=false default=None pk=0

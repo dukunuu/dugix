@@ -33,12 +33,24 @@ const DURABLE: &[Step] = &[
         name: "drop columns kept for older peers",
         run: drop_older_peer_columns,
     },
+    Step {
+        target: 6,
+        name: "research jobs replace watches",
+        run: research_jobs_replace_watches,
+    },
 ];
-const CACHE: &[Step] = &[Step {
-    target: 1,
-    name: "cache v1 baseline",
-    run: cache_v1,
-}];
+const CACHE: &[Step] = &[
+    Step {
+        target: 1,
+        name: "cache v1 baseline",
+        run: cache_v1,
+    },
+    Step {
+        target: 2,
+        name: "drop watch_jobs",
+        run: drop_watch_jobs,
+    },
+];
 
 /// The current version of the durable database schema.
 #[must_use]
@@ -187,6 +199,33 @@ fn drop_older_peer_columns(tx: &Transaction<'_>, _ctx: &mut Ctx<'_>) -> Result<(
     Ok(())
 }
 
+fn research_jobs_replace_watches(tx: &Transaction<'_>, _ctx: &mut Ctx<'_>) -> Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    tx.execute(
+        "INSERT INTO main.device_meta (device_id, created_at)
+         SELECT ?1, ?2 WHERE NOT EXISTS (SELECT 1 FROM main.device_meta)",
+        (uuid::Uuid::new_v4().to_string(), &now),
+    )?;
+    tx.execute(
+        "INSERT OR IGNORE INTO main.jobs
+         (id, space_id, session_id, device_id, name, prompt, root, mode,
+          trigger_kind, interval_minutes, max_iters, max_cost_usd, max_wall_minutes,
+          notify, enabled, last_run_at, updated_at, kind, topic)
+         SELECT id, space_id, session_id, (SELECT device_id FROM main.device_meta LIMIT 1),
+          topic, topic, '', 'agent', 'interval', interval_hours * 60, 5, 1.0, 30,
+          'on_change', 1, last_run_at, COALESCE(updated_at, ?1), 'research', topic
+         FROM main.watches",
+        [&now],
+    )?;
+    tx.execute_batch("DROP TABLE main.watches")?;
+    Ok(())
+}
+
+fn drop_watch_jobs(tx: &Transaction<'_>, ctx: &mut Ctx<'_>) -> Result<()> {
+    tx.execute_batch(&format!("DROP TABLE IF EXISTS {}.watch_jobs", ctx.schema))?;
+    Ok(())
+}
+
 fn import_memory(tx: &Transaction<'_>, ctx: &mut Ctx<'_>) -> Result<()> {
     let Some(root) = ctx.root else {
         return Ok(());
@@ -256,3 +295,7 @@ fn cache_v1(tx: &Transaction<'_>, ctx: &mut Ctx<'_>) -> Result<()> {
 #[cfg(test)]
 #[path = "migrations_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "research_jobs_migration_tests.rs"]
+mod research_jobs_tests;

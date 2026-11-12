@@ -137,6 +137,20 @@ fn session(db: &Db, title: &str) -> String {
     s.id
 }
 
+fn research_job(db: &Db, session_id: &str) {
+    db.save_job(&crate::jobs::Job {
+        id: uuid::Uuid::new_v4().to_string(),
+        space_id: space(db, "default"),
+        session_id: session_id.into(),
+        device_id: db.device_id().unwrap(),
+        spec: crate::jobs::research::spec("topic", Some(1440)),
+        enabled: 1,
+        last_run_at: None,
+        updated_at: chrono::Utc::now().to_rfc3339(),
+    })
+    .unwrap();
+}
+
 fn set_updated(db: &Db, table: &str, id: &str, at: &str) {
     db.conn()
         .execute(
@@ -286,8 +300,7 @@ fn cold_start_full_export_covers_every_table() {
     a.add_citations(&space(a, "default"), "r.md", &[("https://x".into(), None)])
         .unwrap();
     add_session_sources(a, &s, &["https://x".to_string()]);
-    a.create_watch(&space(a, "default"), "topic", 24, &s)
-        .unwrap();
+    research_job(a, &s);
     a.set_reasoning("m", Some("high")).unwrap();
     a.set_setting("theme", "dark").unwrap();
     a.create_space("work").unwrap();
@@ -308,7 +321,7 @@ fn cold_start_full_export_covers_every_table() {
         "model_prefs",
         "spaces",
         "files",
-        "watches",
+        "jobs",
         "app_settings",
         "session_sources",
         "messages",
@@ -616,8 +629,7 @@ fn two_way_convergence_and_then_silence() {
     let sb = session(b, "b's chat");
     b.add_user_message(&sb, "from b").unwrap();
     b.add_user_message(&sb, "and another").unwrap();
-    b.create_watch(&space(b, "default"), "topic", 24, &sb)
-        .unwrap();
+    research_job(b, &sb);
 
     pair.exchange();
     assert_eq!(dump(a), dump(b), "devices must converge");

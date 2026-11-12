@@ -172,7 +172,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "research",
-        desc: "deep multi-agent research (blank = scope topic from this chat)",
+        desc: "create a research job (blank = scope topic from this chat)",
         aliases: &["deep-research"],
     },
     Command {
@@ -187,12 +187,12 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "watch",
-        desc: "standing research, re-runs every 24h",
+        desc: "daily research job (blank = /jobs)",
         aliases: &["watches"],
     },
     Command {
         name: "jobs",
-        desc: "scheduled agent jobs — /job new to create",
+        desc: "agent and research jobs — /job new to create",
         aliases: &[],
     },
     Command {
@@ -464,6 +464,9 @@ pub enum AppCommand {
         id: String,
         on: bool,
     },
+    ToggleResearchRepeat {
+        id: String,
+    },
     RunJobNow {
         id: String,
     },
@@ -680,7 +683,8 @@ impl App {
             | AppCommand::OpenJobForm
             | AppCommand::OpenProcs
             | AppCommand::OpenHelp
-            | AppCommand::Watch { .. } => {}
+            | AppCommand::Watch { topic: None } => {}
+            AppCommand::Watch { topic: Some(topic) } => self.create_watch(&topic),
             AppCommand::UnpinPanel { name } => self.unpin_panel(&name)?,
             AppCommand::RenamePanel { from, to } => self.rename_panel(&from, &to)?,
             AppCommand::AddConnector {
@@ -727,6 +731,21 @@ impl App {
                 job.enabled = i64::from(on);
                 job.updated_at = chrono::Utc::now().to_rfc3339();
                 self.db.save_job(&job)?;
+            }
+            AppCommand::ToggleResearchRepeat { id } => {
+                let job = self.owned_job(&id)?;
+                if job.spec.kind == "research" {
+                    let trigger = if job.spec.trigger_kind == "interval" {
+                        "manual"
+                    } else {
+                        "interval"
+                    };
+                    self.db.conn().execute(
+                        "UPDATE jobs SET trigger_kind = ?2, interval_minutes = 1440,
+                         updated_at = ?3 WHERE id = ?1",
+                        (&id, trigger, chrono::Utc::now().to_rfc3339()),
+                    )?;
+                }
             }
             AppCommand::DeleteJob { id } => {
                 let mut job = self.owned_job(&id)?;

@@ -80,9 +80,6 @@ table tool_events
   session_id: TEXT not_null=true default=None pk=0
   tool: TEXT not_null=true default=None pk=0
   index tool_events_at on tool_events(at) unique=false
-table watch_jobs
-  job_id: TEXT not_null=true default=None pk=0
-  watch_id: TEXT not_null=false default=None pk=1
 table web_cache
   fetched_at: TEXT not_null=true default=None pk=0
   text: TEXT not_null=true default=None pk=0

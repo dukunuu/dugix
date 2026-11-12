@@ -124,7 +124,7 @@ pub fn render(frame: &mut Frame, app: &AppView) {
         if creating {
             "tab/↑↓ field · enter next · ctrl+s save · esc cancel"
         } else {
-            "↑↓ select · n new · space enable · r run · d delete · enter logs · esc close"
+            "↑↓ select · n new · space enable · w daily · r run · d delete · enter logs · esc close"
         },
         app,
         true,
@@ -173,7 +173,7 @@ pub fn render(frame: &mut Frame, app: &AppView) {
                 let status = run.map_or("never run", |run| run.status.as_str());
                 ListItem::new(Line::from(format!(
                     "{} · {} · {} · {} · {status}{}",
-                    job.spec.name,
+                    job.spec.topic.as_deref().unwrap_or(&job.spec.name),
                     job.spec.kind,
                     job.spec.trigger_kind,
                     if job.enabled == 1 {
@@ -247,13 +247,14 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
                 clamp_cursor(app.jobs_popup.selected, app.jobs_popup.jobs.len(), 1);
         }
         KeyCode::Char('n') => return open(app, true),
-        KeyCode::Char(' ' | 'r' | 'd') => {
+        KeyCode::Char(' ' | 'w' | 'r' | 'd') => {
             if let Some(job) = job {
                 let cmd = match key.code {
                     KeyCode::Char(' ') => AppCommand::SetJobEnabled {
                         id: job.id,
                         on: job.enabled != 1,
                     },
+                    KeyCode::Char('w') => AppCommand::ToggleResearchRepeat { id: job.id },
                     KeyCode::Char('r') => AppCommand::RunJobNow { id: job.id },
                     _ => AppCommand::DeleteJob { id: job.id },
                 };
@@ -310,6 +311,10 @@ fn form_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "research_jobs_tests.rs"]
+mod research_jobs_tests;
 
 #[cfg(test)]
 mod tests {

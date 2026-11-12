@@ -109,29 +109,6 @@ pub const TABLES: &[TableSpec] = &[
         cursor: Cursor::UpdatedAt,
     },
     TableSpec {
-        name: "watches",
-        columns: &[
-            "id",
-            "space_id",
-            "topic",
-            "interval_hours",
-            "session_id",
-            "last_run_at",
-            "updated_at",
-        ],
-        apply_columns: &[
-            "id",
-            "space_id",
-            "topic",
-            "interval_hours",
-            "session_id",
-            "last_run_at",
-            "updated_at",
-        ],
-        pk: &["id"],
-        cursor: Cursor::UpdatedAt,
-    },
-    TableSpec {
         name: "jobs",
         columns: &[
             "id",

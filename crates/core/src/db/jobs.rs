@@ -1,72 +1,12 @@
-//! Watches and scheduled jobs.
+//! Scheduled jobs.
 
 use anyhow::Result;
-use chrono::Utc;
-use uuid::Uuid;
 
-use super::{Db, Watch};
+use super::Db;
 
 impl Db {
-    pub fn create_watch(
-        &self,
-        space_id: &str,
-        topic: &str,
-        interval_hours: i64,
-        session_id: &str,
-    ) -> Result<String> {
-        let id = Uuid::new_v4().to_string();
-        let now = Utc::now().to_rfc3339();
-        self.conn.execute(
-            "INSERT INTO watches (id, space_id, topic, interval_hours, session_id, last_run_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)",
-            (&id, space_id, topic, interval_hours, session_id, &now),
-        )?;
-        self.migrate_watch_jobs()?;
-        Ok(id)
-    }
-
-    /// Reuse the watch UUID so migration stays idempotent after cache loss or a
-    /// sync import.
-    pub fn migrate_watch_jobs(&self) -> Result<()> {
-        let device = self.device_id()?;
-        self.conn.execute(
-            "INSERT OR IGNORE INTO jobs
-             (id, space_id, session_id, device_id, name, prompt, root, mode,
-              trigger_kind, interval_minutes, max_iters, max_cost_usd, max_wall_minutes,
-              notify, enabled, last_run_at, updated_at, kind, topic)
-             SELECT id, space_id, session_id, ?1, topic, topic, '', 'agent',
-              'interval', interval_hours * 60, 5, 1.0, 30, 'on_change', 1,
-              last_run_at, COALESCE(updated_at, ?2), 'research', topic FROM watches",
-            (&device, Utc::now().to_rfc3339()),
-        )?;
-        self.conn.execute(
-            "INSERT OR IGNORE INTO cache.watch_jobs (watch_id, job_id) SELECT id, id FROM watches",
-            [],
-        )?;
-        Ok(())
-    }
-
-    pub fn list_watches(&self, space_id: &str) -> Result<Vec<Watch>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, space_id, topic, interval_hours, session_id, last_run_at
-             FROM watches WHERE space_id = ?1 ORDER BY topic",
-        )?;
-        let rows = stmt.query_map([space_id], |r| {
-            Ok(Watch {
-                id: r.get(0)?,
-                space_id: r.get(1)?,
-                topic: r.get(2)?,
-                interval_hours: r.get(3)?,
-                session_id: r.get(4)?,
-                last_run_at: r.get(5)?,
-            })
-        })?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-    }
-
     /// All visible jobs, including read-only jobs owned by other devices.
     pub fn list_jobs(&self) -> Result<Vec<crate::jobs::Job>> {
-        self.migrate_watch_jobs()?;
         let mut statement = self.conn.prepare(
             "SELECT id, space_id, session_id, device_id, name, prompt, root, mode,
              trigger_kind, interval_minutes, run_at, stop_command, max_iters,
@@ -186,74 +126,6 @@ impl Db {
                 run.updated_at
             ],
         )?;
-        Ok(())
-    }
-
-    /// Every watch across all spaces, for the startup due-check.
-    pub fn list_all_watches(&self) -> Result<Vec<Watch>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, space_id, topic, interval_hours, session_id, last_run_at FROM watches",
-        )?;
-        let rows = stmt.query_map([], |r| {
-            Ok(Watch {
-                id: r.get(0)?,
-                space_id: r.get(1)?,
-                topic: r.get(2)?,
-                interval_hours: r.get(3)?,
-                session_id: r.get(4)?,
-                last_run_at: r.get(5)?,
-            })
-        })?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-    }
-
-    pub fn touch_watch(&self, id: &str, now_rfc3339: &str) -> Result<()> {
-        self.conn.execute(
-            "UPDATE watches SET last_run_at = ?2, updated_at = ?3 WHERE id = ?1",
-            (id, now_rfc3339, Utc::now().to_rfc3339()),
-        )?;
-        self.conn.execute(
-            "UPDATE jobs SET last_run_at = ?2, updated_at = ?2 WHERE id = ?1 AND kind = 'research'",
-            (id, now_rfc3339),
-        )?;
-        Ok(())
-    }
-
-    /// Change a watch cadence while preserving its current run timestamp.
-    pub fn set_watch_interval(&self, id: &str, interval_hours: i64) -> Result<()> {
-        self.conn.execute(
-            "UPDATE watches SET interval_hours = ?2, updated_at = ?3 WHERE id = ?1",
-            (id, interval_hours, Utc::now().to_rfc3339()),
-        )?;
-        self.conn.execute(
-            "UPDATE jobs SET interval_minutes = ?2 * 60, updated_at = ?3 WHERE id = ?1 AND kind = 'research'",
-            (id, interval_hours, Utc::now().to_rfc3339()),
-        )?;
-        Ok(())
-    }
-
-    /// Repoint a watch at the session its latest re-run used, so the next
-    /// diff-section lookup matches.
-    pub fn set_watch_session(&self, id: &str, session_id: &str) -> Result<()> {
-        self.conn.execute(
-            "UPDATE watches SET session_id = ?2, updated_at = ?3 WHERE id = ?1",
-            (id, session_id, Utc::now().to_rfc3339()),
-        )?;
-        self.conn.execute(
-            "UPDATE jobs SET session_id = ?2, updated_at = ?3 WHERE id = ?1 AND kind = 'research'",
-            (id, session_id, Utc::now().to_rfc3339()),
-        )?;
-        Ok(())
-    }
-
-    pub fn delete_watch(&self, id: &str) -> Result<()> {
-        self.conn.execute(
-            "UPDATE jobs SET enabled = -1, updated_at = ?2 WHERE id = ?1 AND kind = 'research'",
-            (id, Utc::now().to_rfc3339()),
-        )?;
-        self.conn
-            .execute("DELETE FROM watches WHERE id = ?1", [id])?;
-        self.tombstone("watches", id)?;
         Ok(())
     }
 }

@@ -7,7 +7,8 @@ use anyhow::{Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::app::App;
-use crate::db::{Persona, Watch};
+use crate::db::Persona;
+use crate::jobs::Job;
 
 /// A persona row accepted by the management API.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -56,13 +57,13 @@ impl From<Persona> for PersonaInput {
     }
 }
 
-impl From<Watch> for WatchInfo {
-    fn from(value: Watch) -> Self {
+impl From<Job> for WatchInfo {
+    fn from(value: Job) -> Self {
         Self {
             id: value.id,
             space_id: value.space_id,
-            topic: value.topic,
-            interval_hours: value.interval_hours,
+            topic: value.spec.topic.unwrap_or(value.spec.prompt),
+            interval_hours: value.spec.interval_minutes / 60,
             session_id: value.session_id,
             last_run_at: value.last_run_at,
         }
@@ -260,13 +261,18 @@ pub fn install_skill(app: &mut App, space_id: &str, source: &str) -> Result<()> 
 pub fn list_watches(app: &App) -> Result<Vec<WatchInfo>> {
     Ok(app
         .db
-        .list_watches(&app.active_space.id)?
+        .list_jobs()?
         .into_iter()
+        .filter(|job| {
+            job.space_id == app.active_space.id
+                && job.spec.kind == "research"
+                && job.spec.trigger_kind == "interval"
+        })
         .map(Into::into)
         .collect())
 }
 
-/// Create a watch and point it at an existing session in the active space.
+/// Create a repeating research job and start its first run in the active space.
 pub fn create_watch(
     app: &mut App,
     space_id: &str,
@@ -283,23 +289,15 @@ pub fn create_watch(
     if !(1..=8_760).contains(&interval_hours) {
         bail!("interval must be between 1 and 8760 hours")
     }
-    let before: std::collections::HashSet<String> = app
-        .db
-        .list_watches(space_id)?
+    let before: std::collections::HashSet<String> = list_watches(app)?
         .into_iter()
         .map(|watch| watch.id)
         .collect();
-    app.create_watch(topic);
-    let watch = app
-        .db
-        .list_watches(space_id)?
+    app.create_watch_with_interval(topic, interval_hours * 60);
+    list_watches(app)?
         .into_iter()
         .find(|watch| !before.contains(&watch.id) && watch.topic == topic)
-        .ok_or_else(|| anyhow!("watch was not persisted"))?;
-    if watch.interval_hours != interval_hours {
-        app.db.set_watch_interval(&watch.id, interval_hours)?;
-    }
-    Ok(watch.into())
+        .ok_or_else(|| anyhow!("watch was not persisted"))
 }
 
 /// Delete a watch only when it belongs to the active space.
@@ -307,16 +305,10 @@ pub fn delete_watch(app: &mut App, space_id: &str, id: &str) -> Result<bool> {
     if space_id != app.active_space.id {
         bail!("management operations require the active space")
     }
-    if !app
-        .db
-        .list_watches(&app.active_space.id)?
-        .iter()
-        .any(|watch| watch.id == id)
-    {
+    if !list_watches(app)?.iter().any(|watch| watch.id == id) {
         return Ok(false);
     }
-    app.db.delete_watch(id)?;
-    app.caches.watches.retain(|watch| watch.id != id);
+    app.execute(crate::app::AppCommand::DeleteJob { id: id.into() })?;
     Ok(true)
 }
 
@@ -325,15 +317,15 @@ pub fn run_watch(app: &mut App, space_id: &str, id: &str) -> Result<bool> {
     if space_id != app.active_space.id {
         bail!("management operations require the active space")
     }
-    let Some(watch) = app
-        .db
-        .list_watches(&app.active_space.id)?
-        .into_iter()
-        .find(|watch| watch.id == id)
-    else {
+    let Some(watch) = app.db.list_jobs()?.into_iter().find(|job| {
+        job.id == id
+            && job.space_id == app.active_space.id
+            && job.spec.kind == "research"
+            && job.spec.trigger_kind == "interval"
+    }) else {
         return Ok(false);
     };
-    Ok(app.run_one_watch(&watch))
+    Ok(app.run_research_job(&watch))
 }
 
 /// Dispatch the management surface used by the host actor; session and watch
@@ -507,6 +499,10 @@ fn dispatch_watch_item(
     }
     Ok(serde_json::json!({ "started": run_watch(app, space, id)? }))
 }
+
+#[cfg(test)]
+#[path = "research_jobs_tests.rs"]
+mod research_jobs_tests;
 
 #[cfg(test)]
 mod tests {

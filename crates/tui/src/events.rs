@@ -422,7 +422,6 @@ fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
         Popup::Library => ui::popups::library::handle_key(app, key),
         Popup::Subagents => ui::popups::subagents::handle_key(app, key),
         Popup::InteractiveUi => crate::interactive::key(app, key),
-        Popup::Watch => ui::popups::watches::handle_key(app, key)?,
         Popup::ResearchLive => {
             ui::popups::research_live::handle_key(app, key);
         }

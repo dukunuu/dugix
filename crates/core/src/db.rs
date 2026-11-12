@@ -106,17 +106,6 @@ pub struct Persona {
     pub blurb: String,
 }
 
-/// A standing research watch: runs a topic's research on an interval.
-#[derive(Debug, Clone)]
-pub struct Watch {
-    pub id: String,
-    pub space_id: String,
-    pub topic: String,
-    pub interval_hours: i64,
-    pub session_id: String,
-    pub last_run_at: Option<String>,
-}
-
 /// An imported file; `status` describes extraction and `status`/`mtime` are
 /// this device's derived index state.
 #[derive(Debug, Clone)]
@@ -313,7 +302,6 @@ impl Db {
             "INSERT OR IGNORE INTO spaces (id, name, created_at) VALUES (?1, ?2, ?3)",
             (DEFAULT_SPACE, DEFAULT_SPACE, Utc::now().to_rfc3339()),
         )?;
-        self.migrate_watch_jobs()?;
         Ok(())
     }
 

@@ -170,8 +170,8 @@ fn assert_snapshot(file: &str, actual: &str) {
 #[test]
 fn fresh_schemas_match_snapshots() {
     let db = Db::open_in_memory().unwrap();
-    assert_eq!(version(db.conn(), "main").unwrap(), 5);
-    assert_eq!(version(db.conn(), "cache").unwrap(), 1);
+    assert_eq!(version(db.conn(), "main").unwrap(), 6);
+    assert_eq!(version(db.conn(), "cache").unwrap(), 2);
     assert_snapshot("durable.txt", &schema(db.conn(), "main"));
     assert_snapshot("cache.txt", &schema(db.conn(), "cache"));
 }
@@ -184,7 +184,7 @@ fn durable_fixtures_reach_the_fresh_schema_and_preserve_rows() {
         let root = TempRoot::new();
         root.fixture(fixture);
         let db = Db::open(&root.db_path()).unwrap();
-        assert_eq!(version(db.conn(), "main").unwrap(), 5);
+        assert_eq!(version(db.conn(), "main").unwrap(), 6);
         let actual = schema_ignoring_nullability(db.conn(), "main", FIXTURE_NULLABILITY_VARIANTS);
         assert_eq!(actual, expected);
         assert_snapshot("durable.txt", &actual);
@@ -240,7 +240,7 @@ fn cache_fixture_preserves_embeddings_in_attached_and_standalone_schemas() {
         let actual = schema(conn, name);
         assert_eq!(actual, expected);
         assert_snapshot("cache.txt", &actual);
-        assert_eq!(version(conn, name).unwrap(), 1);
+        assert_eq!(version(conn, name).unwrap(), 2);
         let embedding: (String, Vec<u8>, String) = conn
             .query_row(
                 &format!("SELECT file_id, vec, text FROM {name}.chunk_embeddings"),
@@ -277,7 +277,7 @@ fn cache_baseline_adds_all_missing_columns() {
     ).unwrap();
     assert_eq!(
         run(&conn, CACHE, &mut context("main", "cache.db")).unwrap(),
-        1
+        2
     );
     assert_snapshot("cache.txt", &schema(&conn, "main"));
     let identity: String = conn
@@ -301,7 +301,7 @@ fn unsupported_durable_versions_have_exact_errors() {
         drop(conn);
         let error = Db::open(&root.db_path()).err().unwrap().to_string();
         let expected = if v == 99 {
-            "nexus.db was written by a newer nexus (schema 99, this build knows up to 5); update nexus".into()
+            "nexus.db was written by a newer nexus (schema 99, this build knows up to 6); update nexus".into()
         } else {
             format!(
                 "nexus.db is from a nexus older than 0.1.42 (schema {v}); install nexus-chat 0.1.42 once to upgrade it, then this version"
@@ -317,7 +317,7 @@ fn newer_cache_versions_have_exact_errors() {
     let conn = Connection::open(cache_path_for(&root.db_path())).unwrap();
     conn.pragma_update(None, "user_version", 99).unwrap();
     let expected =
-        "cache.db was written by a newer nexus (schema 99, this build knows up to 1); update nexus";
+        "cache.db was written by a newer nexus (schema 99, this build knows up to 2); update nexus";
     assert_eq!(
         migrate_cache(&conn, "main").unwrap_err().to_string(),
         expected
@@ -415,10 +415,10 @@ fn dropping_the_old_web_cache_exposes_the_device_cache() {
 }
 
 #[test]
-fn durable_step_five_preserves_sessions_and_chapters() {
+fn durable_upgrades_preserve_sessions_and_chapters() {
     let fresh = Db::open_in_memory().unwrap();
-    assert_eq!(durable_schema_version(), 5);
-    assert_eq!(version(fresh.conn(), "main").unwrap(), 5);
+    assert_eq!(durable_schema_version(), 6);
+    assert_eq!(version(fresh.conn(), "main").unwrap(), 6);
     let expected = schema_ignoring_nullability(fresh.conn(), "main", FIXTURE_NULLABILITY_VARIANTS);
     assert_snapshot("durable.txt", &expected);
     for fixture in [DEV, RELEASED] {
@@ -436,9 +436,9 @@ fn durable_step_five_preserves_sessions_and_chapters() {
         .unwrap();
         assert_eq!(
             run(&conn, DURABLE, &mut context("main", "nexus.db")).unwrap(),
-            1
+            2
         );
-        assert_eq!(version(&conn, "main").unwrap(), 5);
+        assert_eq!(version(&conn, "main").unwrap(), 6);
         assert_eq!(
             schema_ignoring_nullability(&conn, "main", FIXTURE_NULLABILITY_VARIANTS),
             expected

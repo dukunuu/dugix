@@ -144,7 +144,6 @@ pub struct ListCaches {
     pub apps: Vec<String>,
     pub images: Vec<ImageMeta>,
     pub scripts: Vec<ScriptMeta>,
-    pub watches: Vec<crate::db::Watch>,
     pub sessions: Vec<crate::db::Session>,
 }
 

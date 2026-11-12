@@ -12,4 +12,3 @@ pub mod skills;
 pub mod spaces;
 pub mod swarm;
 pub mod usage;
-pub mod watches;

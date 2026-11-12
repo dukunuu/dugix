@@ -1,22 +1,8 @@
-//! Standing research jobs, with a startup fallback when no daemon is running.
+//! Repeating research jobs and report diffs.
 
-use chrono::{DateTime, Utc};
 use std::fmt::Write as _;
 
-use crate::db::Watch;
-
-pub fn due_watches(watches: &[Watch], now: DateTime<Utc>) -> Vec<Watch> {
-    watches
-        .iter()
-        .filter(|w| match &w.last_run_at {
-            None => true,
-            Some(t) => DateTime::parse_from_rfc3339(t).map_or(true, |last| {
-                now.signed_duration_since(last) >= chrono::Duration::hours(w.interval_hours)
-            }),
-        })
-        .cloned()
-        .collect()
-}
+use crate::jobs::Job;
 
 pub fn diff_section(previous_report: &str, new_report: &str, new_sources: &[String]) -> String {
     let _ = (previous_report, new_report);
@@ -50,40 +36,29 @@ impl super::App {
             self.push_status("usage: /watch <topic>".to_string());
             return;
         }
-        self.start_research_with_gate(topic, false);
-        let Some(session) = &self.session else {
-            self.push_status("could not start watch: no session created".to_string());
-            return;
-        };
-        match self
-            .db
-            .create_watch(&self.active_space.id, topic, 24, &session.id)
-        {
-            Ok(id) => {
-                let session_id = session.id.clone();
-                let _ = self.db.touch_watch(&id, &chrono::Utc::now().to_rfc3339());
-                let _ = crate::jobs::research::started(self, &id, &session_id);
-                self.push_status(format!("watching: {topic} (every 24h)"));
-            }
-            Err(e) => self.push_status(format!("watch creation failed: {e}")),
+        self.create_watch_with_interval(topic, 1440);
+    }
+
+    pub(crate) fn create_watch_with_interval(&mut self, topic: &str, interval_minutes: i64) {
+        if self.start_research_job(
+            crate::jobs::research::spec(topic, Some(interval_minutes)),
+            false,
+            None,
+        ) {
+            self.push_status(format!(
+                "watching: {} (every {}h)",
+                topic.trim(),
+                interval_minutes / 60
+            ));
         }
     }
 
-    pub fn delete_watch(&mut self, id: &str) -> anyhow::Result<bool> {
-        let existed = self.caches.watches.iter().any(|w| w.id == id);
-        if existed {
-            let _ = self.db.delete_watch(id);
-            self.caches.watches.retain(|x| x.id != id);
-        }
-        Ok(existed)
-    }
-
-    /// Start a watch in its own space, whether due or manually requested.
-    pub fn run_one_watch(&mut self, w: &crate::db::Watch) -> bool {
+    /// Start a research job in its own space, whether due or manually requested.
+    pub fn run_research_job(&mut self, job: &Job) -> bool {
         let Ok(spaces) = self.db.list_spaces() else {
             return false;
         };
-        let Some(space_row) = spaces.into_iter().find(|s| s.id == w.space_id) else {
+        let Some(space_row) = spaces.into_iter().find(|s| s.id == job.space_id) else {
             return false;
         };
         let restore_space = self.active_space.clone();
@@ -93,25 +68,9 @@ impl super::App {
         let restore_messages = std::mem::take(&mut self.messages);
         let restore_work_mode = self.work_mode;
         let restore_workspace = self.workspace.clone();
-        let mut started = false;
-        if let Ok(Some(s)) = self.db.get_session(&w.session_id) {
-            let prior_session_id = s.id.clone();
-            self.active_space = space_row;
-            self.session = Some(s);
-            let _ = self.execute(super::AppCommand::RunResearch {
-                topic: w.topic.clone(),
-                gated: false,
-            });
-            // A busy pipeline creates no new session; leave that watch due rather than marking it run.
-            if let Some(new_session) = self.session.as_ref()
-                && new_session.id != prior_session_id
-            {
-                let _ = self.db.set_watch_session(&w.id, &new_session.id);
-                let _ = self.db.touch_watch(&w.id, &chrono::Utc::now().to_rfc3339());
-                let _ = crate::jobs::research::started(self, &w.id, &new_session.id);
-                started = true;
-            }
-        }
+        self.active_space = space_row;
+        self.session = self.db.get_session(&job.session_id).ok().flatten();
+        let started = self.start_research_job(job.spec.clone(), false, Some(&job.id));
         self.active_space = restore_space;
         self.session = restore_session;
         self.memory_snapshot = restore_memory_snapshot;
@@ -131,14 +90,14 @@ impl super::App {
     ) -> anyhow::Result<Option<Vec<String>>> {
         let Some(w) = self
             .db
-            .list_all_watches()?
+            .list_jobs()?
             .into_iter()
-            .find(|w| w.session_id == session_id)
+            .find(|job| job.spec.kind == "research" && job.session_id == session_id)
         else {
             return Ok(None);
         };
         // Unrelated reports in the same space must not suppress this watch's new sources.
-        let slug = super::sessions::slugify(&w.topic);
+        let slug = super::sessions::slugify(w.spec.topic.as_deref().unwrap_or(&w.spec.prompt));
         let prefix = format!("research-{slug}-");
         let rows = self.db.search_citations(space_id, Some(&prefix))?;
         let rows: Vec<_> = rows
@@ -174,11 +133,26 @@ mod tests {
         App::new(db, Some("k"), space)
     }
 
-    fn watch_row(a: &App, id: &str) -> crate::db::Watch {
-        a.db.list_all_watches()
+    fn create_research_job(a: &App, topic: &str, session_id: &str) -> String {
+        let job = Job {
+            id: uuid::Uuid::new_v4().to_string(),
+            space_id: a.active_space.id.clone(),
+            session_id: session_id.to_string(),
+            device_id: a.db.device_id().unwrap(),
+            spec: crate::jobs::research::spec(topic, Some(1440)),
+            enabled: 1,
+            last_run_at: None,
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        };
+        a.db.save_job(&job).unwrap();
+        job.id
+    }
+
+    fn research_job(a: &App, id: &str) -> Job {
+        a.db.list_jobs()
             .unwrap()
             .into_iter()
-            .find(|w| w.id == id)
+            .find(|job| job.id == id)
             .unwrap()
     }
 
@@ -191,18 +165,11 @@ mod tests {
         let first_session =
             a.db.create_session("first run", "openai/gpt-5-mini", &space_id, "chat")
                 .unwrap();
-        let watch_id =
-            a.db.create_watch(&space_id, "rust async runtimes", 24, &first_session.id)
-                .unwrap();
+        let watch_id = create_research_job(&a, "rust async runtimes", &first_session.id);
 
-        assert!(a.run_one_watch(&watch_row(&a, &watch_id)));
+        assert!(a.run_research_job(&research_job(&a, &watch_id)));
 
-        let updated =
-            a.db.list_all_watches()
-                .unwrap()
-                .into_iter()
-                .find(|w| w.id == watch_id)
-                .unwrap();
+        let updated = research_job(&a, &watch_id);
         assert_ne!(
             updated.session_id, first_session.id,
             "a watch run should repoint the watch at the session its re-run actually used, \
@@ -223,28 +190,14 @@ mod tests {
         let second_session =
             a.db.create_session("second run", "openai/gpt-5-mini", &space_id, "chat")
                 .unwrap();
-        let watch_a =
-            a.db.create_watch(&space_id, "rust async runtimes", 24, &first_session.id)
-                .unwrap();
-        let watch_b =
-            a.db.create_watch(&space_id, "wasm gc proposal", 24, &second_session.id)
-                .unwrap();
+        let watch_a = create_research_job(&a, "rust async runtimes", &first_session.id);
+        let watch_b = create_research_job(&a, "wasm gc proposal", &second_session.id);
 
-        assert!(a.run_one_watch(&watch_row(&a, &watch_a)));
-        assert!(!a.run_one_watch(&watch_row(&a, &watch_b)));
+        assert!(a.run_research_job(&research_job(&a, &watch_a)));
+        assert!(!a.run_research_job(&research_job(&a, &watch_b)));
 
-        let updated_a =
-            a.db.list_all_watches()
-                .unwrap()
-                .into_iter()
-                .find(|w| w.id == watch_a)
-                .unwrap();
-        let updated_b =
-            a.db.list_all_watches()
-                .unwrap()
-                .into_iter()
-                .find(|w| w.id == watch_b)
-                .unwrap();
+        let updated_a = research_job(&a, &watch_a);
+        let updated_b = research_job(&a, &watch_b);
 
         assert_ne!(
             updated_a.session_id, first_session.id,
@@ -266,14 +219,16 @@ mod tests {
         );
     }
 
-    fn watch(topic: &str, interval_hours: i64, last_run_at: Option<&str>) -> Watch {
-        Watch {
+    fn watch(topic: &str, interval_hours: i64, last_run_at: Option<&str>) -> Job {
+        Job {
             id: "w1".to_string(),
             space_id: "space-1".to_string(),
-            topic: topic.to_string(),
-            interval_hours,
             session_id: "sess-1".to_string(),
+            device_id: "device".to_string(),
+            spec: crate::jobs::research::spec(topic, Some(interval_hours * 60)),
+            enabled: 1,
             last_run_at: last_run_at.map(str::to_string),
+            updated_at: String::new(),
         }
     }
 
@@ -283,7 +238,7 @@ mod tests {
         let now = chrono::DateTime::parse_from_rfc3339("2026-07-07T00:00:00+00:00")
             .unwrap()
             .to_utc();
-        assert_eq!(due_watches(&[w], now).len(), 1);
+        assert_eq!(crate::jobs::due(&[w], now, "device").len(), 1);
     }
 
     #[test]
@@ -292,7 +247,7 @@ mod tests {
         let now = chrono::DateTime::parse_from_rfc3339("2026-07-07T05:00:00+00:00")
             .unwrap()
             .to_utc();
-        assert!(due_watches(&[w], now).is_empty());
+        assert!(crate::jobs::due(&[w], now, "device").is_empty());
     }
 
     #[test]
@@ -301,7 +256,7 @@ mod tests {
         let now = chrono::DateTime::parse_from_rfc3339("2026-07-07T01:00:00+00:00")
             .unwrap()
             .to_utc();
-        assert_eq!(due_watches(&[w], now).len(), 1);
+        assert_eq!(crate::jobs::due(&[w], now, "device").len(), 1);
     }
 
     #[test]
@@ -349,10 +304,7 @@ mod tests {
                 "chat",
             )
             .unwrap();
-        let watch_id =
-            a.db.create_watch(&space_id, "rust async runtimes", 24, &session.id)
-                .unwrap();
-        let _ = watch_id;
+        create_research_job(&a, "rust async runtimes", &session.id);
 
         let slug = super::super::sessions::slugify("rust async runtimes");
         a.db.add_citations(
@@ -396,16 +348,12 @@ mod tests {
         let session_rust =
             a.db.create_session("rust", "openai/gpt-5-mini", &space_id, "chat")
                 .unwrap();
-        let _watch_rust =
-            a.db.create_watch(&space_id, "rust", 24, &session_rust.id)
-                .unwrap();
+        create_research_job(&a, "rust", &session_rust.id);
 
         let session_rust_async =
             a.db.create_session("rust async", "openai/gpt-5-mini", &space_id, "chat")
                 .unwrap();
-        let _watch_rust_async =
-            a.db.create_watch(&space_id, "rust async", 24, &session_rust_async.id)
-                .unwrap();
+        create_research_job(&a, "rust async", &session_rust_async.id);
 
         let slug_rust_async = super::super::sessions::slugify("rust async");
         a.db.add_citations(

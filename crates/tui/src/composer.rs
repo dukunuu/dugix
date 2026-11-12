@@ -960,7 +960,9 @@ impl AppView {
                     self.push_status(format!("{error:#}"));
                 }
             }
-            AppCommand::OpenJobs => crate::ui::popups::jobs::open(self, false)?,
+            AppCommand::OpenJobs | AppCommand::Watch { topic: None } => {
+                crate::ui::popups::jobs::open(self, false)?;
+            }
             AppCommand::OpenJobForm => crate::ui::popups::jobs::open(self, true)?,
             AppCommand::OpenUsage => self.open_usage_popup(),
             AppCommand::Memory {
@@ -977,17 +979,6 @@ impl AppView {
             AppCommand::Harness => {
                 self.core.execute(AppCommand::Harness)?;
                 self.popup = Popup::Harness;
-            }
-            // Creating a watch from plain chat would migrate the conversation into research.
-            AppCommand::Watch { topic: None } => self.open_watch_picker()?,
-            AppCommand::Watch { topic: Some(t) } => {
-                if self.core.is_research_session() {
-                    self.core.create_watch(&t);
-                } else {
-                    self.push_status(
-                        "new watches start from a research session — use /research first",
-                    );
-                }
             }
             other => self.core.execute(other)?,
         }
@@ -1345,18 +1336,37 @@ mod tests {
         assert!(a.command_matches().is_empty());
     }
 
-    #[test]
-    fn watch_picker_opens_anywhere_but_new_watches_need_research() {
+    #[tokio::test]
+    async fn watch_opens_jobs_and_new_watches_start_from_chat() {
         let mut a = test_app();
         a.run_command("watch").unwrap();
-        assert!(
-            a.popup == Popup::Watch,
-            "the picker needs no research session"
-        );
+        assert_eq!(a.popup, Popup::Jobs);
         a.popup = Popup::None;
+        assert!(!a.core.is_research_session());
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        a.core.current_model = Some("local:fake".into());
+        a.core.backends.local = Some(
+            nexus_core::provider::openrouter::OpenRouter::local(&format!(
+                "http://{}/v1",
+                listener.local_addr().unwrap()
+            ))
+            .unwrap(),
+        );
         a.run_command("watch rust async").unwrap();
-        assert!(a.last_status().contains("research session"));
-        assert!(a.popup == Popup::None);
+        assert_eq!(a.last_status(), "watching: rust async (every 24h)");
+        assert_eq!(a.popup, Popup::None);
+        let jobs = a.db.list_jobs().unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].spec.kind, "research");
+        assert_eq!(jobs[0].spec.topic.as_deref(), Some("rust async"));
+        assert_eq!(jobs[0].spec.trigger_kind, "interval");
+        assert_eq!(jobs[0].spec.interval_minutes, 1440);
+        let runs = a.db.list_job_runs().unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].job_id, jobs[0].id);
+        assert_eq!(runs[0].id, a.session.as_ref().unwrap().id);
+        assert!(a.research.survey_reply_tx.is_none());
+        a.core.stop_research();
     }
 
     #[test]

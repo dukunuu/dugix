@@ -34,7 +34,7 @@ use canvas::{deck_export, design_files, doc_files, launch_studio};
 use data::{backup, export, files, instructions, memory, restore, sessions, spaces};
 use host::{HostServiceAction, host};
 use providers::{login, models, skills};
-use research::{chat, jobs, research, watch};
+use research::{chat, jobs, research};
 use selection::clipboard;
 use sync::sync_cmd;
 use system::{doctor, open, status, train_export, update};
@@ -208,11 +208,6 @@ pub enum Command {
     Jobs {
         #[command(subcommand)]
         cmd: JobsCmd,
-    },
-    /// Standing research watches: list, or run them from cron.
-    Watch {
-        #[command(subcommand)]
-        cmd: WatchCmd,
     },
     /// Token/cache/cost analytics, like /usage.
     Usage {
@@ -502,21 +497,6 @@ pub enum JobsCmd {
     UninstallService,
 }
 
-#[derive(Subcommand, Debug)]
-pub enum WatchCmd {
-    /// List watches (topic, interval, due state).
-    List,
-    /// Run watches' research now: the given watch, all watches (`--all`),
-    /// or the due ones (default).
-    Run {
-        /// Watch id prefix or topic substring; default: due watches.
-        watch: Option<String>,
-        /// Run every watch, due or not.
-        #[arg(long)]
-        all: bool,
-    },
-}
-
 #[derive(Subcommand)]
 pub enum SessionsCmd {
     /// Delete one session (by id, slug, or id prefix).
@@ -647,7 +627,6 @@ pub async fn run(cmd: Command) -> Result<()> {
         } => research(topic, model, space, approve, json, quiet).await,
         Command::Connectors { cmd } => crate::connectors_cli::run(cmd).await,
         Command::Jobs { cmd } => jobs(cmd).await,
-        Command::Watch { cmd } => watch(cmd).await,
         Command::Usage {
             session,
             range,

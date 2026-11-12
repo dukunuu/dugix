@@ -226,26 +226,40 @@ impl super::App {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
     pub fn start_research_with_gate(&mut self, topic: &str, gated: bool) {
-        let topic = topic.trim().to_string();
+        self.start_research_job(crate::jobs::research::spec(topic, None), gated, None);
+    }
+
+    #[allow(clippy::too_many_lines)]
+    pub(super) fn start_research_job(
+        &mut self,
+        spec: crate::jobs::JobSpec,
+        gated: bool,
+        job_id: Option<&str>,
+    ) -> bool {
+        let topic = spec
+            .topic
+            .as_deref()
+            .unwrap_or(&spec.prompt)
+            .trim()
+            .to_string();
         if topic.is_empty() {
             self.push_status("usage: /research <topic>".to_string());
-            return;
+            return false;
         }
         if self.research.rx.is_some() {
             self.push_status("a research job is already running".to_string());
-            return;
+            return false;
         }
         let Some(model) = self.current_model.clone() else {
             self.push_status("no model configured — set one in /login or /model".to_string());
-            return;
+            return false;
         };
         let Some((provider, raw_research_model)) = self.resolve_model_backend(&model) else {
             self.push_status(format!(
                 "model backend unavailable: {model} — pick another with /model"
             ));
-            return;
+            return false;
         };
         let title = super::chat::title_from(&topic);
         self.set_survey_gate(None);
@@ -274,9 +288,33 @@ impl super::App {
                 Ok(s) => s,
                 Err(e) => {
                     self.push_status(format!("could not start research session: {e}"));
-                    return;
+                    return false;
                 }
             };
+
+        let recorded = (|| -> anyhow::Result<()> {
+            let id = if let Some(id) = job_id {
+                id.to_string()
+            } else {
+                let job = crate::jobs::Job {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    space_id: self.active_space.id.clone(),
+                    session_id: session.id.clone(),
+                    device_id: self.db.device_id()?,
+                    spec,
+                    enabled: 1,
+                    last_run_at: None,
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                };
+                self.db.save_job(&job)?;
+                job.id
+            };
+            crate::jobs::research::started(self, &id, &session.id)
+        })();
+        if let Err(error) = recorded {
+            self.push_status(format!("could not start research job: {error}"));
+            return false;
+        }
 
         if let Some(ref pid) = parent_id {
             let _ = self.db.set_research_parent(&session.id, pid);
@@ -421,6 +459,7 @@ impl super::App {
             space_name,
         }));
         self.research.abort = Some(task.abort_handle());
+        true
     }
 
     pub fn stop_research(&mut self) {
