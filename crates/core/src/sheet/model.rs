@@ -20,6 +20,27 @@ pub enum Align {
     Right,
 }
 
+/// How text that does not fit its cell is drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Wrap {
+    /// Spill into the empty cells beside it (the default).
+    Overflow,
+    /// Break into lines inside the cell; the row grows to fit.
+    Wrap,
+    /// Cut at the cell border.
+    Clip,
+}
+
+/// Vertical alignment of a cell's text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VAlign {
+    Top,
+    Middle,
+    Bottom,
+}
+
 /// Sparse formatting overrides; colors are theme tokens or six-digit hex.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -34,6 +55,10 @@ pub struct Format {
     pub underline: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub align: Option<Align>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wrap: Option<Wrap>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub valign: Option<VAlign>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fill: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

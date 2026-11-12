@@ -103,6 +103,50 @@
     return out;
   }
 
+  // -- derived geometry: the mock measures text the way the core does ------------------------------------------
+
+  let measureCtx = null;
+  function measureText(text, bold) {
+    measureCtx ||= document.createElement('canvas').getContext('2d');
+    measureCtx.font = `${bold ? '700 ' : '400 '}14px system-ui, -apple-system, "Segoe UI", sans-serif`;
+    return measureCtx.measureText(text).width;
+  }
+  /** Greedy word wrap into `width`; overlong words break anywhere, as in the core. */
+  function wrappedLines(text, width) {
+    const space = measureText(' ', false);
+    let lines = 0;
+    for (const paragraph of String(text).split('\n')) {
+      let count = 1, used = 0;
+      for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+        const w = measureText(word, false);
+        if (used > 0 && used + space + w > width) { count++; used = 0; }
+        if (w <= width) { used += (used > 0 ? space : 0) + w; continue; }
+        for (const ch of word) { const cw = measureText(ch, false); if (used > 0 && used + cw > width) { count++; used = 0; } used += cw; }
+      }
+      lines += count;
+    }
+    return Math.max(1, lines);
+  }
+  /** The height each row needs for its wrapped cells, per tab id. */
+  function autoRows() {
+    const out = {};
+    for (const tab of sheet.tabs) {
+      const heights = {};
+      for (const [a1, cell] of Object.entries(tab.cells)) {
+        if (cell.fmt?.wrap !== 'wrap') continue;
+        const a = M.parseAddr(a1);
+        if (!a || tab.rows?.[a.row] !== undefined) continue;
+        const display = valueOf(tab, a1).display;
+        if (!display) continue;
+        const width = Math.max(1, (tab.cols?.[M.colName(a.col)] ?? 100) - 10);
+        const height = wrappedLines(display, width) * 17 + 4;
+        if (height > 24) heights[a.row] = Math.max(heights[a.row] || 0, height);
+      }
+      out[tab.id] = heights;
+    }
+    return out;
+  }
+
   // -- ops ------------------------------------------------------------------------------------------------------
 
   const shiftFormula = (input, dr, dc) => (input.startsWith('=')
@@ -198,6 +242,25 @@
         break;
       }
       case 'set_col_width': { const r = M.parseRange(o.cols); tab.cols = tab.cols || {}; for (let c = r.c1; c <= r.c2; c++) tab.cols[M.colName(c)] = o.width; break; }
+      case 'fit_cols': {
+        const r = M.parseRange(o.cols);
+        tab.cols = tab.cols || {};
+        for (let c = r.c1; c <= r.c2; c++) {
+          let widest = null;
+          const merges = M.mergesOf(tab);
+          for (const [a1, cell] of Object.entries(tab.cells)) {
+            const a = M.parseAddr(a1);
+            if (!a || a.col !== c || M.mergeAt(merges, a.row, a.col)) continue;
+            const display = valueOf(tab, a1).display;
+            if (!display) continue;
+            const words = display.split(/\s+/).filter(Boolean);
+            const w = cell.fmt?.wrap === 'wrap' ? Math.max(0, ...words.map(word => measureText(word, cell.fmt?.bold))) : measureText(display, cell.fmt?.bold);
+            widest = widest === null ? w : Math.max(widest, w);
+          }
+          tab.cols[M.colName(c)] = widest === null ? 100 : Math.min(480, Math.max(40, widest + 10));
+        }
+        break;
+      }
       case 'set_row_height': { const r = M.parseRange(o.rows); tab.rows = tab.rows || {}; for (let row = r.r1; row <= r.r2; row++) tab.rows[row] = o.height; break; }
       case 'freeze': tab.frozen = { rows: o.rows, cols: o.cols }; break;
       case 'merge': tab.merges = [...(tab.merges || []), o.range]; break;
@@ -235,7 +298,7 @@
   // -- events ------------------------------------------------------------------------------------------------------
 
   const current = (extra = {}) => ({
-    event: 'Sheet', sheet, revision: revision(), relative: 'sheets/q3-budget.sheet.json', values: values(sheet.tabs[0].name, 'A1:AZ200'), threads,
+    event: 'Sheet', sheet, revision: revision(), relative: 'sheets/q3-budget.sheet.json', values: values(sheet.tabs[0].name, 'A1:AZ200'), auto_rows: autoRows(), threads,
     linked: window.__mock?.linked ?? true, activities, changed: [], notice: null, colors, can_undo: undo.length > 0, can_redo: redo.length > 0, home: false, ...extra,
   });
   const feedback = () => ({ event: 'SheetFeedback', threads, activities, notes: [] });

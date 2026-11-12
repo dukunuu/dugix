@@ -70,6 +70,26 @@ test('axes of a tab: widths by column letters, heights by row number', () => {
   assert.equal(axes.cols.size(1), 100); assert.equal(axes.cols.size(2), 150); assert.equal(axes.cols.size(27), 40);
   assert.equal(axes.rows.size(3), 60); assert.equal(axes.rows.pos(4), 3 * 24 + 36);
 });
+test('axes of a tab: derived wrapped-row heights, with a user-set height winning', () => {
+  const axes = M.axesOf({ rows: { 3: 60 } }, { rows: 50, cols: 30 }, { 3: 90, 4: 38 });
+  assert.equal(axes.rows.size(3), 60, 'the user-set height wins');
+  assert.equal(axes.rows.size(4), 38, 'a wrapped row takes its derived height');
+  assert.equal(axes.rows.size(5), 24);
+  assert.equal(axes.rows.pos(5), 24 * 4 + 36 + 14, 'offsets add up the mixed heights');
+});
+test('overflow spans: to the next filled cell, in the reading direction', () => {
+  const empty = () => false, filled = () => true;
+  assert.deepEqual(M.overflowSpan('left', false, false, 1, 5, empty), { c1: 1, c2: 5 });
+  assert.deepEqual(M.overflowSpan('left', false, false, 1, 5, c => c === 3), { c1: 1, c2: 2 }, 'a filled cell stops it');
+  assert.deepEqual(M.overflowSpan('left', false, false, 4, 5, empty), { c1: 4, c2: 5 });
+  assert.deepEqual(M.overflowSpan('right', false, false, 5, 5, empty), { c1: 1, c2: 5 }, 'right-aligned text spills left');
+  assert.deepEqual(M.overflowSpan('right', false, false, 5, 5, c => c === 4), { c1: 5, c2: 5 });
+  assert.deepEqual(M.overflowSpan('center', false, false, 3, 5, empty), { c1: 1, c2: 5 }, 'centered text spills both ways');
+  assert.deepEqual(M.overflowSpan('center', false, false, 3, 5, c => c === 2), { c1: 3, c2: 5 });
+  assert.deepEqual(M.overflowSpan('left', false, true, 1, 5, empty), { c1: 1, c2: 1 }, 'numbers never overflow');
+  for (const wrap of ['wrap', 'clip']) assert.deepEqual(M.overflowSpan('left', Boolean(wrap), false, 1, 5, empty), { c1: 1, c2: 1 }, `${wrap} never overflows`);
+  assert.deepEqual(M.overflowSpan('left', false, false, 1, 5, filled), { c1: 1, c2: 1 }, 'a full row leaves no room');
+});
 test('viewport window: the visible rows and columns plus a margin, clamped to the grid', () => {
   const axes = M.axesOf(tabOf(), { rows: 10000, cols: 26 });
   const win = M.windowOf(axes, { left: 0, top: 24 * 9000, width: 600, height: 480 });
@@ -206,6 +226,8 @@ test('keys: clearing, undo, formatting, comment, fill', () => {
   assert.deepEqual(keyAction(key('b', { ctrlKey: true })), { do: 'format', key: 'bold' });
   assert.deepEqual(keyAction(key('u', { metaKey: true })), { do: 'format', key: 'underline' });
   assert.deepEqual(keyAction(key('µ', { metaKey: true, altKey: true, code: 'KeyM' })), { do: 'comment' });
+  assert.deepEqual(keyAction(key('∑', { metaKey: true, altKey: true, code: 'KeyW' })), { do: 'wrap' }, 'Cmd+Alt+W toggles wrap');
+  assert.deepEqual(keyAction(key('w', { ctrlKey: true, altKey: true, code: 'KeyW' })), { do: 'wrap' });
   assert.deepEqual(keyAction(key('m', { ctrlKey: true, altKey: true, code: 'KeyM' })), { do: 'comment' });
   assert.deepEqual(keyAction(key('d', { metaKey: true })), { do: 'fillDown' }); assert.deepEqual(keyAction(key('r', { metaKey: true })), { do: 'fillRight' });
   assert.deepEqual(keyAction(key(' ', { ctrlKey: true })), { do: 'selectColumn' }); assert.deepEqual(keyAction(key(' ', { shiftKey: true })), { do: 'selectRow' });
@@ -286,6 +308,19 @@ test('toolbar: bold, italic, underline toggle by the active cell; number formats
   assert.deepEqual(M.colorFormat('S', 'A1', 'color', 'accent').patch, { color: 'accent' });
   assert.deepEqual(M.colorFormat('S', 'A1', 'fill', null).patch, { fill: null }, '"none" removes the colour');
   assert.equal(M.numberFormatName('0.00%'), 'Percent'); assert.equal(M.numberFormatName(undefined), 'Automatic'); assert.equal(M.numberFormatName('0.0'), 'Custom');
+});
+test('toolbar: wrapping and vertical alignment, and fitting columns', () => {
+  assert.deepEqual(M.WRAP_MODES, [['Overflow', 'overflow'], ['Wrap', 'wrap'], ['Clip', 'clip']]);
+  assert.deepEqual(M.VALIGNS, [['Top', 'top'], ['Middle', 'middle'], ['Bottom', 'bottom']]);
+  assert.deepEqual(M.wrapFormat('S', 'A1:B2', 'wrap'), { op: 'format', tab: 'S', range: 'A1:B2', patch: { wrap: 'wrap' } });
+  assert.deepEqual(M.wrapFormat('S', 'A1', 'overflow'), { op: 'format', tab: 'S', range: 'A1', patch: { wrap: 'overflow' } });
+  assert.deepEqual(M.valignFormat('S', 'A1', 'middle'), { op: 'format', tab: 'S', range: 'A1', patch: { valign: 'middle' } });
+  assert.deepEqual(M.valignFormat('S', 'A1', null), { op: 'format', tab: 'S', range: 'A1', patch: { valign: null } }, 'the default removes the field');
+  assert.deepEqual(M.toggleWrap('S', 'A1', {}).patch, { wrap: 'wrap' });
+  assert.deepEqual(M.toggleWrap('S', 'A1', { wrap: 'wrap' }).patch, { wrap: null }, 'wrap toggles back to overflow');
+  assert.deepEqual(M.toggleWrap('S', 'A1', { wrap: 'clip' }).patch, { wrap: 'wrap' }, 'clip becomes wrap');
+  assert.deepEqual(M.op.fitCols('S', 'A:C'), { op: 'fit_cols', tab: 'S', cols: 'A:C' });
+  assert.equal(M.applyLocal({ title: 'T', tabs: [{ id: 't1', name: 'Sheet1', cells: {} }] }, [M.op.fitCols('Sheet1', 'A:A')]), null, 'fitting waits for the backend to measure');
 });
 test('toolbar: merge toggles with the merges the range touches', () => {
   assert.deepEqual(M.mergeToggle('S', M.parseRange('A1:B2'), []), { op: 'merge', tab: 'S', range: 'A1:B2' });

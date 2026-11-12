@@ -31,7 +31,7 @@ export function mount(shared) {
 
   const state = {
     sheet: null, revision: '', relative: '', threads: [], activities: {}, linked: false, canUndo: false, canRedo: false,
-    tabId: null, sel: null, sels: {}, extents: {}, scrolls: {}, values: new Map(), generation: 0, clip: null, remote: null, drafts: {},
+    tabId: null, sel: null, sels: {}, extents: {}, scrolls: {}, values: new Map(), generation: 0, clip: null, remote: null, drafts: {}, autoRows: {},
   };
   const lifetime = new AbortController();
 
@@ -117,6 +117,8 @@ export function mount(shared) {
     state, signal: lifetime.signal, overlay, sidebarPane: sidePane, command, toast,
     tab: () => state.sheet?.tabs.find(t => t.id === state.tabId) || null,
     tabName: () => api.tab()?.name ?? '',
+    /** Derived heights of wrapped rows for the tab showing; a user-set height wins. */
+    autoRows: () => state.autoRows?.[state.tabId] || null,
     editing: () => api.editor.active,
     place: (node, rect) => placePopup(node, rect, { prefer: 'below', align: 'left' }),
     extent() {
@@ -231,13 +233,19 @@ export function mount(shared) {
     if (axis === 'row' && ['rows', 'all'].includes(state.sel.kind) && index >= r.r1 && index <= r.r2) { from = r.r1; to = Math.min(r.r2, extent.rows); }
     apply([M.resizeOp(api.tabName(), axis, from, to, size)]);
   }
-  /** Double-click on a column border: the width of its widest value; a row goes back to the default height. */
+  /** Double-click on a column border: fit the column to every value it holds; a row goes
+   *  back to the default height. A border of a selected column fits the whole selection. */
   function fit(axis, index) {
     if (axis === 'row') { resize('row', index, M.DEFAULT_ROW); return; }
-    const texts = [];
-    const merges = M.mergesOf(api.tab());
-    for (const [a1, v] of valuesFor(state.tabId).map) { const a = M.parseAddr(a1); if (a?.col === index && v.display && !M.mergeAt(merges, a.row, a.col)) texts.push(v.display); }
-    resize('col', index, M.fitWidth(texts, t => api.grid.measure(t, false)));
+    const r = M.selRect(state.sel);
+    const last = state.sel.kind === 'all' ? (used()?.c2 || index) : Math.min(r.c2, api.extent().cols);
+    const selected = ['cols', 'all'].includes(state.sel.kind) && index >= r.c1 && index <= last;
+    const from = selected ? r.c1 : index, to = selected ? last : index;
+    apply([M.op.fitCols(api.tabName(), `${M.colName(from)}:${M.colName(to)}`)]);
+  }
+  /** ⌘/Ctrl+Alt+W: overflow ↔ wrap on the selection. */
+  function toggleWrap() {
+    if (state.sel) apply([M.toggleWrap(api.tabName(), opRange(), api.formatAt())]);
   }
 
   // -- selection -------------------------------------------------------------------------------------------------------------
@@ -314,8 +322,15 @@ export function mount(shared) {
     const comment = { label: 'Comment', hint: '⌥⌘M', run: () => api.comments.begin() };
     let items;
     if (kind === 'col') {
+      // "Fit to data" fits the selected columns when the clicked one is among them, all
+      // used columns when everything is selected, else just this column.
+      const inSelection = ['cols', 'all'].includes(state.sel.kind) && which >= r.c1 && which <= r.c2;
+      const fitFrom = !inSelection ? which : state.sel.kind === 'all' ? 1 : r.c1;
+      const fitTo = !inSelection ? which : state.sel.kind === 'all' ? (used()?.c2 || which) : Math.min(r.c2, api.extent().cols);
       items = [
         ...insertCols, deleteCols, { rule: true },
+        { label: 'Fit to data', run: () => apply([M.op.fitCols(name, `${M.colName(fitFrom)}:${M.colName(fitTo)}`)]) },
+        { rule: true },
         { label: 'Sort sheet A → Z', run: () => apply(M.sortOps(name, used(), which, false, tab.frozen?.rows || 0)) },
         { label: 'Sort sheet Z → A', run: () => apply(M.sortOps(name, used(), which, true, tab.frozen?.rows || 0)) },
         ...((tab.frozen?.rows || 0) >= 1 ? [{ group: 'Row 1 is frozen and counts as the header' }] : []),
@@ -451,6 +466,7 @@ export function mount(shared) {
     if (event.revision !== state.revision || first) invalidate();
     state.revision = event.revision;
     state.sheet = event.sheet;
+    state.autoRows = event.auto_rows || {};
     const firstTab = state.sheet.tabs[0].id;
     store(firstTab, FIRST_WINDOW, event.values);
     if (conflict) queue.length = 0;
@@ -534,6 +550,7 @@ export function mount(shared) {
       case 'undo': api.undo(); break;
       case 'redo': api.redo(); break;
       case 'format': toggle(act.key); break;
+      case 'wrap': toggleWrap(); break;
       case 'comment': api.comments.begin(); break;
       case 'fillDown': fillSelection(true); break;
       case 'fillRight': fillSelection(false); break;

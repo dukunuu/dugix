@@ -66,6 +66,11 @@ pub fn import_csv(bytes: &[u8], filename: &str, design: &Design) -> Result<Sheet
             }
         }
     }
+    // Imported CSVs come in with their columns fitted to their contents.
+    if let Some(cols) = super::layout::used_columns(&sheet.tabs[0]) {
+        let tab = sheet.tabs[0].name.clone();
+        sheet = super::ops::apply(&sheet, &[super::ops::Op::FitCols { tab, cols }])?;
+    }
     super::validate::checked(&sheet)
 }
 

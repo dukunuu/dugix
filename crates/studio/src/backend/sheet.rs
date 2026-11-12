@@ -7,6 +7,7 @@ use nexus_core::deck::{
 };
 use nexus_core::sheet::{self, Sheet, ValueKind, Workbook, address::Range, feedback as comments};
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use super::{Backend, Command, Event, asset_root, atomic_write, stamp};
@@ -42,6 +43,20 @@ fn tab_name<'a>(sheet: &'a Sheet, tab: &str) -> Result<&'a str> {
         .find(|t| t.id == tab || t.name.eq_ignore_ascii_case(tab))
         .map(|t| t.name.as_str())
         .context("unknown tab")
+}
+
+/// The height each row needs for its wrapped cells, for every tab.
+fn auto_rows(sheet: &Sheet, workbook: &Workbook) -> BTreeMap<String, BTreeMap<u32, f64>> {
+    sheet
+        .tabs
+        .iter()
+        .map(|tab| {
+            (
+                tab.id.clone(),
+                sheet::layout::auto_row_heights(sheet, workbook, tab),
+            )
+        })
+        .collect()
 }
 
 fn values(workbook: &Workbook, tab: &str, range: Range) -> Vec<CellValue> {
@@ -91,6 +106,7 @@ impl Backend {
             sheet: s.sheet.clone(),
             revision: s.sheet.revision(),
             relative,
+            auto_rows: auto_rows(&s.sheet, &s.workbook),
             values: values(
                 &s.workbook,
                 &s.sheet.tabs[0].name,
@@ -333,11 +349,13 @@ impl Backend {
                     sheet,
                     revision,
                     values: window,
+                    auto_rows: rows,
                     ..
                 } = &mut event
                 {
                     *revision = next.revision();
                     *window = values(&workbook, &next.tabs[0].name, "A1:AZ200".parse()?);
+                    *rows = auto_rows(&next, &workbook);
                     *sheet = next;
                 }
                 return Ok(event);

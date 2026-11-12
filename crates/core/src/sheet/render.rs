@@ -1,8 +1,13 @@
 //! Bounded, revision-and-range cached spreadsheet previews.
-#![allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)]
 use super::{
-    Align, Format, Sheet, Tab, ValueKind, Workbook,
+    Align, Format, Sheet, Tab, VAlign, ValueKind, Workbook, Wrap,
     address::{Address, Range, Rect, column_name},
+    layout::{CellText, DEFAULT_COL, DEFAULT_ROW, LINE_HEIGHT, PAD_X, PAD_Y},
 };
 use crate::deck::text::{color, escape};
 use anyhow::{Context as _, Result, ensure};
@@ -78,7 +83,7 @@ pub fn view(
     ))
 }
 
-fn theme(sheet: &Sheet) -> crate::deck::Theme {
+pub(crate) fn theme(sheet: &Sheet) -> crate::deck::Theme {
     crate::deck::Theme {
         colors: sheet.theme.colors.clone(),
         fonts: sheet.theme.fonts.clone(),
@@ -88,32 +93,105 @@ fn theme(sheet: &Sheet) -> crate::deck::Theme {
     }
 }
 
+/// A cell text that spills over its empty neighbours, kept for a second pass.
+struct Overflow {
+    bounds: [f64; 4],
+    clip: [f64; 4],
+    text: String,
+    fmt: Format,
+}
+
+/// One cell: its box, and its text clipped to `clip` (wider than the cell when the
+/// text overflows into empty neighbours).
+struct Cell<'a> {
+    bounds: [f64; 4],
+    clip: [f64; 4],
+    text: &'a str,
+    fmt: &'a Format,
+    /// Draw the background and border; the overflow pass draws only the text.
+    rect: bool,
+}
+
 fn cell_svg(
+    out: &mut String,
+    cell: &Cell<'_>,
+    theme: &crate::deck::Theme,
+    measure: &mut CellText<'_>,
+) {
+    let [x, y, w, h] = cell.bounds;
+    let [cx, cy, cw, ch] = cell.clip;
+    let fmt = cell.fmt;
+    let fill = color(theme, fmt.fill.as_deref().unwrap_or("bg"));
+    let ink = color(theme, fmt.color.as_deref().unwrap_or("fg"));
+    let family = theme.fonts.get("body").map_or("sans-serif", String::as_str);
+    let (tx, anchor) = match fmt.align.unwrap_or(Align::Left) {
+        Align::Left => (x + PAD_X - cx, "start"),
+        Align::Center => (x + w / 2.0 - cx, "middle"),
+        Align::Right => (x + w - PAD_X - cx, "end"),
+    };
+    let lines = if fmt.wrap == Some(Wrap::Wrap) {
+        measure.lines(cell.text, w - 2.0 * PAD_X, fmt.bold)
+    } else {
+        vec![cell.text.to_string()]
+    };
+    let block = lines.len() as f64 * LINE_HEIGHT;
+    let top = match fmt.valign.unwrap_or(VAlign::Bottom) {
+        VAlign::Top => PAD_Y,
+        VAlign::Middle => ((h - block) / 2.0).max(0.0),
+        VAlign::Bottom => (h - block - PAD_Y).max(0.0),
+    };
+    let _ = write!(
+        out,
+        "<svg x=\"{cx}\" y=\"{cy}\" width=\"{cw}\" height=\"{ch}\" overflow=\"hidden\">"
+    );
+    if cell.rect {
+        let _ = write!(
+            out,
+            "<rect x=\"{}\" y=\"{}\" width=\"{w}\" height=\"{h}\" fill=\"{fill}\" stroke=\"#ccc\"/>",
+            x - cx,
+            y - cy
+        );
+    }
+    let _ = write!(
+        out,
+        "<text text-anchor=\"{anchor}\" font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" font-style=\"{}\" text-decoration=\"{}\" fill=\"{ink}\">",
+        escape(family),
+        super::layout::FONT_SIZE,
+        if fmt.bold { "bold" } else { "normal" },
+        if fmt.italic { "italic" } else { "normal" },
+        if fmt.underline { "underline" } else { "none" }
+    );
+    for (index, line) in lines.iter().enumerate() {
+        let baseline = top + 11.0 + index as f64 * LINE_HEIGHT - cy;
+        let _ = write!(
+            out,
+            "<tspan x=\"{tx}\" y=\"{baseline}\">{}</tspan>",
+            escape(line)
+        );
+    }
+    out.push_str("</text></svg>");
+}
+
+/// A cell drawn as one box with one line of text, for headers and simple cells.
+fn plain_cell(
     out: &mut String,
     bounds: [f64; 4],
     text: &str,
     fmt: &Format,
     theme: &crate::deck::Theme,
+    measure: &mut CellText<'_>,
 ) {
-    let [x, y, w, h] = bounds;
-    let fill = color(theme, fmt.fill.as_deref().unwrap_or("bg"));
-    let ink = color(theme, fmt.color.as_deref().unwrap_or("fg"));
-    let family = theme.fonts.get("body").map_or("sans-serif", String::as_str);
-    let (tx, anchor) = match fmt.align.unwrap_or(Align::Left) {
-        Align::Left => (x + 5.0, "start"),
-        Align::Center => (x + w / 2.0, "middle"),
-        Align::Right => (x + w - 5.0, "end"),
-    };
-    let _ = write!(
+    cell_svg(
         out,
-        "<svg x=\"{x}\" y=\"{y}\" width=\"{w}\" height=\"{h}\" overflow=\"hidden\"><rect width=\"100%\" height=\"100%\" fill=\"{fill}\" stroke=\"#ccc\"/><text x=\"{}\" y=\"{}\" text-anchor=\"{anchor}\" font-family=\"{}\" font-size=\"14\" font-weight=\"{}\" font-style=\"{}\" text-decoration=\"{}\" fill=\"{ink}\">{}</text></svg>",
-        tx - x,
-        h / 2.0 + 5.0,
-        escape(family),
-        if fmt.bold { "bold" } else { "normal" },
-        if fmt.italic { "italic" } else { "normal" },
-        if fmt.underline { "underline" } else { "none" },
-        escape(text)
+        &Cell {
+            bounds,
+            clip: bounds,
+            text,
+            fmt,
+            rect: true,
+        },
+        theme,
+        measure,
     );
 }
 
@@ -124,14 +202,17 @@ fn cells_svg(
     rect: Rect,
     xs: &[f64],
     ys: &[f64],
+    workbook: &Workbook,
 ) -> Result<()> {
     let theme = theme(sheet);
-    let workbook = Workbook::load(sheet)?;
+    let mut measure = CellText::new(&theme);
     let merges = tab
         .merges
         .iter()
         .map(|s| s.parse::<Range>().map(Range::bounds))
         .collect::<Result<Vec<_>>>()?;
+    // Cells whose text spills over their neighbours: drawn again, on top of them.
+    let mut overflow: Vec<Overflow> = Vec::new();
     for (r, row) in (rect.start.row..=rect.end.row).enumerate() {
         for (c, col) in (rect.start.col..=rect.end.col).enumerate() {
             let address = Address { row, col };
@@ -158,19 +239,60 @@ fn cells_svg(
                 .cells
                 .get(&key)
                 .map_or_else(Format::default, |cell| cell.fmt.clone());
-            if fmt.align.is_none() && matches!(value.kind, ValueKind::Number(_)) {
+            let numeric = matches!(value.kind, ValueKind::Number(_));
+            if fmt.align.is_none() && numeric {
                 fmt.align = Some(Align::Right);
             }
             let right = (end.col - rect.start.col + 1) as usize;
             let bottom = (end.row - rect.start.row + 1) as usize;
-            cell_svg(
-                out,
-                [xs[c], ys[r], xs[right] - xs[c], ys[bottom] - ys[r]],
-                &value.display,
-                &fmt,
-                &theme,
-            );
+            let bounds = [xs[c], ys[r], xs[right] - xs[c], ys[bottom] - ys[r]];
+            // Only a single, unmerged cell spills into its neighbours.
+            let span = if area.is_some() || value.display.is_empty() {
+                (col, col)
+            } else {
+                super::layout::overflow_span(
+                    fmt.align.unwrap_or(Align::Left),
+                    fmt.wrap,
+                    numeric,
+                    col,
+                    rect.end.col,
+                    |other| {
+                        workbook
+                            .value(&tab.name, &Address { row, col: other }.to_string())
+                            .display
+                            .is_empty()
+                    },
+                )
+            };
+            if span.0 < col || span.1 > col {
+                let first = (span.0 - rect.start.col) as usize;
+                let last = (span.1 - rect.start.col + 1) as usize;
+                let clip = [xs[first], ys[r], xs[last] - xs[first], ys[bottom] - ys[r]];
+                plain_cell(out, bounds, "", &fmt, &theme, &mut measure);
+                overflow.push(Overflow {
+                    bounds,
+                    clip,
+                    text: value.display.clone(),
+                    fmt,
+                });
+            } else {
+                plain_cell(out, bounds, &value.display, &fmt, &theme, &mut measure);
+            }
         }
+    }
+    for item in &overflow {
+        cell_svg(
+            out,
+            &Cell {
+                bounds: item.bounds,
+                clip: item.clip,
+                text: &item.text,
+                fmt: &item.fmt,
+                rect: false,
+            },
+            &theme,
+            &mut measure,
+        );
     }
     Ok(())
 }
@@ -178,18 +300,29 @@ fn cells_svg(
 /// Draw a bounded grid window as PNG, using the workbook's copied theme.
 pub fn png(sheet: &Sheet, tab: &Tab, rect: Rect, assets: Option<&Path>) -> Result<Vec<u8>> {
     let theme = theme(sheet);
+    let workbook = Workbook::load(sheet)?;
+    let auto = super::layout::auto_row_heights(sheet, &workbook, tab);
+    let mut measure = CellText::new(&theme);
     let mut xs = vec![44.0];
     for col in rect.start.col..=rect.end.col {
         xs.push(
             xs.last().copied().unwrap_or_default()
-                + tab.cols.get(&column_name(col)?).copied().unwrap_or(100.0),
+                + tab
+                    .cols
+                    .get(&column_name(col)?)
+                    .copied()
+                    .unwrap_or(DEFAULT_COL),
         );
     }
-    let mut ys = vec![24.0];
+    let mut ys = vec![DEFAULT_ROW];
     for row in rect.start.row..=rect.end.row {
-        ys.push(
-            ys.last().copied().unwrap_or_default() + tab.rows.get(&row).copied().unwrap_or(24.0),
-        );
+        let height = tab
+            .rows
+            .get(&row)
+            .copied()
+            .or_else(|| auto.get(&row).copied())
+            .unwrap_or(DEFAULT_ROW);
+        ys.push(ys.last().copied().unwrap_or_default() + height);
     }
     let width = *xs.last().context("column bounds")?;
     let height = *ys.last().context("row bounds")?;
@@ -200,27 +333,30 @@ pub fn png(sheet: &Sheet, tab: &Tab, rect: Rect, assets: Option<&Path>) -> Resul
     let header = Format {
         bold: true,
         align: Some(Align::Center),
+        valign: Some(VAlign::Middle),
         ..Format::default()
     };
     for (index, col) in (rect.start.col..=rect.end.col).enumerate() {
-        cell_svg(
+        plain_cell(
             &mut out,
-            [xs[index], 0.0, xs[index + 1] - xs[index], 24.0],
+            [xs[index], 0.0, xs[index + 1] - xs[index], DEFAULT_ROW],
             &column_name(col)?,
             &header,
             &theme,
+            &mut measure,
         );
     }
     for (index, row) in (rect.start.row..=rect.end.row).enumerate() {
-        cell_svg(
+        plain_cell(
             &mut out,
             [0.0, ys[index], 44.0, ys[index + 1] - ys[index]],
             &row.to_string(),
             &header,
             &theme,
+            &mut measure,
         );
     }
-    cells_svg(&mut out, sheet, tab, rect, &xs, &ys)?;
+    cells_svg(&mut out, sheet, tab, rect, &xs, &ys, &workbook)?;
     if (rect.start.col..=rect.end.col).contains(&tab.frozen.cols) {
         let x = xs[(tab.frozen.cols - rect.start.col + 1) as usize];
         let _ = write!(

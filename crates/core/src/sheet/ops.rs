@@ -80,6 +80,11 @@ pub enum Op {
         cols: String,
         width: f64,
     },
+    /// Set each column's width to the widest value it holds.
+    FitCols {
+        tab: String,
+        cols: String,
+    },
     SetRowHeight {
         tab: String,
         rows: String,
@@ -264,6 +269,27 @@ fn step(sheet: &mut Sheet, op: &Op, resolver: Option<&Resolver<'_>>) -> Result<(
             let tab = tab_mut(sheet, tab)?;
             for col in first..=last {
                 tab.cols.insert(column_name(col)?, *width);
+            }
+        }
+        Op::FitCols { tab, cols } => {
+            let Range::Columns(first, last) = cols.parse()? else {
+                anyhow::bail!("cols must look like A:C");
+            };
+            let widths = {
+                let workbook = super::engine::Workbook::load(sheet)?;
+                let tab = &sheet.tabs[tab_index(sheet, tab)?];
+                (first..=last)
+                    .map(|col| {
+                        Ok((
+                            column_name(col)?,
+                            super::layout::column_fit_width(sheet, &workbook, tab, col),
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?
+            };
+            let tab = tab_mut(sheet, tab)?;
+            for (name, width) in widths {
+                tab.cols.insert(name, width);
             }
         }
         Op::SetRowHeight { tab, rows, height } => {

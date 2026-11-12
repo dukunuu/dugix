@@ -47,12 +47,13 @@ export function gridController(api) {
     g.tab = tab;
     if (!tab) return;
     g.extent = api.extent();
-    g.axes = M.axesOf(tab, g.extent);
+    const auto = api.autoRows();
+    g.axes = M.axesOf(tab, g.extent, auto);
     g.headerW = headerWidth(g.extent.rows);
     g.fr = tab.frozen?.rows || 0; g.fc = tab.frozen?.cols || 0;
     g.fw = g.axes.cols.pos(g.fc + 1); g.fh = g.axes.rows.pos(g.fr + 1);
     g.merges = M.mergesOf(tab);
-    const sig = JSON.stringify([tab.id, g.extent, tab.cols, tab.rows, g.fr, g.fc, tab.merges, g.headerW]);
+    const sig = JSON.stringify([tab.id, g.extent, tab.cols, tab.rows, auto, g.fr, g.fc, tab.merges, g.headerW]);
     if (sig !== g.sig) {
       g.sig = sig;
       for (const { node } of cells.values()) node.remove();
@@ -105,13 +106,18 @@ export function gridController(api) {
     if (fmt?.italic) cls.push('i');
     if (fmt?.underline) cls.push('u');
     cls.push(`al-${M.alignOf(fmt, value)}`);
+    cls.push(`va-${fmt?.valign || 'bottom'}`);
+    if (fmt?.wrap) cls.push(`wr-${fmt.wrap}`);
     if (value?.kind === 'error') cls.push('err');
     if (merge) cls.push('merged');
     if (g.fr && (merge ? merge.r2 : row) === g.fr) cls.push('fz-b');
     if (g.fc && (merge ? merge.c2 : col) === g.fc) cls.push('fz-r');
+    // Text that does not fit spills over its empty neighbours, unless it wraps or clips.
+    const span = merge ? { c1: col, c2: col } : M.overflowSpan(M.alignOf(fmt, value), Boolean(fmt?.wrap), value?.kind === 'number', col, g.extent.cols, c => (api.displayAt(row, c) || '') !== '');
+    if (span.c1 < col || span.c2 > col) cls.push('ov');
     const text = value?.display ?? '';
     const pin = pins.get(`${row},${col}`);
-    return { cls: cls.join(' '), text, fill: css(fmt?.fill), color: value?.kind === 'error' ? '' : css(fmt?.color), pin: pin ? pin.length : 0, flash: flash.has(a1), tip: value?.error || '' };
+    return { cls: cls.join(' '), text, span, fill: css(fmt?.fill), color: value?.kind === 'error' ? '' : css(fmt?.color), pin: pin ? pin.length : 0, flash: flash.has(a1), tip: value?.error || '' };
   }
   function makeCell(row, col, merge) {
     const node = el('div', 'sg-cell');
@@ -128,11 +134,14 @@ export function gridController(api) {
   }
   function paintCell(entry, merge) {
     const a = appearance(entry.row, entry.col, merge);
-    const sig = `${a.cls}|${a.text}|${a.fill}|${a.color}|${a.pin}|${a.flash}|${a.tip}`;
+    const sig = `${a.cls}|${a.text}|${a.span.c1},${a.span.c2}|${a.fill}|${a.color}|${a.pin}|${a.flash}|${a.tip}`;
     if (sig === entry.sig) return;
     entry.sig = sig;
     entry.base = a.cls + (a.flash ? ' sg-flash' : '') + (a.pin ? ' has-pin' : '');
     entry.text.textContent = a.text;
+    // An overflowing text box is as wide as its span, so it clips at the first full cell.
+    const { axes } = g;
+    entry.text.style.width = a.span.c1 < entry.col || a.span.c2 > entry.col ? `${axes.cols.pos(a.span.c2 + 1) - axes.cols.pos(a.span.c1)}px` : '';
     entry.node.style.background = a.fill || '';
     entry.node.style.color = a.color || '';
     entry.node.title = a.tip;

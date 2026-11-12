@@ -9,6 +9,12 @@ const paths = {
   freeze: 'M3 4h18v16H3ZM3 9h18M9 4v16',
   sort: 'M4 6h10M4 12h7M4 18h4M17 5v14m-3-3 3 3 3-3',
   ban: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18ZM6 18 18 6',
+  'wrap-overflow': 'M4 6h16M4 11h9M4 16h7M17 11h3m-2-2 2 2-2 2',
+  wrap: 'M4 6h16M4 11h12a2.5 2.5 0 0 1 0 5h-4m2-2-2 2 2 2M4 21h8',
+  clip: 'M4 6h16M4 11h13M4 16h9M18 10v6',
+  'valign-top': 'M4 4h16M8 8h8v8H8Z',
+  'valign-middle': 'M4 12h16M8 7h8v10H8Z',
+  'valign-bottom': 'M4 20h16M8 8h8v8H8Z',
 };
 export function glyph(name) {
   if (!paths[name]) return base(name);

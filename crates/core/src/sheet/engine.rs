@@ -2,7 +2,7 @@
 use super::{
     Cell, Format, Frozen, Sheet, Tab,
     address::{Address, MAX_COLS, MAX_ROWS, Range, Rect, column_index, column_name},
-    model::Align,
+    model::{Align, VAlign, Wrap},
     ops::Op,
 };
 use anyhow::{Result, anyhow, bail, ensure};
@@ -14,7 +14,9 @@ use ironcalc::base::{
         types::{Area, CellReferenceRC},
     },
     formatter::parser::Parser,
-    types::{Alignment, CellType, Color, HorizontalAlignment, MergedCell, Style},
+    types::{
+        Alignment, CellType, Color, HorizontalAlignment, MergedCell, Style, VerticalAlignment,
+    },
 };
 use std::{
     cmp::Ordering,
@@ -86,14 +88,22 @@ fn style(fmt: &Format) -> Style {
     // actual hex; export resolves them against the sheet's copied theme.
     style.fill.color = fmt.fill.clone().map_or(Color::None, Color::Rgb);
     style.font.color = fmt.color.clone().map_or(Color::None, Color::Rgb);
-    style.alignment = fmt.align.map(|align| Alignment {
-        horizontal: match align {
-            Align::Left => HorizontalAlignment::Left,
-            Align::Center => HorizontalAlignment::Center,
-            Align::Right => HorizontalAlignment::Right,
-        },
-        ..Alignment::default()
-    });
+    // XLSX has no "clip": wrap and clip both export as no wrap, and import as absent.
+    style.alignment =
+        (fmt.align.is_some() || fmt.wrap.is_some() || fmt.valign.is_some()).then(|| Alignment {
+            horizontal: match fmt.align {
+                Some(Align::Left) => HorizontalAlignment::Left,
+                Some(Align::Center) => HorizontalAlignment::Center,
+                Some(Align::Right) => HorizontalAlignment::Right,
+                None => HorizontalAlignment::General,
+            },
+            vertical: match fmt.valign {
+                Some(VAlign::Top) => VerticalAlignment::Top,
+                Some(VAlign::Middle) => VerticalAlignment::Center,
+                Some(VAlign::Bottom) | None => VerticalAlignment::Bottom,
+            },
+            wrap_text: fmt.wrap == Some(Wrap::Wrap),
+        });
     style
 }
 
@@ -108,6 +118,16 @@ fn format(style: &Style, theme: &ironcalc::base::types::Theme) -> Format {
             HorizontalAlignment::Left => Some(Align::Left),
             HorizontalAlignment::Center => Some(Align::Center),
             HorizontalAlignment::Right => Some(Align::Right),
+            _ => None,
+        }),
+        wrap: style
+            .alignment
+            .as_ref()
+            .and_then(|a| a.wrap_text.then_some(Wrap::Wrap)),
+        // Bottom is the default, so it is not written back.
+        valign: style.alignment.as_ref().and_then(|a| match a.vertical {
+            VerticalAlignment::Top => Some(VAlign::Top),
+            VerticalAlignment::Center => Some(VAlign::Middle),
             _ => None,
         }),
         fill: color(&style.fill.color),
