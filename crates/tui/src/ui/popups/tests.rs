@@ -1578,9 +1578,11 @@ fn status_bar_names_the_model_and_keeps_the_space_tag_beside_the_gauge() {
     assert!(!screen.contains("local:org/"), "{screen}");
     assert!(screen.contains("ready"), "{screen}");
     assert!(
-        screen.contains('▱'),
+        screen.contains('▌'),
         "context meter on the right:\n{screen}"
     );
+    // Geometric shapes fall back to wider fonts and overlap their neighbours.
+    assert!(!screen.contains(['▰', '▱']), "{screen}");
 
     app.status = "x".repeat(200);
     let screen = render_to_string(100, 1, |f| {

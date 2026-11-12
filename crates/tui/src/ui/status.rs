@@ -215,8 +215,13 @@ pub(super) fn render_status(f: &mut Frame, app: &AppView, area: Rect) {
     }
 }
 
-/// `▰▰▰▱▱▱▱▱` — how full the context window is, each filled cell colored by its
-/// position along the ramp.
+/// `▌▌▌▌▌▌▌▌` — how full the context window is, each filled cell colored by its
+/// position along the ramp. A half block per cell leaves a gap between
+/// segments; block elements are drawn by the terminal itself at exactly one
+/// cell, unlike geometric shapes (`▰▱`), which fall back to wider fonts and
+/// overlap their neighbours.
+const METER_CELL: &str = "▌";
+
 fn context_meter(app: &AppView, limit: u64, cells: usize) -> Vec<Span<'static>> {
     let ratio = if limit > 0 {
         (app.context_used() as f64 / limit as f64).clamp(0.0, 1.0)
@@ -228,9 +233,9 @@ fn context_meter(app: &AppView, limit: u64, cells: usize) -> Vec<Span<'static>> 
         .map(|x| {
             if x < filled {
                 let t = x as f64 / (cells - 1).max(1) as f64;
-                Span::styled("▰", Style::default().fg(gradient(t)))
+                Span::styled(METER_CELL, Style::default().fg(gradient(t)))
             } else {
-                Span::styled("▱", Style::default().fg(app.theme.border_dim))
+                Span::styled(METER_CELL, Style::default().fg(app.theme.border_dim))
             }
         })
         .collect()
