@@ -79,9 +79,16 @@ body.sheet-mode { overflow:hidden; background:var(--canvas); }
 .sg-main { position:absolute; }
 .sg-cell.fz-b, .sg-rh.fz-b { border-bottom:2px solid color-mix(in srgb, var(--s-fg) 35%, var(--sg-line)); }
 .sg-cell.fz-r, .sg-ch.fz-r { border-right:2px solid color-mix(in srgb, var(--s-fg) 35%, var(--sg-line)); }
-.sg-cell { position:absolute; box-sizing:border-box; display:flex; align-items:center; overflow:hidden; background:var(--s-bg); border-right:1px solid var(--sg-line); border-bottom:1px solid var(--sg-line); }
-.sg-text { display:block; max-width:100%; padding:0 5px; overflow:hidden; white-space:pre; text-overflow:clip; line-height:1.2; }
+.sg-cell { position:absolute; box-sizing:border-box; display:flex; align-items:flex-end; overflow:hidden; background:var(--s-bg); border-right:1px solid var(--sg-line); border-bottom:1px solid var(--sg-line); }
+.sg-text { display:block; box-sizing:border-box; max-width:100%; padding:0 5px 2px; overflow:hidden; white-space:pre; text-overflow:clip; line-height:1.2; }
 .sg-cell.al-left { justify-content:flex-start; } .sg-cell.al-right { justify-content:flex-end; } .sg-cell.al-center { justify-content:center; }
+.sg-cell.va-top { align-items:flex-start; } .sg-cell.va-middle { align-items:center; }
+.sg-cell.va-top .sg-text { padding-top:2px; padding-bottom:0; } .sg-cell.va-middle .sg-text { padding-top:1px; padding-bottom:1px; }
+/* Overflowing text spills over the empty cells beside it and clips at the first full one. */
+.sg-cell.ov { overflow:visible; z-index:1; }
+.sg-cell.ov .sg-text { max-width:none; flex:none; pointer-events:none; }
+.sg-cell.wr-wrap .sg-text { white-space:pre-wrap; overflow-wrap:anywhere; }
+.sg-cell.wr-clip .sg-text, .sg-cell.wr-overflow .sg-text { white-space:pre; }
 .sg-cell.b { font-weight:650; } .sg-cell.i { font-style:italic; } .sg-cell.u .sg-text { text-decoration:underline; }
 .sg-cell.err { color:var(--danger); }
 .sg-cell.merged { z-index:1; }

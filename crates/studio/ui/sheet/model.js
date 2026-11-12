@@ -84,12 +84,26 @@ export function makeAxis(def, overrides, count) {
   };
   return { pos, size, at, total, count, def };
 }
-/** The axes of a tab: column widths are stored by letters, row heights by number. */
-export function axesOf(tab, extent) {
+/** The axes of a tab: column widths are stored by letters, row heights by number.
+ *  `auto` holds the derived heights of wrapped rows; a user-set height wins. */
+export function axesOf(tab, extent, auto = null) {
   const cols = new Map(), rows = new Map();
   for (const [name, w] of Object.entries(tab.cols || {})) { const i = colIndex(name); if (i) cols.set(i, w); }
+  for (const [row, h] of Object.entries(auto || {})) rows.set(Number(row), h);
   for (const [row, h] of Object.entries(tab.rows || {})) rows.set(Number(row), h);
   return { cols: makeAxis(DEFAULT_COL, cols, extent.cols), rows: makeAxis(DEFAULT_ROW, rows, extent.rows) };
+}
+/**
+ * The columns a cell's text may spill over: the cell itself when it is wrapped, clipped,
+ * a number or empty, else the run of empty neighbours in the reading direction. `filled`
+ * reports whether a column in this row holds a value.
+ */
+export function overflowSpan(align, wrap, numeric, col, last, filled) {
+  if (wrap || numeric) return { c1: col, c2: col };
+  let c1 = col, c2 = col;
+  if (align === 'left' || align === 'center') while (c2 < last && !filled(c2 + 1)) c2++;
+  if (align === 'right' || align === 'center') while (c1 > 1 && !filled(c1 - 1)) c1--;
+  return { c1, c2 };
 }
 /** The rows and columns a scroll position shows, plus a margin. */
 export function windowOf(axes, { left, top, width, height }, margin = { rows: 5, cols: 2 }) {
@@ -288,6 +302,7 @@ export const op = {
   fill: (tab, from, to) => ({ op: 'fill', tab, from, to }),
   sort: (tab, range, by, desc, header) => ({ op: 'sort', tab, range, by, desc, header }),
   colWidth: (tab, cols, width) => ({ op: 'set_col_width', tab, cols, width }),
+  fitCols: (tab, cols) => ({ op: 'fit_cols', tab, cols }),
   rowHeight: (tab, rows, height) => ({ op: 'set_row_height', tab, rows, height }),
   freeze: (tab, rows, cols) => ({ op: 'freeze', tab, rows, cols }),
   merge: (tab, range) => ({ op: 'merge', tab, range }),
@@ -309,6 +324,13 @@ export function setBlock(tab, row, col, rows) {
 export const toggleFormat = (tab, range, current, key) => op.format(tab, range, { [key]: !current?.[key] });
 export const numberFormat = (tab, range, code) => op.format(tab, range, { num: code });
 export const alignFormat = (tab, range, align) => op.format(tab, range, { align });
+/** How text that does not fit its cell is drawn, and where it sits vertically. */
+export const WRAP_MODES = [['Overflow', 'overflow'], ['Wrap', 'wrap'], ['Clip', 'clip']];
+export const VALIGNS = [['Top', 'top'], ['Middle', 'middle'], ['Bottom', 'bottom']];
+export const wrapFormat = (tab, range, wrap) => op.format(tab, range, { wrap });
+export const valignFormat = (tab, range, valign) => op.format(tab, range, { valign });
+/** Overflow ↔ wrap, as ⌘/Ctrl+Alt+W does it. */
+export const toggleWrap = (tab, range, current) => wrapFormat(tab, range, current?.wrap === 'wrap' ? null : 'wrap');
 export const colorFormat = (tab, range, kind, token) => op.format(tab, range, { [kind === 'fill' ? 'fill' : 'color']: token });
 /** Merge the range, or split it when it already lies inside a merge. */
 export function mergeToggle(tab, r, merges) {

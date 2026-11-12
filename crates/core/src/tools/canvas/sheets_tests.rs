@@ -337,3 +337,11 @@ async fn sheets_history_export_and_unavailable_actions() {
     .await;
     assert!(error.contains("not available for sheets yet"), "{error}");
 }
+
+#[test]
+fn sheet_schema_names_fit_cols_wrap_and_valign() {
+    for word in ["fit_cols", "wrap", "valign"] {
+        assert!(super::sheets::SHEET_SCHEMA.contains(word), "{word}");
+    }
+    assert!(super::sheets::SHEET_SCHEMA.chars().count() <= 900);
+}

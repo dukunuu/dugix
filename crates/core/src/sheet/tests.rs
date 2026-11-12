@@ -600,3 +600,168 @@ fn sheet_both_read_shows_formula_and_display_within_budget() {
     assert!(small.chars().count() <= 60);
     assert!(small.contains("more: rows"));
 }
+
+#[test]
+fn wrap_and_valign_validate_round_trip_and_export_as_xlsx_alignment() {
+    let sheet = edits(
+        &blank(),
+        json!([
+            {"op":"set_cells","tab":"Sheet1","at":"A1","values":[["long text here","clip me"]]},
+            {"op":"format","tab":"Sheet1","range":"A1","patch":{"wrap":"wrap","valign":"top"}},
+            {"op":"format","tab":"Sheet1","range":"B1","patch":{"wrap":"clip","valign":"middle"}}
+        ]),
+    );
+    assert_eq!(sheet.tabs[0].cells["A1"].fmt.wrap, Some(Wrap::Wrap));
+    assert_eq!(sheet.tabs[0].cells["A1"].fmt.valign, Some(VAlign::Top));
+    assert_eq!(sheet.tabs[0].cells["B1"].fmt.wrap, Some(Wrap::Clip));
+    assert_eq!(sheet.tabs[0].cells["B1"].fmt.valign, Some(VAlign::Middle));
+    assert_eq!(checked(&sheet), sheet);
+    for (field, value) in [("wrap", "sideways"), ("valign", "sideways")] {
+        let mut bad = serde_json::to_value(&sheet).unwrap();
+        bad["tabs"][0]["cells"]["A1"]["fmt"][field] = json!(value);
+        let errors = Sheet::check(&bad.to_string()).unwrap_err();
+        assert!(errors.iter().any(|e| e.path.contains("A1")), "{errors:?}");
+    }
+    // XLSX: wrap becomes wrapText, and clip exports as no wrap.
+    let imported =
+        interchange::import_xlsx(&interchange::export_xlsx(&sheet).unwrap(), "Imported").unwrap();
+    assert_eq!(imported.tabs[0].cells["A1"].fmt.wrap, Some(Wrap::Wrap));
+    assert_eq!(imported.tabs[0].cells["A1"].fmt.valign, Some(VAlign::Top));
+    assert_eq!(imported.tabs[0].cells["B1"].fmt.wrap, None);
+    assert_eq!(
+        imported.tabs[0].cells["B1"].fmt.valign,
+        Some(VAlign::Middle)
+    );
+}
+
+#[test]
+fn fit_cols_measures_values_bold_and_wrapped_words_within_limits() {
+    let base = edits(
+        &blank(),
+        json!([
+            {"op":"set_cells","tab":"Sheet1","at":"A1","values":[["mmmm"]]},
+            {"op":"set_cells","tab":"Sheet1","at":"B1","values":[["mmmm"]]},
+            {"op":"format","tab":"Sheet1","range":"B1","patch":{"bold":true}},
+            {"op":"set_cells","tab":"Sheet1","at":"C1","values":[[
+                "a value far too wide to fit any column that a sheet would ever show, \
+                even on a very large display with plenty of room to spare for it"
+            ]]},
+            {"op":"set_cells","tab":"Sheet1","at":"E1","values":[["wrap this phrase please"]]},
+            {"op":"format","tab":"Sheet1","range":"E1","patch":{"wrap":"wrap"}},
+            {"op":"set_cells","tab":"Sheet1","at":"F1","values":[["wrap this phrase please"]]}
+        ]),
+    );
+    let fitted = edits(
+        &base,
+        json!([{"op":"fit_cols","tab":"Sheet1","cols":"A:F"}]),
+    );
+    let width = |col: &str| fitted.tabs[0].cols[col];
+    assert!(width("B") > width("A"), "bold is measured as bold");
+    assert_eq!(width("C"), layout::MAX_FIT, "clamped to the widest");
+    assert_eq!(
+        width("D"),
+        layout::DEFAULT_COL,
+        "a column with no data keeps the default"
+    );
+    assert!(
+        width("E") < width("F"),
+        "a wrapped cell only needs its longest word"
+    );
+    assert!((layout::MIN_FIT..layout::MAX_FIT).contains(&width("A")));
+}
+
+#[test]
+fn auto_row_heights_grow_with_text_and_narrow_columns_and_never_override_user_heights() {
+    let text = "one two three four five six seven eight nine ten eleven twelve";
+    let base = edits(
+        &blank(),
+        json!([
+            {"op":"set_cells","tab":"Sheet1","at":"A1","values":[[text]]},
+            {"op":"format","tab":"Sheet1","range":"A1","patch":{"wrap":"wrap"}},
+            {"op":"set_cells","tab":"Sheet1","at":"A2","values":[[text]]},
+            {"op":"format","tab":"Sheet1","range":"A2","patch":{"wrap":"wrap"}},
+            {"op":"set_row_height","tab":"Sheet1","rows":"2:2","height":90},
+            {"op":"set_cells","tab":"Sheet1","at":"A3","values":[["plain"]]}
+        ]),
+    );
+    let workbook = Workbook::load(&base).unwrap();
+    let tall = layout::auto_row_heights(&base, &workbook, &base.tabs[0]);
+    assert!(tall[&1] > layout::DEFAULT_ROW);
+    assert!(!tall.contains_key(&2), "a user-set height wins");
+    assert!(!tall.contains_key(&3), "an unwrapped row keeps the default");
+    let narrow = edits(
+        &base,
+        json!([{"op":"set_col_width","tab":"Sheet1","cols":"A:A","width":60}]),
+    );
+    let workbook = Workbook::load(&narrow).unwrap();
+    let taller = layout::auto_row_heights(&narrow, &workbook, &narrow.tabs[0]);
+    assert!(
+        taller[&1] > tall[&1],
+        "a narrower column wraps into more lines"
+    );
+    let plain = edits(
+        &base,
+        json!([{"op":"format","tab":"Sheet1","range":"A1","patch":{"wrap":null}}]),
+    );
+    let workbook = Workbook::load(&plain).unwrap();
+    assert!(
+        !layout::auto_row_heights(&plain, &workbook, &plain.tabs[0]).contains_key(&1),
+        "no longer wrapped: no derived height"
+    );
+}
+
+#[test]
+fn overflow_spans_stop_at_filled_cells_and_follow_alignment() {
+    assert_eq!(
+        layout::overflow_span(Align::Left, None, false, 1, 5, |c| c < 3),
+        (1, 2)
+    );
+    assert_eq!(
+        layout::overflow_span(Align::Left, None, false, 1, 5, |_| true),
+        (1, 5)
+    );
+    assert_eq!(
+        layout::overflow_span(Align::Right, None, false, 5, 5, |c| c < 4),
+        (5, 5),
+        "a filled cell stops the spill"
+    );
+    assert_eq!(
+        layout::overflow_span(Align::Right, None, false, 5, 5, |_| true),
+        (1, 5),
+        "right-aligned text spills left"
+    );
+    assert_eq!(
+        layout::overflow_span(Align::Center, None, false, 3, 5, |_| true),
+        (1, 5),
+        "centered text spills both ways"
+    );
+    assert_eq!(
+        layout::overflow_span(Align::Center, None, false, 3, 5, |c| c != 2),
+        (3, 5)
+    );
+    assert_eq!(
+        layout::overflow_span(Align::Left, None, true, 1, 5, |_| true),
+        (1, 1),
+        "numbers never overflow"
+    );
+    for wrap in [Wrap::Wrap, Wrap::Clip] {
+        assert_eq!(
+            layout::overflow_span(Align::Left, Some(wrap), false, 1, 5, |_| true),
+            (1, 1),
+            "{wrap:?} never overflows"
+        );
+    }
+}
+
+#[test]
+fn csv_import_fits_every_column_with_data() {
+    let sheet =
+        interchange::import_csv(b"a,bb\nlonger value,x\n", "fit.csv", &Design::default()).unwrap();
+    let cols = &sheet.tabs[0].cols;
+    assert!(cols["A"] > cols["B"], "the widest value wins");
+    assert!(cols["B"] >= layout::MIN_FIT);
+    assert!(
+        !cols.contains_key("C"),
+        "a column with no data keeps the default"
+    );
+}

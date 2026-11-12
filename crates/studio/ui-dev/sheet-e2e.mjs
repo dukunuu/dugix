@@ -423,12 +423,102 @@ const tests = {
     const a = await page.locator('#sheet-app .sg-ch', { hasText: /^A$/ }).boundingBox();
     await page.mouse.dblclick(a.x + a.width - 1, a.y + a.height / 2); await settle(page);
     const fit = (await lastApply(page)).ops[0];
-    assert.equal(fit.op, 'set_col_width'); assert.equal(fit.cols, 'A:A');
-    assert.ok(fit.width < 150 && fit.width > 60, `fit ${fit.width}`);
+    assert.deepEqual(fit, { op: 'fit_cols', tab: 'Budget', cols: 'A:A' }, 'double-clicking a border fits the column to its data');
+    assert.equal(Math.round((await A(page, 'A2').boundingBox()).width), Math.round((await tabOf(page)).cols.A));
+    assert.ok((await tabOf(page)).cols.A < 150, 'narrower than the hand-set width');
     // A row too.
     const r = await page.locator('#sheet-app .sg-rh', { hasText: /^3$/ }).boundingBox();
     await page.mouse.move(r.x + r.width / 2, r.y + r.height - 1); await page.mouse.down(); await page.mouse.move(r.x + r.width / 2, r.y + r.height + 15, { steps: 3 }); await page.mouse.up(); await settle(page);
     assert.equal((await lastApply(page)).ops[0].op, 'set_row_height'); assert.equal((await lastApply(page)).ops[0].rows, '3:3');
+    await page.close();
+  },
+  async wrappingAndFitting() {
+    const page = await open('dark');
+    const long = 'a sentence long enough to need several lines inside a narrow cell';
+    // Wrap: the menu sends the format, and the row grows when the backend answers.
+    await click(page, 'G2');
+    await page.keyboard.type(long); await page.keyboard.press('Enter'); await settle(page);
+    const plain = Math.round((await A(page, 'G2').boundingBox()).height);
+    assert.equal(plain, 24, 'an unwrapped row keeps the default height');
+    await click(page, 'G2');
+    await page.locator('#sheet-app [data-tb="wrap"]').click();
+    assert.deepEqual(await page.locator('.sg-menu .menu-label').allTextContents(), ['Overflow', 'Wrap', 'Clip']);
+    await page.getByRole('menuitemradio', { name: 'Wrap' }).click(); await settle(page);
+    assert.deepEqual(await lastApply(page), { command: 'SheetApply', ops: [{ op: 'format', tab: 'Budget', range: 'G2', patch: { wrap: 'wrap' } }] });
+    const wrapped = Math.round((await A(page, 'G2').boundingBox()).height);
+    assert.ok(wrapped > 40, `the row grew to fit: ${wrapped}`);
+    assert.ok((await A(page, 'G2').getAttribute('class')).includes('wr-wrap'));
+    assert.equal(Math.round((await page.locator('#sheet-app .sg-rh', { hasText: /^2$/ }).boundingBox()).height), wrapped, 'the row header matches');
+    assert.equal(await page.locator('#sheet-app [data-tb="wrap"] .sg-tb-label').textContent(), 'Wrap', 'the toolbar shows the active cell');
+    // Vertical alignment is a format too.
+    await page.locator('#sheet-app [data-tb="valign"]').click();
+    assert.deepEqual(await page.locator('.sg-menu .menu-label').allTextContents(), ['Top', 'Middle', 'Bottom']);
+    await page.getByRole('menuitemradio', { name: 'Top' }).click(); await settle(page);
+    assert.deepEqual((await lastApply(page)).ops[0].patch, { valign: 'top' });
+    assert.ok((await A(page, 'G2').getAttribute('class')).includes('va-top'));
+    // Clip: cut at the cell border.
+    await click(page, 'G3');
+    await page.keyboard.type(long); await page.keyboard.press('Enter'); await settle(page);
+    await click(page, 'G3');
+    await page.locator('#sheet-app [data-tb="wrap"]').click();
+    await page.getByRole('menuitemradio', { name: 'Clip' }).click(); await settle(page);
+    assert.deepEqual((await lastApply(page)).ops[0].patch, { wrap: 'clip' });
+    assert.ok((await A(page, 'G3').getAttribute('class')).includes('wr-clip'));
+    assert.equal(Math.round((await A(page, 'G3').boundingBox()).height), 24, 'clip does not grow the row');
+    const clipped = await A(page, 'G3').locator('.sg-text').boundingBox();
+    const cellWidth = (await A(page, 'G3').boundingBox()).width;
+    assert.ok(clipped.width <= cellWidth && clipped.width >= cellWidth - 2, `clipped at the cell: ${clipped.width} of ${cellWidth}`);
+    // Overflow: text spills into an empty neighbour and stops at a filled one.
+    await click(page, 'G4');
+    await page.keyboard.type(long); await page.keyboard.press('Enter'); await settle(page);
+    await click(page, 'G4');
+    await page.locator('#sheet-app [data-tb="wrap"]').click();
+    await page.getByRole('menuitemradio', { name: 'Overflow' }).click(); await settle(page);
+    assert.deepEqual((await lastApply(page)).ops[0].patch, { wrap: null }, 'overflow removes the field');
+    assert.ok((await A(page, 'G4').getAttribute('class')).includes('ov'));
+    const spilled = await A(page, 'G4').locator('.sg-text').boundingBox();
+    assert.ok(spilled.width > (await A(page, 'G4').boundingBox()).width + 100, `it spans the empty neighbours: ${spilled.width}`);
+    await click(page, 'H4');
+    await page.keyboard.type('full'); await page.keyboard.press('Enter'); await settle(page);
+    assert.ok(!(await A(page, 'G4').getAttribute('class')).includes('ov'), 'a filled neighbour stops the spill');
+    const stopped = await A(page, 'G4').locator('.sg-text').boundingBox();
+    assert.ok(stopped.width <= (await A(page, 'G4').boundingBox()).width, 'the spill stops at the filled cell');
+    // Cmd/Ctrl+Alt+W toggles wrap on the selection.
+    await click(page, 'G5');
+    await page.keyboard.type('toggle me please, with enough words to wrap'); await page.keyboard.press('Enter'); await settle(page);
+    await click(page, 'G5');
+    await page.keyboard.press(`${MOD}+Alt+w`); await settle(page);
+    assert.deepEqual((await lastApply(page)).ops[0].patch, { wrap: 'wrap' });
+    await page.keyboard.press(`${MOD}+Alt+w`); await settle(page);
+    assert.deepEqual((await lastApply(page)).ops[0].patch, { wrap: null }, 'and back to overflow');
+    await shot(page, 'sheet-wrap');
+    // Fitting: the header menu, for one column and for a selection.
+    await page.locator('#sheet-app .sg-ch', { hasText: /^B$/ }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Fit to data' }).click(); await settle(page);
+    assert.deepEqual((await lastApply(page)).ops[0], { op: 'fit_cols', tab: 'Budget', cols: 'B:B' });
+    await page.locator('#sheet-app .sg-ch', { hasText: /^B$/ }).click();
+    await page.locator('#sheet-app .sg-ch', { hasText: /^D$/ }).click({ modifiers: ['Shift'] });
+    await page.locator('#sheet-app .sg-ch', { hasText: /^C$/ }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Fit to data' }).click(); await settle(page);
+    assert.deepEqual((await lastApply(page)).ops[0], { op: 'fit_cols', tab: 'Budget', cols: 'B:D' }, 'the selected columns fit together');
+    await page.close();
+  },
+  async wrappedRowsVirtualize() {
+    const cells = { A1: { input: 'Note', fmt: { bold: true } } };
+    for (let r = 2; r <= 400; r++) cells[`A${r}`] = { input: `Row ${r} has a sentence long enough to wrap over two or three lines in a narrow column`, fmt: { wrap: 'wrap' } };
+    const fixture = { sheet: { ...structuredClone(sample.sheet), title: 'Wrapped', tabs: [{ id: 't1', name: 'Wrapped', cells, cols: { A: 120 } }] }, threads: [] };
+    const page = await open('dark', undefined, { fixture });
+    const tall = Math.round((await A(page, 'A2').boundingBox()).height);
+    assert.ok(tall > 24, `wrapped rows are taller: ${tall}`);
+    assert.ok((await rowCount(page)) < 80, 'a window of rows');
+    assert.ok((await page.locator('#sheet-app .sg-cell').count()) < 1500);
+    const height = await page.locator('#sheet-app .sg-inner').evaluate(n => n.getBoundingClientRect().height);
+    assert.ok(height > 400 * 24, `the full height counts the tall rows: ${height}`);
+    await page.locator('#sheet-app .sg-scroll').evaluate((n, y) => { n.scrollTop = y; }, 24 + 298 * tall);
+    await page.locator('#sheet-app .sg-cell[data-r="300"][data-c="1"]').waitFor();
+    assert.ok((await page.locator('#sheet-app .sg-cell').count()) < 1500, 'still a window after scrolling');
+    assert.ok((await rowCount(page)) < 80);
+    assert.equal(Math.round((await A(page, 'A300').boundingBox()).height), tall, 'every wrapped row keeps its height');
     await page.close();
   },
   async headerMenus() {

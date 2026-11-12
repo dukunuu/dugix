@@ -17,6 +17,7 @@ sort{tab,range,by:column,desc,header}\n\
 copy{tab,from,to_tab?,to,cut}\n\
 fill{tab,from,to}\n\
 set_col_width{tab,cols:A:C,width}\n\
+fit_cols{tab,cols:A:C}\n\
 set_row_height{tab,rows:1:3,height}\n\
 freeze{tab,rows,cols}\n\
 merge{tab,range}\n\
@@ -27,7 +28,7 @@ delete_tab{tab}\n\
 move_tab{tab,after?}\n\
 set_title{title}\n\
 apply_design{design?}\n\
-op:name; atomic. fmt: num,bold,italic,underline,align:left|center|right,fill,color(token|#RRGGBB). Range: A1:F20,B:B,2:4; Data! or 'Q3 plan'! prefix (escape ''). Default first tab. Formula: =.\n";
+op:name; atomic. fmt: num,bold,italic,underline,align:left|center|right,wrap:overflow|wrap|clip,valign:top|middle|bottom,fill,color(token|#RRGGBB). Range: A1:F20,B:B,2:4; Data! or 'Q3 plan'! prefix (escape ''). Default first tab. Formula: =.\n";
 
 pub(in crate::tools) fn is_sheet(action: &str, v: &Value) -> bool {
     v["path"]
@@ -460,7 +461,9 @@ fn edited_range(op: &sheet::Op) -> Result<Option<(String, Rect)>> {
         Op::InsertCols { tab, at, .. } | Op::DeleteCols { tab, at, .. } => {
             (tab, Range::Columns(column_index(at)?, MAX_COLS).bounds())
         }
-        Op::SetColWidth { tab, cols, .. } => (tab, cols.parse::<Range>()?.bounds()),
+        Op::SetColWidth { tab, cols, .. } | Op::FitCols { tab, cols } => {
+            (tab, cols.parse::<Range>()?.bounds())
+        }
         Op::SetRowHeight { tab, rows, .. } => (tab, rows.parse::<Range>()?.bounds()),
         Op::Freeze { tab, .. } | Op::RenameTab { tab, .. } | Op::MoveTab { tab, .. } => {
             (tab, Range::Rows(1, MAX_ROWS).bounds())

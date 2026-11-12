@@ -264,6 +264,8 @@ pub enum Event {
         sheet: nexus_core::sheet::Sheet,
         revision: String,
         relative: String,
+        /// Derived row heights for wrapped cells, per tab id; a user-set height wins.
+        auto_rows: BTreeMap<String, BTreeMap<u32, f64>>,
         values: Vec<sheet::CellValue>,
         threads: Vec<nexus_core::sheet::feedback::Thread>,
         linked: bool,

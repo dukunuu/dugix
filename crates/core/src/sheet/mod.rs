@@ -4,6 +4,7 @@ pub mod address;
 pub mod engine;
 pub mod feedback;
 pub mod interchange;
+pub mod layout;
 pub mod model;
 pub mod ops;
 pub mod read;
@@ -13,7 +14,7 @@ pub mod validate;
 
 pub use crate::deck::history;
 pub use engine::{Value, ValueKind, Workbook};
-pub use model::{Align, Cell, Format, Frozen, Sheet, Tab};
+pub use model::{Align, Cell, Format, Frozen, Sheet, Tab, VAlign, Wrap};
 pub use ops::{ClearWhat, Op, apply, apply_with_resolver};
 pub use read::{Show, outline, read_range};
 

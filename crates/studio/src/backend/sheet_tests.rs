@@ -323,3 +323,40 @@ fn sheet_csv_xlsx_exports_and_dialog_imports_use_scripted_dialogs() {
     );
     assert!(matches!(event, Event::Exported { path, .. } if path == chosen));
 }
+
+#[test]
+fn sheet_event_carries_derived_row_heights_for_wrapped_cells() {
+    let temp = Temp::new();
+    let mut backend = temp.backend();
+    let Event::Sheet { auto_rows, .. } = backend.event() else {
+        panic!("no sheet event");
+    };
+    assert!(auto_rows["t1"].is_empty(), "nothing is wrapped yet");
+    let long = "a sentence long enough to need several lines inside a narrow cell";
+    let event = send(
+        &mut backend,
+        json!({"command":"SheetApply","ops":[
+            {"op":"set_cells","tab":"Sheet1","at":"A1","values":[[long]]},
+            {"op":"format","tab":"Sheet1","range":"A1","patch":{"wrap":"wrap"}}
+        ]}),
+    );
+    let Event::Sheet { auto_rows, .. } = event else {
+        panic!("{event:?}");
+    };
+    assert!(
+        auto_rows["t1"][&1] > 24.0,
+        "a wrapped row grows: {:?}",
+        auto_rows["t1"]
+    );
+    // A user-set height always wins.
+    let event = send(
+        &mut backend,
+        json!({"command":"SheetApply","ops":[
+            {"op":"set_row_height","tab":"Sheet1","rows":"1:1","height":80}
+        ]}),
+    );
+    let Event::Sheet { auto_rows, .. } = event else {
+        panic!("{event:?}");
+    };
+    assert!(!auto_rows["t1"].contains_key(&1));
+}

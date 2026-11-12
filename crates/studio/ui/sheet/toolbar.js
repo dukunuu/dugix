@@ -51,12 +51,29 @@ export function toolbarController(api) {
   sep();
   for (const side of ['left', 'center', 'right']) button(`align-${side}`, `align-${side}`, `Align ${side}`, () => api.format({ align: api.formatAt().align === side ? null : side }));
   sep();
+  const wrap = button('wrap', 'wrap', 'Text wrapping (⌘/Ctrl+Alt+W)', () => wrapMenu(), 'wide');
+  const wrapLabel = el('span', 'sg-tb-label', 'Overflow');
+  wrap.append(wrapLabel, glyph('down'));
+  wrap.setAttribute('aria-haspopup', 'menu');
+  const valign = button('valign', 'valign-bottom', 'Vertical align', () => valignMenu(), 'wide');
+  const valignLabel = el('span', 'sg-tb-label', 'Bottom');
+  valign.append(valignLabel, glyph('down'));
+  valign.setAttribute('aria-haspopup', 'menu');
+  sep();
   button('merge', 'merge', 'Merge cells', () => api.toggleMerge());
   button('comment', 'comment', 'Comment (⌥⌘M)', () => api.comments.begin());
 
   function numberMenu() {
     const current = api.formatAt().num ?? null;
     api.menus.show(M.NUMBER_FORMATS.map(([label, code]) => ({ label, hint: code && code !== '@' ? code : '', checked: code === current, radio: true, run: () => api.format({ num: code }) })), num.getBoundingClientRect(), { label: 'Number format' });
+  }
+  function wrapMenu() {
+    const current = api.formatAt().wrap || 'overflow';
+    api.menus.show(M.WRAP_MODES.map(([label, mode]) => ({ label, icon: `wrap-${mode === 'overflow' ? 'overflow' : mode}`, checked: mode === current, radio: true, run: () => api.format({ wrap: mode === 'overflow' ? null : mode }) })), wrap.getBoundingClientRect(), { label: 'Text wrapping' });
+  }
+  function valignMenu() {
+    const current = api.formatAt().valign || 'bottom';
+    api.menus.show(M.VALIGNS.map(([label, mode]) => ({ label, icon: `valign-${mode}`, checked: mode === current, radio: true, run: () => api.format({ valign: mode === 'bottom' ? null : mode }) })), valign.getBoundingClientRect(), { label: 'Vertical align' });
   }
   function colorMenu(kind, anchor) {
     const node = el('div', 'popup menu sg-colors');
@@ -86,6 +103,15 @@ export function toolbarController(api) {
     for (const key of ['bold', 'italic', 'underline']) { buttons[key].classList.toggle('on', Boolean(fmt[key])); buttons[key].setAttribute('aria-pressed', String(Boolean(fmt[key]))); }
     for (const side of ['left', 'center', 'right']) { const on = (fmt.align || (api.valueKind() === 'number' ? 'right' : 'left')) === side && Boolean(fmt.align); buttons[`align-${side}`].classList.toggle('on', on); buttons[`align-${side}`].setAttribute('aria-pressed', String(on)); }
     numLabel.textContent = M.numberFormatName(fmt.num);
+    const mode = fmt.wrap || 'overflow';
+    wrapLabel.textContent = (M.WRAP_MODES.find(([, value]) => value === mode) || M.WRAP_MODES[0])[0];
+    wrap.querySelector('svg').replaceWith(glyph(`wrap-${mode === 'overflow' ? 'overflow' : mode}`));
+    wrap.classList.toggle('on', mode !== 'overflow');
+    wrap.setAttribute('aria-pressed', String(mode !== 'overflow'));
+    const vertical = fmt.valign || 'bottom';
+    valignLabel.textContent = (M.VALIGNS.find(([, value]) => value === vertical) || M.VALIGNS[2])[0];
+    valign.querySelector('svg').replaceWith(glyph(`valign-${vertical}`));
+    valign.classList.toggle('on', vertical !== 'bottom');
     buttons.color.querySelector('.sg-chip').style.background = M.cssColor(state.sheet.theme, fmt.color) || 'var(--sg-fg)';
     buttons.fill.querySelector('.sg-chip').style.background = M.cssColor(state.sheet.theme, fmt.fill) || 'transparent';
     const merged = Boolean(M.mergeAt(M.mergesOf(api.tab()), state.sel.active.row, state.sel.active.col));

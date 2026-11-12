@@ -22,7 +22,7 @@ export function menusController(api) {
     if (restoreFocus) api.grid.focus();
   }
   /**
-   * Show a menu. Items are `{ label, run, hint?, checked?, disabled?, danger?, rule? }`;
+   * Show a menu. Items are `{ label, run, hint?, icon?, checked?, disabled?, danger?, rule? }`;
    * `at` is a point `{x, y}` or an element's rectangle.
    */
   function show(items, at, { label = 'Menu', className = '', onClose = null } = {}) {
@@ -36,6 +36,7 @@ export function menusController(api) {
       row.type = 'button'; row.setAttribute('role', item.checked === undefined ? 'menuitem' : item.radio ? 'menuitemradio' : 'menuitemcheckbox');
       if (item.checked !== undefined) row.setAttribute('aria-checked', String(item.checked));
       row.disabled = Boolean(item.disabled);
+      if (item.icon) row.append(glyph(item.icon));
       row.append(el('span', 'menu-label', item.label));
       if (item.hint) row.append(el('span', 'menu-hint', item.hint));
       if (item.checked) row.append(glyph('check'));

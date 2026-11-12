@@ -38,6 +38,7 @@ export function keyAction(e, ctx = {}) {
     return null;
   }
   if (mod && alt && e.code === 'KeyM') return { do: 'comment' };
+  if (mod && alt && e.code === 'KeyW') return { do: 'wrap' };
   if (mod || (alt && key.length !== 1)) return null;
   if (arrow) return { do: 'move', dr: arrow[0], dc: arrow[1], extend: shift, jump: false };
   if (key === 'Tab') return { do: 'step', dir: 'right', back: shift };
