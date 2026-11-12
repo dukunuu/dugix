@@ -1225,15 +1225,60 @@ fn mistral_keeps_only_the_newest_images_within_its_limit() {
             .collect()
     };
     let kept = images(&body);
-    assert_eq!(kept.len(), MISTRAL_MAX_IMAGES);
-    assert_eq!(kept[0], "data:image/png;base64,5");
-    assert_eq!(kept[19], "data:image/png;base64,24");
+    // Five over the limit: the oldest block of ten leaves together.
+    assert_eq!(kept.len(), 15);
+    assert_eq!(kept[0], "data:image/png;base64,10");
+    assert_eq!(kept[14], "data:image/png;base64,24");
     let first = &body["messages"][0]["content"];
     assert_eq!(first[0]["text"], "turn 0");
     assert!(first[1]["text"].as_str().unwrap().contains("omitted"));
     let normalized = body.clone();
     mistral_body(&mut body);
     assert_eq!(body, normalized);
+}
+
+#[test]
+fn mistral_image_eviction_keeps_the_earlier_prefix_stable_between_requests() {
+    let provider = OpenRouter::mistral("mock-key".into());
+    let body = |count: usize| {
+        let history: Vec<ChatMessage> = (0..count)
+            .map(|i| ChatMessage {
+                role: "user".into(),
+                content: format!("turn {i}"),
+                images: vec![format!("data:image/png;base64,{i}")],
+                ..Default::default()
+            })
+            .collect();
+        provider.chat_completions_body(
+            MISTRAL_VIBE_MODEL,
+            &history,
+            &ChatParams::default(),
+            &[],
+            false,
+        )
+    };
+    // From 21 to 30 images the same ten leave, so every earlier message is
+    // byte-identical from one request to the next (the provider's cached prefix).
+    for count in 22..=30 {
+        let (before, after) = (body(count - 1), body(count));
+        assert_eq!(
+            before["messages"].as_array().unwrap()[..count - 1],
+            after["messages"].as_array().unwrap()[..count - 1],
+            "{count} images"
+        );
+    }
+    let omitted = |count: usize| {
+        body(count)["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["content"].to_string().contains("older image omitted"))
+            .count()
+    };
+    assert_eq!(omitted(20), 0);
+    assert_eq!(omitted(21), 10);
+    assert_eq!(omitted(30), 10);
+    assert_eq!(omitted(31), 20);
 }
 
 #[test]

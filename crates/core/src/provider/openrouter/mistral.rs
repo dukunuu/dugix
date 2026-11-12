@@ -234,27 +234,38 @@ fn mistral_system_images(messages: &mut Vec<serde_json::Value>) {
 /// ("Total number of images exceeds the maximum allowed of 20").
 pub(super) const MISTRAL_MAX_IMAGES: usize = 20;
 
-/// Keep the newest `MISTRAL_MAX_IMAGES` image chunks and replace older ones
-/// with a text note, so a long session with deck renders or attachments
-/// keeps working instead of failing every turn with a 400.
+/// Older images leave in blocks of this many, so the cut point moves once per
+/// block instead of on every new image.
+const MISTRAL_IMAGE_EVICTION_STEP: usize = 10;
+
+/// Replace the oldest image chunks with a text note so at most
+/// `MISTRAL_MAX_IMAGES` remain, keeping long sessions with deck renders or
+/// screenshots working instead of failing every turn with a 400. Images are
+/// dropped in blocks: dropping one per new image would change an early message
+/// on every request and miss the prompt cache from there on.
 fn mistral_image_cap(messages: &mut [serde_json::Value]) {
-    let mut kept = 0;
-    for parts in messages.iter_mut().rev().filter_map(|m| {
+    let is_image = |part: &serde_json::Value| part["type"] == "image_url";
+    let total = messages
+        .iter()
+        .filter_map(|m| m.get("content").and_then(serde_json::Value::as_array))
+        .flatten()
+        .filter(|part| is_image(part))
+        .count();
+    let over = total.saturating_sub(MISTRAL_MAX_IMAGES);
+    let mut omit = over.div_ceil(MISTRAL_IMAGE_EVICTION_STEP) * MISTRAL_IMAGE_EVICTION_STEP;
+    for parts in messages.iter_mut().filter_map(|m| {
         m.get_mut("content")
             .and_then(serde_json::Value::as_array_mut)
     }) {
-        for part in parts.iter_mut().rev() {
-            if part["type"] != "image_url" {
-                continue;
+        for part in parts.iter_mut().filter(|part| is_image(part)) {
+            if omit == 0 {
+                return;
             }
-            if kept < MISTRAL_MAX_IMAGES {
-                kept += 1;
-            } else {
-                *part = serde_json::json!({
-                    "type": "text",
-                    "text": "[older image omitted: Mistral accepts at most 20 images per request]",
-                });
-            }
+            omit -= 1;
+            *part = serde_json::json!({
+                "type": "text",
+                "text": "[older image omitted: Mistral accepts at most 20 images per request]",
+            });
         }
     }
 }
