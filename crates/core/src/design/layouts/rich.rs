@@ -3,8 +3,8 @@ use serde_json::{Value, json};
 
 use crate::design::Spacing;
 
-/// Weights and families come from the design's style, so a design changes
-/// every layout's typography at once.
+/// Weights and families come from the design's style, so a design changes every
+/// layout's typography at once.
 fn text(slot: &str, style: &str, color: &str) -> Value {
     json!({"kind":"text", "slot":slot, "text":slot, "style":style,
         "font":{"color":color}, "sizing":{"w":"fill"}})

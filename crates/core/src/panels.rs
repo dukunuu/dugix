@@ -1,11 +1,5 @@
-//! Durable storage for nexus-ui panels that outlive their message: per-panel
-//! saved state, and panels pinned as named mini-apps in a space.
-//!
-//! Both tables live in the durable `nexus.db` and sync like the rest of it
-//! (`sync.rs`): `panel_states` is a last-writer-wins row per (conversation,
-//! panel), `pinned_panels` a last-writer-wins row per app with tombstones for
-//! deletes. Functions take a plain connection so the TUI, the CLI, the host and
-//! per-call tool connections all share one implementation.
+//! Durable storage for nexus-ui panels that outlive their message: per-panel saved
+//! state, and panels pinned as named mini-apps in a space.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -30,25 +24,21 @@ fn valid_name(name: &str) -> bool {
 /// A panel saved as a named mini-app: its program and the state it was left in.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pinned {
-    /// Stable identity; what the model and the sync engine address it by.
     pub id: String,
-    /// Owning space.
     pub space_id: String,
-    /// Space-unique name, `[a-z0-9-]{1,32}`.
+    /// Space-unique, `[a-z0-9-]{1,32}`.
     pub name: String,
-    /// The panel's own title, for display.
     pub title: String,
-    /// Current nexus-ui program (patches included).
+    /// The current nexus-ui program, patches included.
     pub program: String,
     /// Encoded [`PanelSnapshot`].
     pub record: String,
-    /// RFC 3339 creation time.
+    /// RFC 3339.
     pub created_at: String,
     /// RFC 3339 time of the last program or state change.
     pub updated_at: String,
 }
 
-/// Save (or replace) one panel's state record within a conversation.
 /// # Errors
 /// Rejects oversized records and returns database failures.
 pub fn save_state(
@@ -71,7 +61,6 @@ pub fn save_state(
     Ok(())
 }
 
-/// Every saved panel record of a conversation, by panel key.
 /// # Errors
 /// Returns database failures.
 pub fn load_states(conn: &Connection, session_id: &str) -> Result<HashMap<String, String>> {
@@ -96,7 +85,6 @@ fn pinned_from(row: &rusqlite::Row) -> rusqlite::Result<Pinned> {
 
 const PINNED_COLUMNS: &str = "id, space_id, name, title, program, record, created_at, updated_at";
 
-/// Pinned apps of a space, by name.
 /// # Errors
 /// Returns database failures.
 pub fn list(conn: &Connection, space_id: &str) -> Result<Vec<Pinned>> {
@@ -107,7 +95,7 @@ pub fn list(conn: &Connection, space_id: &str) -> Result<Vec<Pinned>> {
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
-/// Look an app up by id, else by name (newest wins if a sync produced two).
+/// By id, else by name (newest wins if a sync produced two).
 /// # Errors
 /// Returns database failures.
 pub fn find(conn: &Connection, space_id: &str, reference: &str) -> Result<Option<Pinned>> {
@@ -142,7 +130,6 @@ fn name_taken(conn: &Connection, space_id: &str, name: &str, except_id: &str) ->
     )?)
 }
 
-/// Turn a panel title into a valid, unused app name.
 /// # Errors
 /// Returns database failures.
 pub fn suggest_name(conn: &Connection, space_id: &str, title: &str) -> Result<String> {
@@ -174,7 +161,6 @@ pub fn suggest_name(conn: &Connection, space_id: &str, title: &str) -> Result<St
     bail!("no free app name for {base}")
 }
 
-/// Pin a panel's program and state as a named app.
 /// # Errors
 /// Rejects invalid or taken names, invalid programs, a full space and
 /// database failures.
@@ -233,7 +219,6 @@ pub fn pin(
     Ok(app)
 }
 
-/// Save the state an opened app was left in.
 /// # Errors
 /// Rejects oversized records and returns database failures.
 pub fn save_pinned_state(conn: &Connection, id: &str, record: &str) -> Result<()> {
@@ -248,7 +233,6 @@ pub fn save_pinned_state(conn: &Connection, id: &str, record: &str) -> Result<()
     Ok(())
 }
 
-/// Rename an app.
 /// # Errors
 /// Rejects unknown apps, invalid or taken names and database failures.
 pub fn rename(conn: &Connection, space_id: &str, reference: &str, to: &str) -> Result<Pinned> {
@@ -285,9 +269,8 @@ pub fn unpin(conn: &Connection, space_id: &str, reference: &str) -> Result<Pinne
     Ok(app)
 }
 
-/// Apply an edit-mode patch (changed assignments only) to a pinned app. The
-/// merged program must validate and the app's saved state survives by name; a
-/// failed patch leaves the app untouched.
+/// Apply an edit-mode patch (changed assignments only) to a pinned app; a failed
+/// patch leaves the app untouched.
 /// # Errors
 /// Returns the validation failure or database failures.
 pub fn patch(conn: &Connection, space_id: &str, reference: &str, patch: &str) -> Result<Pinned> {
@@ -324,11 +307,10 @@ pub fn patch(conn: &Connection, space_id: &str, reference: &str, patch: &str) ->
     })
 }
 
-/// The model's view of pinned apps: list, read, patch. Reads are free; the
-/// executor classes `patch` as a write, so the usual approval ask applies.
+/// The model's view of pinned apps: list, read, patch. Reads are free; the executor
+/// classes `patch` as a write, so the usual approval ask applies.
 /// # Errors
-/// Returns missing arguments, unknown apps, patch validation and database
-/// failures.
+/// Missing arguments, unknown apps, patch validation and database failures.
 pub fn tool(
     db_path: &std::path::Path,
     space_id: &str,

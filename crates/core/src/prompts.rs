@@ -1,56 +1,32 @@
 //! Model-facing prompt text bundled from `assets/prompts/`.
 //! Edits change model behavior.
 
-/// Workspace exploration and editing instructions for agent sessions.
 pub const AGENT: &str = include_str!("../assets/prompts/agent.md");
-/// Focused nested agent instructions.
 pub const SUBAGENT: &str = include_str!("../assets/prompts/subagent.md");
-/// Research planning instructions.
 pub const RESEARCH_PLANNER: &str = include_str!("../assets/prompts/research/planner.md");
-/// Research scoping instructions.
 pub const RESEARCH_SURVEY: &str = include_str!("../assets/prompts/research/survey.md");
-/// Research plan approval instructions.
 pub const RESEARCH_PLAN_APPROVAL: &str =
     include_str!("../assets/prompts/research/plan-approval.md");
-/// Research searcher instructions.
 pub const RESEARCH_SEARCHER: &str = include_str!("../assets/prompts/research/searcher.md");
-/// Shared research protocol and provider-cache anchor.
 pub const RESEARCH_CACHE_PREFIX: &str = include_str!("../assets/prompts/research/cache-prefix.md");
-/// Research synthesis instructions.
 pub const RESEARCH_SYNTHESIZER: &str = include_str!("../assets/prompts/research/synthesizer.md");
-/// Research critique instructions.
 pub const RESEARCH_CRITIC: &str = include_str!("../assets/prompts/research/critic.md");
-/// Research contradiction resolution instructions.
 pub const RESEARCH_RESOLVER: &str = include_str!("../assets/prompts/research/resolver.md");
-/// Research verification instructions.
 pub const RESEARCH_VERIFIER: &str = include_str!("../assets/prompts/research/verifier.md");
-/// Research final report instructions.
 pub const RESEARCH_WRITER: &str = include_str!("../assets/prompts/research/writer.md");
-/// Research topic derivation from a chat transcript.
 pub const RESEARCH_TOPIC_FROM_CHAT: &str =
     include_str!("../assets/prompts/research/topic-from-chat.md");
-/// Conversation compaction instructions.
 pub const COMPACTION: &str = include_str!("../assets/prompts/compaction.md");
-/// Experimental item-preserving conversation compaction instructions.
 pub const COMPACTION_ITEMIZED: &str = include_str!("../assets/prompts/compaction-itemized.md");
-/// `/memory tidy`: the request sent to the session model.
 pub const MEMORY_TIDY: &str = include_str!("../assets/prompts/memory-tidy.md");
-/// Session title and slug instructions.
 pub const TITLE: &str = include_str!("../assets/prompts/title.md");
-/// Swarm persona system instructions.
 pub const SWARM_PERSONA: &str = include_str!("../assets/prompts/swarm/persona.md");
-/// Swarm reply-turn instructions.
 pub const SWARM_REPLY_TURN: &str = include_str!("../assets/prompts/swarm/reply-turn.md");
-/// Swarm opening-turn instructions.
 pub const SWARM_OPENING_TURN: &str = include_str!("../assets/prompts/swarm/opening-turn.md");
-/// Swarm persona roster suggestion instructions.
 pub const SWARM_ROSTER: &str = include_str!("../assets/prompts/swarm/roster.md");
-/// Swarm convergence moderator instructions.
 pub const SWARM_MODERATOR: &str = include_str!("../assets/prompts/swarm/moderator.md");
-/// Swarm final synthesis instructions.
 pub const SWARM_SYNTHESIS: &str = include_str!("../assets/prompts/swarm/synthesis.md");
 
-/// Strip one trailing newline and substitute named placeholders in one pass.
 /// Unknown keys panic in debug builds and remain unchanged in release builds.
 #[must_use]
 pub fn render(template: &str, vars: &[(&str, &str)]) -> String {

@@ -121,7 +121,6 @@ impl Fixture {
                     .write_all(headers.as_bytes())
                     .await
                     .unwrap();
-                // A parked run may close the response as soon as it has the denied call.
                 let _ = stream.get_mut().write_all(body.as_bytes()).await;
             }
             requests

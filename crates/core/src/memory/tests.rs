@@ -30,7 +30,6 @@ fn add_files_facts_under_chapters_and_skips_duplicates() {
     let again = add(&conn, SPACE, "Tools", "Uses  neovim ", None, None).unwrap();
     assert!(again.duplicate);
     assert_eq!(again.fact.id, first.fact.id);
-    // Chapter titles match without regard to case.
     let second = add(&conn, SPACE, "tools", "prefers Rust", None, None).unwrap();
     assert_eq!(second.chapter.id, first.chapter.id);
     assert_eq!(second.count, 2);
@@ -135,7 +134,6 @@ fn editor_round_trip_applies_a_diff() {
         &facts(&conn, SPACE).unwrap(),
     );
     assert!(rendered.contains("## About you [pinned]\n- uses Neovim"));
-    // Unchanged text keeps its fact.
     let parsed = book::parse_edit(&rendered);
     assert_eq!(
         book::apply_edit(&conn, SPACE, &parsed, book::opened_at(&rendered)).unwrap(),
@@ -162,7 +160,6 @@ fn editor_round_trip_applies_a_diff() {
     let moved = resolve_fact(&conn, SPACE, &kept.id).unwrap();
     assert_eq!(moved.chapter_id, rust.id);
 
-    // Dropping a chapter heading forgets the chapter.
     let summary = book::apply_edit(
         &conn,
         SPACE,
@@ -401,7 +398,6 @@ fn chapters_and_facts_sync_with_their_deletes() {
     assert_eq!(facts(b.conn(), SPACE).unwrap().len(), 2);
     assert_eq!(chapters(b.conn(), SPACE).unwrap()[0].description, "editor");
 
-    // A delete is a newer row, so it travels like any edit.
     delete_fact(a.conn(), SPACE, &gone.id).unwrap();
     update_fact(a.conn(), SPACE, &kept.id, Some("uses Neovim"), None).unwrap();
     apply_changeset(&b, &space, &build_changeset(&a, None, "a").unwrap(), None).unwrap();

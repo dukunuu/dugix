@@ -59,7 +59,6 @@ pub enum Verdict {
     Ask,
 }
 
-/// An answer and optional evidence supplied by its decider.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Verdicts {
     pub verdict: Verdict,
@@ -82,7 +81,6 @@ impl Verdicts {
 /// Per-action answers and the optional total provider-reported cost in USD.
 pub type DecisionWave = (Vec<Verdicts>, Option<f64>);
 
-/// Decide a whole wave in one call.
 pub trait Decider: Send + Sync {
     fn decide<'a>(
         &'a self,

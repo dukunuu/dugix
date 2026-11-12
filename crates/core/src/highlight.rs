@@ -1,7 +1,5 @@
-//! Shared, theme-free syntax highlighting for code and Markdown.
-//! Tree-sitter queries produce sorted, non-overlapping UTF-8 byte spans.
-//! Frontends map each `Role` to their own colors or presentation classes.
-//! Parsing is size-limited and cancelled when its time budget expires.
+//! Shared, theme-free syntax highlighting for code and Markdown: tree-sitter
+//! queries produce sorted, non-overlapping UTF-8 byte spans.
 
 use std::{
     collections::HashMap,
@@ -22,47 +20,26 @@ const TIMEOUT: Duration = Duration::from_millis(100);
 /// A syntax category independent of any frontend's theme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Role {
-    /// Language keywords and control flow.
     Keyword,
-    /// String and character literals.
     String,
-    /// Comments, including documentation comments.
     Comment,
-    /// Functions, methods and constructors.
     Function,
-    /// Types and built-in types.
     Type,
-    /// Numeric literals.
     Number,
-    /// Constants, booleans and built-in variables.
     Constant,
-    /// Operators.
     Operator,
-    /// Delimiters and brackets.
     Punctuation,
-    /// Properties and fields.
     Property,
-    /// Variables and parameters.
     Variable,
-    /// Markup tags.
     Tag,
-    /// Attributes and annotations.
     Attribute,
-    /// Escape sequences.
     Escape,
-    /// Markdown headings.
     Heading,
-    /// Emphasized Markdown text.
     Emphasis,
-    /// Strongly emphasized Markdown text.
     Strong,
-    /// Link text, references and destinations.
     Link,
-    /// Literal Markdown code.
     Code,
-    /// Markdown quotations.
     Quote,
-    /// Markdown list markers and special punctuation.
     ListMarker,
 }
 
@@ -97,9 +74,7 @@ impl Role {
 }
 
 impl Role {
-    /// The design-palette color key a document paints this role with:
-    /// keywords and markup in `accent`, strings in `accent2`, types and
-    /// literals in `accent3`, comments and punctuation `muted`, the rest `fg`.
+    /// The design-palette color key a document paints this role with.
     #[must_use]
     pub fn color_key(self) -> &'static str {
         match self {
@@ -116,8 +91,7 @@ impl Role {
     }
 }
 
-/// `source` cut into consecutive pieces covering all of it, each with its
-/// role (`None` between highlights). Empty sources give no pieces.
+/// `source` cut into consecutive pieces covering all of it, each with its role.
 #[must_use]
 pub fn segments(source: &str, lang: &str) -> Vec<(Range<usize>, Option<Role>)> {
     let mut out = Vec::new();
@@ -138,13 +112,10 @@ pub fn segments(source: &str, lang: &str) -> Vec<(Range<usize>, Option<Role>)> {
 /// A highlighted, non-empty byte range on UTF-8 character boundaries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Span {
-    /// Byte offsets within the original source.
     pub range: Range<usize>,
-    /// Theme-free syntax category.
     pub role: Role,
 }
 
-/// Canonical language id for a fence/info-string name, or None when unsupported.
 #[must_use]
 pub fn language(name: &str) -> Option<&'static str> {
     let name = name
@@ -378,7 +349,7 @@ fn configure(
     Some(config)
 }
 
-/// Highlight spans for `source`; empty for unknown languages, oversize input, timeouts or parse failure.
+/// Empty for unknown languages, oversize input, timeouts or parse failure.
 #[must_use]
 pub fn highlight(source: &str, lang: &str) -> Vec<Span> {
     if source.len() > MAX_BYTES {
@@ -415,8 +386,8 @@ pub fn highlight(source: &str, lang: &str) -> Vec<Span> {
     }
 }
 
-/// Build the configurations a Markdown source will inject before the time
-/// budget starts, so a first-time query compile never blanks the result.
+/// Build the configurations a Markdown source will inject before the time budget
+/// starts, so a first-time query compile never blanks the result.
 fn warm_markdown_injections(source: &str) {
     configuration("markdown_inline");
     for line in source.lines() {

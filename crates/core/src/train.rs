@@ -29,7 +29,6 @@ pub struct ExportOptions {
     pub split: bool,
 }
 
-/// Supported training-data encodings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
     ChatJsonl,
@@ -38,7 +37,6 @@ pub enum Format {
 }
 
 impl Format {
-    /// Filename stem and CLI spelling.
     pub const fn name(self) -> &'static str {
         match self {
             Self::ChatJsonl => "chat-jsonl",
@@ -72,9 +70,8 @@ impl Report {
 }
 
 /// Export without fetching models or executing tools. Catalog keys are bare
-/// `OpenRouter` model IDs; values retain the distinction between missing metadata
-/// and an explicit false `is_trainable_text` flag. Offline callers with no
-/// catalog must supply an empty map, never infer permission from a model name.
+/// `OpenRouter` model IDs; offline callers must supply an empty map rather than
+/// infer permission from a model name.
 pub fn export(
     store: &TraceStore,
     options: &ExportOptions,
@@ -224,8 +221,8 @@ fn successful(turn: &[Value]) -> bool {
                 ["seen", "full"].iter().any(|key| {
                     let result = text(result, key);
                     let line = result.trim_start().to_lowercase();
-                    // Trace results do not retain the status string. Restore the
-                    // blocked status for denial/refusal prefixes before classifying.
+                    // Trace results do not retain the status string, so denial and
+                    // refusal prefixes are restored before classifying.
                     let status = if ["denied", "blocked", "refused", "path denied:"]
                         .iter()
                         .any(|prefix| line.starts_with(prefix))
@@ -504,8 +501,8 @@ fn merge_definition(existing: &mut Value, def: &Value) -> Option<()> {
 fn conversation(turn: &[Value]) -> Option<Value> {
     let step = turn.last()?;
     let (mut messages, defs) = mapped_step(step)?;
-    // Preserve the final request's result shortening/dedup notes exactly. The
-    // final request already contains preceding rounds; never rebuild from full.
+    // Preserve the final request's result shortening/dedup notes exactly: it
+    // already contains preceding rounds, so never rebuild from full.
     messages.insert(0, json!({"role": "system", "content": step["system"]}));
     let calls = array(&step["response"], "tool_calls")
         .iter()
@@ -573,8 +570,8 @@ fn rescrub(value: Value, scrubber: &Scrubber) -> (Value, bool) {
     let mut flagged = false;
     let value = match value {
         Value::String(mut text) => {
-            // Arguments and ShareGPT calls contain JSON inside JSON strings.
-            // Decode those too, so escaped credentials cannot evade redaction.
+            // Arguments and ShareGPT calls contain JSON inside JSON strings; decode
+            // those too, so escaped credentials cannot evade redaction.
             if let Ok(encoded @ (Value::Object(_) | Value::Array(_))) = serde_json::from_str(&text)
             {
                 let (clean, changed) = rescrub(encoded, scrubber);

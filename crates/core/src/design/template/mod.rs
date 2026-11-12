@@ -88,8 +88,8 @@ pub fn import_bytes(
                 hex
             }),
     });
-    // Asset paths are relative to design/assets, and can be materialized beside
-    // any deck without losing the original content-addressed design artwork.
+    // Asset paths are relative to design/assets, so they materialize beside any
+    // deck without losing the original content-addressed artwork.
     for layout in design.slide.layouts.values_mut() {
         fn paths(nodes: &mut [crate::deck::Node], slug: &str) {
             for node in nodes {

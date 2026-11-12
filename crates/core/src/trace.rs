@@ -118,7 +118,6 @@ CREATE INDEX IF NOT EXISTS labels_step ON labels(step_id);
 ";
 
 impl TraceStore {
-    /// Open (or create) a trace directory and its separate `SQLite` index.
     pub fn open(dir: &Path, scrubber: Scrubber) -> Result<Self> {
         fs::create_dir_all(dir.join("blobs"))?;
         let index = crate::db::open_conn(&dir.join("index.db"))?;
@@ -180,7 +179,7 @@ impl TraceStore {
         Ok(serde_json::from_slice(&fs::read(self.blob_path(hash))?)?)
     }
 
-    /// Write scrubbed blobs first, then atomically insert all rows for a step.
+    /// Blobs are written first, then all rows for the step inserted atomically.
     pub fn record_step(&self, step: &TraceStep) -> Result<String> {
         let mut connection = self.connection()?;
         let system = self.write_blob(json!(step.system))?;
@@ -257,7 +256,6 @@ impl TraceStore {
         Ok(id)
     }
 
-    /// Attach a scrubbed annotation without changing the original step.
     pub fn add_label(&self, step_id: &str, kind: &str, value: &str) -> Result<()> {
         self.connection()?.execute(
             "INSERT INTO labels (step_id, kind, value, at) VALUES (?1, ?2, ?3, ?4)",
@@ -271,7 +269,7 @@ impl TraceStore {
         Ok(())
     }
 
-    /// Return step IDs oldest first, preserving insertion order for timestamp ties.
+    /// Oldest first, preserving insertion order for timestamp ties.
     pub fn steps_for_session(&self, session_id: &str) -> Result<Vec<String>> {
         let connection = self.connection()?;
         let mut statement =
@@ -281,7 +279,7 @@ impl TraceStore {
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// Return a turn's step IDs oldest first, preserving insertion order for timestamp ties.
+    /// Oldest first, preserving insertion order for timestamp ties.
     pub fn steps_for_turn(&self, turn_id: &str) -> Result<Vec<String>> {
         let connection = self.connection()?;
         let mut statement =
@@ -291,8 +289,8 @@ impl TraceStore {
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// Read export candidates in recording order, including complete turns when
-    /// any of their steps is on or after the inclusive RFC 3339 date boundary.
+    /// Export candidates in recording order, including complete turns when any of
+    /// their steps is on or after the inclusive RFC 3339 date boundary.
     pub fn steps_for_export(
         &self,
         space_id: Option<&str>,
@@ -329,8 +327,8 @@ impl TraceStore {
         Ok(())
     }
 
-    /// Delete steps for missing sessions and collect their unreferenced blobs.
-    /// Returns the number of steps deleted.
+    /// Delete steps for missing sessions and collect their unreferenced blobs;
+    /// returns the number of steps deleted.
     pub fn prune_missing_sessions(&self, existing: &HashSet<String>) -> Result<usize> {
         let existing: HashSet<_> = existing.iter().map(|id| self.scrubber.scrub(id)).collect();
         let removed = {
@@ -398,8 +396,8 @@ impl TraceStore {
         Ok(removed)
     }
 
-    /// Reassemble a scrubbed step, including tool results, usage and labels.
-    /// Total tokens are reconstructed from prompt and completion counts.
+    /// Reassemble a scrubbed step, including tool results, usage and labels; total
+    /// tokens are reconstructed from prompt and completion counts.
     pub fn load_step(&self, step_id: &str) -> Result<Value> {
         let connection = self.connection()?;
         let mut step = connection.query_row(

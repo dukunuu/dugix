@@ -10,7 +10,6 @@ pub enum Escalation {
     Unparseable(String),
 }
 
-/// Check simple commands, launchers and nested shell command strings.
 pub fn check_command(cmd: &str) -> Result<(), Escalation> {
     command_words(cmd).map(|_| ())
 }

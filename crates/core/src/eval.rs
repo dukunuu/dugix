@@ -13,18 +13,15 @@ use crate::tools::classify_tool_result;
 #[derive(Debug, Deserialize)]
 #[serde(try_from = "TaskInput")]
 pub struct EvalTask {
-    /// Display name; defaults to the task file's stem when omitted.
+    /// Defaults to the task file's stem when omitted.
     #[serde(default)]
     pub name: String,
-    /// Question sent to the model.
     pub prompt: String,
     /// Ordered prompts sharing a session, instead of `prompt`.
     pub turns: Vec<String>,
-    /// Fixture directory, resolved inside the eval directory by `load_tasks`.
+    /// Resolved inside the eval directory by `load_tasks`.
     pub workspace: Option<PathBuf>,
-    /// Shell command prefixes permitted in a disposable workspace.
     pub allow_shell: Vec<String>,
-    /// Deterministic expectations for the answer and tool calls.
     #[serde(default)]
     pub check: EvalChecks,
 }
@@ -64,7 +61,6 @@ impl TryFrom<TaskInput> for EvalTask {
 }
 
 impl EvalTask {
-    /// Prompts to send in order in the same session.
     #[must_use]
     pub fn prompts(&self) -> &[String] {
         if self.turns.is_empty() {
@@ -75,7 +71,7 @@ impl EvalTask {
     }
 }
 
-/// Optional checks; at least one effective check is required per task.
+/// At least one effective check is required per task.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct EvalChecks {
@@ -106,7 +102,6 @@ impl EvalChecks {
     }
 }
 
-/// Read the directory's `.toml` tasks, reject invalid tasks, and sort by name.
 pub fn load_tasks(dir: &Path) -> Result<Vec<EvalTask>> {
     let mut tasks = Vec::new();
     for entry in fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
@@ -153,7 +148,6 @@ pub fn load_tasks(dir: &Path) -> Result<Vec<EvalTask>> {
     Ok(tasks)
 }
 
-/// A tool call's raw arguments and returned text.
 #[derive(Debug, Deserialize)]
 pub struct ObservedCall {
     pub name: String,
@@ -161,20 +155,18 @@ pub struct ObservedCall {
     pub result: String,
 }
 
-/// The model's final answer and the calls made across all observed turns.
 #[derive(Debug)]
 pub struct Observed {
     pub answer: String,
     pub calls: Vec<ObservedCall>,
 }
 
-/// Return every unmet expectation as a human-readable failure; empty means pass.
+/// Every unmet expectation as a human-readable failure; empty means pass.
 #[must_use]
 pub fn check(task: &EvalTask, observed: &Observed) -> Vec<String> {
     check_workspace(task, observed, None)
 }
 
-/// Check the final answer, all turns' calls, and files in the disposable copy.
 #[must_use]
 pub fn check_workspace(task: &EvalTask, observed: &Observed, root: Option<&Path>) -> Vec<String> {
     let mut failures = Vec::new();
@@ -298,7 +290,6 @@ impl EvalWorkspace {
         Ok(copy)
     }
 
-    /// Workspace root, separate from disposable runtime logs.
     #[must_use]
     pub fn root(&self) -> PathBuf {
         self.dir.join("workspace")
@@ -331,7 +322,6 @@ fn copy_fixture(source: &Path, target: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Extract calls from a turn's stored `tool_call` rows, as history replay does.
 #[must_use]
 pub fn observed_from_messages(answer: &str, turn: &[Message]) -> Observed {
     Observed {

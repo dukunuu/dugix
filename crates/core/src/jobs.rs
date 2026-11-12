@@ -172,8 +172,8 @@ fn parse_time(value: &str) -> Option<DateTime<Utc>> {
         .map(|at| at.with_timezone(&Utc))
 }
 
-/// Pure scheduling: only enabled jobs belonging to `device_id` can be due.
-/// Until-done is a single bounded run, rather than an unbounded interval.
+/// Only enabled jobs belonging to `device_id` can be due; until-done is a single
+/// bounded run, not an unbounded interval.
 pub fn due(jobs: &[Job], now: DateTime<Utc>, device_id: &str) -> Vec<Job> {
     jobs.iter()
         .filter(|job| {

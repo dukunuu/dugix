@@ -537,9 +537,7 @@ fn evals_exclude_normalized_containment_all_task_turns_and_eight_gram_overlap() 
     for (index, user) in [
         "Please solve HELD\n   out TASK now",
         "Now do first EVAL prompt please",
-        // 2/3 user 8-grams overlap, but neither string contains the other.
         "prefix one two three four five six seven eight nine",
-        // Only 1/3 user 8-grams overlap: it must survive.
         "prefix one two three four five six seven eight suffix",
         "An unrelated real-world prompt",
     ]

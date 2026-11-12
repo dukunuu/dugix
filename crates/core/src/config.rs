@@ -8,11 +8,10 @@ use serde::{Deserialize, Serialize};
 pub const OPENROUTER_ENV_KEY: &str = "OPENROUTER_API_KEY";
 pub const OPENAI_ENV_KEY: &str = "OPENAI_API_KEY";
 pub const OPENCODE_ENV_KEY: &str = "OPENCODE_API_KEY";
-/// Mistral's own variable, shared with the Vibe CLI; a Vibe plan key (made
-/// under Code > Vibe CLI) bills against the plan's monthly Vibe budget.
+/// Mistral's own variable, shared with the Vibe CLI; a Vibe plan key bills against the plan's budget.
 pub const MISTRAL_ENV_KEY: &str = "MISTRAL_API_KEY";
 
-/// Credential environment variables never passed to children that run model-authored code.
+/// Never passed to children that run model-authored code.
 pub const SECRET_ENV_VARS: &[&str] = &[
     OPENROUTER_ENV_KEY,
     OPENAI_ENV_KEY,
@@ -23,10 +22,8 @@ pub const SECRET_ENV_VARS: &[&str] = &[
     "REDDIT_CLIENT_SECRET",
 ];
 
-/// Bundled base instructions, always used directly from the binary.
 pub const BASE_SYSTEM_PROMPT: &str = include_str!("../assets/prompts/base.md");
 
-/// Remove credential environment variables from children that run model-authored code.
 pub fn scrub_secret_env(cmd: &mut std::process::Command) {
     for key in SECRET_ENV_VARS {
         cmd.env_remove(key);
@@ -45,13 +42,10 @@ struct Config {
     experiments: Experiments,
     #[serde(default)]
     agent: AgentConfig,
-    /// Raw `[connectors.*]` section. Typed parsing lives in
-    /// `connectors::config` so a malformed connector can never stop the
-    /// provider credentials above from loading.
+    /// Raw; `connectors::config` parses it so a malformed connector can't stop credentials loading.
     #[serde(default)]
     #[allow(dead_code)] // parsed so the key is known; read through `read_table_at`
     connectors: Option<toml::Value>,
-    /// Raw `[extract.converters]` section, read by `load_extract_converters`.
     #[serde(default)]
     #[allow(dead_code)] // parsed so the key is known
     extract: Option<toml::Value>,
@@ -160,8 +154,6 @@ impl Experiments {
     }
 }
 
-/// The `[provider]` table: every stored credential, read without env
-/// overrides. Credential writers load it, change one field, and write it back.
 #[derive(Debug, Default, Deserialize)]
 struct Provider {
     #[serde(default)]
@@ -201,23 +193,19 @@ struct HostSettings {
     named_tunnel: Option<NamedTunnelConfig>,
 }
 
-/// Every credential the app knows about at once — every configured backend
-/// is simultaneously usable (`/model` merges all of their catalogs).
+/// Every credential the app knows about at once — every configured backend is simultaneously usable.
 #[derive(Debug, Clone, Default)]
 pub struct SavedCreds {
-    /// Independent local runtime configuration, never synced between machines.
+    /// Machine-local, never synced between machines.
     pub local: Option<crate::provider::local::LocalConfig>,
-    /// Opt-in experiments from the same machine-local config.
     pub experiments: Experiments,
-    /// Deterministic agent-auto allow rules.
     pub agent: AgentConfig,
     pub openrouter_key: Option<String>,
     pub openai_key: Option<String>,
     pub opencode_key: Option<String>,
     pub mistral_key: Option<String>,
     pub codex: Option<CodexCredentials>,
-    /// Bearer token protecting the local host API, persisted under
-    /// `[provider].host_token` and never synced with space data.
+    /// Protects the local host API; never synced with space data.
     pub host_token: Option<String>,
 }
 
@@ -243,15 +231,11 @@ impl SavedCreds {
     }
 }
 
-/// Write a file that holds credentials, restricting it to the owner.
-///
-/// `config.toml` carries provider API keys, Codex OAuth tokens, and the host
-/// bearer token. `std::fs::write` would leave it at the process umask
-/// (commonly world-readable), so the mode is tightened the same way
-/// `host/cloudflare.rs` protects tunnel credentials.
+/// `config.toml` holds API keys, OAuth tokens and the host bearer token, so it is
+/// written at 0600 rather than the process umask.
 fn write_secret_file(path: &std::path::Path, body: &str) -> Result<()> {
-    // Written beside the target and renamed over it, so a crash mid-write
-    // can't leave a truncated file that loses every key.
+    // Written beside the target and renamed over it, so a crash mid-write can't
+    // leave a truncated file that loses every key.
     let temp = path.with_extension(format!("toml.{}.tmp", uuid::Uuid::new_v4()));
     std::fs::write(&temp, body).with_context(|| format!("writing {}", temp.display()))?;
     restrict_to_owner(&temp);
@@ -275,10 +259,8 @@ pub(crate) fn read_table_at(path: &Path) -> Result<toml::Table> {
         .map_err(|_| anyhow::anyhow!("invalid TOML in {}", path.display()))
 }
 
-/// Edit the config file in place: read the whole table, let `edit` change
-/// the parts it owns, and write it back atomically with owner-only
-/// permissions. Everything else in the file is carried over untouched, and a
-/// file that does not parse is left alone rather than replaced.
+/// Read-modify-write the config, keeping every key `edit` does not touch; a file
+/// that does not parse is left alone rather than replaced.
 ///
 /// # Errors
 /// Propagates read, parse, `edit` and write failures.
@@ -325,13 +307,11 @@ pub fn load_banner() -> Option<String> {
     (!art.trim().is_empty()).then(|| art.trim_end().to_string())
 }
 
-/// Optional user additions to the bundled base prompt. Lives beside config.toml,
-/// not per-space — this is app-level, not chat-level. Editable via `$EDITOR`.
+/// Optional user additions to the bundled base prompt: app-level, beside config.toml.
 pub fn system_prompt_path() -> Result<PathBuf> {
     Ok(project_dirs()?.config_dir().join("system_prompt.md"))
 }
 
-/// Read optional user additions without creating or writing the file.
 pub fn load_system_prompt_overlay() -> String {
     system_prompt_path()
         .ok()
@@ -340,15 +320,11 @@ pub fn load_system_prompt_overlay() -> String {
         .unwrap_or_default()
 }
 
-/// Resolve every configured credential from disk + env, with no network
-/// access: Codex creds are returned exactly as stored (no refresh). Read-only
-/// CLI commands (`status`, `usage`, `sessions`, …) use this so they never
-/// touch the network; `load_all_providers` additionally scaffolds and
-/// validates configuration without refreshing tokens.
+/// Resolve credentials from disk and env with no network access, so read-only CLI
+/// commands never touch the network.
 pub fn load_creds_offline() -> SavedCreds {
     let stored = load_config_all().unwrap_or_default();
     let host_token = load_host_token().ok().flatten();
-    // A key in the config file wins; the environment fills an empty slot.
     let resolve = |stored: String, env_key: &str| {
         Some(stored).filter(|key| !key.is_empty()).or_else(|| {
             std::env::var(env_key)
@@ -370,16 +346,12 @@ pub fn load_creds_offline() -> SavedCreds {
     }
 }
 
-/// Resolve every configured credential at once: `$OPENROUTER_API_KEY`/
-/// `$OPENAI_API_KEY`/`$OPENCODE_API_KEY`/`$MISTRAL_API_KEY` fill any slot the
-/// config file leaves empty, Codex creds always come from the config file
-/// (without refreshing). Scaffolds an empty config on first run. Never
-/// fails on missing credentials — the app launches regardless and they can
-/// be set in-app with `/login`.
+/// Resolve every configured credential, scaffolding an empty config on first run;
+/// missing credentials never fail because `/login` can set them later.
 pub fn load_all_providers() -> Result<SavedCreds> {
     let path = config_path()?;
     if !path.exists() {
-        write_provider_config(&Provider::default())?; // scaffold template
+        write_provider_config(&Provider::default())?;
     }
     let mut saved = load_creds_offline();
     saved.local = load_local_config()?;
@@ -442,11 +414,8 @@ fn load_experiments() -> Result<Experiments> {
     Ok(config.experiments)
 }
 
-/// The user's file converters from `[extract.converters]`: `"<ext or mime>" =
-/// ["cmd", "{in}"]`, run with the file path substituted for `{in}` and read
-/// as Markdown from stdout. Read through the config reader, so a bad or
-/// missing file just means no hooks; the config writer is read-modify-write,
-/// so the section survives every save.
+/// The user's `[extract.converters]` hooks: `"<ext or mime>" = ["cmd", "{in}"]`,
+/// run with the file path substituted and read as Markdown from stdout.
 pub fn load_extract_converters() -> Vec<(String, Vec<String>)> {
     config_path()
         .ok()
@@ -455,8 +424,6 @@ pub fn load_extract_converters() -> Vec<(String, Vec<String>)> {
         .unwrap_or_default()
 }
 
-/// Valid `[extract.converters]` entries of `root`: a non-empty command array
-/// of strings under a key that is an extension (`rtf`, `.rtf`) or a MIME type.
 pub(crate) fn converters_from_table(root: &toml::Table) -> Vec<(String, Vec<String>)> {
     let Some(table) = root
         .get("extract")
@@ -491,8 +458,6 @@ fn load_local_config() -> Result<Option<crate::provider::local::LocalConfig>> {
     Ok(config.local)
 }
 
-/// The first configured credential in a fixed priority order (openrouter >
-/// openai > opencode > mistral > codex).
 pub fn first_configured(saved: &SavedCreds) -> Option<(&'static str, String)> {
     saved
         .openrouter_key
@@ -583,9 +548,7 @@ pub fn load_openrouter_key_only() -> Option<String> {
         .filter(|key| !key.is_empty())
 }
 
-/// Persist a provider's key by explicit flavor tag ("openrouter" / "openai"
-/// / "opencode" / "mistral") — called only from the `/login` provider selector, which
-/// always knows exactly which flavor a pasted key is for (no shape-sniffing).
+/// The `/login` selector always knows the flavor of a pasted key, so nothing is shape-sniffed.
 pub fn save_provider_key(flavor: &str, key: &str) -> Result<()> {
     let mut stored = load_config_all().unwrap_or_default();
     let slot = match flavor {
@@ -599,7 +562,6 @@ pub fn save_provider_key(flavor: &str, key: &str) -> Result<()> {
     write_provider_config(&stored)
 }
 
-/// Read all credential fields straight off disk, no env overrides.
 fn load_config_all() -> Result<Provider> {
     let path = config_path()?;
     if !path.exists() {
@@ -612,8 +574,7 @@ fn load_config_all() -> Result<Provider> {
     Ok(cfg.provider)
 }
 
-/// Read the optional host bearer token without exposing it in provider
-/// selection or diagnostics.
+/// Read the host bearer token without exposing it in provider selection or diagnostics.
 pub fn load_host_token() -> Result<Option<String>> {
     let path = config_path()?;
     if !path.exists() {
@@ -629,8 +590,6 @@ pub fn load_host_token() -> Result<Option<String>> {
         .filter(|token| !token.trim().is_empty()))
 }
 
-/// Persist the host bearer token in the existing provider table while keeping
-/// all provider credentials and Codex fields intact.
 pub fn save_host_token(token: &str) -> Result<()> {
     let path = config_path()?;
     if let Some(dir) = path.parent() {
@@ -661,7 +620,6 @@ pub fn save_host_token(token: &str) -> Result<()> {
     write_secret_file(&path, &body)
 }
 
-/// Return the persisted token or create a random one on the first host run.
 pub fn ensure_host_token() -> Result<String> {
     if let Some(token) = load_host_token()? {
         return Ok(token);
@@ -671,7 +629,7 @@ pub fn ensure_host_token() -> Result<String> {
     Ok(token)
 }
 
-/// Load a previously provisioned named tunnel without contacting Cloudflare.
+/// Load a provisioned named tunnel without contacting Cloudflare.
 pub fn load_named_tunnel() -> Result<Option<NamedTunnelConfig>> {
     let path = config_path()?;
     if !path.exists() {
@@ -684,8 +642,7 @@ pub fn load_named_tunnel() -> Result<Option<NamedTunnelConfig>> {
     Ok(cfg.host.and_then(|host| host.named_tunnel))
 }
 
-/// Persist named-tunnel identifiers and local config paths. Credentials stay
-/// in cloudflared's private file; this table contains no bearer/API secret.
+/// Persist named-tunnel identifiers and paths; credentials stay in cloudflared's private file.
 pub fn save_named_tunnel(tunnel: &NamedTunnelConfig) -> Result<()> {
     let path = config_path()?;
     if let Some(dir) = path.parent() {
@@ -721,7 +678,7 @@ pub async fn login_openai_codex_device(
     login_openai_codex_device_with_browser(status, true).await
 }
 
-/// Device login for a host client; does not launch a browser or touch the host clipboard.
+/// Device login for a host client: no browser launch, no host clipboard.
 pub async fn login_openai_codex_remote(
     status: tokio::sync::mpsc::UnboundedSender<String>,
 ) -> Result<CodexCredentials> {
@@ -855,8 +812,7 @@ async fn login_openai_codex_device_with_browser(
     Ok(creds)
 }
 
-/// Persist (or clear) the machine-local `[local]` block, leaving every
-/// credential in the file untouched.
+/// Persist (or clear) the machine-local `[local]` block, leaving credentials untouched.
 ///
 /// # Errors
 /// Propagates read/serialize/write failures on the config file.
@@ -866,15 +822,12 @@ pub fn save_local_config(local: Option<&crate::provider::local::LocalConfig>) ->
 }
 
 fn write_provider_config(stored: &Provider) -> Result<()> {
-    // Credential writers leave the local runtime block exactly as it is.
     let local = load_local_config()?;
     write_config_at(&config_path()?, stored, local.as_ref())
 }
 
-/// Update the credential keys, the Codex login and `[local]` in place. Every
-/// other table and key (`[search]`, `[agent]`, `[host]`, `[studio]`, anything
-/// a newer build added) is kept; a file that doesn't parse is left alone
-/// rather than replaced.
+/// Update credentials, the Codex login and `[local]`; every other table is kept and
+/// a file that doesn't parse is left alone rather than replaced.
 fn write_config_at(
     path: &std::path::Path,
     stored: &Provider,
@@ -904,7 +857,7 @@ fn write_config_at(
     ] {
         provider.insert(key.to_string(), Value::String(value.clone()));
     }
-    // Written only once set, so configs that never used Mistral stay as they were.
+    // Removed rather than written empty, so configs that never used Mistral stay as they were.
     if stored.mistral_key.is_empty() {
         provider.remove("mistral_key");
     } else {
@@ -1170,7 +1123,6 @@ mod tests {
             .unwrap();
         assert_eq!(codex.refresh, "r");
 
-        // Clearing the Codex login, the Mistral key and [local] removes only those.
         let only = |key: &str| Provider {
             openrouter_key: key.into(),
             ..Provider::default()
@@ -1182,7 +1134,6 @@ mod tests {
         assert!(saved.get("local").is_none());
         assert_eq!(saved["search"]["reddit_client_id"].as_str(), Some("rid"));
 
-        // A file that doesn't parse is never replaced.
         std::fs::write(&path, "[provider\nopenrouter_key = 'precious'").unwrap();
         assert!(write_config_at(&path, &only("x"), None).is_err());
         assert!(std::fs::read_to_string(&path).unwrap().contains("precious"));
@@ -1361,7 +1312,6 @@ mod tests {
             )]
         );
         assert_eq!(saved["provider"]["openrouter_key"].as_str(), Some("key"));
-        // The config struct accepts the section too.
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(toml::from_str::<Config>(&text).is_ok());
     }

@@ -1,6 +1,5 @@
 //! The library of a space: every deck and doc, newest first, with the file
-//! operations studio, the TUI and the CLI share. Native Open and Save dialogs
-//! sit behind the [`dialogs::Dialogs`] trait so no test opens a real window.
+//! operations studio, the TUI and the CLI share.
 
 pub mod dialogs;
 pub mod files;
@@ -25,14 +24,12 @@ use crate::doc::Doc;
 const MAX_DEPTH: usize = 4;
 /// More files than this are not listed (a library, not a file manager).
 const MAX_ENTRIES: usize = 1000;
-/// Width of a doc's page-one thumbnail.
 const DOC_THUMB_WIDTH: u32 = 800;
 
 /// One deck or doc of the space.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Entry {
     pub kind: Kind,
-    /// Absolute path of the file.
     pub path: PathBuf,
     /// `decks/q3.deck.json`: the path inside the space files, `/` separated.
     pub relative: String,
@@ -42,15 +39,12 @@ pub struct Entry {
     pub count: usize,
     /// The design's name, or its slug when the design is gone.
     pub design: Option<String>,
-    /// The revision the thumbnail is keyed by.
     pub revision: String,
-    /// Where the thumbnail is (or will be) cached; `None` for an empty deck.
-    /// [`ensure_thumbnail`] renders it on first use.
+    /// Where the thumbnail is cached; [`ensure_thumbnail`] renders it on first use.
     pub thumbnail: Option<PathBuf>,
 }
 
 impl Entry {
-    /// `slides` or `blocks`, singular for one.
     #[must_use]
     pub fn count_label(&self) -> String {
         let (one, many) = match self.kind {
@@ -65,7 +59,6 @@ impl Entry {
     }
 }
 
-/// `<files>/<decks|docs>/.renders/<stem>`, the cache folder for one file.
 fn render_folder(files: &Path, kind: Kind, path: &Path) -> Option<PathBuf> {
     let name = path.file_name()?.to_string_lossy();
     let (folder, suffix) = suffixes(kind);
@@ -93,9 +86,8 @@ fn doc_thumbnail(files: &Path, path: &Path, revision: &str) -> Option<PathBuf> {
     Some(render_folder(files, Kind::Doc, path)?.join(format!("thumb-{}.png", &revision[..8])))
 }
 
-/// Every deck and doc in the space, newest first. Hidden folders (`.history`,
-/// `.renders`, `.trash`), `assets` folders, symlinks and files that do not
-/// validate are left out.
+/// Every deck and doc in the space, newest first; hidden folders, `assets`,
+/// symlinks and files that do not validate are left out.
 #[must_use]
 pub fn library(files: &Path) -> Vec<Entry> {
     let Ok(root) = files.canonicalize() else {
@@ -216,9 +208,8 @@ fn read_entry(
     })
 }
 
-/// The thumbnail of `entry`, rendered into the cache when it is not there yet:
-/// the first slide of a deck (the render the `canvas` tool's `view` shares) or
-/// page one of a doc. Old thumbnails of the same file are removed.
+/// Render the entry's thumbnail (a deck's first slide, a doc's page one) into the
+/// cache when it is not there yet, removing the older ones of the same file.
 pub fn ensure_thumbnail(files: &Path, entry: &Entry) -> Result<PathBuf> {
     let target = entry.thumbnail.clone().context("nothing to draw yet")?;
     if target.is_file() {

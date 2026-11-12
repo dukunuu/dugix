@@ -17,15 +17,12 @@ use super::registry::{
 };
 use super::{ApplySummary, Changeset, FileChange, PeerCursor, Tombstone};
 
-// ── apply ──
-
 enum LwwOutcome {
     Applied,
     Skipped,
     Warned(String),
 }
 
-/// Whether an incoming row wins LWW against a local opponent.
 /// `local_updated`/`local_tie` are `''`/empty when no local row exists.
 fn lww_wins(
     spec: &TableSpec,
@@ -50,18 +47,16 @@ fn lww_wins(
     (incoming_updated, incoming_tie.as_str()) > (local_updated, local_tie)
 }
 
-/// `(updated_at, id) > (local_updated_at, local_id)` — the spaces/files
-/// LWW comparison, id-tiebroken so equal timestamps stay deterministic.
+/// `(updated_at, id) > (local_updated_at, local_id)`: id-tiebroken so equal
+/// timestamps stay deterministic.
 fn lww_wins_against(id: &str, updated: &str, local_id: &str, local_updated: &str) -> bool {
     (updated, id) > (local_updated, local_id)
 }
 
-/// Apply one changeset: rows (per the registry), tombstones, file blobs,
-/// and the embedded ack. Returns the summary plus the reply cursors — the
-/// receiver's new pull cursors per table, to be acked back to the sender.
-/// `blob_source`, when given, is a directory whose content-addressed
-/// `blobs/by-hash/<hash>` path holds the sender's payloads; missing blobs are
-/// reported instead.
+/// Apply rows (per the registry), tombstones, file blobs and the embedded ack;
+/// returns the summary plus the reply cursors to ack back. `blob_source`, when
+/// given, is a directory whose `blobs/by-hash/<hash>` paths hold the sender's
+/// payloads; missing blobs are reported instead.
 // Long by design: one step per sync rule, in registry order.
 #[allow(clippy::too_many_lines)]
 pub fn apply_changeset(
@@ -92,10 +87,9 @@ pub fn apply_changeset(
         }
     }
 
-    // Rows, in registry order. `max_pos` tracks the highest position
-    // received per table — the reply cursor. Losing LWW rows are safe to
-    // acknowledge because their data is already present locally; warned
-    // rows remove the table cursor below so they are retried.
+    // `max_pos` is the highest position received per table — the reply cursor.
+    // Losing LWW rows are safe to acknowledge; warned rows remove the table cursor
+    // below so they are retried.
     let mut max_pos: HashMap<&'static str, String> = HashMap::new();
     let mut failed_tables: HashSet<&'static str> = HashSet::new();
     let mut won_sessions: HashSet<String> = HashSet::new();
@@ -142,10 +136,8 @@ pub fn apply_changeset(
                 LwwOutcome::Warned(w) => {
                     summary.rows_skipped += 1;
                     summary.warnings.push(w);
-                    // Do not acknowledge a table past a row that was not
-                    // applied. The sender will retry it; advancing here
-                    // would turn a transient/local validation problem into
-                    // silent permanent data loss.
+                    // Never acknowledge past a row that was not applied: advancing
+                    // would turn a transient validation problem into silent data loss.
                     failed_tables.insert(spec.name);
                 }
             }
@@ -155,8 +147,8 @@ pub fn apply_changeset(
         max_pos.remove(table);
     }
 
-    // swarm_personas: applied only for sessions that won in this changeset,
-    // as a wholesale roster replace (the collection has no per-row LWW).
+    // swarm_personas: only for sessions that won, as a wholesale roster replace
+    // (the collection has no per-row LWW).
     if let Some(personas) = by_table.get("swarm_personas") {
         let mut rosters: HashMap<&str, Vec<&serde_json::Value>> = HashMap::new();
         for p in personas {
@@ -190,9 +182,8 @@ pub fn apply_changeset(
         }
     }
 
-    // Tombstones, after rows: within one changeset a row and its tombstone
-    // never coexist (a deleted row is not re-exported), and across
-    // changesets the destructive delete is the newer intent.
+    // Tombstones after rows: a row and its tombstone never coexist in one
+    // changeset, and across changesets the destructive delete is the newer intent.
     let mut tombstone_max = 0i64;
     for t in &cs.tombstones {
         tombstone_max = tombstone_max.max(t.origin_id);
@@ -204,10 +195,9 @@ pub fn apply_changeset(
         max_pos.insert(SYNC_TOMBSTONES, tombstone_max.to_string());
     }
 
-    // File blobs: for every file row that won, keep the local blob when it
-    // matches, else pull it from the transport's blob channel. A manifest
-    // may have landed during an earlier metadata-only import, so retry a
-    // missing blob even when the row itself is an idempotent LWW skip.
+    // Keep a matching local blob, else pull it from the transport. A manifest may
+    // have landed during an earlier metadata-only import, so retry a missing blob
+    // even when the row itself is an idempotent LWW skip.
     for fc in &cs.files {
         let manifest_matches = local_file_matches_manifest(db, fc)?;
         if !won_files.contains(&(fc.space_id.clone(), fc.name.clone())) && !manifest_matches {
@@ -251,8 +241,8 @@ pub fn apply_changeset(
         }
     }
 
-    // The embedded ack: entries addressed to this device advance the
-    // sender's push cursors — the only thing that does.
+    // Entries addressed to this device advance the sender's push cursors — the
+    // only thing that does.
     if let Some(acks) = &cs.ack {
         let states = db.load_sync_state()?;
         for a in acks {
@@ -286,7 +276,6 @@ pub fn apply_changeset(
         }
     }
 
-    // Advance pull cursors (monotonically) and build the reply cursors.
     let states = db.load_sync_state()?;
     let mut reply: Vec<PeerCursor> = Vec::new();
     for (table, pos) in &max_pos {
@@ -334,8 +323,8 @@ fn apply_row(
     }
 }
 
-/// LWW upsert for a plain row (not spaces/files — those have their own
-/// name-merge rules). A `scope != 'sync'` `app_settings` row never lands.
+/// LWW upsert for a plain row (spaces and files have their own name-merge rules);
+/// a `scope != 'sync'` `app_settings` row never lands.
 fn apply_lww(db: &Db, spec: &TableSpec, row: &serde_json::Value) -> Result<LwwOutcome> {
     if spec.name == "app_settings"
         && row.get("scope").and_then(serde_json::Value::as_str) != Some("sync")
@@ -387,8 +376,7 @@ fn apply_lww(db: &Db, spec: &TableSpec, row: &serde_json::Value) -> Result<LwwOu
             .map(|(i, c)| format!("{c} = ?{}", i + 1))
             .collect::<Vec<_>>()
             .join(", ");
-        // The WHERE placeholders follow the SET's (the SELECT above used
-        // its own 1-based clause).
+        // The WHERE placeholders follow the SET's.
         let update_where = spec
             .pk
             .iter()
@@ -420,8 +408,8 @@ fn apply_lww(db: &Db, spec: &TableSpec, row: &serde_json::Value) -> Result<LwwOu
     Ok(LwwOutcome::Applied)
 }
 
-/// INSERT OR IGNORE by the row's sync identity — the append-only union
-/// rule. `changes()` tells an ignored duplicate apart from a real insert.
+/// INSERT OR IGNORE by the row's sync identity; `changes()` tells an ignored
+/// duplicate apart from a real insert.
 fn apply_append(db: &Db, spec: &TableSpec, row: &serde_json::Value) -> Result<bool> {
     let cols = spec.apply_columns.join(", ");
     let marks = (1..=spec.apply_columns.len())
@@ -443,12 +431,9 @@ fn apply_append(db: &Db, spec: &TableSpec, row: &serde_json::Value) -> Result<bo
     Ok(n > 0)
 }
 
-/// A space row's apply: LWW like the others, plus the name-merge rules —
-/// spaces are UNIQUE by name, and two devices may have independently
-/// created different spaces with the same name. The LWW loser is renamed
-/// to `<name>-<first8(loser_id)>` on both sides (the rename is a pure
-/// function of the loser, so both devices compute the same name). Fresh
-/// winners get their directory; renames move it.
+/// LWW plus the name-merge rules: spaces are UNIQUE by name and two devices may
+/// have created different spaces under the same one. The loser is renamed to
+/// `<name>-<first8(loser_id)>` on both sides, a pure function of the loser.
 fn apply_space(db: &Db, space: &Space, row: &serde_json::Value) -> Result<LwwOutcome> {
     let Some(id) = row.get("id").and_then(serde_json::Value::as_str) else {
         return Ok(LwwOutcome::Warned("space row without id".to_string()));
@@ -474,8 +459,8 @@ fn apply_space(db: &Db, space: &Space, row: &serde_json::Value) -> Result<LwwOut
         )
         .optional()?;
     let Some((local_name, local_updated)) = local else {
-        // New space. Its name may be taken by a different local space —
-        // the loser of that pair is renamed deterministically.
+        // Its name may be taken by a different local space; the loser of that pair
+        // is renamed deterministically.
         let colliding: Option<String> = conn
             .query_row(
                 "SELECT id FROM spaces WHERE name = ?1 AND id != ?2",
@@ -543,8 +528,8 @@ fn insert_space_row(
     Ok(())
 }
 
-/// Move a space's directory on a rename — best-effort: a missing old dir
-/// is fine, a failing rename surfaces in the caller's warning path.
+/// Best-effort: a missing old dir is fine, a failing rename surfaces in the
+/// caller's warning path.
 fn rename_dir(space: &Space, old: &str, new: &str) {
     let from = space.space_dir(old);
     let to = space.space_dir(new);
@@ -553,10 +538,9 @@ fn rename_dir(space: &Space, old: &str, new: &str) {
     }
 }
 
-/// A file row's apply: LWW, plus the (`space_id`, name) uniqueness merge —
-/// the app keeps one row per space+name, so a synced row colliding with a
-/// different id is the LWW opponent; the loser is replaced wholesale (id
-/// and all) so both devices end on the same row id and deletes propagate.
+/// LWW plus the (`space_id`, name) uniqueness merge: a synced row colliding with a
+/// different id is the LWW opponent, and the loser is replaced wholesale (id and
+/// all) so both devices end on the same row id and deletes propagate.
 fn apply_file(db: &Db, row: &serde_json::Value) -> Result<LwwOutcome> {
     let Some(id) = row.get("id").and_then(serde_json::Value::as_str) else {
         return Ok(LwwOutcome::Warned("file row without id".to_string()));
@@ -577,8 +561,7 @@ fn apply_file(db: &Db, row: &serde_json::Value) -> Result<LwwOutcome> {
         .get("updated_at")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
-    // The opponent: the row with this id, or the row owning this
-    // space+name (the app's uniqueness rule).
+    // The row with this id, or the row owning this space+name.
     let local: Option<(String, String)> = conn
         .query_row(
             "SELECT id, COALESCE(updated_at, '') FROM files WHERE id = ?1",
@@ -601,8 +584,7 @@ fn apply_file(db: &Db, row: &serde_json::Value) -> Result<LwwOutcome> {
     if !lww_wins_against(id, incoming_updated, &local_id, &local_updated) {
         return Ok(LwwOutcome::Skipped);
     }
-    // Incoming wins — replace the local row wholesale, including its id:
-    // the winner's id becomes the row's identity on both devices.
+    // The winner's id becomes the row's identity on both devices.
     let values: Vec<rusqlite::types::Value> = [
         "id",
         "space_id",
@@ -647,9 +629,8 @@ fn insert_file_row(conn: &Connection, row: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
-/// Read the version that competes with a tombstone. Mutable rows use
-/// `updated_at`; append-only rows use `created_at`. A newer offline write must
-/// be allowed to revive a row after an older delete reaches the device.
+/// Mutable rows use `updated_at`, append-only rows `created_at`: a newer offline
+/// write must be able to revive a row after an older delete reaches the device.
 fn row_version_for_tombstone(db: &Db, table: &str, row_id: &str) -> Result<Option<String>> {
     let conn = db.conn();
     let (table, id_column, version_column, id) = match table {
@@ -659,9 +640,9 @@ fn row_version_for_tombstone(db: &Db, table: &str, row_id: &str) -> Result<Optio
         "app_settings" => (table, "key", "updated_at", row_id),
         "messages" => (table, "id", "created_at", row_id),
         "usage_log" | "citations" => (table, "sync_id", "created_at", row_id),
-        // Persona rows are versioned by their owning session. Their own
-        // tombstones are retained for transitive propagation, but the row is
-        // only removed by a winning session roster replacement.
+        // Persona rows are versioned by their owning session: their tombstones are
+        // kept for transitive propagation, but only a winning session roster
+        // replacement removes the row.
         "swarm_personas" => {
             let Some((session_id, _)) = row_id.split_once(':') else {
                 return Ok(None);
@@ -682,9 +663,9 @@ fn row_version_for_tombstone(db: &Db, table: &str, row_id: &str) -> Result<Optio
         .optional()?)
 }
 
-/// Record an incoming tombstone and return the newest delete time known for
-/// this `(table_name, row_id)`. Tombstones can cross several peers, so an
-/// older copy must never replace a newer delete that was already recorded.
+/// Record an incoming tombstone and return the newest delete time known for this
+/// `(table_name, row_id)`: tombstones cross several peers, so an older copy must
+/// never replace a newer delete already recorded.
 fn remember_tombstone(db: &Db, tombstone: &Tombstone) -> Result<String> {
     let conn = db.conn();
     let existing: Option<(i64, String)> = conn
@@ -719,9 +700,8 @@ fn remember_tombstone(db: &Db, tombstone: &Tombstone) -> Result<String> {
     }
 }
 
-/// Apply one tombstone; returns whether it performed the destructive delete.
-/// The incoming tombstone is recorded locally for transitive propagation,
-/// even when a newer row makes the delete stale.
+/// Returns whether it performed the destructive delete. The incoming tombstone is
+/// recorded locally for transitive propagation even when a newer row makes it stale.
 // Long by design: one arm per tombstonable table.
 #[allow(clippy::too_many_lines)]
 fn apply_tombstone(
@@ -851,8 +831,8 @@ fn apply_tombstone(
             Ok(true)
         }
         "app_settings" => {
-            // Local-scope settings are never exported, but reject a forged
-            // tombstone rather than allowing a peer to delete device state.
+            // Local-scope settings are never exported; reject a forged tombstone
+            // rather than let a peer delete device state.
             let scope: Option<String> = conn
                 .query_row(
                     "SELECT scope FROM app_settings WHERE key = ?1",
@@ -869,17 +849,15 @@ fn apply_tombstone(
             conn.execute("DELETE FROM app_settings WHERE key = ?1", [&t.row_id])?;
             Ok(true)
         }
-        // Persona tombstones are subsumed by the roster replace that
-        // accompanies a winning session row — applying them alone could
-        // delete slots of a roster the session's LWW winner restored.
+        // Subsumed by the roster replace that accompanies a winning session row:
+        // applying them alone could delete slots the winner restored.
         "swarm_personas" => Ok(false),
         _ => unreachable!("validated tombstone table"),
     }
 }
 
-/// Whether the local durable manifest still describes the incoming file.
-/// This enables a later blob-only retry after a metadata changeset was
-/// imported without its transport channel.
+/// Enables a later blob-only retry after a metadata changeset was imported
+/// without its transport channel.
 fn local_file_matches_manifest(db: &Db, file: &FileChange) -> Result<bool> {
     if !valid_component(&file.space_id) || !valid_component(&file.name) {
         return Ok(false);
@@ -895,7 +873,6 @@ fn local_file_matches_manifest(db: &Db, file: &FileChange) -> Result<bool> {
         .is_some_and(|(hash, size)| hash == file.hash && size == file.size))
 }
 
-/// A space row's name for a space id, when the space still exists.
 pub(super) fn space_name_for(db: &Db, space_id: &str) -> Result<Option<String>> {
     Ok(db
         .conn()

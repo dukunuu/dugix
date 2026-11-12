@@ -12,11 +12,8 @@ use super::{Chapter, Fact};
 
 /// Most pinned facts listed in full; the rest are reachable with a read.
 const MAX_PINNED_FACTS: usize = 60;
-/// Most chapters listed.
 const MAX_CHAPTERS: usize = 60;
-/// Most docs listed.
 const MAX_DOCS: usize = 30;
-/// Most headings listed per doc.
 const MAX_HEADINGS: usize = 6;
 
 /// A doc of the space, as the table of contents lists it.
@@ -61,9 +58,8 @@ pub fn docs(files_dir: &Path) -> Vec<DocEntry> {
         .collect()
 }
 
-/// The `## Memory` section body: pinned chapters in full, other chapters by
-/// title, count and description, then the docs. Empty when there is nothing
-/// to list.
+/// The `## Memory` section body: pinned chapters in full, others by title, count
+/// and description, then the docs; empty when there is nothing to list.
 #[must_use]
 pub fn toc(chapters: &[Chapter], facts: &[Fact], docs: &[DocEntry]) -> String {
     if chapters.is_empty() && docs.is_empty() {
@@ -127,8 +123,8 @@ pub fn toc(chapters: &[Chapter], facts: &[Fact], docs: &[DocEntry]) -> String {
 /// result cap so a page is never cut mid-entry.
 const PAGE_CHARS: usize = 6_000;
 
-/// Append `lines` from the 1-based `offset` until the page is full; when
-/// entries remain, end with how to read on. `what` names the entries.
+/// Append `lines` from the 1-based `offset` until the page is full; when entries
+/// remain, end with how to read on.
 fn page(out: &mut String, lines: &[String], offset: usize, what: &str) {
     let start = offset.max(1) - 1;
     if start >= lines.len() {
@@ -162,8 +158,6 @@ fn page(out: &mut String, lines: &[String], offset: usize, what: &str) {
     }
 }
 
-/// One chapter with its facts from the 1-based `offset`, as `memory
-/// action=read` returns it.
 #[must_use]
 pub fn chapter_page(chapter: &Chapter, facts: &[Fact], offset: usize) -> String {
     let mut out = format!("## {}", chapter.title);
@@ -187,8 +181,6 @@ pub fn chapter_page(chapter: &Chapter, facts: &[Fact], offset: usize) -> String 
     out.trim_end().to_string()
 }
 
-/// Chapter titles with their counts and descriptions from the 1-based
-/// `offset`, as `memory action=read` without a chapter returns them.
 #[must_use]
 pub fn chapter_list(chapters: &[Chapter], facts: &[Fact], offset: usize) -> String {
     if chapters.is_empty() {
@@ -219,7 +211,6 @@ const EDIT_HEADER: &str =
      chapter in full in every chat. Delete a line to forget that fact, or a
      chapter heading to forget the whole chapter. -->";
 
-/// The book as Markdown for `$EDITOR`.
 #[must_use]
 pub fn render_edit(chapters: &[Chapter], facts: &[Fact]) -> String {
     let mut out = format!(
@@ -255,7 +246,6 @@ pub fn opened_at(text: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         .map(|time| time.with_timezone(&chrono::Utc))
 }
 
-/// One chapter as the user left it in the editor.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EditedChapter {
     pub title: String,
@@ -267,8 +257,7 @@ pub struct EditedChapter {
 /// Facts written above the first chapter heading land here.
 pub const UNFILED: &str = "General";
 
-/// Parse the editor Markdown. Comments are skipped; any other non-empty line
-/// is a fact.
+/// Comments are skipped; any other non-empty line is a fact.
 #[must_use]
 pub fn parse_edit(text: &str) -> Vec<EditedChapter> {
     let mut out: Vec<EditedChapter> = Vec::new();
@@ -281,7 +270,6 @@ pub fn parse_edit(text: &str) -> Vec<EditedChapter> {
     out
 }
 
-/// `text` without its `<!-- … -->` comments; an unclosed one runs to the end.
 fn strip_comments(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -336,7 +324,6 @@ fn push_line(out: &mut Vec<EditedChapter>, line: &str) {
     }
 }
 
-/// What an editor save changed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EditSummary {
     pub added: usize,
@@ -359,9 +346,9 @@ impl std::fmt::Display for EditSummary {
     }
 }
 
-/// Apply an editor save as a diff: matching lines keep their fact, new lines
-/// are added, a line moved under another heading moves its fact, and
-/// anything no longer present is deleted.
+/// Apply an editor save as a diff: matching lines keep their fact, new lines are
+/// added, a line moved under another heading moves its fact, and anything no longer
+/// present is deleted.
 pub fn apply_edit(
     conn: &Connection,
     space: &str,

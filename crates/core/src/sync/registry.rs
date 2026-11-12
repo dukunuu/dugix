@@ -1,43 +1,35 @@
 //! The per-table sync rules: cursor kind, columns, keys, and cursor encoding.
 
-// ── the registry ──
-
 /// How a table's rows are ordered and resumed across changesets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cursor {
-    /// Mutable rows: the cursor is an opaque JSON tuple containing
-    /// `(updated_at, pk…)`. Rows that never got a version are never exported.
-    /// Including the primary key prevents a row created with the same
+    /// Mutable rows: an opaque JSON `(updated_at, pk…)` tuple. Rows that never got
+    /// a version are never exported; the primary key keeps a row created in the same
     /// timestamp as the last acknowledged row from being skipped forever.
     UpdatedAt,
-    /// Append-only rows: cursor is a `(col1, col2)` row-value tuple
-    /// (e.g. messages `(created_at, id)`), encoded as `"a|b"`.
+    /// Append-only rows: a `(col1, col2)` row-value tuple, encoded as `"a|b"`.
     Tuple(&'static [&'static str]),
-    /// Append-only rows whose cursor is their device-local AUTOINCREMENT
-    /// id (citations, `sync_tombstones`). The id rides along in the row JSON
-    /// for cursor bookkeeping but is never applied.
+    /// Append-only rows cursor on their device-local AUTOINCREMENT id; the id rides
+    /// along in the row JSON for bookkeeping but is never applied.
     AutoId,
-    /// No cursor of its own; rows travel attached to a parent row
-    /// (`swarm_personas` → sessions).
+    /// Rows travel attached to a parent row (`swarm_personas` → sessions).
     None,
 }
 
-/// One syncable table's cursor + apply rules.
 pub struct TableSpec {
     pub name: &'static str,
-    /// Columns exported in the row JSON (order = the SELECT list).
+    /// Exported in the row JSON; order is the SELECT list.
     pub columns: &'static [&'static str],
-    /// Columns applied on insert/update — a subset of `columns`: the
-    /// AUTOINCREMENT ids are excluded where they'd collide across devices
-    /// (citations) and kept where the id is the sync identity.
+    /// A subset of `columns`: AUTOINCREMENT ids are dropped where they would
+    /// collide across devices and kept where the id is the sync identity.
     pub apply_columns: &'static [&'static str],
-    /// The sync identity: the INSERT OR IGNORE target and the LWW tiebreak.
+    /// The INSERT OR IGNORE target and the LWW tiebreak.
     pub pk: &'static [&'static str],
     pub cursor: Cursor,
 }
 
-/// The engine's registry, in apply order (sessions before their children,
-/// spaces/files before messages so foreign rows land after their parents).
+/// In apply order: sessions before their children, spaces and files before
+/// messages so foreign rows land after their parents.
 pub const TABLES: &[TableSpec] = &[
     TableSpec {
         name: "sessions",
@@ -391,8 +383,7 @@ pub const TABLES: &[TableSpec] = &[
     },
     TableSpec {
         name: "citations",
-        // `id` rides along for the cursor but is never applied — it is a
-        // device-local AUTOINCREMENT id.
+        // `id` rides along for the cursor but is never applied.
         columns: &["id", "sync_id", "space_id", "report_file", "url", "title"],
         apply_columns: &["sync_id", "space_id", "report_file", "url", "title"],
         pk: &["sync_id"],
@@ -410,8 +401,7 @@ pub(super) fn known_table(table: &str) -> bool {
     table == SYNC_TOMBSTONES || spec_for(table).is_some()
 }
 
-/// Encode the cursor for a mutable row. The JSON representation is opaque to
-/// transports and avoids delimiter collisions in keys such as URLs.
+/// JSON is opaque to transports and avoids delimiter collisions in keys such as URLs.
 fn encode_updated_cursor(updated_at: &str, keys: &[String]) -> String {
     serde_json::Value::Array(vec![
         serde_json::Value::String(updated_at.to_string()),
@@ -425,7 +415,7 @@ fn encode_updated_cursor(updated_at: &str, keys: &[String]) -> String {
     .to_string()
 }
 
-/// Decode a mutable-row cursor. Invalid cursors restart the export.
+/// Invalid cursors restart the export.
 pub(super) fn decode_updated_cursor(cursor: &str, key_count: usize) -> (String, Vec<String>) {
     if let Ok(serde_json::Value::Array(parts)) = serde_json::from_str(cursor)
         && let (Some(serde_json::Value::String(updated_at)), Some(serde_json::Value::Array(keys))) =
@@ -445,9 +435,8 @@ pub(super) fn decode_updated_cursor(cursor: &str, key_count: usize) -> (String, 
     (String::new(), vec![String::new(); key_count])
 }
 
-/// Cursor comparisons are table-aware: the AUTOINCREMENT tables compare
-/// numerically (string comparison would order "9" > "10"), mutable rows
-/// compare `(updated_at, pk…)`, and everything else compares lexically.
+/// Table-aware: AUTOINCREMENT tables compare numerically (string order puts "9"
+/// above "10"), mutable rows compare `(updated_at, pk…)`, the rest lexically.
 pub(super) fn position_gt(table: &str, a: &str, b: &str) -> bool {
     if table == "citations" || table == SYNC_TOMBSTONES {
         let n = |s: &str| s.parse::<i64>().unwrap_or(0);
@@ -463,8 +452,7 @@ pub(super) fn position_gt(table: &str, a: &str, b: &str) -> bool {
     }
 }
 
-/// Validate a cursor received from another device before persisting it. A
-/// malformed ack must not poison future exports with an impossible SQL
+/// A malformed ack must not poison future exports with an impossible SQL
 /// comparison or a cursor that can never be advanced.
 pub(super) fn valid_cursor(table: &str, cursor: &str) -> bool {
     if table == "citations" || table == SYNC_TOMBSTONES {
@@ -500,8 +488,8 @@ pub(super) fn valid_cursor(table: &str, cursor: &str) -> bool {
     }
 }
 
-/// A row's cursor position — the pull cursor advances to the max position
-/// among received rows, win or lose (a losing row was still imported).
+/// The pull cursor advances to the max position among received rows, win or lose
+/// (a losing row was still imported).
 pub(super) fn row_position(spec: &TableSpec, row: &serde_json::Value) -> String {
     match spec.cursor {
         Cursor::UpdatedAt => {
@@ -538,9 +526,8 @@ pub(super) fn row_position(spec: &TableSpec, row: &serde_json::Value) -> String 
     }
 }
 
-/// A value that must be a single path component — names flow into
-/// `spaces/<name>/files/<name>` and hashes into `blobs/by-hash/<hash>`, so
-/// they must not smuggle separators or `..`.
+/// Names flow into `spaces/<name>/files/<name>` and hashes into
+/// `blobs/by-hash/<hash>`, so they must not smuggle separators or `..`.
 pub(super) fn valid_component(name: &str) -> bool {
     !name.is_empty()
         && name != "."
@@ -550,7 +537,6 @@ pub(super) fn valid_component(name: &str) -> bool {
         && !name.contains('\0')
 }
 
-/// The human-readable device name riding in every changeset.
 pub fn device_name() -> String {
     if let Ok(n) = std::env::var("NEXUS_DEVICE_NAME")
         && !n.trim().is_empty()

@@ -248,10 +248,6 @@ async fn read_only_task_is_fresh_restricted_capped_accounted_and_traced() {
             .all(|message| message.content.contains("not available in this sub-agent"))
     );
     drop(seen);
-    // The sub-agent's client records its own usage under its own model; none
-    // of it reaches the parent's stream as `Usage` (it would be priced as the
-    // session model and move the parent's context bar). The live view gets
-    // the run as `Subagent` events instead.
     let mut statuses = Vec::new();
     let mut updates = Vec::new();
     while let Ok(event) = events.try_recv() {
@@ -388,7 +384,6 @@ impl Approver for Approval {
 async fn workspace_task_asks_once_and_commits_only_its_worktree_with_a_review_diff() {
     let temp = Temp::new();
     temp.init_git();
-    // Neither staged nor unstaged user changes may enter the helper's commit.
     fs::write(temp.root().join("staged.txt"), "user staged\n").unwrap();
     command(&temp.root(), &["add", "staged.txt"]);
     fs::write(temp.root().join("tracked.txt"), "user unstaged\n").unwrap();

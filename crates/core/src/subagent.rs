@@ -21,8 +21,8 @@ use crate::workspace::Workspace;
 
 static NEXT_TASK: AtomicU64 = AtomicU64::new(1);
 const REPORT_CAP: usize = 6_000;
-/// Sub-agents running at once; more wait for a slot. Parallel helpers mostly
-/// buy token spend, and a burst of them trips provider rate limits.
+/// Sub-agents running at once; more wait for a slot. Parallel helpers mostly buy
+/// token spend, and a burst of them trips provider rate limits.
 const MAX_CONCURRENT: usize = 3;
 /// How often streamed sub-agent text reaches the view, at most.
 const DELTA_EVERY: std::time::Duration = std::time::Duration::from_millis(100);
@@ -232,7 +232,7 @@ fn finish_tree(tree: &Tree, number: u64) -> Result<String> {
     ))
 }
 
-/// Run one task, returning only its final report and optional branch review.
+/// One task, returning only its final report and optional branch review.
 pub(crate) async fn run(context: &Context, toolbox: &ToolBox, args: &Value) -> Result<String> {
     let mut number = NEXT_TASK.fetch_add(1, Ordering::Relaxed);
     let writable = args["tools"] == "workspace";
@@ -318,7 +318,6 @@ pub(crate) async fn run(context: &Context, toolbox: &ToolBox, args: &Value) -> R
     conclude(context, (number, &id), outcome, review)
 }
 
-/// Tell the live view how the run ended and build the parent's report.
 fn conclude(
     context: &Context,
     (number, id): (u64, &str),

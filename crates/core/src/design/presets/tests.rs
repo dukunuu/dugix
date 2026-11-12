@@ -36,7 +36,6 @@ fn every_preset_is_a_valid_design_with_its_own_voice() {
             "{slug}"
         );
         assert!(design.slide.text_styles.contains_key("kicker"), "{slug}");
-        // No two presets share a type pairing, and none is Inter on Inter.
         let pair = (
             design.fonts["heading"].clone(),
             design.fonts["body"].clone(),
@@ -56,13 +55,11 @@ fn preset_palettes_keep_the_contrast_the_layouts_rely_on() {
         assert!(contrast(fg, surface) >= 10.0, "{slug}: text on cards");
         assert!(contrast(muted, bg) >= 3.0, "{slug}: captions");
         assert!(contrast(accent, bg) >= 3.0, "{slug}: accent display text");
-        // Text on the deep panel (accent2): bg on light designs, fg on dark ones.
         let on_panel = if dark(bg) { fg } else { bg };
         assert!(
             contrast(on_panel, accent2) >= 4.5,
             "{slug}: text on accent2 panels"
         );
-        // Text on bright highlight cards stays dark.
         let dark_text = if dark(bg) { bg } else { fg };
         assert!(
             contrast(dark_text, accent3) >= 4.5,
@@ -94,7 +91,6 @@ fn dark_presets_keep_panels_dark_and_their_text_light() {
         colors.iter().all(|c| c.as_deref() != Some("bg")),
         "{colors:?}"
     );
-    // A light preset keeps the layouts as drawn.
     assert_eq!(
         preset("editorial").unwrap().slide.layouts["closing"].fill,
         Design::default().slide.layouts["closing"].fill

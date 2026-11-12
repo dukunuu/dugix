@@ -93,7 +93,6 @@ fn storage_revisions_defaults_and_confinement() {
     design.name = "Brand".into();
     save(&files, "brand", &design).unwrap();
     assert_eq!(load(&files, "brand").unwrap(), design);
-    // Stored designs sort in with the built-in fallback and the curated presets.
     let listed = list(&files).unwrap();
     assert!(listed.contains(&"brand".to_string()) && listed.contains(&"nexus".to_string()));
     assert_eq!(listed.len(), 2 + presets::catalog().len());
@@ -178,7 +177,6 @@ fn deck_design_ops_preserve_overrides_and_old_serialization() {
     )
     .unwrap();
     assert_eq!(prepared.next.slides[0].id, "intro");
-    // Decoration (the accent rule) stays; of the text slots only the filled one remains.
     let texts = prepared.next.slides[0]
         .nodes()
         .iter()

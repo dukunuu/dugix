@@ -181,9 +181,6 @@ async fn judgement_controls_real_runs_and_low_confidence_continues_to_budget() {
 
 #[tokio::test]
 async fn rules_and_network_errors_end_after_one_iteration() {
-    // Without a working judge or a stop command, nothing can say the job is
-    // finished, so it stops after one iteration instead of spending the
-    // whole budget blind.
     for rules in [true, false] {
         let mut fixture = Fixture::new();
         let job = fixture.job("until_done");
@@ -253,7 +250,6 @@ async fn on_change_uses_meaningfulness_not_text_noise() {
         let mut fixture = Fixture::new();
         let mut job = fixture.job("interval");
         job.spec.notify = "on_change".into();
-        // Persist the policy before collecting notifications.
         fixture
             .app
             .db
@@ -382,8 +378,6 @@ fn research_kind_and_topic_sync_and_deleted_migrations_stay_deleted() {
 #[tokio::test]
 async fn slash_watch_creates_research_job_and_direct_watch_runner_remains_compatible() {
     let mut fixture = Fixture::new();
-    // A bound mock backend permits synchronous startup; abort before yielding to
-    // its spawned research task, so this test never starts a provider request.
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .unwrap();

@@ -43,8 +43,8 @@ pub struct Source {
     pub sha256: String,
 }
 
-/// Slide-space rhythm, in pixels. `radius` is the corner of the layouts'
-/// cards and photos; smaller corners in them scale with it.
+/// Slide-space rhythm, in pixels. `radius` is the corner of the layouts' cards and
+/// photos; smaller corners in them scale with it.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Spacing {
@@ -142,13 +142,11 @@ impl Default for Design {
 }
 
 impl Design {
-    /// Canonical JSON SHA-256, including the layouts.
     #[must_use]
     pub fn revision(&self) -> String {
         crate::deck::hash(self)
     }
 
-    /// A filename-safe default slug derived from the display name.
     #[must_use]
     pub fn slug(&self) -> String {
         let name: String = self
@@ -184,11 +182,8 @@ impl Design {
     }
 }
 
-/// Derive both media from one modular scale. Document roles use exponents
-/// display=9, title=4, h1/slide quote=3, h2/lead=2, h3/doc quote=1, body=0, caption/code=-1. Slide sizes are
-/// those point sizes times 42/11 (at 1920 px wide), so an 11 pt body is 42 px.
-/// Families stay role references, so changing a role remaps both media. `fonts`
-/// supplies the available roles; absent roles fall back to body.
+/// Derive both media from one modular scale: slide sizes are the document point
+/// sizes times 42/11. Families stay role references, so changing a role remaps both.
 #[must_use]
 pub fn derive_styles(
     scale: Scale,
@@ -256,8 +251,8 @@ pub fn derive_styles(
         slide.insert(name.into(), font);
     }
     slide.insert("kicker".into(), kicker(&slide));
-    // A page quote is set like running text, one step up and in italic; only a
-    // slide quote is a display size.
+    // A page quote is set like running text, one step up and in italic; only a slide
+    // quote is a display size.
     if let Some(quote) = doc.get_mut("quote") {
         quote.size = Some(crate::deck::model::round2(scale.base_pt * scale.ratio));
         quote.weight = Some(400);
@@ -268,8 +263,8 @@ pub fn derive_styles(
     (slide, doc)
 }
 
-/// The small label above a slide title: the caption size, set in capitals
-/// with open tracking in the accent color.
+/// The small label above a slide title: caption size, capitals, open tracking,
+/// accent color.
 fn kicker(slide: &BTreeMap<String, Font>) -> Font {
     Font {
         family: Some("body".into()),

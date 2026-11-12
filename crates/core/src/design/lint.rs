@@ -11,8 +11,8 @@ pub enum Drift {
     Family { id: String, value: String },
 }
 
-/// Find explicit hex colors, sizes and families outside the design. Color
-/// spellings normalize short hex, case and opaque alpha before comparison.
+/// Explicit hex colors, sizes and families outside the design; color spellings
+/// normalize short hex, case and opaque alpha before comparison.
 #[must_use]
 pub fn lint_deck(deck: &Deck, design: &Design) -> Vec<Drift> {
     let mut out = Vec::new();
@@ -114,8 +114,7 @@ pub fn lint_doc(_doc: &crate::doc::Doc, _design: &Design) -> Vec<Drift> {
     Vec::new()
 }
 
-/// One compact result line. Count unique nodes, list up to six ids per kind,
-/// then `+N`; the complete line never exceeds 200 characters.
+/// Unique nodes counted, up to six ids per kind then `+N`; never over 200 characters.
 #[must_use]
 pub fn summary(drift: &[Drift]) -> Option<String> {
     let mut groups: [BTreeSet<String>; 3] = std::array::from_fn(|_| BTreeSet::new());

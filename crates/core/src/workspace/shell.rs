@@ -176,8 +176,8 @@ pub(super) mod unix {
         let started = std::time::Instant::now();
         let header = wait(&mut child, &group, &path, seconds).await?;
         let header = format!("{header} · {:.1}s", started.elapsed().as_secs_f64());
-        // One-shot commands must not leave background descendants behind even
-        // when the shell itself exits before them.
+        // One-shot commands must not leave background descendants behind even when
+        // the shell itself exits before them.
         drop(group);
         Ok(shape(
             &format!("{header} · shell action=log id={id}{sandbox_note}"),
@@ -207,8 +207,8 @@ pub(super) mod unix {
             return Ok(None);
         };
         environment(&mut command, &shims)?;
-        // Both descriptors share one open-file offset: stdout and stderr are
-        // recorded in kernel write order, without competing reader tasks.
+        // Both descriptors share one open-file offset: stdout and stderr are recorded
+        // in kernel write order, without competing reader tasks.
         command
             .current_dir(cwd)
             .stdin(Stdio::null())

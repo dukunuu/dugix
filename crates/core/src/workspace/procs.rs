@@ -18,7 +18,6 @@ pub struct ProcInfo {
 }
 
 impl ProcInfo {
-    /// Name and current state, including elapsed time while running.
     #[must_use]
     pub fn header(&self) -> String {
         if self.state == "running" {
@@ -323,7 +322,7 @@ mod unix {
             }
         }
 
-        /// All processes, with this session first and stable ordering within it.
+        /// This session first, stable ordering within it.
         #[must_use]
         pub fn list(&self, session_id: &str) -> Vec<ProcInfo> {
             let mut registry = self.0.lock().expect("process registry");
@@ -339,7 +338,6 @@ mod unix {
             rows
         }
 
-        /// Number of commands still running across all sessions.
         #[must_use]
         pub fn running_count(&self) -> usize {
             let mut registry = self.0.lock().expect("process registry");
@@ -351,7 +349,7 @@ mod unix {
             count
         }
 
-        /// Read only output added since the previous read, or a 1-based line.
+        /// Only output added since the previous read, or a 1-based line.
         pub fn read(&self, id: &str, since: Option<u64>) -> Result<String> {
             let mut registry = self.0.lock().expect("process registry");
             let process = registry
@@ -390,7 +388,7 @@ mod unix {
             tail(&process.path, 200)
         }
 
-        /// Stop a group. The reaper sends SIGKILL after a two-second grace.
+        /// The reaper sends SIGKILL after a two-second grace.
         pub fn kill(&self, id: &str) -> Result<String> {
             let mut registry = self.0.lock().expect("process registry");
             let process = registry
@@ -403,7 +401,7 @@ mod unix {
             Ok(format!("{} · killed", process.name))
         }
 
-        /// Stop every group before the frontend exits; no future starts allowed.
+        /// Stops every group; no future starts are allowed.
         pub async fn shutdown(&self) {
             let processes = {
                 let mut registry = self.0.lock().expect("process registry");
@@ -681,8 +679,6 @@ mod unix {
                     );
                 }
                 if dropping {
-                    // Replacing the fixture's Arc ensures its cleanup cannot
-                    // kill the groups: only the registry's Drop can do that.
                     let mut fixture = fixture;
                     drop(std::mem::take(&mut fixture.procs));
                     for pid in pids {
@@ -862,7 +858,6 @@ mod unix {
 
 #[cfg(not(unix))]
 #[derive(Default)]
-/// Background commands are unavailable on this platform.
 pub struct Procs;
 
 #[cfg(not(unix))]
@@ -876,24 +871,19 @@ impl Procs {
         "proc is only available on Unix".into()
     }
 
-    /// No processes on unsupported platforms.
     #[must_use]
     pub fn list(&self, _session_id: &str) -> Vec<ProcInfo> {
         Vec::new()
     }
-    /// No processes on unsupported platforms.
     #[must_use]
     pub fn running_count(&self) -> usize {
         0
     }
-    /// Background processes are unavailable on this platform.
     pub fn kill(&self, _id: &str) -> anyhow::Result<String> {
         anyhow::bail!("proc is only available on Unix")
     }
-    /// Background processes are unavailable on this platform.
     pub fn last_output(&self, _id: &str) -> anyhow::Result<String> {
         anyhow::bail!("proc is only available on Unix")
     }
-    /// Nothing to shut down on unsupported platforms.
     pub async fn shutdown(&self) {}
 }

@@ -162,9 +162,8 @@ impl Tree {
             .status()?;
         ensure!(matches!(changed.code(), Some(0 | 1)), "git diff failed");
         if !changed.success() {
-            // Unattended: the repo's hooks (e.g. a slow pre-commit gate) and
-            // commit signing (a passphrase prompt) must not block the job.
-            // The branch is reviewed before it is merged anyway.
+            // Unattended: the repo's hooks and commit signing (a passphrase prompt)
+            // must not block the job; the branch is reviewed before it is merged.
             git(
                 &self.path,
                 &[

@@ -1,10 +1,6 @@
-//! Plain-text markdown helpers for the core crate: `to_plain` (markers
-//! stripped, for clipboard copy) and the GFM pipe-table splitter shared
-//! with the TUI's styled renderer (`crates/tui/src/ui/markdown.rs`). This
-//! module is deliberately free of ratatui/tui-markdown — styled rendering
-//! lives in the TUI crate.
+//! Plain-text markdown helpers: `to_plain` (markers stripped, for clipboard copy)
+//! and the GFM pipe-table splitter shared with the TUI's styled renderer.
 
-/// One table cell's horizontal alignment, parsed from the GFM delimiter row.
 #[derive(Clone, Copy)]
 pub enum TableAlign {
     Left,
@@ -12,17 +8,13 @@ pub enum TableAlign {
     Right,
 }
 
-/// A chunk of `content`: plain text, or a parsed GFM pipe table.
 pub enum TableSegment {
     Text(String),
     Table(Vec<Vec<String>>, Vec<TableAlign>),
 }
 
-/// Split `content` into text and table segments. A table starts at a header
-/// row immediately followed by a valid delimiter row (`| --- | :---: |`), and
-/// continues while subsequent lines still look like table rows. Shared by
-/// `to_plain` here and the TUI's styled `render` — both skip anything inside
-/// a fenced code block.
+/// A table starts at a header row followed by a valid delimiter row and continues
+/// while lines still look like rows; fenced code blocks are skipped.
 pub fn split_tables(content: &str) -> Vec<TableSegment> {
     let lines: Vec<&str> = content.lines().collect();
     let mut segments = Vec::new();
@@ -61,13 +53,11 @@ pub fn split_tables(content: &str) -> Vec<TableSegment> {
     segments
 }
 
-/// A plausible table row: non-empty and contains at least one `|`.
 fn looks_like_row(line: &str) -> bool {
     let t = line.trim();
     !t.is_empty() && t.contains('|')
 }
 
-/// The GFM delimiter row: cells of only `-`/`:`, at least one `-` each.
 fn is_delimiter_row(line: Option<&&str>) -> bool {
     let Some(line) = line else { return false };
     if !looks_like_row(line) {
@@ -95,8 +85,7 @@ fn parse_aligns(delim_line: &str) -> Vec<TableAlign> {
         .collect()
 }
 
-/// `| a | b |` -> `["a", "b"]`. Doesn't handle escaped `\|` — out of scope for
-/// chat-message tables.
+/// Doesn't handle escaped `\|`.
 fn split_cells(line: &str) -> Vec<String> {
     let t = line.trim();
     let t = t.strip_prefix('|').unwrap_or(t);
@@ -104,8 +93,6 @@ fn split_cells(line: &str) -> Vec<String> {
     t.split('|').map(|c| c.trim().to_string()).collect()
 }
 
-/// Reconstruct a clean, standard GFM table from parsed cells — nicer to paste
-/// elsewhere than whatever mangled text `tui_markdown` would have produced.
 fn plain_table(rows: &[Vec<String>], aligns: &[TableAlign]) -> String {
     let Some(header) = rows.first() else {
         return String::new();
@@ -126,8 +113,7 @@ fn plain_table(rows: &[Vec<String>], aligns: &[TableAlign]) -> String {
     out.join("\n")
 }
 
-/// Plain text of `content` with markdown markers stripped (for clipboard
-/// copy). Tables are reconstructed as clean GFM markdown rather than mangled.
+/// `content` with markdown markers stripped, for clipboard copy.
 pub fn to_plain(content: &str) -> String {
     let content = ui_fences_to_plain(content);
     split_tables(&content)
@@ -140,9 +126,8 @@ pub fn to_plain(content: &str) -> String {
         .join("\n")
 }
 
-/// Replace each complete, valid `nexus-ui` block with its readable text
-/// (title, then each node), so copying a designed reply or a card gives
-/// words rather than its JSON source. Invalid or unclosed blocks are kept.
+/// Replace each valid `nexus-ui` block with its readable text, so copying a
+/// designed reply gives words rather than JSON; invalid or unclosed blocks are kept.
 fn ui_fences_to_plain(content: &str) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut lines = content.lines();
@@ -204,8 +189,7 @@ enum Block {
     Plain,
 }
 
-/// Decide how a plain markdown line should be treated for copying: block
-/// markers (`#`, `-`) are stripped, fence lines dropped, everything else kept.
+/// Block markers (`#`, `-`) are stripped, fence lines dropped, everything else kept.
 fn classify_line(plain: &str) -> Block {
     let trimmed = plain.trim_start();
     if trimmed.starts_with("```") {
@@ -220,7 +204,6 @@ fn classify_line(plain: &str) -> Block {
     Block::Plain
 }
 
-/// `## Heading` -> `Heading` (1–6 `#` then a space).
 fn header_rest(trimmed: &str) -> Option<String> {
     let hashes = trimmed.chars().take_while(|&c| c == '#').count();
     if (1..=6).contains(&hashes) && trimmed[hashes..].starts_with(' ') {
@@ -230,7 +213,6 @@ fn header_rest(trimmed: &str) -> Option<String> {
     }
 }
 
-/// `- item` / `* item` / `+ item` -> `• item`, preserving indentation.
 fn list_rest(plain: &str) -> Option<String> {
     let indent_len = plain.len() - plain.trim_start().len();
     let (indent, s) = plain.split_at(indent_len);
@@ -242,17 +224,13 @@ fn list_rest(plain: &str) -> Option<String> {
     None
 }
 
-/// Strip inline markdown markers from one line, keeping the plain text:
-/// `**bold**`/`*italic*`/`_em_`/`__strong__`/`` `code` ``/`[text](url)`/
-/// `![alt](url)`/`~~strike~~`. Unmatched markers are left as literal text
-/// (same as `tui_markdown`'s conservative behavior).
+/// Unmatched markers are left as literal text, as `tui_markdown` does.
 fn strip_inline(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
     let mut i = 0;
     while i < chars.len() {
         let c = chars[i];
-        // `![alt](url)` → `alt`.
         if c == '!'
             && chars.get(i + 1) == Some(&'[')
             && let Some((alt, rest)) = take_link(&chars, i + 1)
@@ -261,7 +239,6 @@ fn strip_inline(text: &str) -> String {
             i = rest;
             continue;
         }
-        // `[text](url)` → `text`.
         if c == '['
             && let Some((link_text, rest)) = take_link(&chars, i)
         {
@@ -269,8 +246,7 @@ fn strip_inline(text: &str) -> String {
             i = rest;
             continue;
         }
-        // `` `code` `` → `code` (a run of backticks closes a run of the same
-        // length, per CommonMark).
+        // A run of backticks closes a run of the same length, per CommonMark.
         if c == '`' {
             let run = chars[i..].iter().take_while(|&&x| x == '`').count();
             if let Some(close) = find_run(&chars, i + run, run, '`') {
@@ -280,7 +256,6 @@ fn strip_inline(text: &str) -> String {
                 continue;
             }
         }
-        // `~~strike~~`.
         if c == '~'
             && chars.get(i + 1) == Some(&'~')
             && let Some(close) = find_run(&chars, i + 2, 2, '~')
@@ -289,7 +264,6 @@ fn strip_inline(text: &str) -> String {
             i = close + 2;
             continue;
         }
-        // `**bold**`, `*italic*`, `__strong__`, `_em_`.
         if (c == '*' || c == '_')
             && let Some(run) = emphasis_run(&chars, i)
             && let Some(close) = find_run(&chars, i + run, run, c)
@@ -304,7 +278,7 @@ fn strip_inline(text: &str) -> String {
     out
 }
 
-/// `[text](url)` starting at `open` (the `[`): returns `(text, index after ')')`.
+/// A link starting at `open` (the `[`): `(text, index after ')')`.
 fn take_link(chars: &[char], open: usize) -> Option<(String, usize)> {
     let close = chars[open..].iter().position(|&c| c == ']')? + open;
     if chars.get(close + 1) != Some(&'(') {
@@ -314,7 +288,6 @@ fn take_link(chars: &[char], open: usize) -> Option<(String, usize)> {
     Some((chars[open + 1..close].iter().collect(), end + 1))
 }
 
-/// Index of a run of `run` copies of `marker` starting at or after `from`.
 fn find_run(chars: &[char], from: usize, run: usize, marker: char) -> Option<usize> {
     if run == 0 {
         return None;
@@ -324,8 +297,7 @@ fn find_run(chars: &[char], from: usize, run: usize, marker: char) -> Option<usi
     (len >= run).then_some(start)
 }
 
-/// Length of an emphasis marker run at `i` (`*`/`_`), capped at 2 — a run of
-/// 3+ is left alone (`CommonMark` treats a triple run as strong+em).
+/// Capped at 2: a run of 3+ is left alone (`CommonMark` treats it as strong+em).
 fn emphasis_run(chars: &[char], i: usize) -> Option<usize> {
     let c = chars[i];
     let run = chars[i..].iter().take_while(|&&x| x == c).count();
@@ -342,7 +314,6 @@ mod to_plain_tests {
         assert!(plain.contains("Go ships faster."), "{plain}");
         assert!(plain.contains("Both are fine."), "{plain}");
         assert!(!plain.contains("\"version\""), "{plain}");
-        // Invalid or unclosed blocks are copied as they are.
         let broken = "```nexus-ui\n{not json}\n```";
         assert!(to_plain(broken).contains("{not json}"));
         assert!(to_plain("```nexus-ui\n{\"version\":1").contains("\"version\":1"));

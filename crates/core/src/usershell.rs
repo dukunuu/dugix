@@ -8,19 +8,16 @@ use std::time::{Duration, Instant};
 /// Cached once per app, including failures (which are reported once).
 #[derive(Debug)]
 pub struct UserShell {
-    /// Validated shell executable.
     pub shell: PathBuf,
     /// Only definitions and PATH, never startup chatter.
     pub snapshot: Option<PathBuf>,
-    /// PATH captured after interactive startup.
     pub path: String,
-    /// Alias and function names available for completion.
     pub names: Vec<String>,
     /// Why setup could not be captured.
     pub warning: Option<String>,
 }
 
-/// Select a supported executable, otherwise the POSIX fallback.
+/// A supported executable, otherwise the POSIX fallback.
 #[must_use]
 pub fn select_shell(value: Option<&std::ffi::OsStr>) -> PathBuf {
     value
@@ -47,13 +44,12 @@ fn executable(path: &Path) -> bool {
     path.is_file()
 }
 
-/// Shell single-quoting, also used for paths containing spaces or apostrophes.
+/// Shell single-quoting; paths with spaces or apostrophes rely on it.
 #[must_use]
 pub fn quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 
-/// Display a directory without exposing the user's home prefix repeatedly.
 #[must_use]
 pub fn display_dir(path: &Path) -> String {
     display_with_home(path, std::env::var_os("HOME").as_deref().map(Path::new))
@@ -81,7 +77,7 @@ fn display_with_home(path: &Path, home: Option<&Path>) -> String {
 }
 
 impl UserShell {
-    /// Capture the supported portions of interactive startup without a terminal.
+    /// The supported portions of interactive startup, captured without a terminal.
     pub async fn load(data: &Path) -> Self {
         Self::build(
             select_shell(std::env::var_os("SHELL").as_deref()),
@@ -200,8 +196,8 @@ impl UserShell {
         }
     }
 
-    /// Noninteractive wrapper: aliases expand in bash, and EXIT also records
-    /// cwd for commands containing an explicit `exit`.
+    /// Noninteractive wrapper: aliases expand in bash, and EXIT also records cwd
+    /// for commands containing an explicit `exit`.
     #[must_use]
     pub fn wrapper(&self, cmd: &str, cwd: &Path) -> String {
         let aliases = if self.shell.file_name().is_some_and(|name| name == "bash") {
@@ -212,8 +208,8 @@ impl UserShell {
         let source = self.snapshot.as_ref().map_or_else(String::new, |p| {
             format!(". {} 2>/dev/null || :\n", quote(&p.to_string_lossy()))
         });
-        // The user's `cd` may be a function (zoxide `--cmd cd`); entering the
-        // tracked directory must not run it or bump its ranking.
+        // The user's `cd` may be a function (zoxide `--cmd cd`); entering the tracked
+        // directory must not run it or bump its ranking.
         let cd = if self
             .shell
             .file_name()
@@ -253,18 +249,16 @@ fn kill_group(group: Option<u32>) {
     let _ = group;
 }
 
-/// A shell word and its byte range in the composer. Quotes are decoded, not evaluated.
+/// A shell word and its byte range in the composer; quotes are decoded, not evaluated.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Word {
     /// Decoded prefix up to the cursor.
     pub text: String,
-    /// Replacement starts here.
     pub start: usize,
-    /// Replacement ends here (including any closing quote).
+    /// Including any closing quote.
     pub end: usize,
 }
 
-/// Split shell words, respecting quoted and backslash-escaped spaces.
 #[must_use]
 pub fn words(text: &str) -> Vec<Word> {
     let mut out = Vec::new();
@@ -315,8 +309,8 @@ pub fn words(text: &str) -> Vec<Word> {
     out
 }
 
-/// Programs that need the real terminal (a password prompt or a full-screen
-/// UI): the TUI hands them the terminal instead of capturing their output.
+/// Programs that need the real terminal (a password prompt or a full-screen UI):
+/// the TUI hands them the terminal instead of capturing their output.
 #[must_use]
 pub fn terminal_program(cmd: &str) -> Option<String> {
     words(cmd)
@@ -344,16 +338,15 @@ pub fn terminal_program(cmd: &str) -> Option<String> {
         .map(|word| word.text.clone())
 }
 
-/// A completion request's replacements, already escaped for shell insertion.
+/// Replacements already escaped for shell insertion.
 #[derive(Debug, Default)]
 pub struct Completion {
-    /// Byte range to replace.
     pub range: std::ops::Range<usize>,
-    /// Sorted, deduplicated alternatives.
+    /// Sorted and deduplicated.
     pub candidates: Vec<String>,
 }
 
-/// Complete off the UI thread; even a slow filesystem or zoxide cannot stall keys.
+/// Runs off the UI thread, so a slow filesystem or zoxide cannot stall keys.
 pub async fn complete(setup: &UserShell, text: &str, cursor: usize, cwd: &Path) -> Completion {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let setup_path = setup.path.clone();
@@ -537,7 +530,6 @@ fn escape(text: &str) -> String {
     })
 }
 
-/// Longest shared prefix on Unicode character boundaries.
 #[must_use]
 pub fn common_prefix(candidates: &[String]) -> String {
     let Some(first) = candidates.first() else {
@@ -658,9 +650,8 @@ mod tests {
     async fn failed_and_timed_out_startup_leave_no_snapshot() {
         let root = temp();
         let home = root.join("home");
-        // Only the hanging case gets the short timeout: under a loaded
-        // parallel test run bash alone can take longer than 150 ms to start,
-        // which turned "exited 9" into a spurious "timed out".
+        // Only the hanging case gets the short timeout: under a loaded parallel
+        // test run bash alone can take longer than 150 ms to start.
         for (rc, expected, timeout) in [
             ("exit 9", "shell setup exited", Duration::from_secs(10)),
             (

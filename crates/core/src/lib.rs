@@ -1,11 +1,5 @@
-//! nexus-chat-core (lib crate `nexus_core`): the engine behind the `nexus`
-//! TUI, CLI, and `nexus host` API. Owns all domain logic — sessions, research
-//! pipeline, provider clients, tools, files, skills, `SQLite` state — with no
-//! knowledge of the terminal UI.
-//!
-//! Doc-lint allows: the domain surface the frontends drive directly (`Db`,
-//! provider, config, `App`'s event handlers) is pub, and per-item error/panic
-//! docs on all of it would be noise.
+//! nexus-chat-core (lib crate `nexus_core`): the engine behind the `nexus` TUI,
+//! CLI and `nexus host` API, owning all domain logic and no terminal UI.
 #![allow(
     clippy::missing_errors_doc,
     clippy::missing_panics_doc,
@@ -51,8 +45,7 @@ pub mod workspace;
 
 use anyhow::Result;
 
-/// One bootstrap for every frontend (TUI, CLI, host): credentials → space →
-/// db → appserver → toolbox.
+/// One bootstrap for every frontend (TUI, CLI, host).
 pub async fn boot(saved: config::SavedCreds) -> Result<app::App> {
     let space = space::Space::open()?;
     let db = db::Db::open(&space.db_path())?;

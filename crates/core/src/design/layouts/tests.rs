@@ -351,9 +351,8 @@ fn text_fits(deck: &Deck, assets: &Path, rects: &BTreeMap<String, Rect>) {
         if let Kind::Text { text, style, font } = &node.kind {
             let rect = rects[&node.id];
             let resolved = deck.theme.resolve_font(style, font);
-            // Layouts are sized for their font stack; when no named family
-            // in it is installed (Linux CI: no Inter, Helvetica or Segoe) a
-            // generic fallback face runs wider.
+            // Layouts are sized for their font stack; when no named family in it is
+            // installed (Linux CI: no Inter, Helvetica or Segoe) a fallback face runs wider.
             let stack = crate::deck::text::font_stack(&deck.theme, &resolved.family);
             if !stack
                 .split(',')
@@ -423,8 +422,8 @@ fn round_trip(deck: &Deck, bytes: &[u8], assets: &Path, imported: &Path) -> (usi
         .collect();
     let mut counts = (0, 0);
     for original in deck.slides[0].nodes() {
-        // Flattened, unpainted flex containers have no visible Office primitive.
-        // Every painted background and every descendant is compared separately.
+        // Flattened, unpainted flex containers have no visible Office primitive;
+        // every painted background and every descendant is compared separately.
         if matches!(
             original.kind,
             Kind::Frame {
@@ -578,7 +577,6 @@ fn editorial_layout_gallery_checks_renders_and_round_trips_every_painted_node() 
             .unwrap();
         let bytes = deck::export::pptx::export_pptx(&deck, Some(&assets_dir)).unwrap();
         package_is_complete(&bytes);
-        // Separate from the older count-test's generic placeholder fixtures.
         if std::env::var_os("NEXUS_LAYOUT_PREVIEWS").is_some() {
             let output = target.join("layout-previews/rich");
             std::fs::create_dir_all(&output).unwrap();

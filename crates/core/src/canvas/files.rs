@@ -1,9 +1,5 @@
-//! File operations on the decks and docs of a space: the library's rename,
-//! duplicate and delete, saving a copy somewhere else, and writing an export to
-//! a place the user chose in a dialog.
-//!
-//! Every function takes the space's files folder and a path *inside* it, as
-//! the library lists them (`decks/q3.deck.json`), and refuses anything else.
+//! File operations on the decks and docs of a space: rename, duplicate, delete,
+//! save a copy and write an export where a dialog said.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -14,7 +10,6 @@ use crate::deck::link::Kind;
 use crate::deck::{self, Deck};
 use crate::doc::{self, Doc};
 
-/// The longest title a rename accepts.
 const MAX_TITLE: usize = 200;
 
 /// The file a library path names: a plain, visible `decks/…/x.deck.json` or
@@ -58,7 +53,6 @@ fn title_ok(title: &str) -> Result<String> {
     Ok(title.into())
 }
 
-/// Backslash-escape what the doc's inline Markdown would read as marks.
 fn escape_inline(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
@@ -73,7 +67,7 @@ fn escape_inline(text: &str) -> String {
     out
 }
 
-/// A doc with a new title; the title block follows when it showed the old one.
+/// The title block follows when it showed the old title.
 fn retitled_doc(doc: &Doc, title: &str) -> Result<Doc> {
     let mut ops = vec![serde_json::json!({"op": "set_title", "title": title})];
     if let Some(block) = doc
@@ -102,8 +96,8 @@ fn read_doc(path: &Path) -> Result<Doc> {
         .map_err(|e| anyhow::anyhow!("{}: {}", e[0].path, e[0].message))
 }
 
-/// Write a deck or doc over its own file: the version it replaces is kept in
-/// the file's history, and a doc's comment anchors follow the new text.
+/// Write over the file, keeping the replaced version in its history; a doc's
+/// comment anchors follow the new text.
 fn write_over(files: &Path, path: &Path, kind: Kind, source: &Edited) -> Result<()> {
     match (kind, source) {
         (Kind::Deck, Edited::Deck(next)) => {
@@ -135,8 +129,7 @@ enum Edited {
     Doc(Doc),
 }
 
-/// Give a deck or doc a new title. The file keeps its name, so links and the
-/// model's references to it keep working.
+/// The file keeps its name, so links and the model's references to it keep working.
 pub fn rename(files: &Path, relative: &str, title: &str) -> Result<()> {
     let title = title_ok(title)?;
     let (kind, path) = resolve(files, relative)?;
@@ -151,8 +144,8 @@ pub fn rename(files: &Path, relative: &str, title: &str) -> Result<()> {
     write_over(files, &path, kind, &next)
 }
 
-/// A copy beside the original, titled `<title> copy`, named `<stem>-copy`.
-/// Comments and history stay with the original. Returns the copy's library path.
+/// A copy beside the original titled `<title> copy`; comments and history stay with
+/// the original.
 pub fn duplicate(files: &Path, relative: &str) -> Result<String> {
     let (kind, path) = resolve(files, relative)?;
     let suffix = match kind {
@@ -226,10 +219,8 @@ fn history_folder(kind: Kind, path: &Path) -> Option<PathBuf> {
     Some(folder.join(".history").join(stem))
 }
 
-/// Move a deck or doc out of the library into `<files>/.trash/<when>/` with its
-/// comments and kept versions, so deleting is undone by moving it back. Returns
-/// the folder it went to. (The operating system's trash is not reachable with
-/// the standard library alone.)
+/// Move the file and its comments and kept versions into `<files>/.trash/`, so
+/// deleting is undone by moving it back.
 pub fn delete(files: &Path, relative: &str) -> Result<PathBuf> {
     let (kind, path) = resolve(files, relative)?;
     let root = files.canonicalize()?;
@@ -289,14 +280,12 @@ pub fn file_stem_for(title: &str) -> String {
     }
 }
 
-/// `<title>.<extension>`: what an export's Save dialog is pre-filled with.
 #[must_use]
 pub fn export_file_name(title: &str, extension: &str) -> String {
     format!("{}.{extension}", file_stem_for(title))
 }
 
-/// A path from a Save dialog: the extension the format needs is added when the
-/// user left it off.
+/// The extension the format needs is added when the user left it off.
 #[must_use]
 pub fn with_extension(path: PathBuf, extension: &str) -> PathBuf {
     if path.extension().is_some() {
@@ -307,9 +296,8 @@ pub fn with_extension(path: PathBuf, extension: &str) -> PathBuf {
     name.into()
 }
 
-/// Write an export where a Save dialog said. The dialog already asked about
-/// replacing a file, so an existing file is replaced (atomically). Returns the
-/// canonical path written.
+/// The dialog already asked about replacing, so an existing file is replaced
+/// atomically. Returns the canonical path written.
 pub fn write_chosen(bytes: &[u8], destination: &Path) -> Result<PathBuf> {
     ensure!(
         destination.is_absolute(),
@@ -332,7 +320,6 @@ pub fn write_chosen(bytes: &[u8], destination: &Path) -> Result<PathBuf> {
     Ok(target)
 }
 
-/// Local assets (`assets/…`) a deck or doc refers to, in source order.
 fn asset_references(kind: Kind, source: &str) -> Result<Vec<String>> {
     let mut refs = Vec::new();
     let mut add = |src: &str| {
@@ -369,7 +356,6 @@ fn asset_references(kind: Kind, source: &str) -> Result<Vec<String>> {
     Ok(refs)
 }
 
-/// What [`save_copy`] wrote.
 #[derive(Debug, PartialEq, Eq)]
 pub struct SavedCopy {
     pub path: PathBuf,
@@ -377,10 +363,8 @@ pub struct SavedCopy {
     pub assets: usize,
 }
 
-/// Write `source` (a deck or doc file) to `destination` with the assets it
-/// uses in an `assets/` folder beside it. The extension is `.deck.json` or
-/// `.doc.json` whatever the dialog returned. A copy never overwrites an asset
-/// that is already there.
+/// Write `source` to `destination` with its assets in an `assets/` folder beside
+/// it; the extension is `.deck.json` or `.doc.json` whatever the dialog returned.
 pub fn save_copy(source: &Path, destination: &Path) -> Result<SavedCopy> {
     let kind = Kind::of_path(source);
     let suffix = match kind {
@@ -441,8 +425,8 @@ pub fn save_copy(source: &Path, destination: &Path) -> Result<SavedCopy> {
     Ok(SavedCopy { path, assets })
 }
 
-/// A deck as a file in `format` (`pptx`, `pdf`, `png`, `html` or `json`), not
-/// yet written anywhere. `template: Some("none")` writes a plain package.
+/// A deck as a file in `format`, not yet written anywhere; `template:
+/// Some("none")` writes a plain package.
 pub fn deck_output(
     files: &Path,
     deck: &Deck,
@@ -454,9 +438,8 @@ pub fn deck_output(
     crate::design::template::export_deck(deck, assets.as_deref(), files, format, template)
 }
 
-/// A doc as a file in `format`, not yet written anywhere. Markdown names its
-/// images in an `assets/` folder beside the file, so they are copied by content
-/// into `md_images`.
+/// Markdown names its images in an `assets/` folder beside the file, so they are
+/// copied by content into `md_images`.
 pub fn doc_output(
     files: &Path,
     doc: &Doc,
@@ -496,8 +479,6 @@ pub fn doc_output(
     Ok(output)
 }
 
-/// The file extension an export of `kind` in `word` gets (`deck.json` for a
-/// deck's own JSON).
 pub fn export_extension(kind: Kind, word: &str) -> Result<&'static str> {
     Ok(match kind {
         Kind::Deck => word.parse::<deck::export::Format>()?.extension(),
@@ -505,7 +486,6 @@ pub fn export_extension(kind: Kind, word: &str) -> Result<&'static str> {
     })
 }
 
-/// Export a library file, read from disk, in `word` format.
 pub fn export_file(
     files: &Path,
     relative: &str,

@@ -1,10 +1,5 @@
-//! Chapter and doc hints attached to a message before it is sent.
-//!
-//! A plain keyword match, no model call: the message's distinct terms are
-//! scored against each unpinned chapter (title, description, facts) and each
-//! doc (title, headings). A term in a title counts double. The best few
-//! targets are named — not pasted — so the model opens them only when they
-//! matter. Pinned chapters are already in the prompt and never hinted.
+//! Chapter and doc hints attached to a message before it is sent: a plain keyword
+//! match, no model call, naming the best few targets so the model opens them.
 
 use std::collections::HashSet;
 
@@ -13,11 +8,9 @@ use serde::{Deserialize, Serialize};
 use super::book::DocEntry;
 use super::{Chapter, Fact};
 
-/// Most targets hinted per message.
 pub const MAX_HINTS: usize = 3;
 /// Messages shorter than this carry no hint.
 const MIN_QUERY_CHARS: usize = 15;
-/// Weighted score a target needs to be hinted.
 const MIN_SCORE: usize = 2;
 
 const STOPWORDS: &[&str] = &[
@@ -31,8 +24,8 @@ const STOPWORDS: &[&str] = &[
     "my", "me", "is", "it", "to", "of", "in", "on", "a", "an", "do", "be", "so", "if", "or",
 ];
 
-/// Lowercase alphanumeric words of three or more characters, minus common
-/// words, each once.
+/// Lowercase alphanumeric words of three or more characters, minus common words,
+/// each once.
 #[must_use]
 pub fn terms(text: &str) -> Vec<String> {
     let mut seen = HashSet::new();
@@ -46,7 +39,6 @@ pub fn terms(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Something worth opening.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Target {
     /// `chapter:<title>` or `doc:<relative>`: what "already hinted" compares.
@@ -57,8 +49,8 @@ pub struct Target {
     pub open: String,
 }
 
-/// The persisted `recall` row: the text replayed to the model, verbatim on
-/// every later request, plus the targets for display and de-duplication.
+/// The persisted `recall` row: the text replayed to the model verbatim on every
+/// later request, plus the targets for display and de-duplication.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Recall {
     pub text: String,
@@ -66,13 +58,11 @@ pub struct Recall {
 }
 
 impl Recall {
-    /// Encode for the message row.
     #[must_use]
     pub fn to_row(&self) -> String {
         serde_json::to_string(self).unwrap_or_default()
     }
 
-    /// Decode a message row; `None` for anything malformed.
     #[must_use]
     pub fn from_row(content: &str) -> Option<Self> {
         serde_json::from_str(content).ok()
@@ -94,8 +84,8 @@ fn score(query: &[String], title: &str, body: &[&str]) -> usize {
         .sum()
 }
 
-/// The hint for one message, or `None` when nothing matches well enough.
-/// `already` holds keys hinted earlier in the session.
+/// `None` when nothing matches well enough; `already` holds keys hinted earlier in
+/// the session.
 #[must_use]
 #[allow(clippy::implicit_hasher)] // Callers build a plain `HashSet`.
 pub fn hint(

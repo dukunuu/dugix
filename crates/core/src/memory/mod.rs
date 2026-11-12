@@ -1,11 +1,5 @@
-//! Long-term memory for a space, organized like a book: chapters of short
-//! facts behind a generated table of contents (`docs/memory.md`).
-//!
-//! Both tables live in the durable `nexus.db` and sync as last-writer-wins
-//! rows (`sync.rs`). A delete sets `deleted_at` and bumps `updated_at`, so it
-//! travels like any edit. Functions take a plain
-//! connection so the TUI, the CLI, the host and per-call tool connections
-//! share one implementation.
+//! Long-term memory for a space, organized like a book: chapters of short facts
+//! behind a generated table of contents (`docs/memory.md`).
 
 pub mod book;
 pub mod recall;
@@ -16,20 +10,14 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Longest fact, in characters.
 pub const MAX_FACT_CHARS: usize = 300;
-/// Longest fact the user writes themselves (the editor, a legacy
-/// `memory.md`); the model's own facts stay under `MAX_FACT_CHARS`.
+/// The user's own facts (editor, legacy `memory.md`) may be longer than the model's.
 pub const MAX_NOTE_CHARS: usize = 2_000;
-/// Longest chapter title, in characters.
 pub const MAX_TITLE_CHARS: usize = 60;
-/// Longest chapter description, in characters.
 pub const MAX_DESCRIPTION_CHARS: usize = 160;
-/// Most live facts one space keeps.
 pub const MAX_FACTS: usize = 2000;
 /// Chapter size at which the tool and the status bar suggest a tidy.
 pub const TIDY_HINT_FACTS: usize = 40;
-/// Characters of a fact id shown to the model and the user.
 pub const SHORT_ID: usize = 8;
 /// The chapter a legacy `memory.md` is imported into.
 pub const ABOUT_YOU: &str = "About you";
@@ -40,8 +28,7 @@ pub struct Chapter {
     pub id: String,
     pub space_id: String,
     pub title: String,
-    /// One line on what the chapter holds; written by whoever creates or
-    /// tidies it.
+    /// One line on what the chapter holds; written by whoever creates or tidies it.
     pub description: String,
     /// Pinned chapters are listed in full in every prompt.
     pub pinned: bool,
@@ -63,14 +50,12 @@ pub struct Fact {
 }
 
 impl Fact {
-    /// The id prefix shown to the model and in previews.
     #[must_use]
     pub fn short_id(&self) -> &str {
         short(&self.id)
     }
 }
 
-/// The first [`SHORT_ID`] characters of an id.
 #[must_use]
 pub fn short(id: &str) -> &str {
     id.get(..SHORT_ID).unwrap_or(id)
@@ -131,8 +116,7 @@ pub fn chapters(conn: &Connection, space: &str) -> Result<Vec<Chapter>> {
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
-/// Live facts of a space, oldest first. Facts whose chapter is gone are
-/// left out.
+/// Live facts of a space, oldest first; facts whose chapter is gone are left out.
 pub fn facts(conn: &Connection, space: &str) -> Result<Vec<Fact>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT {} FROM memories m
@@ -164,8 +148,8 @@ pub fn find_chapter(conn: &Connection, space: &str, title: &str) -> Result<Optio
         .optional()?)
 }
 
-/// The live chapter with this title, created when missing. A given
-/// description or pin state is applied to an existing chapter too.
+/// The live chapter with this title, created when missing; a given description or
+/// pin state is applied to an existing chapter too.
 pub fn ensure_chapter(
     conn: &Connection,
     space: &str,
@@ -234,7 +218,6 @@ pub fn ensure_chapter(
     Ok(chapter)
 }
 
-/// What [`add`] did.
 #[derive(Debug)]
 pub struct Added {
     pub fact: Fact,
@@ -245,8 +228,8 @@ pub struct Added {
     pub duplicate: bool,
 }
 
-/// Save a fact under a chapter (created when missing). Saving text that is
-/// already in the space returns the existing fact.
+/// Save a fact under a chapter (created when missing); text already in the space
+/// returns the existing fact.
 pub fn add(
     conn: &Connection,
     space: &str,
@@ -348,7 +331,6 @@ fn add_capped(
     })
 }
 
-/// Live facts in one chapter.
 pub fn chapter_count(conn: &Connection, chapter_id: &str) -> Result<usize> {
     let n: i64 = conn.query_row(
         "SELECT COUNT(*) FROM memories WHERE chapter_id = ?1 AND deleted_at IS NULL",
@@ -373,8 +355,7 @@ pub fn resolve_fact(conn: &Connection, space: &str, id: &str) -> Result<Fact> {
     }
 }
 
-/// Change a fact's text and/or move it to another chapter (created when
-/// missing).
+/// Change a fact's text and/or move it to another chapter (created when missing).
 pub fn update_fact(
     conn: &Connection,
     space: &str,
@@ -401,7 +382,6 @@ pub fn update_fact(
     Ok(fact)
 }
 
-/// Mark one fact deleted.
 pub fn delete_fact(conn: &Connection, space: &str, id: &str) -> Result<Fact> {
     let fact = resolve_fact(conn, space, id)?;
     tombstone_fact(conn, &fact.id)?;
@@ -417,7 +397,6 @@ fn tombstone_fact(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Rename a chapter, change its description or pin state.
 pub fn update_chapter(
     conn: &Connection,
     space: &str,
@@ -463,7 +442,6 @@ pub fn update_chapter(
     Ok(chapter)
 }
 
-/// Mark a chapter and every fact in it deleted.
 pub fn delete_chapter(conn: &Connection, chapter_id: &str) -> Result<()> {
     let stamp = now();
     conn.execute(
@@ -478,7 +456,6 @@ pub fn delete_chapter(conn: &Connection, chapter_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Move every fact of `from` into `into`, then delete `from`.
 pub fn merge_chapters(conn: &Connection, from: &str, into: &str) -> Result<()> {
     ensure!(from != into, "cannot merge a chapter into itself");
     let stamp = now();
@@ -505,15 +482,13 @@ pub fn delete_space(conn: &Connection, space: &str) -> Result<()> {
     Ok(())
 }
 
-/// Every memory row of a space, deleted ones included: what `/memory undo`
-/// restores.
+/// Every memory row of a space, deleted ones included: what `/memory undo` restores.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub chapters: Vec<Chapter>,
     pub facts: Vec<Fact>,
 }
 
-/// All rows of a space, deleted ones included.
 pub fn snapshot(conn: &Connection, space: &str) -> Result<Snapshot> {
     let mut stmt = conn.prepare(&format!(
         "SELECT {CHAPTER_COLUMNS} FROM memory_chapters WHERE space_id = ?1 ORDER BY created_at, id"
@@ -530,9 +505,8 @@ pub fn snapshot(conn: &Connection, space: &str) -> Result<Snapshot> {
     Ok(Snapshot { chapters, facts })
 }
 
-/// Put every row of a snapshot back as it was. Rows are re-stamped so the
-/// restore wins over the change it undoes on every synced device; rows
-/// created after the snapshot are left alone.
+/// Put every row of a snapshot back as it was. Rows are re-stamped so the restore
+/// wins over the change it undoes on every synced device.
 pub fn restore(conn: &Connection, snapshot: &Snapshot) -> Result<()> {
     let stamp = now();
     for c in &snapshot.chapters {
@@ -578,9 +552,9 @@ pub fn restore(conn: &Connection, snapshot: &Snapshot) -> Result<()> {
     Ok(())
 }
 
-/// Import a legacy numbered `memory.md` (`1. fact` lines) into a pinned
-/// "About you" chapter, once: the file is renamed to `memory.md.imported`
-/// afterwards. Returns how many facts were saved.
+/// Import a legacy numbered `memory.md` (`1. fact` lines) into a pinned "About you"
+/// chapter once, renaming the file to `memory.md.imported`; returns how many facts
+/// were saved.
 pub fn import_legacy(conn: &Connection, space: &str, path: &std::path::Path) -> Result<usize> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Ok(0);
@@ -607,7 +581,6 @@ pub fn import_legacy(conn: &Connection, space: &str, path: &std::path::Path) -> 
     Ok(saved)
 }
 
-/// When a chapter or any of its facts last changed.
 #[must_use]
 pub fn last_change<'a>(chapter: &'a Chapter, facts: &'a [Fact]) -> &'a str {
     facts

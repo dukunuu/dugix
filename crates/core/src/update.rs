@@ -1,18 +1,13 @@
-//! Update check: compare the running version against the latest release on
-//! crates.io so the app can say a newer one is out. Installing is always the
-//! user's choice (`nexus update`). Best-effort by design — offline or an
-//! index hiccup is silent; the app never blocks or fails startup on it.
+//! Update check against the latest crates.io release, so the app can say a newer
+//! one is out. Installing is always the user's choice (`nexus update`).
 
-/// The version this binary was built from (Cargo.toml at compile time).
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 
-/// The crates.io sparse index doc for `nexus-chat` — one small NDJSON line
-/// per published version, newest last, no auth, no API quota.
+/// One small NDJSON line per published version, newest last, no auth, no API quota.
 const SPARSE_INDEX: &str = "https://index.crates.io/ne/xu/nexus-chat";
 
-/// Fetch the newest non-yanked published version, or `None` on any failure
-/// (offline, timeout, malformed index). Runs in a background task — the UI
-/// is never blocked on this.
+/// The newest non-yanked published version, or `None` on any failure (offline,
+/// timeout, malformed index); runs in a background task.
 pub async fn latest_version() -> Option<String> {
     let body = reqwest::Client::new()
         .get(SPARSE_INDEX)
@@ -38,10 +33,8 @@ pub async fn latest_version() -> Option<String> {
         .next_back()
 }
 
-/// `a > b` for the dotted versions crates.io publishes (`0.1.1`, `1.2.3`,
-/// `0.1.2-alpha.1`). Numeric components compare numerically (`0.1.10` >
-/// `0.1.9` — string order would get that wrong), missing components count
-/// as 0, and pre-release extras compare alphabetically after the numbers.
+/// Dotted versions compare numerically per component, so `0.1.10` > `0.1.9`;
+/// missing components count as 0 and pre-release extras compare after the numbers.
 pub fn version_gt(a: &str, b: &str) -> bool {
     compare(a, b).is_gt()
 }
@@ -53,8 +46,8 @@ fn compare(a: &str, b: &str) -> std::cmp::Ordering {
     if core != std::cmp::Ordering::Equal {
         return core;
     }
-    // Same numeric core: a release (no pre-release suffix) beats any
-    // pre-release of it ("0.1.2" > "0.1.2-alpha.1").
+    // Same numeric core: a release beats any pre-release of it ("0.1.2" >
+    // "0.1.2-alpha.1").
     let pre_a = a.strip_prefix(core_a).and_then(|s| s.strip_prefix('-'));
     let pre_b = b.strip_prefix(core_b).and_then(|s| s.strip_prefix('-'));
     match (pre_a, pre_b) {
@@ -65,7 +58,6 @@ fn compare(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
-/// Dotted numeric core: missing components count as 0.
 fn compare_core(a: &str, b: &str) -> std::cmp::Ordering {
     let pa: Vec<&str> = a.split('.').collect();
     let pb: Vec<&str> = b.split('.').collect();
@@ -83,8 +75,8 @@ fn compare_core(a: &str, b: &str) -> std::cmp::Ordering {
     std::cmp::Ordering::Equal
 }
 
-/// Pre-release identifiers ("alpha.1", "beta"): numeric when both are,
-/// otherwise byte order — close enough to semver for update notices.
+/// Numeric when both are, otherwise byte order — close enough to semver for
+/// update notices.
 fn compare_pre(a: &str, b: &str) -> std::cmp::Ordering {
     let pa: Vec<&str> = a.split('.').collect();
     let pb: Vec<&str> = b.split('.').collect();
@@ -102,14 +94,12 @@ fn compare_pre(a: &str, b: &str) -> std::cmp::Ordering {
     std::cmp::Ordering::Equal
 }
 
-/// `--locked` installs with the dependency versions the release was tested
-/// with (the packaged `Cargo.lock`) instead of a fresh resolve that may pick
-/// an older nexus-chat-core or a newly broken dependency.
+/// `--locked` installs with the dependency versions the release was tested with,
+/// instead of a fresh resolve that may pick a newly broken dependency.
 const INSTALL_ARGS: [&str; 4] = ["install", "--locked", "--force", "nexus-chat"];
 
 /// Run `cargo install --locked --force nexus-chat` in the foreground, streaming its
-/// output to the terminal — the deliberate `nexus update` path. Returns
-/// the exit status; the caller decides how to report it.
+/// output to the terminal; returns the exit status.
 pub fn install_now() -> anyhow::Result<std::process::ExitStatus> {
     let status = std::process::Command::new("cargo")
         .args(INSTALL_ARGS)

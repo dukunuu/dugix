@@ -10,12 +10,9 @@ use super::registry::{
 };
 use super::{Changeset, FileChange, PeerCursor, RowChange, Tombstone};
 
-// ── export ──
-
-/// Build this device's export for `peer_id` — every row past the peer's
-/// acked cursor per table (no cursor → full export, the first-run
-/// bootstrap), the un-acked tombstones, and the file manifest. Does not
-/// advance any cursor: that happens only when the peer acks.
+/// Build this device's export for `peer_id`: every row past the peer's acked
+/// cursor per table (no cursor means a full export, the first-run bootstrap), the
+/// un-acked tombstones and the file manifest. Advances no cursor.
 pub fn build_changeset(db: &Db, peer_id: Option<&str>, name: &str) -> Result<Changeset> {
     let device_id = db.device_id()?;
     let mut cs = Changeset {
@@ -100,10 +97,9 @@ pub fn build_changeset(db: &Db, peer_id: Option<&str>, name: &str) -> Result<Cha
     Ok(cs)
 }
 
-/// The ack for `peer_id`: this device's pull cursors for that peer's
-/// data — "I imported your rows up to here". The transports embed it in
-/// their next changeset so the peer can advance its push cursors; without
-/// it the peer would re-export everything forever.
+/// This device's pull cursors for `peer_id`'s data: "I imported your rows up to
+/// here". Transports embed it in their next changeset; without it the peer would
+/// re-export everything forever.
 pub fn build_ack(db: &Db, peer_id: &str) -> Result<Vec<PeerCursor>> {
     Ok(db
         .load_sync_state()?
@@ -122,9 +118,8 @@ pub fn build_ack(db: &Db, peer_id: &str) -> Result<Vec<PeerCursor>> {
         .collect())
 }
 
-/// The rows of one table past a cursor, in cursor order. Rows that never
-/// got an `updated_at` (legacy, pre-version rows) stay home — they could
-/// never win LWW anyway.
+/// Rows of one table past a cursor, in cursor order. Rows without an `updated_at`
+/// stay home: they could never win LWW anyway.
 pub(super) fn select_rows(
     db: &Db,
     spec: &TableSpec,
@@ -134,10 +129,9 @@ pub(super) fn select_rows(
     let cols = spec.columns.join(", ");
     let (sql, params): (String, Vec<rusqlite::types::Value>) = match spec.cursor {
         Cursor::UpdatedAt => {
-            // Device-local settings are structurally invisible to sync. The
-            // cursor is `(updated_at, pk…)`, not only a timestamp: two rows
-            // can legitimately share an RFC3339 timestamp when a device is
-            // busy or a clock has coarse precision.
+            // Device-local settings are structurally invisible to sync. The cursor is
+            // `(updated_at, pk…)`, not only a timestamp: two rows can legitimately
+            // share an RFC3339 timestamp.
             let (updated_at, keys) = decode_updated_cursor(cursor.unwrap_or(""), spec.pk.len());
             let ordered_columns = std::iter::once("COALESCE(updated_at, '')")
                 .chain(spec.pk.iter().copied())
@@ -195,8 +189,8 @@ pub(super) fn select_rows(
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-/// A session row's persona roster — attached to the session row in the
-/// changeset (personas have no cursor of their own).
+/// A session row's persona roster, attached to the session row because personas
+/// have no cursor of their own.
 fn select_personas(db: &Db, session: &serde_json::Value) -> Result<Vec<serde_json::Value>> {
     let Some(session_id) = session.get("id").and_then(serde_json::Value::as_str) else {
         return Ok(Vec::new());
@@ -243,8 +237,8 @@ pub(super) fn json_to_value(v: &serde_json::Value) -> rusqlite::types::Value {
     }
 }
 
-/// The first 8 chars of a uuid — enough to disambiguate in log lines, and
-/// the suffix the space-name collision resolution renames with.
+/// The first 8 chars of a uuid: enough to disambiguate in log lines, and the
+/// suffix space-name collision resolution renames with.
 pub(super) fn short_id(id: &str) -> String {
     id.chars().take(8).collect()
 }

@@ -2,8 +2,7 @@ use super::*;
 use crate::db::Db;
 use std::io::Write as _;
 
-/// A fresh device pair: in-memory dbs (with their attached in-memory
-/// caches) plus temp roots standing in for the spaces layout.
+/// A fresh device pair: in-memory dbs plus temp roots for the spaces layout.
 struct Pair {
     a: Db,
     b: Db,
@@ -37,9 +36,7 @@ impl Pair {
         }
     }
 
-    /// One full A→B exchange: A exports (+ blobs into the channel), B
-    /// applies (pulling blobs), B replies with its own export + blobs
-    /// + ack, A applies.
+    /// One full A→B exchange, blobs and ack included.
     fn exchange_ab(&self) -> (ApplySummary, ApplySummary) {
         let a_space = self.space_a();
         let b_space = self.space_b();
@@ -53,7 +50,6 @@ impl Pair {
         (sa, sb)
     }
 
-    /// The mirror image: B→A.
     fn exchange_ba(&self) -> (ApplySummary, ApplySummary) {
         let a_space = self.space_a();
         let b_space = self.space_b();
@@ -67,7 +63,6 @@ impl Pair {
         (sb, sa)
     }
 
-    /// Both directions.
     fn exchange(&self) -> (ApplySummary, ApplySummary) {
         let (_, _) = self.exchange_ab();
         self.exchange_ba()
@@ -80,11 +75,9 @@ impl Drop for Pair {
     }
 }
 
-/// Every syncable row on a device, as (table, pk, json) — the
-/// convergence oracle: two devices are converged iff their dumps are
-/// equal (tombstones included). The default space is excluded: its
-/// `updated_at` is NULL so it never exports, and its `created_at` is
-/// device-local (cosmetic).
+/// Every syncable row on a device as (table, pk, json): two devices are converged
+/// iff their dumps are equal. The default space is excluded because it never
+/// exports.
 fn dump(db: &Db) -> Vec<(String, String, String)> {
     let mut out = Vec::new();
     for spec in TABLES {
@@ -180,8 +173,6 @@ fn db_state(db: &Db) -> Vec<crate::db::SyncState> {
     db.load_sync_state().unwrap()
 }
 
-// ── types / registry ──
-
 #[test]
 fn changeset_serde_roundtrip() {
     let cs = Changeset {
@@ -218,10 +209,8 @@ fn changeset_serde_roundtrip() {
 
 #[test]
 fn cursor_positions_compare_table_aware() {
-    // AUTOINCREMENT cursors are numeric: "10" > "9" as ids.
     assert!(position_gt("citations", "10", "9"));
     assert!(position_gt("sync_tombstones", "10", "9"));
-    // `updated_at` cursors compare by time, then key.
     assert!(position_gt(
         "sessions",
         r#"["2026-02-01T00:00:00Z",["a"]]"#,
@@ -274,8 +263,6 @@ fn warned_rows_do_not_advance_their_table_cursor() {
     assert!(!cursors.iter().any(|cursor| cursor.table_name == "files"));
 }
 
-// ── export / cursor rules ──
-
 #[test]
 fn cold_start_full_export_covers_every_table() {
     let pair = Pair::new();
@@ -303,9 +290,6 @@ fn cold_start_full_export_covers_every_table() {
         .unwrap();
     a.set_reasoning("m", Some("high")).unwrap();
     a.set_setting("theme", "dark").unwrap();
-    // A real space (with a version) — the default space has no
-    // `updated_at`, so it never exports; its id/name are deterministic
-    // on every device instead.
     a.create_space("work").unwrap();
     let persona = crate::db::Persona {
         name: "p".to_string(),
@@ -333,13 +317,11 @@ fn cold_start_full_export_covers_every_table() {
     ] {
         assert!(tables.contains(expected), "missing {expected}");
     }
-    // The file manifest matches the exported file row.
     assert_eq!(cs.files.len(), 1);
     assert_eq!(cs.files[0].space_id, space(a, "default"));
     assert_eq!(cs.files[0].name, "f.txt");
     assert_eq!(cs.files[0].hash, "deadbeef");
     assert_eq!(cs.files[0].size, 3);
-    // The persona rides attached to its session.
     let personas: Vec<_> = cs
         .rows
         .iter()
@@ -349,7 +331,6 @@ fn cold_start_full_export_covers_every_table() {
     assert_eq!(personas[0].row["session_id"], s);
     assert_eq!(personas[0].row["name"], "p");
     assert!(cs.ack.is_none());
-    // Nothing local-scope leaks out.
     assert!(
         !cs.rows
             .iter()
@@ -365,11 +346,9 @@ fn export_resumes_past_acked_cursor_only() {
     let cs1 = build_changeset(a, None, "a").unwrap();
     assert!(!cs1.rows.is_empty());
 
-    // No ack yet: the same rows re-export (the idempotent backstop).
     let cs_again = build_changeset(a, Some("peer-x"), "a").unwrap();
     assert_eq!(cs_again.rows.len(), cs1.rows.len());
 
-    // A "peer-x" ack of the current position silences the resends.
     let sess_pos = cs1
         .rows
         .iter()
@@ -380,7 +359,6 @@ fn export_resumes_past_acked_cursor_only() {
         .unwrap();
     let cs2 = build_changeset(a, Some("peer-x"), "a").unwrap();
     assert!(!cs2.rows.iter().any(|r| r.table == "sessions"));
-    // Newer rows still flow.
     let _s2 = session(a, "two");
     let cs3 = build_changeset(a, Some("peer-x"), "a").unwrap();
     assert!(
@@ -410,8 +388,6 @@ fn updated_cursor_keeps_rows_sharing_a_timestamp() {
     assert!(sessions.iter().any(|row| row.row["id"] == first));
     assert!(sessions.iter().any(|row| row.row["id"] == second));
 
-    // Ack only the first ordered row. A timestamp-only cursor would skip
-    // the second row; the composite cursor must resume at its primary key.
     let first_row = sessions.first().expect("session export is non-empty");
     let cursor = row_position(spec_for("sessions").unwrap(), &first_row.row);
     a.set_sync_state("peer-x", "sessions", None, Some(&cursor))
@@ -427,8 +403,6 @@ fn updated_cursor_keeps_rows_sharing_a_timestamp() {
     assert_ne!(resumed_ids[0], first_row.row["id"].as_str().unwrap());
 }
 
-// ── LWW ──
-
 #[test]
 fn lww_newer_wins_older_loses() {
     let pair = Pair::new();
@@ -436,8 +410,6 @@ fn lww_newer_wins_older_loses() {
     let b = &pair.b;
     let sa = session(a, "from a");
     let sb = session(b, "from b");
-    // Same logical session on both devices — same id, so the merge is
-    // a same-row LWW; A's version is newer.
     b.conn()
         .execute("UPDATE sessions SET id = ?1 WHERE id = ?2", (&sa, &sb))
         .unwrap();
@@ -447,7 +419,6 @@ fn lww_newer_wins_older_loses() {
     let title = |db: &Db| db.get_session(&sa).unwrap().unwrap().title.clone();
     assert_eq!(title(a), "from a");
     assert_eq!(title(b), "from a");
-    // The older row arriving later changes nothing.
     let cs = build_changeset(b, None, "b").unwrap();
     let _ = apply_changeset(&pair.b, &pair.space_b(), &cs, None).unwrap();
     assert_eq!(title(a), "from a");
@@ -468,9 +439,6 @@ fn equal_timestamp_keeps_local_and_is_stable() {
     b.conn()
         .execute("UPDATE sessions SET id = ?1 WHERE id = ?2", (&sid, &sb))
         .unwrap();
-    // Same row, same nanosecond, different content — the clock-skew
-    // residual. Both sides keep their own copy, and re-imports never
-    // flip-flop.
     set_session_updated(a, &sid, "2026-01-01T00:00:00Z");
     set_session_updated(b, &sid, "2026-01-01T00:00:00Z");
     let title_a = a.get_session(&sid).unwrap().unwrap().title.clone();
@@ -494,7 +462,6 @@ fn clock_skew_loser_converges() {
     b.conn()
         .execute("UPDATE sessions SET id = ?1 WHERE id = ?2", (&sid, &sb))
         .unwrap();
-    // B's clock is behind: its version of the row is the loser.
     set_session_updated(a, &sid, "2026-02-01T00:00:00Z");
     set_session_updated(b, &sid, "2026-01-01T00:00:00Z");
     pair.exchange();
@@ -517,7 +484,6 @@ fn scope_local_setting_never_syncs_or_applies() {
         .map(|r| r.row["key"].as_str().unwrap())
         .collect();
     assert_eq!(keys, vec!["theme"]);
-    // A smuggled local-scope row is refused on apply.
     let mut evil = cs.clone();
     evil.rows.push(RowChange {
         table: "app_settings".to_string(),
@@ -532,15 +498,12 @@ fn scope_local_setting_never_syncs_or_applies() {
     assert!(!settings.iter().any(|(k, _)| k == "searxng_url"));
 }
 
-// ── append-only union + dedupe ──
-
 #[test]
 fn messages_union_dedupes_by_id() {
     let pair = Pair::new();
     let a = &pair.a;
     let b = &pair.b;
     let sa = session(a, "shared");
-    // B gets the same session via sync.
     let cs = build_changeset(a, None, "a").unwrap();
     let _ = apply_changeset(b, &pair.space_b(), &cs, None).unwrap();
     a.add_user_message(&sa, "from a").unwrap();
@@ -550,7 +513,6 @@ fn messages_union_dedupes_by_id() {
     let count = |db: &Db| db.load_messages(&sa).unwrap().len();
     assert_eq!(count(a), 2);
     assert_eq!(count(b), 2);
-    // Re-exchange: nothing new moves.
     let (sa2, _) = pair.exchange_ab();
     assert_eq!(count(a), 2);
     assert_eq!(count(b), 2);
@@ -614,7 +576,6 @@ fn usage_and_citations_dedupe_by_sync_id() {
     assert_eq!(usage(b), 2);
     assert_eq!(cites(a), 2);
     assert_eq!(cites(b), 2);
-    // sync_ids are unique on both sides.
     for db in [a, b] {
         let dupes: i64 = db
             .conn()
@@ -629,14 +590,11 @@ fn usage_and_citations_dedupe_by_sync_id() {
     }
 }
 
-// ── convergence ──
-
 #[test]
 fn two_way_convergence_and_then_silence() {
     let pair = Pair::new();
     let a = &pair.a;
     let b = &pair.b;
-    // Independent work on both devices.
     let sa = session(a, "a's chat");
     a.add_user_message(&sa, "from a").unwrap();
     a.set_setting("theme", "dark").unwrap();
@@ -664,7 +622,6 @@ fn two_way_convergence_and_then_silence() {
     pair.exchange();
     assert_eq!(dump(a), dump(b), "devices must converge");
 
-    // A second round with no new work moves nothing.
     let (sa2, sb2) = pair.exchange_ab();
     assert_eq!(sa2.rows_applied, 0);
     assert_eq!(sb2.rows_applied, 0);
@@ -722,8 +679,6 @@ fn session_sources_lww_flag_propagates() {
         .unwrap();
     assert_eq!(flags, vec![(s, "pinned".to_string())]);
 }
-
-// ── tombstones ──
 
 #[test]
 fn session_tombstone_cascades_messages_and_sources() {
@@ -822,8 +777,6 @@ fn newer_offline_write_survives_an_older_tombstone() {
         )
         .unwrap();
 
-    // A's delete arrives first. B must retain its newer write and send
-    // the row back, allowing A to converge on the revived session.
     let delete = build_changeset(a, None, "a").unwrap();
     let (_, cursors) = apply_changeset(b, &pair.space_b(), &delete, None).unwrap();
     assert_eq!(
@@ -848,10 +801,8 @@ fn tombstone_cursor_advances_and_no_resends() {
     pair.exchange_ab();
     a.delete_session(&s).unwrap();
     pair.exchange_ab();
-    // The tombstone is acked: nothing re-sends.
     let cs = build_changeset(a, Some(&b.device_id().unwrap()), "a").unwrap();
     assert!(cs.tombstones.is_empty());
-    // And B's pull cursor for tombstones advanced — its ack included it.
     let state = db_state(b);
     assert!(state.iter().any(|st| {
         st.peer_id == a.device_id().unwrap()
@@ -859,8 +810,6 @@ fn tombstone_cursor_advances_and_no_resends() {
             && st.pull_cursor.is_some()
     }));
 }
-
-// ── swarm personas ──
 
 #[test]
 fn swarm_roster_follows_winning_session() {
@@ -874,10 +823,8 @@ fn swarm_roster_follows_winning_session() {
         blurb: "b".to_string(),
     };
     a.save_swarm_personas(&s, &[p1]).unwrap();
-    // B gets everything (no acks yet — exports are full either way).
     let cs = build_changeset(a, None, "a").unwrap();
     let _ = apply_changeset(b, &pair.space_b(), &cs, None).unwrap();
-    // B's roster v2 is newer (t2).
     let p2 = crate::db::Persona {
         name: "p2".to_string(),
         model: "m".to_string(),
@@ -890,7 +837,6 @@ fn swarm_roster_follows_winning_session() {
     };
     b.save_swarm_personas(&s, &[p2, p3]).unwrap();
     let t2 = session_updated(b, &s);
-    // A's stale roster v1b sits between: newer than v1, older than v2.
     let p1b = crate::db::Persona {
         name: "p1".to_string(),
         model: "m".to_string(),
@@ -898,8 +844,6 @@ fn swarm_roster_follows_winning_session() {
     };
     a.save_swarm_personas(&s, &[p1b]).unwrap();
     set_session_updated(a, &s, &minus_one_second(&t2));
-    // Full exchange: B's v2 wins everywhere; A's stale roster (and
-    // both sides' persona tombstones) can't clobber it.
     let cs_a = build_changeset(a, None, "a").unwrap();
     let (_, cursors) = apply_changeset(b, &pair.space_b(), &cs_a, None).unwrap();
     let mut reply = build_changeset(b, Some(&cs_a.device_id), "b").unwrap();
@@ -916,8 +860,6 @@ fn swarm_roster_follows_winning_session() {
     assert_eq!(names(b), vec!["p2", "p3"]);
 }
 
-// ── files / blobs ──
-
 #[test]
 fn file_blobs_transfer_keep_and_report_missing() {
     let pair = Pair::new();
@@ -927,8 +869,6 @@ fn file_blobs_transfer_keep_and_report_missing() {
     let hash = sha256_hex(b"hello sync");
     a.upsert_file(&sid, "notes.txt", &hash, 11, "ok").unwrap();
 
-    // Import with no blob channel: the row lands, the blob is reported
-    // missing.
     let cs = build_changeset(a, None, "a").unwrap();
     let (summary, _) = apply_changeset(&pair.b, &pair.space_b(), &cs, None).unwrap();
     assert_eq!(summary.files_missing.len(), 1);
@@ -941,8 +881,6 @@ fn file_blobs_transfer_keep_and_report_missing() {
             .exists()
     );
 
-    // The same changeset re-imported with a channel retries the missing
-    // blob even though the metadata row is now an idempotent LWW skip.
     export_blobs(a, &pair.space_a(), &cs, &pair.dir).unwrap();
     let (summary2, _) = apply_changeset(&pair.b, &pair.space_b(), &cs, Some(&pair.dir)).unwrap();
     assert_eq!(summary2.files_pulled, 1);
@@ -952,8 +890,6 @@ fn file_blobs_transfer_keep_and_report_missing() {
         b"hello sync"
     );
 
-    // A newer version of the file re-wins the row and pulls its blob,
-    // hash-verified.
     write_blob(&pair.space_a(), "default", "notes.txt", b"hello sync v2");
     let hash2 = sha256_hex(b"hello sync v2");
     a.upsert_file(&sid, "notes.txt", &hash2, 13, "ok").unwrap();
@@ -977,7 +913,6 @@ fn stale_blob_in_channel_is_never_applied() {
     let hash = sha256_hex(b"real");
     a.upsert_file(&sid, "f.txt", &hash, 4, "ok").unwrap();
     let cs = build_changeset(a, None, "a").unwrap();
-    // A stale payload with the right name but wrong content.
     let blob_dir = pair.dir.join("blobs").join(&sid);
     std::fs::create_dir_all(&blob_dir).unwrap();
     std::fs::write(blob_dir.join("f.txt"), b"stale").unwrap();
@@ -1014,8 +949,6 @@ fn content_addressed_blob_survives_mailbox_name_collision() {
 
     let changeset_a = build_changeset(a, None, "a").unwrap();
     let changeset_b = build_changeset(b, None, "b").unwrap();
-    // Both senders use the same legacy name path; the second export wins
-    // there, but each content hash gets its own immutable mailbox path.
     export_blobs(a, &pair.space_a(), &changeset_a, &pair.dir).unwrap();
     export_blobs(b, &pair.space_b(), &changeset_b, &pair.dir).unwrap();
     let (summary, _) = apply_changeset(b, &pair.space_b(), &changeset_a, Some(&pair.dir)).unwrap();
@@ -1053,8 +986,6 @@ fn unsafe_blob_names_cannot_escape() {
     assert!(!pair.a_root.join("escape.txt").exists());
 }
 
-// ── spaces ──
-
 #[test]
 fn default_space_is_the_same_row_on_both_devices() {
     let pair = Pair::new();
@@ -1072,12 +1003,9 @@ fn space_name_collision_renames_loser_deterministically() {
     let b = &pair.b;
     let wa = a.create_space("work").unwrap();
     let wb = b.create_space("work").unwrap();
-    // Make the loser deterministic: B's space is older.
     set_updated(a, "spaces", &wa.id, "2026-02-01T00:00:00Z");
     set_updated(b, "spaces", &wb.id, "2026-01-01T00:00:00Z");
     pair.exchange();
-    // Both devices end with the same two rows: the winner keeps "work",
-    // the loser is renamed from its own id — identically on both sides.
     let names_a: Vec<String> = a
         .list_spaces()
         .unwrap()
@@ -1095,7 +1023,6 @@ fn space_name_collision_renames_loser_deterministically() {
     assert!(names_a.contains(&expected));
     assert_eq!(names_a, names_b);
     assert_eq!(dump(a), dump(b));
-    // A later sync doesn't churn the names.
     pair.exchange();
     let names_a2: Vec<String> = a
         .list_spaces()
@@ -1129,8 +1056,6 @@ fn space_rename_moves_the_dir() {
     assert!(pair.space_b().files_dir("work-2").join("f.txt").exists());
     assert!(!pair.space_b().space_dir("work").exists());
 }
-
-// ── bundles ──
 
 #[test]
 fn bundle_roundtrip_carries_changeset_and_blobs() {
@@ -1196,8 +1121,6 @@ fn bundle_rejects_escaping_paths() {
     assert!(!pair.dir.join("escape.txt").exists());
 }
 
-// ── ack plumbing ──
-
 #[test]
 fn ack_built_from_pull_cursors_advances_peer_push() {
     let pair = Pair::new();
@@ -1206,18 +1129,14 @@ fn ack_built_from_pull_cursors_advances_peer_push() {
     let _s = session(a, "s");
     let cs = build_changeset(a, None, "a").unwrap();
     let (_, cursors) = apply_changeset(b, &pair.space_b(), &cs, None).unwrap();
-    // B's reply is its export + the ack from the apply.
     let mut reply = build_changeset(b, Some(&cs.device_id), "b").unwrap();
     reply.ack = Some(cursors);
     let _ = apply_changeset(a, &pair.space_a(), &reply, None).unwrap();
-    // A's next export carries `build_ack` for B (the ssh transport's
-    // shape) — B applies it and its push cursors advance.
     let bid = b.device_id().unwrap();
     let mut next = build_changeset(a, Some(&bid), "a").unwrap();
     next.ack = Some(build_ack(a, &bid).unwrap());
     let (summary, _) = apply_changeset(b, &pair.space_b(), &next, None).unwrap();
     assert!(summary.acks_applied >= 1);
-    // B's export for A is now silent.
     let after = build_changeset(b, Some(&a.device_id().unwrap()), "b").unwrap();
     assert!(after.rows.is_empty());
 }
@@ -1229,14 +1148,12 @@ fn acks_are_only_honored_for_this_device() {
     let b = &pair.b;
     let _s = session(a, "s");
     pair.exchange_ab();
-    // B's reply acked A; A's push cursor for B is set.
     let state = db_state(a);
     assert!(state.iter().any(|st| {
         st.peer_id == b.device_id().unwrap()
             && st.table_name == "sessions"
             && st.push_cursor.is_some()
     }));
-    // A forged ack addressed to someone else is ignored.
     let forged = Changeset {
         schema: crate::db::migrations::durable_schema_version(),
         device_id: b.device_id().unwrap(),
@@ -1296,11 +1213,9 @@ fn push_cursor_advances_only_on_ack() {
     let b = &pair.b;
     let _s = session(a, "s");
     let bid = b.device_id().unwrap();
-    // Export alone advances nothing.
     let _ = build_changeset(a, Some(&bid), "a").unwrap();
     let after_export = db_state(a);
     assert!(after_export.iter().all(|st| st.peer_id != bid));
-    // B imports and acks; only then does A's push cursor move.
     let cs = build_changeset(a, None, "a").unwrap();
     let (_, cursors) = apply_changeset(b, &pair.space_b(), &cs, None).unwrap();
     let mut reply = build_changeset(b, Some(&cs.device_id), "b").unwrap();

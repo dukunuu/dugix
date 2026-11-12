@@ -338,8 +338,8 @@ async fn stop_check(
     )))
 }
 
-/// Queue an immediate run for the lock-owning daemon (or the next run-due pass).
-/// IDs come from persisted jobs, never from workspace paths.
+/// Queue an immediate run for the lock-owning daemon; IDs come from persisted
+/// jobs, never from workspace paths.
 pub fn request_run(data: &Path, job: &Job) -> Result<()> {
     ensure!(uuid::Uuid::parse_str(&job.id).is_ok(), "invalid job id");
     let queue = data.join("jobs-now");
@@ -375,7 +375,7 @@ async fn pass(app: &mut App, cancelled: &mut watch::Receiver<bool>) -> Result<Ve
     Ok(results)
 }
 
-/// Run one scheduling pass and return, including when nothing is due.
+/// One scheduling pass, returning even when nothing is due.
 pub async fn run_due(app: &mut App) -> Result<Vec<JobRun>> {
     let _lock = DaemonLock::acquire(&app.space.root)?;
     let (_sender, mut cancelled) = watch::channel(false);

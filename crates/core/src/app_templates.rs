@@ -1,16 +1,6 @@
-//! Embedded starter scaffolds for the `app` tool's `init` action.
-//!
-//! Both templates are build-time-only: the model edits source, and `app
-//! action=build` installs missing deps from package.json, then runs the
-//! framework's static build. The served output (`dist/`) is pure static
-//! files, so the appserver stays a static file server with no runtime
-//! processes.
-//!
-//! Builds run with `--base=/<app-uuid>/` (passed by `app action=build`),
-//! so asset links always resolve under the app's URL — no relative-base
-//! tricks needed.
+//! Embedded starter scaffolds for the `app` tool's `init` action: build-time-only
+//! sources whose static `dist/` output the appserver serves.
 
-/// Astro + React islands. Static output, one interactive island demo.
 const ASTRO_TEMPLATE: &[(&str, &str)] = &[
     (".gitignore", "node_modules/\ndist/\n"),
     (
@@ -148,7 +138,6 @@ Notes:\n\
     ),
 ];
 
-/// Vite + React single-page app.
 const VITE_TEMPLATE: &[(&str, &str)] = &[
     (".gitignore", "node_modules/\ndist/\n"),
     (
@@ -307,10 +296,8 @@ Notes:\n\
     ),
 ];
 
-/// Write a starter scaffold into `app_dir` for the given framework.
-///
-/// Refuses to overwrite anything — `init` only scaffolds fresh apps (the
-/// model then edits with read/patch/write). Returns the written file paths.
+/// Refuses to overwrite anything: `init` only scaffolds fresh apps. Returns the
+/// written file paths.
 pub fn scaffold(app_dir: &std::path::Path, framework: &str) -> Result<Vec<String>, String> {
     let files: &[(&str, &str)] = match framework {
         "astro" => ASTRO_TEMPLATE,

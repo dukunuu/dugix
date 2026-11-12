@@ -134,8 +134,8 @@ impl ToolExecutor for JobExecutor {
                     "batch".into(),
                 );
             }
-            // Non-workspace mutations can include script execution and skill installation:
-            // they do not have the workspace approval/confinement path.
+            // Non-workspace mutations can run scripts and install skills: they have no
+            // workspace approval/confinement path.
             if !self.inner.is_read_only(name, args)
                 && !matches!(name, "fs" | "shell" | "proc" | "batch")
             {

@@ -1,6 +1,5 @@
-//! Taste hints: the structural habits that make a deck look generic, found
-//! without rendering. They go with every deck write as one `taste:` line, so
-//! the model fixes them before the user sees them. Hints, never errors.
+//! Taste hints: the structural habits that make a deck look generic, found without
+//! rendering. They ride on every deck write as one `taste:` line. Hints, never errors.
 
 use std::collections::BTreeSet;
 
@@ -17,7 +16,6 @@ const ANCHOR_AREA: f64 = 0.01;
 const MAX_BULLETS: usize = 5;
 const MAX_WORDS: usize = 70;
 
-/// What one pass over the deck found.
 #[derive(Default)]
 struct Scan {
     sizes: BTreeSet<String>,
@@ -103,7 +101,7 @@ fn scan(deck: &Deck) -> Scan {
     found
 }
 
-/// Every hint for `deck`, most important first.
+/// Most important first.
 #[must_use]
 pub fn hints(deck: &Deck) -> Vec<String> {
     let Scan {
@@ -160,7 +158,7 @@ pub fn hints(deck: &Deck) -> Vec<String> {
     out
 }
 
-/// The hints as one line for a tool result, or nothing for a clean deck.
+/// One line for a tool result, or nothing for a clean deck.
 #[must_use]
 pub fn summary(hints: &[String]) -> Option<String> {
     (!hints.is_empty()).then(|| {
@@ -201,7 +199,7 @@ fn is_bullet(line: &str) -> bool {
             .is_some_and(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
 }
 
-/// The share of the slide a node's fixed box covers; flexible boxes count.
+/// Flexible boxes count as 1.
 fn area(node: &Node, deck: &Deck) -> f64 {
     let size = deck.theme.size;
     match (node.sizing.w, node.sizing.h) {
@@ -210,7 +208,6 @@ fn area(node: &Node, deck: &Deck) -> f64 {
     }
 }
 
-/// The slide's own background color, as hex.
 fn ground(slide: &Slide, theme: &Theme) -> String {
     let role = slide.fill.as_deref().unwrap_or("bg");
     crate::deck::text::color(theme, role)
@@ -231,7 +228,6 @@ fn same_ground(deck: &Deck) -> bool {
     })
 }
 
-/// The first run of three or more slides with the same structure.
 fn repeated(deck: &Deck) -> Option<String> {
     let shapes: Vec<String> = deck.slides.iter().map(structure).collect();
     let mut start = 0;

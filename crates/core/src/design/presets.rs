@@ -1,15 +1,12 @@
-//! Curated built-in designs. Each is a complete point of view: a palette with
-//! one dominant color and one sharp accent, a display face paired with a body
-//! face (Google Fonts, fetched into the deck when the device lacks them), a
-//! type scale with real contrast, corners and shadows. The `character` line is
-//! what the model reads when it picks one for a topic.
+//! Curated built-in designs, each a complete point of view: palette, type pairing,
+//! scale, corners and shadows. The `character` line is what the model picks by.
 
 use std::collections::BTreeMap;
 
 use super::{Design, DocDesign, Scale, SlideDesign, Spacing, derive_styles, layouts};
 use crate::deck::{Color, Fill, Kind, Node, ShadowSpec};
 
-/// How a preset's shadows look: soft, none, or hard offset blocks.
+/// Soft, none, or hard offset blocks.
 #[derive(Clone, Copy)]
 enum Shadows {
     Soft,
@@ -27,11 +24,11 @@ struct Preset {
     body: &'static str,
     mono: &'static str,
     heading_weight: u16,
-    /// Tracking for the title, heading and display styles, in em.
+    /// In em, for the title, heading and display styles.
     tracking: f64,
     /// Title and display sizes relative to the derived scale.
     drama: f64,
-    /// The kicker's family role; `mono` reads technical.
+    /// `mono` reads technical.
     kicker_family: &'static str,
     radius: f64,
     shadows: Shadows,
@@ -186,7 +183,6 @@ pub fn catalog() -> Vec<(&'static str, &'static str)> {
     PRESETS.iter().map(|p| (p.slug, p.character)).collect()
 }
 
-/// The curated design `slug`, if it is one.
 #[must_use]
 pub fn preset(slug: &str) -> Option<Design> {
     PRESETS.iter().find(|p| p.slug == slug).map(build)
@@ -286,17 +282,13 @@ fn build(p: &Preset) -> Design {
     }
 }
 
-/// Whether a background is dark enough that `fg` is the light color.
 fn dark(hex: &str) -> bool {
     let channel = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).map_or(0.0, f64::from);
     channel(1) * 0.2126 + channel(3) * 0.7152 + channel(5) * 0.0722 < 100.0
 }
 
-/// The layouts paint dark panels with `fg` and set text on them in `bg`,
-/// which assumes a light design. On a dark one those trade places, so the
-/// panels stay dark and their text stays light; text on a bright accent panel
-/// is dark (`bg`), and elsewhere `accent2` text (a deep panel color here)
-/// takes the bright `accent3`. Cards on `bg` or `surface` with `fg` text are already right.
+/// The layouts paint dark panels with `fg` and set text on them in `bg`, which
+/// assumes a light design; on a dark one those trade places.
 fn for_dark(node: &mut Node, on_bright: bool) {
     if let Some(overlay) = &mut node.overlay {
         fill_on_dark(&mut overlay.fill);
@@ -330,7 +322,6 @@ fn for_dark(node: &mut Node, on_bright: bool) {
     }
 }
 
-/// A fill that starts in a bright accent; text on it stays dark.
 fn is_bright(fill: &Fill) -> bool {
     matches!(&**fill, "accent" | "accent3")
 }

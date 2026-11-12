@@ -22,7 +22,7 @@ fn check_slots(nodes: &[crate::deck::Node], path: &str, errors: &mut Vec<CheckEr
 }
 
 impl Design {
-    /// Parse, fill missing tokens/styles, repair layout ids and locate errors.
+    /// Parse, fill missing tokens and styles, repair layout ids and locate errors.
     #[allow(clippy::too_many_lines)] // Located checks for both media and every layout.
     pub fn check(source: &str) -> Result<Self, Vec<CheckError>> {
         let parse_error = |e: serde_json::Error| {
@@ -32,8 +32,8 @@ impl Design {
             }]
         };
         let mut value: Value = serde_json::from_str(source).map_err(parse_error)?;
-        // Validate raw trees separately, like Deck::check, so malformed nodes
-        // report their layout/node path rather than failing at the root.
+        // Validate raw trees separately, like Deck::check, so malformed nodes report
+        // their layout/node path rather than failing at the root.
         let layouts = value
             .get_mut("slide")
             .and_then(Value::as_object_mut)

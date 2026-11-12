@@ -344,8 +344,8 @@ pub(super) fn merge(template: &[u8], generated: &[u8]) -> Result<Vec<u8>> {
             );
         }
     }
-    // Template section relationship ids belong to the retained relationships,
-    // not the generated document's id namespace.
+    // Template section relationship ids belong to the retained relationships, not
+    // the generated document's id namespace.
     if let Some(section) = package::ranges(&original_document, "sectPr").last() {
         document = package::replace(&document, "sectPr", &original_document[section.clone()]);
     }
@@ -394,8 +394,8 @@ pub(super) fn merge(template: &[u8], generated: &[u8]) -> Result<Vec<u8>> {
             base.insert(name.into(), bytes.clone());
             written.push(name.into());
         }
-        // Numbering and fallback styles added above need a content type if the
-        // template originally had no corresponding override.
+        // Numbering and fallback styles added above need a content type when the
+        // template had no corresponding override.
         if !original_types.contains(&format!("/{name}\"")) && base.contains_key(name) {
             written.push(name.into());
         }

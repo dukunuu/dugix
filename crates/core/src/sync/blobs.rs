@@ -13,8 +13,6 @@ use super::apply::space_name_for;
 use super::registry::valid_component;
 use super::{Changeset, FileChange};
 
-// ── file blobs ──
-
 pub(super) fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
@@ -24,9 +22,9 @@ pub(super) fn sha256_hex(bytes: &[u8]) -> String {
     })
 }
 
-/// Store one HTTP/transport blob after checking that its manifest row exists,
-/// the declared size matches, and the content hash is exact. Metadata always
-/// wins first; an upload can never create a new file row or escape its space.
+/// Store one transport blob after checking that its manifest row exists, the
+/// declared size matches and the content hash is exact: an upload can never create
+/// a new file row or escape its space.
 pub fn put_blob(
     db: &Db,
     space: &Space,
@@ -70,8 +68,7 @@ pub fn put_blob(
     Ok(())
 }
 
-/// Read a manifest-backed blob for an HTTP download. A missing or stale local
-/// file is `None`, never an unverified byte stream.
+/// A missing or stale local file is `None`, never an unverified byte stream.
 pub fn read_blob(db: &Db, space: &Space, space_id: &str, name: &str) -> Result<Option<Vec<u8>>> {
     if !valid_component(space_id) || !valid_component(name) {
         return Ok(None);
@@ -98,7 +95,6 @@ pub fn read_blob(db: &Db, space: &Space, space_id: &str, name: &str) -> Result<O
     )
 }
 
-/// Whether the file at `path` exists and its sha256 matches `hash`.
 pub(super) fn file_matches(path: &Path, hash: &str) -> bool {
     let Ok(bytes) = std::fs::read(path) else {
         return false;
@@ -106,8 +102,8 @@ pub(super) fn file_matches(path: &Path, hash: &str) -> bool {
     sha256_hex(&bytes) == hash
 }
 
-/// The local disk path of a manifest entry's blob, when the space still
-/// exists and the name is a valid path component.
+/// The blob's local path, when the space still exists and the name is a valid
+/// path component.
 fn blob_source_path(db: &Db, space: &Space, fc: &FileChange) -> Result<Option<PathBuf>> {
     if !valid_component(&fc.name) || !valid_component(&fc.space_id) {
         return Ok(None);
@@ -116,15 +112,13 @@ fn blob_source_path(db: &Db, space: &Space, fc: &FileChange) -> Result<Option<Pa
         return Ok(None);
     };
     let path = space.files_dir(&space_name).join(&fc.name);
-    // Never publish a disk payload that does not match the durable manifest.
-    // Sending it only guarantees a failed import and can overwrite a valid
-    // mailbox blob from another export.
+    // Never publish a disk payload that does not match the durable manifest: it
+    // only guarantees a failed import and can overwrite a valid mailbox blob.
     Ok((path.is_file() && file_matches(&path, &fc.hash)).then_some(path))
 }
 
-/// Install a copied file with a rename so a reader never observes a partial
-/// blob. The final rename is also what makes a mailbox changeset safe to read
-/// immediately after its blobs are exported.
+/// Install with a rename so a reader never observes a partial blob, which is what
+/// makes a mailbox changeset safe to read right after its blobs are exported.
 fn copy_atomic(source: &Path, target: &Path) -> Result<()> {
     let name = target
         .file_name()
@@ -159,9 +153,8 @@ fn copy_atomic(source: &Path, target: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Copy the local blobs of a changeset's manifest into `dest/blobs/by-hash/` —
-/// the transport's blob channel. Never re-sends identical content: the
-/// receiver hash-checks before pulling.
+/// Copy the manifest's local blobs into `dest/blobs/by-hash/`, the transport's
+/// channel; identical content is never re-sent because the receiver hash-checks.
 pub fn export_blobs(db: &Db, space: &Space, cs: &Changeset, dest: &Path) -> Result<usize> {
     let mut n = 0usize;
     for fc in &cs.files {
@@ -178,9 +171,8 @@ pub fn export_blobs(db: &Db, space: &Space, cs: &Changeset, dest: &Path) -> Resu
     Ok(n)
 }
 
-/// Pull one blob from `src/blobs/by-hash/<hash>` into `target`, after
-/// verifying the source's content hash matches the manifest (a stale or
-/// mismatched payload is never applied).
+/// Pull one blob from `src/blobs/by-hash/<hash>` into `target` after verifying its
+/// content hash: a stale or mismatched payload is never applied.
 pub(super) fn pull_blob(src: &Path, hash: &str, target: &Path) -> Result<bool> {
     let candidate = valid_component(hash)
         .then(|| src.join("blobs").join("by-hash").join(hash))
@@ -192,10 +184,8 @@ pub(super) fn pull_blob(src: &Path, hash: &str, target: &Path) -> Result<bool> {
     Ok(true)
 }
 
-// ── zip bundles (the ssh transport's blob channel) ──
-
-/// Write a changeset plus its blobs as a zip: `changeset.json` and
-/// `blobs/by-hash/<hash>` entries. Returns how many blobs were included.
+/// Write a changeset plus its blobs as a zip (`changeset.json` and
+/// `blobs/by-hash/<hash>` entries); returns how many blobs were included.
 pub fn write_bundle(
     db: &Db,
     space: &Space,
@@ -224,9 +214,8 @@ pub fn write_bundle(
     Ok(n)
 }
 
-/// Unpack a bundle written by `write_bundle` into `dest_dir` (as
-/// `blobs/…`), returning the changeset. Entry paths are validated — a
-/// bundle must never write outside `dest_dir`.
+/// Unpack a bundle into `dest_dir` (as `blobs/…`), returning the changeset. Entry
+/// paths are validated: a bundle must never write outside `dest_dir`.
 pub fn unpack_bundle(src: &Path, dest_dir: &Path) -> Result<Changeset> {
     let file = std::fs::File::open(src).with_context(|| format!("opening {}", src.display()))?;
     let mut archive =

@@ -35,7 +35,6 @@ fn panel_state_round_trips_across_a_db_reopen() {
         .restore(&PanelSnapshot::decode(&states["key-0"]).unwrap())
         .unwrap();
     assert_eq!(restored.value("note"), "groceries");
-    // Replacing a record keeps one row per panel.
     save_state(db.conn(), "s1", "key-0", &record).unwrap();
     assert_eq!(load_states(db.conn(), "s1").unwrap().len(), 1);
     assert!(
@@ -100,7 +99,6 @@ fn pin_list_open_keeps_the_program_and_state() {
     }
     assert_eq!(suggest_name(conn, "space", "Budget").unwrap(), "budget-2");
 
-    // State saved from the opened view lands back on the same app.
     let mut opened = Session::new(Document::parse(&app.program).unwrap()).unwrap();
     opened.input("note", "rent".into()).unwrap();
     save_pinned_state(conn, &app.id, &opened.snapshot().encode().unwrap()).unwrap();
@@ -141,7 +139,6 @@ fn names_are_validated_unique_and_bounded() {
             .to_string()
             .contains("already pinned")
     );
-    // The same name is free in another space.
     pin(conn, "t", "ok", program, &session.snapshot()).unwrap();
     for n in 0..MAX_PINNED - 1 {
         pin(conn, "s", &format!("app-{n}"), program, &session.snapshot()).unwrap();
@@ -169,7 +166,6 @@ fn rename_and_unpin_by_name_or_id() {
     let renamed = rename(conn, "s", &a.id, "gamma").unwrap();
     assert_eq!(renamed.name, "gamma");
     assert_eq!(renamed.id, a.id);
-    // Renaming to its own name is not a collision.
     rename(conn, "s", "gamma", "gamma").unwrap();
     assert!(find(conn, "s", "alpha").unwrap().is_none());
 
@@ -177,7 +173,6 @@ fn rename_and_unpin_by_name_or_id() {
     assert!(find(conn, "s", "gamma").unwrap().is_none());
     assert!(unpin(conn, "s", "gamma").is_err());
     assert_eq!(list(conn, "s").unwrap().len(), 1);
-    // The delete leaves a tombstone for other devices.
     let tombstones: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM sync_tombstones WHERE table_name = 'pinned_panels' AND row_id = ?1",
@@ -186,7 +181,6 @@ fn rename_and_unpin_by_name_or_id() {
         )
         .unwrap();
     assert_eq!(tombstones, 1);
-    // A different space cannot reach it.
     assert!(unpin(conn, "other", "beta").is_err());
 }
 
@@ -217,7 +211,6 @@ fn edit_mode_patch_targets_a_pinned_app_and_keeps_its_state() {
     assert_eq!(opened.value("note"), "groceries", "existing state survives");
     assert_eq!(opened.value("limit"), "100");
 
-    // A bad patch is atomic, and the `edit` marker line is tolerated by the tool.
     let before = find(conn, "s", "budget").unwrap().unwrap();
     assert!(super::patch(conn, "s", "budget", "root = Panel(\"X\", [Unknown()])").is_err());
     assert_eq!(find(conn, "s", "budget").unwrap().unwrap(), before);
@@ -302,7 +295,6 @@ fn both_tables_sync_and_pinned_deletes_propagate() {
     assert_eq!(find(b.conn(), "s", "budget").unwrap().unwrap(), app);
     assert_eq!(load_states(b.conn(), "chat").unwrap().len(), 1);
 
-    // Last writer wins on a pinned app.
     let patched = super::patch(
         a.conn(),
         "s",
@@ -317,7 +309,6 @@ fn both_tables_sync_and_pinned_deletes_propagate() {
         patched.program
     );
 
-    // Unpinning on A removes it from B.
     unpin(a.conn(), "s", "budget").unwrap();
     let cs = build_changeset(&a, None, "a").unwrap();
     apply_changeset(&b, &space, &cs, None).unwrap();
