@@ -41,7 +41,6 @@ fn tabs() -> Value {
 #[test]
 fn tabs_two_state_snapshots_keep_the_same_height_and_hit_identity() {
     let mut entry = entry(tabs(), json!({"tab":0}));
-    // Tabs are one segmented strip; the active segment is filled.
     assert_eq!(content(&entry, 24).0, "  A ▕ B\nOne");
     let height = entry
         .canvas(24, &Theme::default(), true, true)
@@ -59,7 +58,6 @@ fn tabs_two_state_snapshots_keep_the_same_height_and_hit_identity() {
         height
     );
     assert_eq!(entry.session.as_ref().unwrap().value("tab"), "1");
-    // The focused strip fills its active tab with your accent.
     let (_, buffer) = content(&entry, 24);
     assert_eq!(buffer[(8, 2)].symbol(), "B");
     assert_eq!(buffer[(8, 2)].bg, Theme::default().accent);
@@ -168,8 +166,6 @@ fn form_submit_snapshots_and_actions_respect_required_values_and_send_readiness(
         json!({"type":"form","title":"Profile","fields":[{"type":"input","key":"name","label":"Name","rules":{"required":true}}],"submit_label":"Save","action":"save"}),
         json!({"name":""}),
     );
-    // Label, an empty text row, the underline, then the message row saying
-    // what the field needs; one blank row before the submit button.
     assert_eq!(
         content(&entry, 36).0,
         format!(
@@ -231,7 +227,6 @@ fn timeline_rating_badge_meter_slider_and_highlighted_code_snapshots() {
         json!({}),
     );
     let (text, buffer) = content(&code, 36);
-    // Rendered focused, so the Copy pill carries the focus mark.
     assert_eq!(text, format!("{:<24} ▸Copy\nlet x = 1;", "rust"));
     assert_ne!(
         buffer[(2, 3)].fg,
@@ -325,7 +320,6 @@ fn tabs_accordion_rating_and_slider_route_mouse_and_keyboard() {
         json!({"n":0}),
     );
     draw(&mut widgets, &src);
-    // The hit area is the stars themselves: the third star sets 3.
     click(&mut widgets, 0, 2, 0);
     assert_eq!(session(&widgets).value("n"), "3");
     widgets.key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), true);

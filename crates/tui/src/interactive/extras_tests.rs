@@ -43,7 +43,6 @@ fn tree_branches_expand_into_their_reserved_rows() {
     let before = entry.canvas(40, &Theme::default(), false, true).0;
     assert!(text(&before).contains("▸ app"));
     assert!(!text(&before).contains("mod.rs"));
-    // Two expandable branches are visible: src and app.
     assert_eq!(entry.controls().len(), 2);
     entry.activate(1, true, true);
     let after = entry.canvas(40, &Theme::default(), false, true).0;
@@ -77,8 +76,6 @@ $done = []"#;
 
 #[test]
 fn diagrams_at_the_content_edge_get_image_placements_others_keep_placeholders() {
-    // The second diagram sits in a row's right column, off the edge the
-    // diagram painter insets to.
     let source = r#"root = Panel("Flow", [Text("Intro"), Diagram("flowchart LR\nA-->B", "A to B"), Row([Text("side"), Diagram("flowchart LR\nC-->D")])])"#;
     let mut widgets = Widgets::default();
     let placement = tests::placement(source, 1);

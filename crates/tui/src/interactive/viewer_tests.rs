@@ -14,7 +14,6 @@ fn layout(view: Value) -> String {
     json!({"version":1,"title":"Gallery","view":view}).to_string()
 }
 
-/// Two image buttons whose action sets `n` to 1.
 fn tiles() -> String {
     json!({
         "version":1,"title":"Pick","state":{"n":0},
@@ -101,12 +100,10 @@ fn an_image_button_keeps_its_action_and_exposes_the_viewer_through_its_tag() {
     let p = placement(&source);
     draw(&mut widgets, &[p.clone()]);
 
-    // One tag per image button, 3 cells wide, drawn in the image's corner.
     let tags = image_hits(&widgets);
     assert_eq!(tags.len(), 2);
     assert!(tags.iter().all(|t| t.rect.width == 3 && t.rect.height == 1));
 
-    // Clicking the tag views the image and does not press the button.
     let tag = &tags[1];
     assert_eq!(
         press(&mut widgets, tag.rect.x + 1, tag.rect.y),
@@ -123,7 +120,6 @@ fn an_image_button_keeps_its_action_and_exposes_the_viewer_through_its_tag() {
         "0"
     );
 
-    // Clicking the button anywhere else still runs its action.
     let button = widgets
         .hits
         .iter()
@@ -151,13 +147,11 @@ fn v_views_the_focused_image_button_and_never_types_into_inputs() {
     let p = placement(&source);
     draw(&mut widgets, &[p]);
     assert!(widgets.focus_latest());
-    // Focus the second button (Tab), then `v`.
     widgets.key(KeyCode::Tab.into(), true);
     widgets.key(KeyCode::Char('v').into(), true);
     let pending = widgets.pending_image.take().unwrap();
     assert_eq!((pending.url.as_str(), pending.index), (PIC2, 1));
 
-    // On a document with an input, `v` is text.
     let form = json!({
         "version":1,"title":"Form","state":{"name":""},
         "view":[{"type":"image","src":PIC},{"type":"input","key":"name","label":"Name"}]
@@ -179,8 +173,6 @@ fn v_views_the_focused_image_button_and_never_types_into_inputs() {
     );
 }
 
-/// The click regions must sit exactly where the images are drawn, for every
-/// node kind that carries one.
 #[test]
 fn image_targets_line_up_with_the_drawn_images() {
     let documents = [
@@ -216,7 +208,6 @@ fn image_targets_line_up_with_the_drawn_images() {
                         .collect();
                     assert_eq!(tag, " v ", "{source} @ {width}: {target:?}");
                 } else {
-                    // The loading placeholder starts on the image's first row.
                     assert_eq!(
                         symbol(target.rect.x, target.rect.y),
                         "\u{25a3}",
@@ -304,7 +295,6 @@ fn an_image_button_click_acts_but_its_tag_and_v_open_the_viewer_and_esc_returns(
     app.history_cache.widgets = vec![p.clone()];
     paint(&mut app, &[p.clone()]);
 
-    // The tag opens the viewer, from the focused-document state.
     let tag = image_hits(&app.interactive)[0].rect;
     assert!(click(&mut app, tag.x, tag.y));
     assert!(app.popup == Popup::ImageViewer);
@@ -316,7 +306,6 @@ fn an_image_button_click_acts_but_its_tag_and_v_open_the_viewer_and_esc_returns(
     app.close_image_viewer();
     assert!(app.popup == Popup::None);
 
-    // A click on the button runs its action and focuses the document.
     let button = app
         .interactive
         .hits
@@ -337,7 +326,6 @@ fn an_image_button_click_acts_but_its_tag_and_v_open_the_viewer_and_esc_returns(
             .value("n"),
         "1"
     );
-    // `v` now views the focused button's image and Esc comes back to it.
     paint(&mut app, &[p]);
     key(&mut app, KeyCode::Char('v').into());
     assert!(app.popup == Popup::ImageViewer);

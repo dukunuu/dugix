@@ -45,7 +45,6 @@ fn rows(buffer: &Buffer) -> Vec<String> {
                 .map(|x| buffer[(x, y)].symbol())
                 .collect::<String>()
                 .trim()
-                // Chrome: old side borders and the focus gutter marker.
                 .trim_matches('│')
                 .trim_start_matches('▸')
                 .trim()
@@ -100,7 +99,6 @@ fn quiz_pages_questions_marks_choices_and_reveals_answers_in_a_fixed_height() {
     widgets.entries.get_mut(&p.key()).unwrap().focus = 1;
     press(&mut widgets, KeyCode::Enter);
     let revealed = rows(&draw(&mut widgets, &p));
-    // Still focused, so the pill carries the focus mark.
     assert!(
         revealed.iter().any(|row| row == "Hide answer"),
         "{revealed:#?}"
@@ -192,7 +190,6 @@ fn clicking_an_editor_line_places_the_caret_there() {
         .find(|hit| hit.control == Some(0))
         .unwrap()
         .clone();
-    // Row 0 is the label; the gutter is "1 " wide, so x+2+3 is column 3.
     let mouse = MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: hit.rect.x + 2 + 3,

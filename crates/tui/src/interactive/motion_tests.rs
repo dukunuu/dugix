@@ -8,7 +8,6 @@ $n = 2"#;
 fn entry(source: &str) -> Entry {
     Entry::new(Ok(Session::new(Document::parse(source).unwrap()).unwrap()))
 }
-/// Braille cells drawn in a buffer: the chart's ink.
 fn ink(buffer: &Buffer) -> usize {
     buffer
         .content
@@ -21,7 +20,6 @@ fn ink(buffer: &Buffer) -> usize {
         })
         .count()
 }
-/// Heavy track cells: a progress bar's filled part.
 fn filled(buffer: &Buffer) -> usize {
     buffer
         .content
@@ -60,7 +58,6 @@ fn bound_bars_glide_to_new_values() {
     session.set_clock(1.0);
     let before = filled(&entry.canvas(60, &Theme::default(), false, true).0);
     entry.activate(0, true, true);
-    // Same instant: the bar still shows where it was.
     assert_eq!(
         filled(&entry.canvas(60, &Theme::default(), false, true).0),
         before

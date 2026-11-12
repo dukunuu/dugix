@@ -165,7 +165,6 @@ fn measured_reservations_match_the_drawn_card_at_actual_widths() {
                         .collect::<String>()
                 })
                 .collect();
-            // Open, sentence-case header; bottom rule keeps panel boundaries clear.
             assert!(rows[0].starts_with("  ") && rows[0].contains('⤢'));
             assert!(rows.last().unwrap().starts_with('─'));
             assert!(rows.last().unwrap().ends_with('─'));
@@ -247,7 +246,6 @@ fn pill_tile_input_and_expand_clicks_share_the_keyboard_state() {
         assert!(widgets.expanded);
         widgets.unfocus();
         widgets.focus_latest();
-        // Re-entering keeps the expand control selected.
         widgets.key(KeyCode::Enter.into(), false);
         assert!(widgets.expanded);
     }
@@ -375,7 +373,6 @@ fn arbitrary_game_artwork_and_controls_use_the_same_renderer() {
     let p = placement(source, 0);
     let screen = text(&draw(&mut widgets, &[p], 0));
     for label in [
-        // Preserve the model's sentence-case title.
         "Rock · Paper · Scissors",
         "Wins 0",
         "Losses 0",
@@ -393,7 +390,7 @@ fn arbitrary_game_artwork_and_controls_use_the_same_renderer() {
             .iter()
             .filter(|hit| hit.control.is_some())
             .count(),
-        5 // Four actions and the expand affordance.
+        5
     );
 }
 

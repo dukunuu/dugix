@@ -33,10 +33,8 @@ fn bound_keys_drive_the_focused_panel_but_never_typing() {
     let mut widgets = Widgets::default();
     let _ = tests::draw(&mut widgets, &[tests::placement(PAD, 1)], 0);
     assert!(widgets.focus_latest());
-    // Focus starts on the text field: arrows move its caret, not $x.
     press(&mut widgets, KeyCode::Right);
     assert_eq!(value(&widgets, "x"), "5");
-    // Off the field (Tab to the expand affordance), the bindings take over.
     press(&mut widgets, KeyCode::Tab);
     press(&mut widgets, KeyCode::Right);
     press(&mut widgets, KeyCode::Right);
@@ -50,14 +48,12 @@ fn timers_tick_on_wall_time_only_while_live() {
     let back = |entry: &mut Entry, seconds: f64| {
         entry.born -= std::time::Duration::from_secs_f64(seconds);
     };
-    // Motion off: timers still run, and keep frames coming.
     assert!(entry.advance_clock(false, true));
     back(&mut entry, 0.6);
     entry.advance_clock(false, true);
     back(&mut entry, 0.5);
     entry.advance_clock(false, true);
     assert_eq!(entry.session.as_ref().unwrap().value("n"), "2");
-    // Not live (window unfocused or idle): nothing runs.
     back(&mut entry, 5.0);
     assert!(!entry.advance_clock(false, false));
     assert_eq!(entry.session.as_ref().unwrap().value("n"), "2");
@@ -79,7 +75,6 @@ fn clicking_a_clickable_shape_runs_its_action() {
         .find(|hit| hit.control == Some(0))
         .unwrap()
         .rect;
-    // The hit area is the circle's own cells, not the whole canvas.
     assert!(target.width < 40 && target.height < 6, "{target:?}");
     let click = MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
@@ -128,20 +123,17 @@ fn the_loop_saves_panel_state_at_most_once_a_second() {
     frame(&mut app);
     let run_timer = |app: &mut AppView| {
         let entry = app.interactive.entries.values_mut().next().unwrap();
-        // The first paint scheduled the timer half a second out.
         assert!(entry.session.as_mut().unwrap().tick(0.6).unwrap());
     };
     run_timer(&mut app);
     flush_settled(&mut app);
     let saved = |app: &AppView| app.core.panel_states(&id).unwrap().len();
     assert_eq!(saved(&app), 1);
-    // A second change within the second waits for the next settled flush.
     let entry = app.interactive.entries.values_mut().next().unwrap();
     assert!(entry.session.as_mut().unwrap().tick(1.2).unwrap());
     let before = app.core.panel_states(&id).unwrap();
     flush_settled(&mut app);
     assert_eq!(app.core.panel_states(&id).unwrap(), before);
-    // A direct flush (session switch, shutdown) saves right away.
     flush(&mut app);
     assert_ne!(app.core.panel_states(&id).unwrap(), before);
 }

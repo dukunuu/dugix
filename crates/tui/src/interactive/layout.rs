@@ -14,8 +14,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Widget};
 use unicode_width::UnicodeWidthStr;
 
-/// One image drawn inside a document, in document order. `button` names the
-/// (node, item) of an image button, whose click belongs to its action.
+/// One image drawn inside a document, in document order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DocImage {
     pub url: String,
@@ -50,16 +49,13 @@ pub(crate) fn document_images(document: &Document) -> Vec<DocImage> {
     }
     out
 }
-/// Where one image sits on a document canvas. Plain images are clickable
-/// over their whole area; an image button exposes only its corner tag so the
-/// rest of the button keeps its action.
+/// Where one image sits on a document canvas; an image button exposes only its corner tag.
 #[derive(Clone, Debug)]
 pub(crate) struct ImageTarget {
     pub rect: Rect,
     pub url: String,
     pub index: usize,
 }
-/// Card images in the same grid `cards_lines` draws.
 fn card_image_rects(items: &[Card], session: &Session, region: Rect) -> Vec<(Rect, String, bool)> {
     let theme = Theme::default();
     let fit = usize::from((region.width.saturating_add(2) / 26).clamp(1, 3)).min(items.len());
@@ -330,7 +326,6 @@ pub(super) fn render_button_group(
     }
     hits
 }
-/// The small affordance drawn over an image button's top-right corner.
 const VIEW_TAG: &str = " v ";
 const VIEW_TAG_WIDTH: u16 = 3;
 fn view_tag(image_area: Rect) -> Rect {
@@ -434,8 +429,7 @@ fn button_regions(session: &Session, items: &[Button], area: Rect) -> Vec<(usize
     } else {
         let mut x = area.x;
         let mut y = area.y;
-        // Keep action order predictable: drawing, tabbing and the source
-        // all agree. Related actions stay together instead of opposite edges.
+        // Keep action order predictable: drawing, tabbing and the source all agree.
         for (item, button) in items.iter().enumerate() {
             let width = bold::pill_width(&button_label(session, button)).min(area.width);
             let fits = x > area.x && x.saturating_add(width) <= area.right();
@@ -449,8 +443,7 @@ fn button_regions(session: &Session, items: &[Button], area: Rect) -> Vec<(usize
     }
     regions
 }
-/// Column where panel content starts: two cells in from the edge, leaving a
-/// gutter for the focus marker.
+/// Column where panel content starts, leaving a gutter for the focus marker.
 pub(super) const CONTENT_X: u16 = 2;
 /// Measure actual content at the available width; declared rows remain core caps.
 pub(super) fn node_regions(session: &Session, width: u16) -> Vec<Rect> {
@@ -509,9 +502,7 @@ pub(super) fn branch_regions(session: &Session, nodes: &[Node], area: Rect) -> V
         })
         .collect()
 }
-/// Nodes that stack without a blank row when they follow one of their own
-/// kind: paragraphs, and hairline readings. Filled controls always keep a
-/// row between them so their shapes never merge.
+/// Nodes that stack without a blank row when they follow one of their own kind.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Run {
     Text,
@@ -532,8 +523,7 @@ pub(super) fn card_height(regions: &[Rect]) -> u16 {
 pub(crate) fn source_height(source: &str, width: u16) -> u16 {
     document_height(Document::preview(source), width)
 }
-/// Rows a block reserves: a finished one as it will settle (broken pieces
-/// left out), one still arriving as its streamed preview.
+/// Rows a block reserves: settled when complete, else the streamed preview.
 pub(crate) fn block_height(source: &str, complete: bool, width: u16) -> u16 {
     if complete {
         document_height(Document::settled(source), width)
@@ -561,7 +551,6 @@ pub(super) fn streaming_buffer(document: Option<Document>, width: u16, theme: &T
     let height = card_height(&regions);
     let mut buffer = document_buffer(width, height, &session, theme, "");
     render_nodes(&session, &regions, theme, None, false, &mut buffer);
-    // Replace final-panel affordances with an explicit, inert streaming status.
     if width >= 8 {
         buffer.set_string(width - 3, 0, "◌", Style::default().fg(theme.fg_dim));
     }
@@ -579,8 +568,7 @@ pub(super) fn streaming_buffer(document: Option<Document>, width: u16, theme: &T
         );
     buffer
 }
-/// Scroll a pinned panel taller than the viewport so its focused control (or
-/// caret) stays in view above the pinned rule; returns the rows scrolled.
+/// Scroll a pinned panel so its focused control stays in view; returns the rows scrolled.
 pub(super) fn follow_focus(
     entry: &mut Entry,
     canvas: &Buffer,
@@ -607,7 +595,6 @@ pub(super) fn follow_focus(
     entry.scroll = entry.scroll.min(canvas.area.height.saturating_sub(rows));
     entry.scroll
 }
-/// The canvas from row `scroll` down.
 pub(super) fn scrolled(canvas: &Buffer, scroll: u16) -> Buffer {
     let area = canvas.area;
     let height = area.height.saturating_sub(scroll);
@@ -619,15 +606,13 @@ pub(super) fn scrolled(canvas: &Buffer, scroll: u16) -> Buffer {
     }
     buffer
 }
-/// One line on why part of a panel is missing: the first line of the first
-/// problem, without its list of alternatives.
+/// One line on why part of a panel is missing, without the list of alternatives.
 pub(super) fn left_out_note(error: &nexus_core::interactive::CheckError) -> String {
     let line = error.message.lines().next().unwrap_or_default();
     let line = line.split(';').next().unwrap_or(line).trim_end_matches(':');
     safe(line.trim())
 }
-/// Mark a panel that renders without its broken pieces, on the bottom rule
-/// left of the key hints, so the gap is never silent.
+/// Mark a panel that renders without its broken pieces, left of the key hints.
 pub(super) fn draw_left_out(buffer: &mut Buffer, note: &str, hint: &str, theme: &Theme) {
     let area = buffer.area;
     if area.width < 12 || area.height < 2 {
@@ -682,14 +667,9 @@ struct Chrome<'a> {
     /// Title text; `None` leaves the bar empty (a Hero already says it).
     title: Option<&'a str>,
     frame: DocumentFrame,
-    /// Show the expand affordance at the bar's right end.
     expand: bool,
-    /// Key hints, right-aligned on the bottom rule.
     hint: &'a str,
 }
-/// Sentence-case title, a discreet expand affordance, and a bottom rule.
-/// Content keeps its two-column inset and existing height contract. Explicit
-/// `plain` frames retain their title rule; other frames leave the header open.
 fn panel_chrome(buffer: &mut Buffer, chrome: &Chrome, theme: &Theme) {
     let area = buffer.area;
     if area.width < 4 || area.height < 2 {

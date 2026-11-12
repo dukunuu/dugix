@@ -153,7 +153,6 @@ fn word_navigation_document_selection_and_key_repeats_stay_in_the_field() {
 fn mouse_places_the_caret_by_display_cells_including_wide_text() {
     let (mut widgets, placement) =
         focused_input("root = Panel('Contact', [Input($name, 'Name')])\n$name = 'A李B'");
-    // Content starts at the field's left edge. Click the second cell of 李.
     pointer(&mut widgets, 2, 1, false);
     widgets.key(KeyCode::Char('X').into(), false);
     assert_eq!(value(&widgets, &placement, "name"), "AX李B");
@@ -221,8 +220,6 @@ fn horizontally_scrolled_input_clicks_use_the_visible_text_not_the_start() {
     let source = format!("root = Panel('Long', [Input($name, 'Name')])\n$name = '{initial}'");
     let (mut widgets, placement) = focused_input(&source);
     draw(&mut widgets, &[placement.clone()], 0);
-    // The field's text spans its full 66 columns; the end caret reserves one
-    // visible cell, so the view starts at character 39.
     pointer(&mut widgets, 4, 1, false);
     widgets.paste("!");
     let mut expected = initial;
@@ -299,7 +296,6 @@ fn fields_use_theme_borders_placeholders_help_and_inline_errors_at_every_width()
             let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
             assert!(text.contains("Email *"));
             assert!(text.contains("you@example.com"));
-            // An untouched empty field shows its hint, not an error.
             assert!(text.contains("Use your work email"));
             assert!(!text.contains("Required"));
             assert!(text.contains("What should we know?"));

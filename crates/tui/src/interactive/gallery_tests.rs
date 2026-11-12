@@ -1,7 +1,5 @@
-//! Visual regression net: every component family rendered as plain text at
-//! 72 columns. Regenerate after an intended visual change with
-//! `NEXUS_UPDATE_SNAPSHOTS=1 cargo test -p nexus-chat gallery` and review the
-//! diff of `gallery_snapshots.txt`.
+//! Visual regression net: every component family as plain text at 72 columns.
+//! Regenerate with `NEXUS_UPDATE_SNAPSHOTS=1 cargo test -p nexus-chat gallery`.
 
 use super::*;
 
@@ -70,7 +68,6 @@ art = Canvas([Circle(50, 50, 40, "muted"), Circle(50, 50, 8, "warning", true), R
 fn render(index: usize, source: &str) -> String {
     let document = Document::parse(source).unwrap_or_else(|error| panic!("panel {index}: {error}"));
     let entry = Entry::new(Session::new(document).map_err(|error| error.to_string()));
-    // The second panel shows focus chrome; the rest render unfocused.
     let (buffer, _) = entry.canvas(72, &Theme::default(), index == 1, true);
     (0..buffer.area.height)
         .map(|y| {

@@ -1,8 +1,5 @@
-//! Shared panel drawing: aligned sentence-case labels, slim tracks, solid
-//! bars and compact filled controls (chips, switches, checks, segmented
-//! strips). The panel's primary action, focus and "on" states carry the
-//! strong fills; everything else sits on the theme's control surface.
-//! Glyphs come from `ui/style.rs`.
+//! Shared panel drawing: aligned labels, slim tracks, solid bars and compact
+//! filled controls. Glyphs come from `ui/style.rs`.
 
 use super::{Session, accent_color, display, glyph, tone_color};
 use crate::theme::Theme;
@@ -12,9 +9,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use unicode_width::UnicodeWidthStr;
 
-/// Width of the shared label column: the widest label among the panel's
-/// labelled one-row controls and bars, plus a gap, capped at a third of the
-/// width so values keep most of the row.
+/// Width of the shared label column, capped at a third of the panel so values keep most of the row.
 pub(super) fn label_column(session: &Session, width: u16) -> u16 {
     let widest = session
         .document()
@@ -41,8 +36,7 @@ pub(super) fn label_column(session: &Session, width: u16) -> u16 {
         .min(width)
 }
 
-/// A control label in the label column: dim sentence case, your accent when the
-/// control has focus.
+/// A control label in the label column, accented when focused.
 pub(super) fn label(buffer: &mut Buffer, area: Rect, text: &str, focused: bool, theme: &Theme) {
     let style = if focused {
         Style::default()
@@ -55,8 +49,7 @@ pub(super) fn label(buffer: &mut Buffer, area: Rect, text: &str, focused: bool, 
     buffer.set_stringn(area.x, area.y, text, usize::from(area.width), style);
 }
 
-/// A slim one-row bar: `ratio` of `area` in `fill`, with a partial end cap
-/// and a dim, unfilled track.
+/// A slim one-row bar with a partial end cap and a dim track.
 pub(super) fn bar(buffer: &mut Buffer, area: Rect, ratio: f64, fill: Color, theme: &Theme) {
     if area.width == 0 {
         return;
@@ -79,8 +72,7 @@ pub(super) fn bar(buffer: &mut Buffer, area: Rect, ratio: f64, fill: Color, them
     }
 }
 
-/// Fill and ink for a tone: semantic tones fill with their color; normal and
-/// muted fall back to the theme's control surfaces so they stay quiet.
+/// Fill and ink for a tone; normal and muted stay on the theme's control surfaces.
 pub(super) fn tone_fill(tone: Tone, session: &Session, theme: &Theme) -> (Color, Color) {
     match tone {
         Tone::Normal => (theme.control, theme.fg),
@@ -92,10 +84,7 @@ pub(super) fn tone_fill(tone: Tone, session: &Session, theme: &Theme) -> (Color,
     }
 }
 
-/// One end of a filled shape: a Powerline half circle in `fill` where the
-/// terminal draws them, else a plain cell of `fill`. The cap takes the
-/// background already under it, so shapes stay round on cards and tiles.
-/// Either way it is one cell, so geometry never depends on the font.
+/// One end of a filled shape, one cell wide whatever the font draws.
 pub(super) fn cap(buffer: &mut Buffer, (x, y): (u16, u16), left: bool, fill: Color, theme: &Theme) {
     if theme.round_caps {
         let under = buffer.cell((x, y)).map_or(theme.surface, |cell| cell.bg);
@@ -114,9 +103,7 @@ pub(super) fn cap(buffer: &mut Buffer, (x, y): (u16, u16), left: bool, fill: Col
     }
 }
 
-/// A padded label on a filled surface, clipped to `limit` columns: a cap,
-/// ` text `, a cap. Returns the width drawn; drawing and hit-testing share
-/// this geometry.
+/// A padded label on a filled surface, clipped to `limit` columns; returns the width drawn.
 pub(super) fn pill(
     buffer: &mut Buffer,
     (x, y): (u16, u16),
@@ -150,14 +137,13 @@ pub(super) fn revealed(width: u16, session: &Session) -> u16 {
     shown.min(width)
 }
 
-/// Width `pill` will take for `text`.
 pub(super) fn pill_width(text: &str) -> u16 {
     u16::try_from(text.width())
         .unwrap_or(u16::MAX)
         .saturating_add(4)
 }
 
-/// A value right-aligned at the end of a row, in bold foreground.
+/// A value right-aligned at the end of a row.
 pub(super) fn value(buffer: &mut Buffer, area: Rect, text: &str, theme: &Theme) -> u16 {
     let width = u16::try_from(text.width())
         .unwrap_or(u16::MAX)
@@ -172,8 +158,7 @@ pub(super) fn value(buffer: &mut Buffer, area: Rect, text: &str, theme: &Theme) 
     width
 }
 
-/// A padded label as spans for line-based layouts. `bg` is the surface the
-/// pill sits on, which round caps take as their background.
+/// A padded label as spans for line-based layouts, on the surface `bg`.
 pub(super) fn pill_spans(
     text: &str,
     (fill, ink): (Color, Color),
@@ -208,12 +193,10 @@ pub(super) enum Kind {
     Primary,
     /// Any other action: the theme's control surface.
     Secondary,
-    /// Not available now.
     Disabled,
 }
 
-/// A button pill. Focus fills it with your accent and marks it `▸`, so "you
-/// are here" never depends on the panel's own color.
+/// A button pill; focus fills it with your accent and marks it `▸`.
 pub(super) fn button(
     buffer: &mut Buffer,
     (x, y): (u16, u16),
@@ -267,9 +250,7 @@ pub(super) fn button(
     Rect::new(x, y, width, 1)
 }
 
-/// Where each segment of a segmented strip sits: a cap cell, then
-/// ` label ` slots joined by one-cell seams, then a cap cell. Drawing and
-/// clicks share this geometry; tabs and selects both use it.
+/// Where each segment of a segmented strip sits; drawing and clicks share it.
 pub(super) fn segment_rects(labels: &[String], area: Rect) -> Vec<Rect> {
     let mut x = area.x.saturating_add(1).min(area.right());
     labels
@@ -292,9 +273,7 @@ pub(super) fn segments_width(labels: &[String]) -> u16 {
     u16::try_from(text + labels.len().saturating_sub(1) + 2).unwrap_or(u16::MAX)
 }
 
-/// A segmented strip: every option on the control surface, the active one
-/// filled with `fill`, capped at both ends. Seams are thin background-colored
-/// rules, so the strip reads as one control with parts.
+/// A segmented strip with the active option filled and capped at both ends.
 pub(super) fn segmented(
     buffer: &mut Buffer,
     area: Rect,
@@ -349,12 +328,11 @@ pub(super) fn segmented(
     rects
 }
 
-/// Where each tab sits on the strip; shared by drawing and clicks.
 pub(super) fn tab_rects(labels: &[String], area: Rect) -> Vec<Rect> {
     segment_rects(labels, area)
 }
 
-/// A compact filled chip, ` text `, returning its width.
+/// A compact filled chip, returning its width.
 pub(super) fn chip(buffer: &mut Buffer, (x, y): (u16, u16), text: &str, style: Style) -> u16 {
     let width = u16::try_from(text.width())
         .unwrap_or(u16::MAX)
@@ -363,13 +341,10 @@ pub(super) fn chip(buffer: &mut Buffer, (x, y): (u16, u16), text: &str, style: S
     width
 }
 
-/// Width of a switch.
 pub(super) const SWITCH_WIDTH: u16 = 4;
-/// Width of a check box.
 pub(super) const CHECK_WIDTH: u16 = 3;
 
-/// A four-cell switch: on is a success-filled track with its knob at the
-/// right; off is the control surface with a dim knob at the left.
+/// A four-cell switch, on with its knob at the right.
 pub(super) fn switch(buffer: &mut Buffer, (x, y): (u16, u16), on: bool, theme: &Theme) {
     let (fill, knob) = if on {
         (theme.success, theme.on(theme.success))
@@ -388,8 +363,7 @@ pub(super) fn switch(buffer: &mut Buffer, (x, y): (u16, u16), on: bool, theme: &
     cap(buffer, (x + 3, y), false, fill, theme);
 }
 
-/// A three-cell check box: a check on a success fill, or an empty control
-/// cell, capped at both ends.
+/// A three-cell check box, capped at both ends.
 pub(super) fn check(buffer: &mut Buffer, (x, y): (u16, u16), on: bool, theme: &Theme) {
     let fill = if on { theme.success } else { theme.control };
     cap(buffer, (x, y), true, fill, theme);
@@ -405,8 +379,7 @@ pub(super) fn check(buffer: &mut Buffer, (x, y): (u16, u16), on: bool, theme: &T
     cap(buffer, (x + 2, y), false, fill, theme);
 }
 
-/// A solid one-row bar for data (Bars), where length is the reading. Cells
-/// are five-eighths tall, so stacked bars keep a seam between rows.
+/// A solid one-row bar for data, five-eighths tall so stacked bars keep a seam.
 pub(super) fn solid_bar(buffer: &mut Buffer, area: Rect, ratio: f64, fill: Color) {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let cells = (ratio.clamp(0.0, 1.0) * f64::from(area.width)).round() as u16;

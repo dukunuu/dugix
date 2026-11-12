@@ -31,8 +31,6 @@ impl Entry {
         }
     }
     /// Move the animation clock to now; whether anything is still moving.
-    /// With motion off the clock stays put: canvases hold their first frame,
-    /// values snap and charts draw whole.
     pub(super) fn advance_clock(&mut self, motion: bool, timers: bool) -> bool {
         let elapsed = self.born.elapsed().as_secs_f64();
         let pressing = motion && self.press_flash().is_some();
@@ -53,7 +51,6 @@ impl Entry {
         }
         moving || pressing
     }
-    /// The control whose press is still flashing.
     fn press_flash(&self) -> Option<usize> {
         self.pressed
             .filter(|(_, at)| at.elapsed() < std::time::Duration::from_millis(PRESS_FLASH_MS))
@@ -66,7 +63,7 @@ impl Entry {
             _ => None,
         }
     }
-    /// Terminal caret of the focused field on a canvas this entry just drew.
+    /// Terminal caret of the focused field in the canvas just drawn.
     pub(super) fn input_caret(&self, buffer: &Buffer) -> Option<Position> {
         self.focused_input()?;
         self.inputs.borrow().caret(buffer)
@@ -126,7 +123,6 @@ impl Entry {
                             .filter(|(_, shape)| shape.action().is_some())
                             .map(|(shape, _)| Control::Shape(index, shape))
                             .collect(),
-                        // Visible expandable branches toggle like sections.
                         Node::Tree { items } => nexus_core::interactive::tree_branches(items)
                             .iter()
                             .enumerate()
@@ -446,8 +442,6 @@ impl Entry {
             .err()
             .map_or_else(String::new, |error| error.to_string());
     }
-    /// The card's bottom hint line: data status, a pending link, the focused
-    /// control's keys (with the vim mode when vim keys are on), or how to start.
     fn hint(&self, width: u16, focused: bool) -> String {
         let choices = self.choices().len().min(9);
         let pending_url = self.session.as_ref().ok().and_then(Session::pending_url);
@@ -549,9 +543,7 @@ impl Entry {
             can_send,
             &mut buffer,
         );
-        // "You are here": a marker in the panel's left gutter beside the
-        // focused control when it starts at the content edge, unless it is a
-        // pill (which marks itself).
+        // "You are here": a gutter marker beside a focused control at the content edge.
         if focused
             && let Some((rect, _)) = hits.iter().find(|(_, control)| *control == self.focus)
             && rect.x == CONTENT_X
@@ -569,7 +561,6 @@ impl Entry {
                 Style::default().fg(theme.accent),
             );
         }
-        // A just-pressed control flashes inverted for a moment.
         if let Some(control) = self.press_flash()
             && session.motion()
             && let Some((rect, _)) = hits.iter().find(|(_, hit)| *hit == control)

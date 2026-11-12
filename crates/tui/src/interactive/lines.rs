@@ -134,7 +134,6 @@ fn hero_lines(
         width.saturating_sub(badge_width).max(1),
         Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
     );
-    // The badge rides right after the title's last line.
     if let Some(badge) = badge
         && let Some(last) = lines.last_mut()
     {
@@ -155,7 +154,7 @@ fn hero_lines(
     }
     lines
 }
-/// A card's title and badge rows: everything above its image.
+/// A card's title and badge rows, above its image.
 pub(super) fn card_head(
     item: &Card,
     session: &Session,
@@ -195,8 +194,7 @@ pub(super) fn card_head(
     }
     content
 }
-/// One bordered card, padded to at least `rows` content rows so cards
-/// sharing a grid row line up.
+/// One bordered card, padded to at least `rows` content rows so a grid row lines up.
 pub(super) fn card_lines(
     item: &Card,
     session: &Session,
@@ -294,7 +292,6 @@ pub(super) fn stat_lines(
     let mut lines = match crate::ui::style::display_font(number)
         .filter(|rows| big && rows[0].width() + unit.width() <= usize::from(width))
     {
-        // Big numerals, with any unit set small on the baseline row.
         Some([top, middle, bottom]) => vec![
             Line::styled(top, value_style),
             Line::styled(middle, value_style),
@@ -366,7 +363,6 @@ fn stats_lines(
     }
     lines
 }
-/// A step's marker and its color.
 fn step_marker(state: StepState, accent: Color, theme: &Theme) -> (&'static str, Color) {
     match state {
         StepState::Done => ("●", theme.success),
@@ -374,8 +370,6 @@ fn step_marker(state: StepState, accent: Color, theme: &Theme) -> (&'static str,
         StepState::Todo => ("○", theme.fg_dim),
     }
 }
-/// Steps in equal columns joined by a rule: titles on one row, details under
-/// them. `None` when a title or detail would not fit its column.
 fn step_columns(
     items: &[nexus_core::interactive::DisplayStep],
     session: &Session,
@@ -506,7 +500,6 @@ fn steps_lines(
     }
     lines
 }
-/// A callout: a tinted band behind a rail in the callout's tone.
 fn callout_lines(
     tone: CalloutTone,
     title: Option<&str>,
@@ -536,7 +529,6 @@ fn callout_lines(
         width.saturating_sub(3),
         Style::default().fg(theme.fg),
     ));
-    // A tinted band behind a tone rail.
     let band = Style::default().bg(theme.raised);
     prefixed(lines, "▌ ", Style::default().fg(color).bg(theme.raised))
         .into_iter()
@@ -641,7 +633,6 @@ pub(super) fn control_style(theme: &Theme, selected: bool) -> Style {
         style
     }
 }
-/// A switch (or, for checklist items, a check box) followed by its label.
 fn render_toggle(
     session: &Session,
     (key, label, boxed): (&str, &str, bool),
@@ -677,8 +668,6 @@ fn render_toggle(
         style,
     );
 }
-/// Where a stepper's chip starts: after the label column, leaving room for
-/// ` − value + `.
 fn stepper_offset(label: &str, value: &str, session: &Session, area: Rect) -> u16 {
     let chip = u16::try_from(value.width())
         .unwrap_or(u16::MAX)
@@ -781,8 +770,6 @@ fn render_stepper(
         theme,
     );
 }
-/// A select: every option as a segmented strip when they fit beside the
-/// label, else the current value in a chip with cycle arrows.
 fn render_select(
     node: &Node,
     session: &Session,
@@ -983,11 +970,7 @@ pub(super) fn clipped(text: &str, width: u16) -> String {
     result.push('…');
     result
 }
-/// Each table column's `(x, width)` within `width` cells, one gap between
-/// columns. Columns get their widest cell (header and every row, so paging
-/// and sorting never shift them) when that fits; otherwise narrow columns keep
-/// their natural width and the rest share what remains. Drawing and header
-/// clicks both use this, so a click sorts the column drawn under it.
+/// Each table column's `(x, width)` within `width` cells, one gap between columns.
 pub(super) fn table_columns(session: &Session, node: &Node, width: u16) -> Vec<(u16, u16)> {
     let Node::Table {
         columns,
@@ -1092,7 +1075,6 @@ pub(super) fn render_table(
     }
     for (row, (original, cells)) in data.into_iter().enumerate() {
         let is_selected = original.is_some() && selected == original;
-        // A filled header, zebra rows, and a filled selection.
         let style = if row == 0 {
             Style::default()
                 .fg(theme.fg_dim)
@@ -1192,7 +1174,6 @@ pub(super) fn ratio_text(value: f64, max: f64) -> String {
         format!("{value} / {max}")
     }
 }
-/// Bars on one shared scale, in the label column layout.
 fn render_bars(
     (node, items): (usize, &[nexus_core::interactive::BarItem]),
     session: &Session,

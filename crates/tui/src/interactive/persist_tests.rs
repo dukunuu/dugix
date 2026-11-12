@@ -77,14 +77,12 @@ fn value(app: &AppView, p: &Placement, name: &str) -> String {
         .unwrap()
         .value(name)
 }
-/// Paint, focus the newest panel and type into its first input.
 fn edit_name(app: &mut AppView, placements: &[Placement], text: &str) {
     draw(app, placements);
     assert!(app.interactive.focus_latest());
     type_text(app, text);
     flush(app);
 }
-/// A new process: no widgets, same database.
 fn restart(app: &mut AppView) {
     app.interactive = Widgets::default();
     app.popup = Popup::None;
@@ -101,7 +99,6 @@ fn panel_state_is_saved_per_panel_and_restored_after_a_restart() {
     draw(&mut app, std::slice::from_ref(&p));
     assert_eq!(value(&app, &p, "name"), "Ada");
     assert_eq!(value(&app, &p, "count"), "0");
-    // Restoring changes nothing, so nothing is rewritten.
     assert!(app.interactive.take_dirty().is_empty());
 }
 
@@ -111,7 +108,6 @@ fn identical_panels_in_one_conversation_keep_separate_state() {
     let (a, b) = (placement(COUNTER, 0), placement(COUNTER, 1));
     let both = [a.clone(), b.clone()];
     draw(&mut app, &both);
-    // `focus_latest` picks the last visible panel: the second one.
     assert!(app.interactive.focus_latest());
     type_text(&mut app, "second");
     flush(&mut app);
@@ -132,7 +128,6 @@ fn state_belongs_to_its_conversation_and_incognito_saves_nothing() {
     edit_name(&mut app, std::slice::from_ref(&p), "kept");
     let first = app.core.session.clone().unwrap();
 
-    // A different conversation does not see it.
     let other = app
         .core
         .db
@@ -178,11 +173,9 @@ fn p_pins_the_focused_panel_but_types_into_inputs() {
     let p = placement(COUNTER, 0);
     draw(&mut app, std::slice::from_ref(&p));
     assert!(app.interactive.focus_latest());
-    // The input has focus first: `p` is just a letter.
     press(&mut app, KeyCode::Char('p'));
     assert_eq!(value(&app, &p, "name"), "p");
     assert!(app.core.pinned_panels().unwrap().is_empty());
-    // On the button it pins, state and all.
     press(&mut app, KeyCode::Tab);
     press(&mut app, KeyCode::Enter);
     press(&mut app, KeyCode::Char('p'));
@@ -193,7 +186,6 @@ fn p_pins_the_focused_panel_but_types_into_inputs() {
     let record = nexus_core::interactive::PanelSnapshot::decode(&pinned[0].record).unwrap();
     assert_eq!(record.state["count"].as_f64(), Some(1.0));
     assert_eq!(record.state["name"], "p");
-    // Pinning again picks a free name.
     press(&mut app, KeyCode::Char('p'));
     assert_eq!(app.core.pinned_panels().unwrap().len(), 2);
 }
@@ -211,7 +203,6 @@ fn the_command_pins_a_named_app_renames_and_unpins() {
     assert_eq!(app.core.pinned_panels().unwrap()[0].name, "tally");
     app.run_command("pin-panel unpin tally").unwrap();
     assert!(app.core.pinned_panels().unwrap().is_empty());
-    // With nothing on screen there is nothing to pin.
     let mut empty = test_app();
     empty.run_command("pin-panel").unwrap();
     assert!(empty.core.pinned_panels().unwrap().is_empty());
@@ -235,7 +226,6 @@ fn a_pinned_app_opens_full_size_with_its_state_and_keeps_changes() {
     app.run_command("pin-panel counter").unwrap();
     app.interactive.unfocus();
 
-    // Open it from /apps, as a person would.
     app.open_apps_popup();
     assert_eq!(app.pinned_apps.len(), 1);
     let rendered = apps_screen(&app);
@@ -252,7 +242,6 @@ fn a_pinned_app_opens_full_size_with_its_state_and_keeps_changes() {
     assert!(app.interactive.focused_app());
     assert!(app.interactive.expanded);
 
-    // Full-size view, with the saved state, even before any transcript layout.
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).unwrap();
     terminal.draw(|f| render_popup(f, &mut app)).unwrap();
     let view = screen(&terminal);
@@ -268,7 +257,6 @@ fn a_pinned_app_opens_full_size_with_its_state_and_keeps_changes() {
     };
     assert_eq!(name(&app), "Ada");
 
-    // Press the button, close, reopen: the new state is there.
     press(&mut app, KeyCode::Tab);
     press(&mut app, KeyCode::Enter);
     press(&mut app, KeyCode::Esc);
@@ -279,10 +267,8 @@ fn a_pinned_app_opens_full_size_with_its_state_and_keeps_changes() {
     let session = app.interactive.entries[&focused].session.as_ref().unwrap();
     assert_eq!(session.value("count"), "1");
     assert_eq!(session.value("name"), "Ada");
-    // The opened app is not the transcript panel it came from.
     assert_eq!(value(&app, &p, "count"), "0");
 
-    // The /apps command keeps the pinned panel available without a script runtime.
     app.interactive.unfocus();
     app.run_command("apps").unwrap();
     assert_eq!(app.popup, Popup::Apps);
@@ -323,7 +309,6 @@ fn the_apps_popup_renames_and_unpins_panels() {
     assert_eq!(app.core.pinned_panels().unwrap()[0].name, "tally");
     assert!(apps_screen(&app).contains("tally"));
 
-    // A bad name keeps the prompt open with a reason.
     handle(&mut app, ctrl('r')).unwrap();
     app.apps_edit = "Not Valid".into();
     handle(&mut app, plain(KeyCode::Enter)).unwrap();
@@ -395,7 +380,6 @@ fn open_url_names_the_host_and_waits_for_confirmation() {
     );
     assert!(shown.contains("a always docs.example.com"), "{shown}");
     assert!(opened.lock().unwrap().is_empty());
-    // Other keys are inert while a URL waits.
     press(&mut app, KeyCode::Char('x'));
     press(&mut app, KeyCode::Tab);
     assert!(opened.lock().unwrap().is_empty());
@@ -421,11 +405,9 @@ fn always_allow_is_per_host_for_this_run_only() {
     let said = status(&mut app);
     assert!(said.contains("docs.example.com allowed"), "{said}");
 
-    // The same host now opens at once.
     press(&mut app, KeyCode::Enter);
     assert_eq!(opened.lock().unwrap().len(), 2);
     assert!(!app.interactive.pending_url_focused());
-    // Another host still asks.
     press(&mut app, KeyCode::Tab);
     press(&mut app, KeyCode::Enter);
     assert_eq!(opened.lock().unwrap().len(), 2);
@@ -433,7 +415,6 @@ fn always_allow_is_per_host_for_this_run_only() {
     assert!(prompt(&app).contains("a always other.example.org"));
     press(&mut app, KeyCode::Esc);
 
-    // The allowance survives a viewport reset but not a new run.
     app.interactive.clear();
     draw(&mut app, std::slice::from_ref(&p));
     assert!(app.interactive.focus_latest());
@@ -452,7 +433,6 @@ fn a_long_url_is_shortened_but_never_its_host() {
         );
         assert!(line.chars().count() <= width.max(60), "{width}: {line}");
         assert!(line.contains("Enter"), "{width}: {line}");
-        // The hints shrink before the host does; the whole line fits the card.
         if width >= 100 {
             assert!(
                 line.contains("a always docs.example.com"),

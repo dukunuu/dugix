@@ -1,4 +1,4 @@
-use super::{Control, Entry, pin_focused, plain, safe};
+use super::{Control, Entry, no_modifier_but_shift, pin_focused, safe};
 use crate::app_view::AppView;
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -8,8 +8,6 @@ use nexus_core::interactive::{Node, Session};
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 
-/// Why an answer button can't send right now: a reply is streaming or a
-/// `!` command's output is still on its way into the conversation.
 fn answer_block(app: &AppView) -> Option<&'static str> {
     if app.viewing_stream() {
         Some("wait for the reply to finish, then pick again")
@@ -19,7 +17,7 @@ fn answer_block(app: &AppView) -> Option<&'static str> {
         None
     }
 }
-/// A proposed response must not race a reply or overwrite the user's draft.
+/// A proposed response must not race a reply or overwrite a draft.
 #[must_use]
 pub(crate) fn can_send(app: &AppView) -> bool {
     !app.viewing_stream() && app.input_text().is_empty()
@@ -137,8 +135,6 @@ pub fn mouse(app: &mut AppView, event: MouseEvent, screen: Rect) -> bool {
     open_pending_image(app);
     handled
 }
-/// Hand an image the user picked to the viewer, remembering whether to come
-/// back to the focused document when it closes.
 fn open_pending_image(app: &mut AppView) {
     if let Some(pending) = app.interactive.pending_image.take() {
         let back = if app.interactive.focused.is_some() {
@@ -149,8 +145,7 @@ fn open_pending_image(app: &mut AppView) {
         app.open_widget_image(&pending, back);
     }
 }
-/// Copy/cut a nonempty field selection to the clipboard. Returns false when
-/// nothing is selected, so Ctrl+C can still back out of the panel.
+/// Copy/cut a nonempty field selection; false when nothing is selected.
 pub(crate) fn copy_selection(app: &mut AppView, cut: bool) -> bool {
     let Some(text) = app.interactive.take_selection(cut) else {
         return false;
@@ -176,7 +171,7 @@ pub fn key(app: &mut AppView, event: KeyEvent) {
     {
         return;
     }
-    if !app.interactive.input_focused() && !plain(&event) {
+    if !app.interactive.input_focused() && !no_modifier_but_shift(&event) {
         return;
     }
     let textarea_focused = app.interactive.textarea_focused();
@@ -228,8 +223,7 @@ pub fn render_popup(f: &mut Frame, app: &mut AppView) {
         let enabled = can_send(app);
         app.interactive.popup(f, &app.theme, viewport, enabled);
     } else {
-        // The popup dispatcher dims the base view. Repaint just this card at
-        // full strength while retaining inline keyboard ownership.
+        // Repaint just this card at full strength: the popup dispatcher dims the base view.
         app.interactive.hits.clear();
         app.interactive
             .paint(f, viewport, top, &placements, &app.theme, true);

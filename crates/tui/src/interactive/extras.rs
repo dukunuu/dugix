@@ -10,7 +10,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Widget};
 use unicode_width::UnicodeWidthStr;
 
-/// Shade glyphs for heatmap quartiles, lightest first.
+/// Heatmap quartile glyphs, lightest first.
 const SHADES: [&str; 4] = ["░", "▒", "▓", "█"];
 
 fn fill(tone: Tone, session: &Session, theme: &Theme) -> Color {
@@ -35,8 +35,7 @@ fn number_lines(node: &Node, session: &Session, width: u16, theme: &Theme) -> Ve
         delta: delta.clone(),
         tone: *tone,
     };
-    // A headline is hierarchy, not ASCII artwork: use a bold, legible value
-    // with its unit intact, even in a narrow column.
+    // A headline is hierarchy, not ASCII artwork: keep the value bold and legible.
     super::stat_lines(&stat, session, (width, false), theme)
 }
 fn md_lines(
@@ -167,7 +166,6 @@ pub(super) fn render(
     Some(hits)
 }
 
-/// Visible branches packed from the top; expandable ones are controls.
 fn tree(
     (index, items): (usize, &[nexus_core::interactive::Branch]),
     session: &Session,
@@ -225,7 +223,6 @@ fn tree(
     hits
 }
 
-/// A half-ring in braille with the value in its middle and the label below.
 fn gauge(
     (index, label, value, max): (usize, &str, &serde_json::Value, &serde_json::Value),
     fill: Color,

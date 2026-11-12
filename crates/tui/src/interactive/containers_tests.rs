@@ -12,8 +12,6 @@ fn rows_sit_side_by_side_until_columns_get_too_narrow() {
     let row = &session.document().nodes()[0];
     let wide = components::container_regions(row, &session, Rect::new(2, 2, 76, 10));
     assert_eq!(wide, [Rect::new(2, 2, 37, 1), Rect::new(41, 2, 37, 1)]);
-    // Two 19-column slots are under the minimum: the row stacks instead,
-    // with the usual sibling spacing (consecutive text runs together).
     let narrow = components::container_regions(row, &session, Rect::new(2, 2, 40, 10));
     assert_eq!(narrow, [Rect::new(2, 2, 40, 1), Rect::new(2, 3, 40, 1)]);
 }
@@ -24,7 +22,6 @@ fn grids_fill_rows_and_drop_columns_on_narrow_terminals() {
     let grid = &session.document().nodes()[0];
     let wide = components::container_regions(grid, &session, Rect::new(0, 0, 76, 10));
     assert_eq!(wide.iter().map(|r| r.y).collect::<Vec<_>>(), [0, 0, 0]);
-    // 40 columns hold two 19-wide cells; the third wraps under the first.
     let narrow = components::container_regions(grid, &session, Rect::new(0, 0, 40, 10));
     assert_eq!(
         narrow,
@@ -76,7 +73,6 @@ $load = 4"#;
         .find(|hit| hit.control == Some(1))
         .unwrap()
         .rect;
-    // The button sits in the row's right-hand column.
     assert!(reset.x > 30, "{reset:?}");
     let click = MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),

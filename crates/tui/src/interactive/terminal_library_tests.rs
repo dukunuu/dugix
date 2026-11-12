@@ -1,6 +1,5 @@
 //! Component sheet: one realistic program per component family, rendered by
-//! the real panel renderer and exported as terminal cells for the preview
-//! workspace (`web/prototypes/interactive/`).
+//! the real panel renderer and exported as terminal cells.
 
 use super::*;
 use serde_json::{Value, json};

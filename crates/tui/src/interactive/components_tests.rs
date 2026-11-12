@@ -29,8 +29,6 @@ fn snapshot(view: Value, state: Value, expected: &[String]) -> Buffer {
         .unwrap();
     let buffer = terminal.backend().buffer();
     assert!(row_text(buffer, 0).starts_with("  Panel"));
-    // Component expectations describe the content, excluding the new card
-    // padding and blank section separators. Full-card snapshots live below.
     let regions = node_regions(entry.session.as_ref().unwrap(), 36);
     let mut content = Buffer::empty(Rect::new(
         0,
@@ -70,7 +68,6 @@ fn table_snapshot_shows_header_selection_and_truncated_cells() {
     let buffer = snapshot(
         json!([{"type":"table","columns":["Name","Status"],"rows_data":[["Ada","Ready"],["Longer than the column, and more","Waiting"]],"select":"row"}]),
         json!({"row":0}),
-        // Status keeps its natural width; Name takes the rest and clips.
         &[
             format!(" {:<24}Status", "Name"),
             format!("▸{:<24}Ready", "Ada"),
@@ -83,7 +80,6 @@ fn table_snapshot_shows_header_selection_and_truncated_cells() {
 
 #[test]
 fn progress_snapshot_clamps_and_uses_accent_bar() {
-    // Label column, eighth-cell bar on a dim track, value at the right.
     let buffer = snapshot(
         json!([{"type":"progress","label":"Done","value":5,"max":10}]),
         json!({}),
@@ -109,7 +105,6 @@ fn bars_snapshot_scales_to_largest_value() {
         json!([{"type":"bars","items":[{"label":"A","value":2},{"label":"B","value":4},{"label":"C","value":-1}]}]),
         json!({}),
         &[
-            // Solid data bars: no track behind them, zero draws nothing.
             format!("{:<6}{}{}  2", "A", "▆".repeat(12), " ".repeat(11)),
             format!("{:<6}{}  4", "B", "▆".repeat(23)),
             format!("{:<6}{}  0", "C", " ".repeat(23)),
@@ -147,8 +142,6 @@ fn checklist_snapshot_shows_independent_boolean_values() {
         json!({"name":"Ready","ready":false,"done":true}),
         &["    Ready".into(), " ✓  Done".into()],
     );
-    // An empty box sits on the control surface; a checked one is
-    // success-filled with a bright label. The first item has focus.
     assert_eq!(buffer[(1, 2)].bg, Theme::default().control);
     assert_eq!(buffer[(4, 2)].fg, Theme::default().accent);
     assert_eq!(buffer[(1, 3)].bg, Theme::default().success);
@@ -325,7 +318,7 @@ fn focus_order_and_keys_include_new_controls_without_stealing_input() {
     assert_eq!(value(&widgets, &p, "ready"), "false");
     assert_eq!(value(&widgets, &p, "done"), "true");
     widgets.key(KeyCode::Tab.into(), true);
-    assert_eq!(widgets.entries[&p.key()].focus, 7); // Expand is keyboard reachable.
+    assert_eq!(widgets.entries[&p.key()].focus, 7);
     widgets.key(KeyCode::Tab.into(), true);
     assert_eq!(widgets.entries[&p.key()].focus, 0);
 }
@@ -344,7 +337,6 @@ fn mouse_toggles_checklist_and_toggle_cycles_select_and_selects_table_rows() {
     assert_eq!(value(&widgets, &p, "ready"), "true");
     click_control(&mut widgets, 4, 3);
     assert_eq!(value(&widgets, &p, "row"), "2");
-    // Clip the header and first data row without depending on earlier fields' height.
     let table_top = widgets
         .hits
         .iter()
@@ -490,7 +482,6 @@ fn counter_card_snapshots_70_and_80_columns() {
         ];
         assert_card_snapshot(&entry, width, &expected);
         let (actual, _) = entry.canvas(width, &theme, false, true);
-        // The primary pill fills with the panel accent.
         assert_eq!(actual[(3, 10)].bg, theme.accent2);
         assert_eq!(actual[(3, 10)].fg, theme.on(theme.accent2));
         assert!(actual[(4, 4)].modifier.contains(Modifier::UNDERLINED));
@@ -498,16 +489,12 @@ fn counter_card_snapshots_70_and_80_columns() {
     }
 }
 
-/// A content row: content starts two columns in, past the focus gutter.
-/// Rows are compared with trailing spaces trimmed.
 fn card_row(content: &str, _width: u16) -> String {
     format!(" {content}").trim_end().to_string()
 }
-/// Quiet sentence-case title, with a discreet expand affordance.
 fn top_border(title: &str, width: u16) -> String {
     format!("  {title:<inner$}⤢", inner = usize::from(width) - 5)
 }
-/// The bottom rule with the hint right-aligned two columns from the end.
 fn bottom_border(width: u16) -> String {
     format!(
         "{} F2 keyboard ──",
@@ -588,8 +575,6 @@ fn input_fields_are_underlined_lines_with_visible_focus() {
         );
         let (quiet, _) = entry.canvas(width, &theme, false, true);
         let (focused, _) = entry.canvas(width, &theme, true, true);
-        // Label above, a text row on the panel surface, an underline below
-        // that spans the content width.
         assert_eq!(quiet[(2, 2)].fg, theme.fg_dim);
         assert_eq!(focused[(2, 2)].fg, theme.accent);
         for x in 2..width - 2 {
@@ -662,8 +647,6 @@ fn pills_use_contrasting_surfaces_and_distinct_primary_and_focus_styles() {
     let mut theme = Theme::default();
     theme.raised = theme.bg;
     let (quiet, _) = entry.canvas(80, &theme, false, true);
-    // Secondary actions are quiet underlined text on the panel surface; the
-    // primary action is the one filled pill.
     assert_eq!(quiet[(4, 4)].bg, theme.bg);
     assert_eq!(quiet[(4, 4)].fg, theme.fg_dim);
     assert!(quiet[(4, 4)].modifier.contains(Modifier::UNDERLINED));
@@ -672,7 +655,6 @@ fn pills_use_contrasting_surfaces_and_distinct_primary_and_focus_styles() {
     assert!(quiet[(3, 10)].modifier.contains(Modifier::BOLD));
     assert_eq!(quiet[(2, 10)].symbol(), " ");
     assert_eq!(quiet[(2, 10)].bg, theme.accent2);
-    // Focus fills a pill with your accent and marks it, with no underline.
     let (focused, _) = entry.canvas(80, &theme, true, true);
     assert_eq!(focused[(3, 4)].bg, theme.accent);
     assert_eq!(focused[(3, 4)].symbol(), "▸");
@@ -705,13 +687,11 @@ fn related_actions_stay_together_in_source_order_at_every_width() {
     };
     let entry = make_entry(&data);
     let (_, wide) = entry.canvas(80, &Theme::default(), false, true);
-    // Buttons keep two padding columns per side and source reading order.
     assert_eq!(wide[0].0, Rect::new(2, 2, 11, 1));
     assert_eq!(wide[1].0, Rect::new(14, 2, 9, 1));
     assert_eq!(wide[2].0, Rect::new(24, 2, 19, 1));
     let (_, narrow) = entry.canvas(30, &Theme::default(), false, true);
     assert_eq!(narrow[2].0, Rect::new(2, 3, 19, 1));
-    // Once anything wraps, the send stays in the left-aligned flow.
     data["view"][0]["items"][0]["label"] = json!("A very long local action");
     let (_, wrapped) = make_entry(&data).canvas(40, &Theme::default(), false, true);
     assert_eq!(wrapped[1].0, Rect::new(2, 3, 9, 1));

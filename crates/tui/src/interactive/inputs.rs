@@ -20,16 +20,12 @@ pub(super) struct Inputs {
     fields: HashMap<String, TextArea<'static>>,
     /// Vim keys on (mirrors the app's `/vim` setting before keys and draws).
     pub(super) vim: bool,
-    /// Each field's vim mode and pending command.
     vims: HashMap<String, Vim>,
-    /// Vim state of each code `Editor`, by node.
     code_vims: HashMap<usize, Vim>,
-    /// Text body of the focused field as last drawn on the panel canvas, so
-    /// the terminal caret is looked up only inside that field.
+    /// Text body of the focused field as last drawn, so the caret is looked up inside it.
     body: Option<Rect>,
 }
 
-/// Soft-wrap prose in a textarea; a single-line input scrolls horizontally.
 fn wrap_mode(field: &Node) -> WrapMode {
     if field.is_textarea() {
         WrapMode::WordOrGlyph
@@ -47,8 +43,6 @@ fn editor(value: &str, field: &Node) -> TextArea<'static> {
     editor
 }
 
-/// Keep pasted text within the field: drop control characters, keep newlines
-/// in a textarea, and fold them to spaces in a single-line input.
 fn sanitize_paste(text: &str, field: &Node) -> String {
     let multiline = field.is_textarea();
     let limit = field.input_limit().unwrap_or_default();
@@ -70,14 +64,10 @@ fn sanitize_paste(text: &str, field: &Node) -> String {
 }
 
 impl Inputs {
-    /// The editor for `node`, rebuilt when the session's value changed outside
-    /// it (patches, reset buttons, live data); editors of removed fields are
-    /// dropped on the way.
     fn sync_editor(&mut self, session: &Session, node: usize) -> Option<&mut TextArea<'static>> {
         let input @ Node::Input { key, .. } = session.document().node(node)? else {
             return None;
         };
-        // Patches, reset buttons and live data may replace the value externally.
         let live = |key: &String| {
             session
                 .document()
@@ -124,8 +114,6 @@ impl Inputs {
         Ok(())
     }
 
-    /// Vim first: `Some(consumed)` when vim decided, `None` to fall through
-    /// to the plain field keys (Insert-mode typing).
     fn vim_key(
         &mut self,
         session: &mut Session,
@@ -148,9 +136,7 @@ impl Inputs {
         })
     }
 
-    /// Apply an editing key; `Ok(true)` means the field consumed it, and
-    /// `Ok(false)` leaves it to the panel (Tab, Esc, Enter in a single-line
-    /// input, PageUp/PageDown outside a textarea).
+    /// Apply an editing key; `Ok(false)` leaves it to the panel.
     pub(super) fn key(
         &mut self,
         session: &mut Session,
@@ -337,18 +323,15 @@ impl Inputs {
         }
     }
 
-    /// The vim state for code editor `node`.
     pub(super) fn code_vim(&mut self, node: usize) -> &mut Vim {
         self.code_vims.entry(node).or_default()
     }
 
-    /// A code editor's vim mode label, when vim keys are on.
     pub(super) fn code_mode_label(&self, node: usize) -> Option<&'static str> {
         self.vim
             .then(|| self.code_vims.get(&node).map_or("INSERT", Vim::label))
     }
 
-    /// The focused field's vim mode label, when vim keys are on.
     pub(super) fn mode_label(&self, session: &Session, node: usize) -> Option<&'static str> {
         let Some(Node::Input { key, .. }) = session.document().node(node) else {
             return None;
@@ -362,8 +345,7 @@ impl Inputs {
         caret(buffer, self.body?.intersection(buffer.area))
     }
 
-    /// Hit-test through the editor's own rendered caret. Its soft-wrap map is
-    /// private; bounded visual moves avoid a second, divergent Unicode/wrap map.
+    /// Hit-test through the editor's own rendered caret, avoiding a second wrap map.
     pub(super) fn click(
         &mut self,
         session: &Session,
@@ -412,7 +394,6 @@ impl Inputs {
             return;
         };
         // Probe on one clone, not a history-buffer clone per display cell.
-        // Only the resulting data cursor is applied to the real editor.
         let mut candidate = field.clone();
         candidate.cancel_selection();
         for _ in 0..body.height {
@@ -519,9 +500,6 @@ struct FieldView<'a> {
     vim: Option<&'a Vim>,
 }
 
-/// A field's label above and underline below; returns the text body
-/// between them. Focus wins over the error colour so the focused field stays
-/// findable; the error itself shows on the row below the field.
 fn field_frame(
     buffer: &mut Buffer,
     frame: Rect,
@@ -564,7 +542,6 @@ fn field_frame(
     )
 }
 
-/// Paint one field into `view.area`; returns the editor's text body.
 fn placeholder_style(theme: &Theme) -> Style {
     Style::default()
         .fg(theme.fg_dim)
@@ -594,9 +571,7 @@ fn paint(field: &mut TextArea<'static>, view: FieldView<'_>, buffer: &mut Buffer
     };
     Clear.render(area, buffer);
     buffer.set_style(area, theme.background_style());
-    // An empty field has not been answered yet: say what it needs (the
-    // hint and the required mark) rather than greeting it with an error.
-    // Submitting still validates it.
+    // An empty field has not been answered yet: say what it needs, not an error.
     let error = session
         .input_error(key)
         .filter(|_| !session.value(key).is_empty());
@@ -622,7 +597,6 @@ fn paint(field: &mut TextArea<'static>, view: FieldView<'_>, buffer: &mut Buffer
     field.set_cursor_line_style(Style::default());
     field.set_selection_style(Style::default().fg(theme.fg).bg(theme.selection));
     field.set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
-    // The focused field draws its placeholder as a single line.
     let lines: Vec<_> = placeholder.lines().collect();
     field.set_placeholder_text(safe(&lines.join(crate::ui::style::SEP)));
     field.set_placeholder_style(placeholder_style(theme));
@@ -637,8 +611,7 @@ fn paint(field: &mut TextArea<'static>, view: FieldView<'_>, buffer: &mut Buffer
     );
     if body.width > 0 && body.height > 0 {
         if !selected && field.is_empty() {
-            // Without focus there is no caret cell, so the placeholder lines
-            // up with the label above it, one placeholder line per row.
+            // Without focus there is no caret cell, so the placeholder lines up with the label.
             for (y, line) in (body.y..body.bottom()).zip(lines) {
                 let width = usize::from(body.width);
                 buffer.set_stringn(body.x, y, safe(line), width, placeholder_style(theme));

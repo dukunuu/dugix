@@ -4,7 +4,8 @@ use super::layout::{
 };
 use super::lines::{select_option_at, stepper_arrows};
 use super::{
-    Control, Entry, Key, Placement, Widgets, binding_name, components, place_caret, plain, practice,
+    Control, Entry, Key, Placement, Widgets, binding_name, components, no_modifier_but_shift,
+    place_caret, practice,
 };
 use crate::theme::Theme;
 use crossterm::event::{
@@ -28,8 +29,7 @@ pub(super) struct Hit {
     pub(super) image: Option<(String, usize)>,
 }
 
-/// An image the user asked to see full size, waiting for the app to open the
-/// viewer (the document layer has no popup of its own to open).
+/// An image the user asked to see full size, waiting for the app to open the viewer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PendingImage {
     pub owner: usize,
@@ -38,7 +38,7 @@ pub(crate) struct PendingImage {
     pub url: String,
 }
 
-/// The rows of `rect` that fall inside `first..limit`, as (low, high).
+/// The rows of `rect` inside `first..limit`, as (low, high).
 fn visible_rows(rect: Rect, first: usize, limit: usize) -> Option<(usize, usize)> {
     let low = usize::from(rect.y).max(first);
     let high = usize::from(rect.bottom()).min(limit);
@@ -52,8 +52,7 @@ impl Widgets {
         let data_running = self.data_running.take();
         let window_unfocused = self.window_unfocused;
         let store = std::mem::take(&mut self.store).retained();
-        // Settings outlive a viewport reset: without this a session switch
-        // silently turned vim keys and motion back to their defaults.
+        // Settings outlive a viewport reset.
         let (vim, motion) = (self.vim, self.motion);
         *self = Self {
             data_calls: calls,
@@ -72,10 +71,7 @@ impl Widgets {
         self.visible.clear();
         self.animating = false;
     }
-    /// Where Diagram components in complete, on-transcript panels sit, as
-    /// transcript placements for the diagram painter. Only diagrams that
-    /// start at the content edge line up with its fixed inset; others (a
-    /// row's right column, a pinned panel) keep their text placeholder.
+    /// Where Diagram components in complete, on-transcript panels sit for the diagram painter.
     pub(crate) fn diagram_placements(
         &self,
         placements: &[Placement],
@@ -106,32 +102,27 @@ impl Widgets {
         }
         out
     }
-    /// Timers run while the window has focus and someone used it recently;
-    /// a panel left alone for half an hour stops ticking.
+    /// Timers run while the window has focus and someone used it in the last half hour.
     pub(super) fn timers_live(&self) -> bool {
         !self.window_unfocused
             && self
                 .last_input
                 .is_none_or(|at| at.elapsed() < std::time::Duration::from_mins(30))
     }
-    /// Whether the last frame drew a moving canvas, so the event loop should
-    /// keep redrawing. Off while the terminal window is unfocused.
+    /// Whether the last frame drew a moving canvas the event loop should keep redrawing.
     pub(crate) fn animating(&self) -> bool {
         self.animating && !self.window_unfocused
     }
-    /// Whether a document currently owns the keyboard.
     pub(crate) fn is_focused(&self) -> bool {
         self.focused.is_some()
     }
-    /// Whether a text field owns editing keys (including terminal key repeats).
     pub(crate) fn input_focused(&self) -> bool {
         self.focused
             .as_ref()
             .and_then(|key| self.entries.get(key))
             .is_some_and(|entry| entry.focused_input().is_some())
     }
-    /// Whether the focused field is a multiline textarea, which keeps
-    /// PageUp/PageDown for itself; other panels let them scroll the transcript.
+    /// Whether the focused field is a multiline textarea, which keeps PageUp/PageDown.
     pub(super) fn textarea_focused(&self) -> bool {
         self.focused
             .as_ref()
@@ -144,7 +135,6 @@ impl Widgets {
                 })
             })
     }
-    /// Copy (or cut) the focused field's nonempty selection.
     pub(super) fn take_selection(&mut self, cut: bool) -> Option<String> {
         let entry = self
             .focused
@@ -168,7 +158,6 @@ impl Widgets {
         self.expanded = false;
         self.pinned = false;
     }
-    /// Focus the last visible document, if any.
     pub fn focus_latest(&mut self) -> bool {
         self.focused = self.visible.last().cloned();
         if let Some(session) = self
@@ -741,7 +730,6 @@ impl Widgets {
             entry.edit(text, false);
         }
     }
-    /// Offer `key` to the focused text field; whether it consumed it.
     fn field_takes(&mut self, key: KeyEvent) -> bool {
         let vim = self.vim;
         let Some(entry) = self.focused.as_ref().and_then(|k| self.entries.get_mut(k)) else {
@@ -776,7 +764,7 @@ impl Widgets {
         }
         if self.pending_url_focused() {
             if key.kind == KeyEventKind::Press
-                && plain(&key)
+                && no_modifier_but_shift(&key)
                 && matches!(key.code, KeyCode::Enter | KeyCode::Esc | KeyCode::Char('a'))
             {
                 self.resolve_url(key.code);
@@ -788,13 +776,13 @@ impl Widgets {
             .focused
             .as_ref()
             .and_then(|key| self.entries.get_mut(key))
-            && (plain(&key) || vim)
+            && (no_modifier_but_shift(&key) || vim)
             && let Some(node) = practice::editing(entry)
             && practice::editor_key(entry, node, key, vim)
         {
             return (false, None);
         }
-        if matches!(key.code, KeyCode::Esc | KeyCode::F(2)) && plain(&key) {
+        if matches!(key.code, KeyCode::Esc | KeyCode::F(2)) && no_modifier_but_shift(&key) {
             // With vim keys, Esc first leaves Insert/Visual in a text field.
             if key.code == KeyCode::Esc && self.vim && self.field_takes(key) {
                 return (false, None);
@@ -829,7 +817,7 @@ impl Widgets {
                 Ok(false) => {}
             }
         }
-        if !plain(&key) {
+        if !no_modifier_but_shift(&key) {
             return (false, None);
         }
         let count = controls.len() + 1;

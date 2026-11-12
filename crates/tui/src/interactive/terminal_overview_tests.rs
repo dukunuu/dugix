@@ -184,9 +184,7 @@ fn overview() -> (Buffer, Vec<String>) {
         );
         let mut y = 5;
         for panel in panels {
-            // Contact-sheet packing: omit only the known blank padding
-            // below the title and above the footer. Every visible cell and
-            // component drawing still comes directly from Entry::canvas.
+            // Omit only the known blank padding below the title and above the footer.
             for row in
                 (0..panel.area.height).filter(|row| *row != 1 && *row != panel.area.height - 2)
             {

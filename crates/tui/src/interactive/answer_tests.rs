@@ -289,7 +289,6 @@ fn choice_list_card_at_80_columns_has_chips_labels_and_right_edge_arrows() {
     let frame = |text: &str| format!("  {text:<78}");
     let choice = |text: &str| format!("  {text:<75}→  ");
     let expected = [
-        // The hero repeats the panel title, so only the expand mark remains.
         format!("{}⤢  ", " ".repeat(77)),
         " ".repeat(80),
         frame("A little memory nook"),
@@ -302,7 +301,6 @@ fn choice_list_card_at_80_columns_has_chips_labels_and_right_edge_arrows() {
         format!("{} 1–3 pick · F2 keyboard ──", "─".repeat(54)),
     ];
     assert_eq!(rows(&canvas), expected);
-    // Hero titles are bold foreground; color is kept for interaction.
     assert_eq!(canvas[(2, 2)].fg, theme.fg);
     assert!(canvas[(2, 2)].modifier.contains(Modifier::BOLD));
     assert_eq!(canvas[(2, 3)].fg, theme.fg_dim);
@@ -412,7 +410,6 @@ async fn numbered_and_arrow_key_choices_use_the_same_guarded_send_path() {
         let mut app = app(&quiz("First"));
         app.set_input("keep my draft");
         draw(&mut app);
-        // Digits have no effect until the card owns keyboard input.
         app.interactive.key(KeyCode::Char('2').into(), true);
         assert_eq!(app.messages.len(), 1);
         focus(&mut app);
@@ -498,7 +495,6 @@ async fn choice_clicks_include_the_chip_blank_space_arrow_and_wrapped_continuati
 #[tokio::test(flavor = "current_thread")]
 async fn number_choices_are_blocked_while_a_user_command_is_running() {
     let mut app = app(&quiz("First"));
-    // `!` commands are an agent-mode feature.
     app.work_mode = nexus_core::app::WorkMode::Agent;
     app.execute(AppCommand::RunUserCommand { cmd: "true".into() })
         .unwrap();

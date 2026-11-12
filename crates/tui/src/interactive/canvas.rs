@@ -1,7 +1,5 @@
-//! Braille rasterizer for `Canvas` and chart plots. Each cell holds a 2×4 dot
-//! grid, and terminal cells are about twice as tall as wide, so dots come out
-//! roughly square: circles stay round on any panel width. The last shape to
-//! touch a cell picks its color.
+//! Braille rasterizer for `Canvas` and chart plots: a 2×4 dot grid per cell,
+//! roughly square on the terminal. The last shape to touch a cell picks its color.
 
 use super::safe;
 use crate::theme::Theme;
@@ -34,7 +32,6 @@ impl Dots {
             touched: None,
         }
     }
-    /// The cell box raised since the last call, as a rect inside `area`.
     pub(super) fn take_touched(&mut self, area: Rect) -> Option<Rect> {
         self.touched.take().map(|(left, top, right, bottom)| {
             Rect::new(
@@ -45,15 +42,12 @@ impl Dots {
             )
         })
     }
-    /// Width in dots.
     pub(super) fn width(&self) -> f64 {
         f64::from(self.cols) * 2.0
     }
-    /// Height in dots.
     pub(super) fn height(&self) -> f64 {
         f64::from(self.rows) * 4.0
     }
-    /// Raise the dot nearest `(x, y)`; points off the grid are ignored.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub(super) fn set(&mut self, x: f64, y: f64, color: Color) {
         let (x, y) = (x.round(), y.round());
@@ -72,8 +66,7 @@ impl Dots {
         cell.0 |= BITS[y % 4][x % 2];
         cell.1 = Some(color);
     }
-    /// A straight segment, clipped to the grid first so far-off endpoints
-    /// cost nothing.
+    /// A straight segment, clipped to the grid first so far-off endpoints cost nothing.
     pub(super) fn line(&mut self, from: (f64, f64), to: (f64, f64), color: Color) {
         let Some(((x0, y0), (x1, y1))) = self.clip(from, to) else {
             return;
@@ -119,7 +112,6 @@ impl Dots {
             )
         })
     }
-    /// Every dot centre inside the (clamped) box, for fills and outlines.
     fn each_in(&self, left: f64, top: f64, right: f64, bottom: f64) -> Vec<(f64, f64)> {
         let left = left.floor().max(0.0);
         let top = top.floor().max(0.0);
@@ -209,7 +201,6 @@ impl Dots {
             self.line(points[index], points[(index + 1) % points.len()], color);
         }
     }
-    /// Every other dot inside a polygon: a light shade under chart lines.
     pub(super) fn shade(&mut self, points: &[(f64, f64)], color: Color) {
         if points.len() < 3 {
             return;
@@ -251,7 +242,6 @@ impl Dots {
     }
 }
 
-/// Even-odd point-in-polygon test.
 fn inside(points: &[(f64, f64)], x: f64, y: f64) -> bool {
     let mut result = false;
     let mut previous = points[points.len() - 1];
@@ -265,8 +255,7 @@ fn inside(points: &[(f64, f64)], x: f64, y: f64) -> bool {
     result
 }
 
-/// Draw a canvas's shapes at the session's clock into `area`; returns the
-/// cell box each clickable shape inked, by shape index, for hit testing.
+/// Draw a canvas's shapes at the session's clock, returning each clickable shape's cell box.
 pub(super) fn draw(
     shapes: &[Shape],
     session: &Session,
@@ -406,8 +395,6 @@ art = Canvas([
   Label("hi", 50, 0, "normal")
 ], 4, "A ball bouncing in a box")"#;
 
-    /// Inner rows of a panel's card, which starts with a title border, a
-    /// padding row, then the canvas.
     fn canvas_rows(entry: &super::super::Entry, width: u16) -> Vec<String> {
         let (buffer, _) = entry.canvas(width, &Theme::default(), false, false);
         (2..6)
@@ -419,7 +406,6 @@ art = Canvas([
             .collect()
     }
     fn ball_column(rows: &[String]) -> usize {
-        // Inside the box's side walls, the ball is the only ink on this row.
         rows[1]
             .chars()
             .enumerate()
@@ -446,7 +432,6 @@ art = Canvas([
         entry.session.as_mut().unwrap().set_clock(2.0);
         let right = ball_column(&canvas_rows(&entry, 40));
         assert!(right > left + 20, "ball moved from {left} to {right}");
-        // Radii follow the height, so a narrow panel draws the same ball.
         let narrow = canvas_rows(&entry, 24);
         let wide = canvas_rows(&entry, 40);
         let ball = |rows: &[String]| {

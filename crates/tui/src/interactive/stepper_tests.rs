@@ -30,8 +30,6 @@ fn row(buffer: &Buffer, y: u16) -> String {
 #[test]
 fn stepper_renders_one_row_at_80_columns_with_dim_label_and_bound_arrows() {
     let theme = Theme::default();
-    // A ` − value + ` chip on the control surface after the label column;
-    // a bound's sign goes faint.
     for (days, expected, minus, plus) in [
         (5, "5", theme.fg_dim, theme.fg_dim),
         (1, "1", theme.border_dim, theme.fg_dim),
@@ -52,8 +50,6 @@ fn stepper_renders_one_row_at_80_columns_with_dim_label_and_bound_arrows() {
     assert_eq!(buffer[(9, 4)].fg, theme.border_dim);
     assert_eq!(buffer[(13, 4)].fg, theme.accent);
     assert_eq!(buffer[(11, 4)].bg, theme.selection);
-    // Focus: the label turns your accent and the gutter carries the marker;
-    // nothing is underlined.
     assert!(!buffer[(11, 4)].modifier.contains(Modifier::UNDERLINED));
     assert_eq!(buffer[(2, 4)].fg, theme.accent);
     assert!(buffer[(2, 4)].modifier.contains(Modifier::BOLD));
@@ -151,7 +147,6 @@ fn clicks_only_adjust_on_arrows_inline_and_in_the_expanded_view() {
     let mut widgets = Widgets::default();
     draw(&mut widgets, &p);
     let screen = Rect::new(0, 0, 82, 32);
-    // Minus covers chip cells 6–7, the value sits at 9, plus covers 11–12.
     for (offset, expected) in [(0, "5"), (9, "5"), (11, "7"), (12, "7"), (6, "5")] {
         click(&mut widgets, offset, screen);
         assert_eq!(days(&widgets, &p), expected);
@@ -201,7 +196,6 @@ fn prompt_app_has_an_80_column_render_and_state_driven_progress() {
         card_row(" ✓  Beach (2 days)"),
         card_row("    Hiking (3 days)"),
         card_row(""),
-        // Shared label column, a 55-cell bar at 2/5, the value at the right.
         card_row(&format!(
             "{:<14}{}{}  2 / 5",
             "Planned days",

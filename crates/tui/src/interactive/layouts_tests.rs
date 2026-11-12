@@ -27,12 +27,9 @@ fn render_at(source: &str, width: u16) -> (Buffer, Vec<String>) {
 fn render(source: &str) -> Vec<String> {
     render_at(source, 80).1
 }
-/// Expected content row: Bold panels have no side borders, so content sits
-/// one column further in (past the focus gutter). Rows compare trimmed.
 fn framed(content: &str) -> String {
     format!(" {content}")
 }
-/// A static panel's quiet title (snapshots trim trailing whitespace).
 fn title_bar(title: &str, _width: usize) -> String {
     format!("  {title}")
 }
@@ -115,7 +112,6 @@ fn columns_and_callout_render_at_80_columns_in_a_rounded_frame() {
         .map(|row| row.trim_end().to_string())
         .collect();
     assert_eq!(rows, trimmed);
-    // Static documents carry no expand glyph and no keyboard hint.
     let text = rows.join("\n");
     assert!(
         !text.contains('⤢') && !text.contains("F2 keyboard"),
@@ -141,8 +137,6 @@ fn accent_colors_come_from_the_theme_roles() {
         );
         let (canvas, _) = entry(&source).canvas(60, &theme, false, true);
         assert_eq!(canvas[(3, 0)].bg, theme.bg, "{accent} unfilled title");
-        // Titles are bold foreground in every accent; the accent colors
-        // what the panel draws, not its name.
         assert_eq!(canvas[(3, 0)].fg, theme.fg, "{accent} title ink");
         assert_eq!(canvas[(2, 2)].fg, color, "{accent} tip rail");
         assert_eq!(canvas[(2, 2)].symbol(), "▌");
@@ -169,7 +163,6 @@ fn stats_and_steps_render_at_80_columns_in_a_heavy_frame() {
     let rows = render(&release());
     assert_eq!(rows.len(), 8, "{rows:#?}");
     assert_eq!(rows[0], title_bar("Overview", 80));
-    // A heavy frame draws a heavy bottom rule.
     assert_eq!(rows[7], "━".repeat(80));
     assert!(rows[2].starts_with("  12 "), "{}", rows[2]);
     for (value, label) in [
@@ -228,7 +221,6 @@ fn steps_fall_back_to_a_connected_timeline_when_they_do_not_fit() {
     assert!(text.contains("○ Ship it"), "{text}");
     assert!(text.contains("│ Nodes and limits"), "{text}");
     assert!(rows.iter().any(|row| row.starts_with("  │")), "{text}");
-    // One row when the same steps fit.
     let wide = render_at(&source, 120).1;
     assert!(
         wide.iter()
@@ -245,14 +237,12 @@ fn cards_form_a_tiled_responsive_grid() {
     let rows = render(&cards());
     let text = rows.join("\n");
     assert_eq!(rows[0], "  Overview", "{text}");
-    // 80 columns fit three cards per row; four cards balance into a 2x2 grid.
     let row_of = |word: &str| rows.iter().position(|row| row.contains(word)).unwrap();
     assert_eq!(row_of("Speed"), row_of("Safety"), "{text}");
     assert_eq!(row_of("Size"), row_of("Cost"), "{text}");
     assert!(row_of("Size") > row_of("Speed"), "{text}");
     assert!(text.contains("  fast"), "{text}");
     assert!(text.contains("Builds finish in"), "{text}");
-    // Narrow panels stack: one card's rail per row.
     let narrow = render_at(&cards(), 30).1;
     assert!(narrow.iter().all(|row| row.matches('▎').count() <= 1));
     let theme = Theme::default();
@@ -265,8 +255,6 @@ fn cards_form_a_tiled_responsive_grid() {
             .unwrap(),
     )
     .unwrap();
-    // Tiles sit on the raised surface behind a rail in the card's tone; the
-    // first card's title uses its tone too.
     assert_eq!(canvas[(2, speed)].symbol(), "▎");
     assert_eq!(canvas[(2, speed)].fg, theme.success);
     assert_eq!(canvas[(4, speed)].bg, theme.raised);
@@ -278,7 +266,6 @@ fn hero_badge_is_a_pill_right_after_the_title() {
     let rows = render(&hero());
     let text = rows.join("\n");
     assert_eq!(rows[0], "  Overview", "{text}");
-    // A dashed frame draws a dashed bottom rule.
     assert!(rows.last().unwrap().starts_with('╌'), "{text}");
     let title = rows.iter().find(|row| row.contains("Nexus 0.2")).unwrap();
     assert!(title.contains("Nexus 0.2    NEW"), "{title}");
@@ -292,7 +279,6 @@ fn hero_badge_is_a_pill_right_after_the_title() {
 fn plain_frame_has_only_a_title_rule() {
     let source = doc("plain", "accent2", json!([{"type":"text","text":"Body"}]));
     let rows = render(&source);
-    // Plain frames draw an unfilled title over a rule.
     assert_eq!(
         rows[0],
         format!("Overview {}", "─".repeat(80 - "Overview ".width()))
@@ -364,7 +350,6 @@ fn reserved_height_equals_drawn_height_at_60_80_and_120() {
             let reserved = source_height(source, width);
             let (canvas, rows) = render_at(source, width);
             assert_eq!(canvas.area.height, reserved, "{width}\n{}", rows.join("\n"));
-            // Nothing is clipped: the last content row sits above the bottom padding.
             let regions = node_regions(entry(source).session.as_ref().unwrap(), width);
             assert_eq!(card_height(&regions), reserved);
         }
@@ -404,7 +389,6 @@ fn static_documents_are_not_focusable_expandable_or_pinned() {
         "static layouts are never focusable"
     );
     assert!(!widgets.pinned);
-    // Scrolled past, a layout stays in the history instead of pinning over it.
     terminal
         .draw(|f| {
             widgets.begin_frame(false);
@@ -455,8 +439,6 @@ fn interactive_panels_are_counted_but_layouts_are_not() {
 #[test]
 fn cards_in_a_row_share_one_height_and_badges_sit_on_the_title_row() {
     let lines = render(&cards());
-    // Each grid row's two cards start and end on the same rows: every row
-    // with a tile carries both tiles' rails.
     let tiled: Vec<_> = lines.iter().filter(|line| line.contains('▎')).collect();
     assert_eq!(tiled.len(), 10, "{lines:#?}");
     assert!(
@@ -476,7 +458,6 @@ fn first_hero_suppresses_only_a_matching_rendered_border_title() {
         })
         .to_string();
         let (canvas, rows) = render_at(&source, 80);
-        // The hero already says it: the header remains empty.
         assert!(rows[0].is_empty());
         assert!(rows[2].to_lowercase().contains("overview"));
         assert_eq!(canvas[(2, 2)].fg, Theme::default().fg);

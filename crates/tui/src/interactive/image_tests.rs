@@ -103,7 +103,6 @@ fn height_is_identical_while_loading_failed_disabled_and_loaded() {
         fetcher.set_enabled(false);
         let off = canvas(&source);
         assert!(
-            // Narrow tiles drop the host before they clip the description.
             off.iter().any(|row| row.contains("\u{25a3}")),
             "{name}: {off:#?}"
         );

@@ -61,7 +61,6 @@ use ratatui::style::Color;
 #[cfg(test)]
 use unicode_width::UnicodeWidthStr;
 
-/// How long a pressed control stays inverted.
 const PRESS_FLASH_MS: u64 = 140;
 
 /// Fixed image reservation with a visible, centered failure placeholder.
@@ -147,16 +146,12 @@ enum Control {
     Shape(usize, usize),
     Load,
 }
-/// Why a control that would send can't yet.
 const SEND_BLOCKED: &str = "Finish the reply and clear your draft before reviewing a UI response.";
-/// Whether a canvas shape's action sends a message (and so waits for the
-/// reply to finish, like a sending button).
 fn shape_sends(session: &Session, node: usize, shape: usize) -> bool {
     matches!(session.document().node(node), Some(Node::Canvas { shapes, .. })
         if shapes.get(shape).and_then(nexus_core::interactive::Shape::action)
             .is_some_and(|action| session.document().sends(action)))
 }
-/// The `@Keys` name of a key: arrows, space, a–z, 0–9.
 fn binding_name(code: KeyCode) -> Option<String> {
     Some(match code {
         KeyCode::Left => "left".into(),
@@ -168,12 +163,10 @@ fn binding_name(code: KeyCode) -> Option<String> {
         _ => return None,
     })
 }
-/// No modifier other than Shift: the key may drive panel shortcuts.
-fn plain(key: &KeyEvent) -> bool {
+fn no_modifier_but_shift(key: &KeyEvent) -> bool {
     key.modifiers.difference(KeyModifiers::SHIFT).is_empty()
 }
-/// Hand the terminal caret to a focused text field (for IMEs), replacing
-/// the reversed-video cell the editor drew there.
+/// Hand the terminal caret to a focused text field so IMEs follow it.
 fn place_caret(f: &mut Frame, position: Position) {
     f.buffer_mut()[position].modifier.remove(Modifier::REVERSED);
     f.set_cursor_position(position);
@@ -186,12 +179,12 @@ struct Entry {
     inputs: std::cell::RefCell<inputs::Inputs>,
     /// When this panel was first shown; canvas animations count from here.
     born: std::time::Instant,
-    /// The control last pressed and when, for the brief press flash.
+    /// The control last pressed and when, for the press flash.
     pressed: Option<(usize, std::time::Instant)>,
-    /// Why part of the model's panel was left out, when it was.
+    /// Why part of the model's panel was left out.
     left_out: Option<String>,
 }
-/// Disposable UI instances and this frame's hit areas. No filesystem writes.
+/// Disposable UI instances and this frame's hit areas; no filesystem writes.
 #[derive(Default)]
 #[allow(clippy::struct_excessive_bools)] // Independent input, layout and OS-focus flags.
 pub struct Widgets {
@@ -206,22 +199,19 @@ pub struct Widgets {
     expanded: bool,
     pinned: bool,
     layout: Option<(Rect, usize, Vec<Placement>)>,
-    /// Set by a click on an image (or `v` on a focused one); the app takes it.
+    /// An image the user asked to see; the app opens the viewer.
     pending_image: Option<PendingImage>,
     pending_status: Option<String>,
     applied_patches: std::collections::HashSet<Key>,
     data_calls: HashMap<String, usize>,
     data_running: Option<live::Running>,
     window_unfocused: bool,
-    /// A canvas drawn this frame is still animating.
     animating: bool,
     /// The last key or click the panels saw; timers idle after 30 minutes.
     last_input: Option<std::time::Instant>,
-    /// Motion in panels (`/motion on|off`): glides, draw-in, press flash and
-    /// canvas animation. Off by default so tests render final frames; the
-    /// app turns it on from the `motion` setting.
+    /// Motion in panels (`/motion on|off`), off by default so tests render final frames.
     pub(crate) motion: bool,
-    /// Saved-state bookkeeping and pinned apps; see `persist`.
+    /// Saved-state bookkeeping and pinned apps.
     store: persist::Store,
     /// Vim keys in text fields and code editors (the app's `/vim` setting).
     pub(crate) vim: bool,

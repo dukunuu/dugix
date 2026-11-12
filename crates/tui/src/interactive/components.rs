@@ -17,7 +17,6 @@ use unicode_width::UnicodeWidthStr;
 
 pub(super) fn control_count(node: &Node, session: &Session) -> usize {
     match node {
-        // Visible expandable branches, in preorder.
         Node::Tree { items } => {
             let index = session.document().node_index(node);
             nexus_core::interactive::tree_branches(items)
@@ -81,7 +80,6 @@ pub(super) fn height(node: &Node, session: &Session, width: u16) -> Option<u16> 
             .iter()
             .map(|item| 1 + branch_height(&item.view, session, width))
             .sum(),
-        // Title, fields, a blank row, then the submit button.
         Node::Form { fields, .. } => 3 + branch_height(fields, session, width),
         Node::Chart { rows, .. } | Node::Canvas { rows, .. } | Node::Spacer { rows } => *rows,
         Node::Row { .. } | Node::Grid { .. } | Node::Stack { .. } => {
@@ -169,12 +167,9 @@ pub(super) fn visible_regions(session: &Session, width: u16) -> Vec<(&Node, Rect
     );
     out
 }
-/// Narrowest column a row child gets before the row stacks instead.
 const MIN_ROW_SLOT: u16 = 20;
-/// Narrowest grid cell before the grid drops a column.
 const MIN_GRID_SLOT: u16 = 18;
-/// One node's height at `width`, measured the way siblings are.
-fn measured(node: &Node, session: &Session, width: u16) -> u16 {
+fn measured_height(node: &Node, session: &Session, width: u16) -> u16 {
     branch_regions(
         session,
         std::slice::from_ref(node),
@@ -183,8 +178,7 @@ fn measured(node: &Node, session: &Session, width: u16) -> u16 {
     .first()
     .map_or(0, |region| region.height)
 }
-/// Where a layout container's children sit inside `area`. Rows and grids
-/// fall back to stacking when a column would be too narrow to read.
+/// Where a layout container's children sit inside `area`.
 pub(super) fn container_regions(node: &Node, session: &Session, area: Rect) -> Vec<Rect> {
     let columns = |items: &[Node], count: u16, gap: u16, row_gap: u16| {
         let slot = area.width.saturating_sub(gap * (count - 1)) / count;
@@ -194,7 +188,7 @@ pub(super) fn container_regions(node: &Node, session: &Session, area: Rect) -> V
             let mut bottom = y;
             for (column, child) in chunk.iter().enumerate() {
                 let x = area.x + u16::try_from(column).unwrap_or(0) * (slot + gap);
-                let height = measured(child, session, slot);
+                let height = measured_height(child, session, slot);
                 regions.push(Rect::new(x, y, slot, height));
                 bottom = bottom.max(y.saturating_add(height));
             }
@@ -245,7 +239,7 @@ pub(super) fn container_regions(node: &Node, session: &Session, area: Rect) -> V
             items
                 .iter()
                 .map(|child| {
-                    let height = measured(child, session, area.width);
+                    let height = measured_height(child, session, area.width);
                     let region = Rect::new(area.x, y, area.width, height);
                     y = y.saturating_add(height).saturating_add(*gap);
                     region
@@ -397,7 +391,6 @@ pub(super) fn render(
             ..
         } => chart(*kind, series, labels, session, area, theme, buffer),
         Node::Canvas { shapes, .. } => {
-            // Clickable shapes are controls, in shape order.
             for (rank, (_, rect)) in super::canvas::draw(shapes, session, area, theme, buffer)
                 .into_iter()
                 .enumerate()
@@ -619,7 +612,6 @@ pub(super) fn render(
     }
     Some((next - control, hits))
 }
-/// The slider's bar, between the label column and its value.
 fn slider_track(label: &str, value: &str, session: &Session, area: Rect) -> Rect {
     let column = if display(session, label).is_empty() {
         0
@@ -634,7 +626,6 @@ fn slider_track(label: &str, value: &str, session: &Session, area: Rect) -> Rect
         1,
     )
 }
-/// The stars of a rating, after the label column.
 fn rating_rect(label: &str, max: u16, session: &Session, area: Rect) -> Rect {
     let column = if display(session, label).is_empty() {
         0
@@ -971,8 +962,6 @@ fn chart(
         .style(Style::default().fg(theme.fg_dim))
         .render(axis, buffer);
 }
-/// Grouped columns on a zero baseline, eighth-cell tall, one hue per series.
-/// A single series prints each value above its column.
 fn columns(
     values: &[Vec<f64>],
     tones: &[Color],
@@ -1035,7 +1024,6 @@ fn columns(
         }
     }
 }
-/// One label under each column group when they fit, else first and last.
 fn column_labels(
     labels: &[String],
     samples: usize,
@@ -1070,7 +1058,6 @@ fn column_labels(
         }
     }
 }
-/// Samples as braille dot positions, spread evenly across the plot.
 fn braille_points(
     values: &[f64],
     samples: usize,

@@ -1,7 +1,5 @@
-//! Practice components: a highlighted code editor with line numbers, choice
-//! lists that mark the right answer once picked, and quizzes that page
-//! through questions. Every quiz reserves its tallest question so paging
-//! never moves the transcript below it.
+//! Practice components: a highlighted code editor, choice lists that mark the
+//! right answer, and quizzes whose tallest question is always reserved.
 
 use super::{Control, Entry, branch_regions, control_style, display, glyph, wrapped_text};
 use crate::theme::Theme;
@@ -30,7 +28,6 @@ pub(super) fn height(node: &Node, session: &Session, width: u16) -> Option<u16> 
     })
 }
 
-/// Prompt, answer and explanation lines, wrapped to `width`.
 fn question_text(
     item: &Question,
     session: &Session,
@@ -268,8 +265,7 @@ fn quiz(
     hits
 }
 
-/// Highlighted lines of `source`, one per `\n`-separated line, so the caret
-/// stays aligned with the text.
+/// Highlighted lines of `source`, one per `\n`-separated line.
 pub(super) fn highlighted(source: &str, lang: &str, theme: &Theme) -> Vec<Line<'static>> {
     crate::ui::style::highlighted_lines(
         source,
@@ -279,7 +275,6 @@ pub(super) fn highlighted(source: &str, lang: &str, theme: &Theme) -> Vec<Line<'
     )
 }
 
-/// `line` without its first `skip` display columns, at most `take` wide.
 fn columns(line: &Line<'static>, skip: usize, take: usize) -> Line<'static> {
     let mut spans = Vec::new();
     let mut column = 0;
@@ -383,8 +378,7 @@ fn editor(
     }
 }
 
-/// Route a key to the focused editor while it is editing. Returns whether
-/// the key was consumed.
+/// Route a key to the focused editor while it is editing; whether it was consumed.
 pub(super) fn editor_key(entry: &mut Entry, node: usize, key: KeyEvent, vim: bool) -> bool {
     if vim && let Some(consumed) = vim_editor_key(entry, node, key) {
         return consumed;
@@ -427,8 +421,6 @@ pub(super) fn editor_key(entry: &mut Entry, node: usize, key: KeyEvent, vim: boo
     true
 }
 
-/// Vim over the editor's code: `None` hands the key to the plain editor
-/// (Insert-mode typing keeps its smart indent; Normal-mode Esc stops editing).
 fn vim_editor_key(entry: &mut Entry, node: usize, key: KeyEvent) -> Option<bool> {
     let Ok(session) = &mut entry.session else {
         return Some(false);
@@ -478,8 +470,7 @@ pub(super) fn editing(entry: &Entry) -> Option<usize> {
         .then_some(node)
 }
 
-/// Clicks: an editor places its caret, a quiz header pages back on its
-/// left arrow and forward elsewhere.
+/// Clicks: an editor places its caret, a quiz header pages.
 pub(super) fn click(
     entry: &mut Entry,
     control: &Control,
