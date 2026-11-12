@@ -45,7 +45,7 @@ pub struct IndexState {
     /// One in-flight file/chat embedding job, or embedder capability probe.
     pub embed_rx: Option<mpsc::UnboundedReceiver<EmbedMsg>>,
     /// Background converter updates: (`space_id`, file name, progress or final result).
-    pub convert_rx: Option<mpsc::UnboundedReceiver<(String, String, files::OcrUpdate)>>,
+    pub convert_rx: Option<mpsc::UnboundedReceiver<(String, String, files::ConvertUpdate)>>,
 }
 
 impl IndexState {

@@ -243,7 +243,7 @@ async fn run_loop(
                     AppEvent::Title(t) => app.on_title_result(t),
                     AppEvent::Compact(c) => app.on_compact_result(c),
                     AppEvent::SkillInstall(r) => app.on_skill_install_result(r),
-                    AppEvent::Ocr(r) => app.on_ocr_done(r),
+                    AppEvent::Convert(r) => app.on_convert_done(r),
                     AppEvent::Embed(r) => app.on_embed_done(r),
                     AppEvent::LocalServers(r) => app.on_local_status(r),
                     AppEvent::Research(r) => {

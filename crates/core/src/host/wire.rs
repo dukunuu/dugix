@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::app::{
-    AppEvent, GateState, LoginMsg, OcrUpdate, PlanQuestion, ResearchUpdate, SurveyPhase,
+    AppEvent, ConvertUpdate, GateState, LoginMsg, PlanQuestion, ResearchUpdate, SurveyPhase,
     SwarmUpdate,
 };
 use crate::db::Persona;
@@ -47,7 +47,7 @@ pub enum WireEvent {
     SkillInstall(Option<Result<String, String>>),
     /// A progress or final converter result for one file, or `None` when the
     /// batch closed.
-    Ocr(Option<(String, String, WireOcrUpdate)>),
+    Convert(Option<(String, String, WireConvertUpdate)>),
     /// One file's chunk-embedding job finished (or the channel closed).
     Embed(Option<WireEmbedMsg>),
     /// A deep-research pipeline update, or `None` when its channel closed.
@@ -127,7 +127,7 @@ pub enum WireSurveyPhase {
 
 /// A message from the background converter batch about one file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum WireOcrUpdate {
+pub enum WireConvertUpdate {
     /// A human-readable phase shown while nothing is countable yet.
     Stage(String),
     /// (pages done, total pages, pages failed so far).
@@ -293,9 +293,11 @@ impl From<AppEvent> for WireEvent {
             AppEvent::Title(t) => Self::Title(t),
             AppEvent::Compact(c) => Self::Compact(c),
             AppEvent::SkillInstall(s) => Self::SkillInstall(s),
-            AppEvent::Ocr(o) => Self::Ocr(
-                o.map(|(file, session, update)| (file, session, WireOcrUpdate::from(update))),
-            ),
+            AppEvent::Convert(o) => {
+                Self::Convert(o.map(|(file, session, update)| {
+                    (file, session, WireConvertUpdate::from(update))
+                }))
+            }
             AppEvent::Embed(e) => Self::Embed(e),
             AppEvent::LocalServers(s) => Self::LocalServers(s),
             AppEvent::Research(r) => {
@@ -394,12 +396,12 @@ impl From<SurveyPhase> for WireSurveyPhase {
     }
 }
 
-impl From<OcrUpdate> for WireOcrUpdate {
-    fn from(u: OcrUpdate) -> Self {
+impl From<ConvertUpdate> for WireConvertUpdate {
+    fn from(u: ConvertUpdate) -> Self {
         match u {
-            OcrUpdate::Stage(s) => Self::Stage(s),
-            OcrUpdate::Progress(done, total, failed) => Self::Progress(done, total, failed),
-            OcrUpdate::Done(d) => Self::Done(d),
+            ConvertUpdate::Stage(s) => Self::Stage(s),
+            ConvertUpdate::Progress(done, total, failed) => Self::Progress(done, total, failed),
+            ConvertUpdate::Done(d) => Self::Done(d),
         }
     }
 }
@@ -604,10 +606,10 @@ mod tests {
             WireEvent::Compact(Some(("s1".into(), "digest".into(), 12, 40))),
             WireEvent::SkillInstall(Some(Ok("python".into()))),
             WireEvent::SkillInstall(Some(Err("no model".into()))),
-            WireEvent::Ocr(Some((
+            WireEvent::Convert(Some((
                 "f1".into(),
                 "s1".into(),
-                WireOcrUpdate::Progress(1, 3, 0),
+                WireConvertUpdate::Progress(1, 3, 0),
             ))),
             WireEvent::Embed(Some((
                 "s1".into(),
@@ -726,7 +728,7 @@ mod tests {
             AppEvent::Title(None),
             AppEvent::Compact(None),
             AppEvent::SkillInstall(None),
-            AppEvent::Ocr(None),
+            AppEvent::Convert(None),
             AppEvent::Embed(None),
             AppEvent::Research(None),
             AppEvent::ResearchTopic(None),
@@ -855,18 +857,18 @@ mod tests {
 
     /// `OCR` payloads map every update shape.
     #[test]
-    fn from_app_event_maps_ocr() {
-        let app = AppEvent::Ocr(Some((
+    fn from_app_event_maps_convert() {
+        let app = AppEvent::Convert(Some((
             "f1".into(),
             "s1".into(),
-            OcrUpdate::Done(Ok(("text".into(), vec![(2, "reason".into())]))),
+            ConvertUpdate::Done(Ok(("text".into(), vec![(2, "reason".into())]))),
         )));
         assert_eq!(
             WireEvent::from(app),
-            WireEvent::Ocr(Some((
+            WireEvent::Convert(Some((
                 "f1".into(),
                 "s1".into(),
-                WireOcrUpdate::Done(Ok(("text".into(), vec![(2, "reason".into())]))),
+                WireConvertUpdate::Done(Ok(("text".into(), vec![(2, "reason".into())]))),
             )))
         );
     }

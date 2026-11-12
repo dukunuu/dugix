@@ -79,7 +79,7 @@ pub use chat::{
 pub use commands::{
     AppCommand, COMMANDS, Command, Match, MemoryAction, command_score, fuzzy_score,
 };
-pub use files::OcrUpdate;
+pub use files::ConvertUpdate;
 pub use research::{PlanQuestion, ResearchUpdate};
 pub use sessions::session_score;
 pub use snapshot::{
@@ -883,7 +883,7 @@ pub enum AppEvent {
     Compact(Option<(String, String, i64, u64)>),
     SkillInstall(Option<Result<String, String>>),
 
-    Ocr(Option<(String, String, files::OcrUpdate)>),
+    Convert(Option<(String, String, files::ConvertUpdate)>),
     Embed(Option<EmbedMsg>),
     Research(Option<ResearchMsg>),
     ResearchTopic(Option<Result<String, String>>),
@@ -2042,7 +2042,7 @@ impl App {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
-            } => AppEvent::Ocr(r),
+            } => AppEvent::Convert(r),
             r = async {
                 match self.index.embed_rx.as_mut() {
                     Some(rx) => rx.recv().await,

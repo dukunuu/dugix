@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 use super::App;
 
 #[derive(Clone)]
-pub enum OcrUpdate {
+pub enum ConvertUpdate {
     Stage(String),
     /// (pages done, total pages, pages failed so far).
     Progress(usize, usize, usize),
@@ -78,7 +78,7 @@ fn read_label(previous_status: &str) -> String {
 
 async fn convert_flow(
     path: std::path::PathBuf,
-    tx: &tokio::sync::mpsc::UnboundedSender<(String, String, OcrUpdate)>,
+    tx: &tokio::sync::mpsc::UnboundedSender<(String, String, ConvertUpdate)>,
     space_id: &str,
     name: &str,
 ) -> std::result::Result<(String, Vec<(usize, String)>), String> {
@@ -92,7 +92,7 @@ async fn convert_flow(
             let _ = tx.send((
                 space_id.to_string(),
                 name.to_string(),
-                OcrUpdate::Stage(format!("convert: {}", done.via)),
+                ConvertUpdate::Stage(format!("convert: {}", done.via)),
             ));
             Ok((done.text, Vec::new()))
         }
@@ -149,7 +149,7 @@ impl App {
             .list_files(&self.active_space.id)
             .unwrap_or_default();
         let mut seen: Vec<String> = Vec::new();
-        let mut ocr_jobs: Vec<(String, String, std::path::PathBuf)> = Vec::new();
+        let mut convert_jobs: Vec<(String, String, std::path::PathBuf)> = Vec::new();
         let version = crate::extract::EXTRACTOR_VERSION;
 
         let entries = std::fs::read_dir(&dir)
@@ -179,7 +179,11 @@ impl App {
                 // Matching stats do not guarantee complete or current extraction state.
                 if crate::extract::status_is_queued(&f.status) {
                     if self.index.convert_rx.is_none() {
-                        ocr_jobs.push((self.active_space.id.clone(), name.clone(), path.clone()));
+                        convert_jobs.push((
+                            self.active_space.id.clone(),
+                            name.clone(),
+                            path.clone(),
+                        ));
                     }
                     continue;
                 }
@@ -197,7 +201,7 @@ impl App {
             {
                 let _ = self.db.set_file_mtime(&f.id, mtime);
                 if crate::extract::status_is_queued(&f.status) && self.index.convert_rx.is_none() {
-                    ocr_jobs.push((self.active_space.id.clone(), name.clone(), path.clone()));
+                    convert_jobs.push((self.active_space.id.clone(), name.clone(), path.clone()));
                 }
                 continue;
             }
@@ -218,7 +222,11 @@ impl App {
                     let _ = self.db.set_file_extractor(&id, version);
                     // Without a durable row, results cannot be recorded and rescans would requeue forever.
                     if crate::extract::status_is_queued(&status) {
-                        ocr_jobs.push((self.active_space.id.clone(), name.clone(), path.clone()));
+                        convert_jobs.push((
+                            self.active_space.id.clone(),
+                            name.clone(),
+                            path.clone(),
+                        ));
                     }
                 }
                 Err(e) => self.push_status(format!("could not index {name}: {e:#}")),
@@ -227,7 +235,7 @@ impl App {
         for gone in known.iter().filter(|f| !seen.contains(&f.name)) {
             let _ = self.db.delete_file(&gone.id);
         }
-        self.start_ocr(ocr_jobs);
+        self.start_convert(convert_jobs);
         self.start_embedding();
         self.caches.files = self
             .db
@@ -235,7 +243,7 @@ impl App {
             .unwrap_or_default();
     }
 
-    pub fn start_ocr(&mut self, jobs: Vec<(String, String, std::path::PathBuf)>) {
+    pub fn start_convert(&mut self, jobs: Vec<(String, String, std::path::PathBuf)>) {
         if jobs.is_empty() || self.index.convert_rx.is_some() {
             return;
         }
@@ -244,7 +252,10 @@ impl App {
         tokio::spawn(async move {
             for (space_id, name, path) in jobs {
                 let result = convert_flow(path, &tx, &space_id, &name).await;
-                if tx.send((space_id, name, OcrUpdate::Done(result))).is_err() {
+                if tx
+                    .send((space_id, name, ConvertUpdate::Done(result)))
+                    .is_err()
+                {
                     return;
                 }
             }
@@ -552,7 +563,7 @@ impl App {
     }
 
     #[allow(clippy::too_many_lines)]
-    pub fn on_ocr_done(&mut self, r: Option<(String, String, OcrUpdate)>) {
+    pub fn on_convert_done(&mut self, r: Option<(String, String, ConvertUpdate)>) {
         let Some((space_id, name, update)) = r else {
             self.index.convert_rx = None;
             // A rescan picks up files imported while the completed batch was running.
@@ -568,9 +579,9 @@ impl App {
         if !crate::extract::status_is_queued(&f.status) {
             return;
         }
-        let completed = matches!(update, OcrUpdate::Done(_));
+        let completed = matches!(update, ConvertUpdate::Done(_));
         match update {
-            OcrUpdate::Stage(s) => {
+            ConvertUpdate::Stage(s) => {
                 // The stale-result check depends on this prefix.
                 let shown = if s.starts_with("convert:") {
                     s.clone()
@@ -582,7 +593,7 @@ impl App {
                     self.push_status(format!("convert {name}: {s}"));
                 }
             }
-            OcrUpdate::Progress(done, total, failed) => {
+            ConvertUpdate::Progress(done, total, failed) => {
                 let tail = if failed > 0 {
                     format!(" ({failed} failed)")
                 } else {
@@ -595,7 +606,7 @@ impl App {
                     self.push_status(format!("convert {name}: {done}/{total} pages{tail}"));
                 }
             }
-            OcrUpdate::Done(Ok((text, errors))) if text.trim().is_empty() => {
+            ConvertUpdate::Done(Ok((text, errors))) if text.trim().is_empty() => {
                 let _ = self
                     .db
                     .set_file_chunks(&f.id, &crate::extract::metadata_chunks(&name));
@@ -610,7 +621,7 @@ impl App {
                     self.push_status(format!("convert {name}: {status}"));
                 }
             }
-            OcrUpdate::Done(Ok((text, errors))) => {
+            ConvertUpdate::Done(Ok((text, errors))) => {
                 let chunks = crate::extract::chunk_lines(&text);
                 let chunks = if chunks.is_empty() {
                     crate::extract::metadata_chunks(&name)
@@ -649,7 +660,7 @@ impl App {
                     self.push_status(format!("conversion done: {name}"));
                 }
             }
-            OcrUpdate::Done(Err(msg)) => {
+            ConvertUpdate::Done(Err(msg)) => {
                 if self
                     .db
                     .file_chunk_texts(&f.id)
@@ -1226,16 +1237,16 @@ mod tests {
         assert_eq!(hits.len(), 1);
 
         let space = a.active_space.id.clone();
-        a.on_ocr_done(Some((
+        a.on_convert_done(Some((
             space.clone(),
             "notes.rst".into(),
-            OcrUpdate::Stage("convert: pandoc".into()),
+            ConvertUpdate::Stage("convert: pandoc".into()),
         )));
         assert_eq!(status_of(&a, "notes.rst"), "convert: pandoc");
-        a.on_ocr_done(Some((
+        a.on_convert_done(Some((
             space.clone(),
             "notes.rst".into(),
-            OcrUpdate::Done(Ok(("# converted by pandoc".into(), Vec::new()))),
+            ConvertUpdate::Done(Ok(("# converted by pandoc".into(), Vec::new()))),
         )));
         assert_eq!(status_of(&a, "notes.rst"), "ok · pandoc");
         let text = crate::db::file_text(a.db.conn_for_test(), &space, "notes.rst")
@@ -1246,10 +1257,10 @@ mod tests {
         std::fs::write(dir.join("other.rst"), "Other\n=====\nkept words").unwrap();
         a.index.convert_rx = None;
         a.rescan_files_with(&bin.cfg());
-        a.on_ocr_done(Some((
+        a.on_convert_done(Some((
             space.clone(),
             "other.rst".into(),
-            OcrUpdate::Done(Err("conversion failed: pandoc: boom".into())),
+            ConvertUpdate::Done(Err("conversion failed: pandoc: boom".into())),
         )));
         assert_eq!(
             status_of(&a, "other.rst"),

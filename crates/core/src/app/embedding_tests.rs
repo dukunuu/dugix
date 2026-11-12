@@ -95,7 +95,7 @@ fn image_inputs(mock: &MockOllama) -> usize {
 }
 
 #[tokio::test]
-async fn local_model_embeds_text_and_images_directly_and_queues_no_ocr() {
+async fn local_model_embeds_text_and_images_directly_and_queues_no_convert() {
     let mock = MockOllama::start(true).await;
     let mut app = app_with_key();
     point_at(&mut app, &mock.endpoint);
