@@ -1082,6 +1082,7 @@ fn history_lists_previews_and_restores_kept_decks() {
         id,
         deck: Some(kept),
         doc: None,
+        sheet: None,
     } = event
     else {
         panic!("{event:?}")

@@ -6,6 +6,8 @@ pub mod files;
 pub mod settings;
 
 #[cfg(test)]
+mod sheet_tests;
+#[cfg(test)]
 mod tests;
 
 use std::collections::HashMap;
@@ -50,6 +52,7 @@ impl Entry {
         let (one, many) = match self.kind {
             Kind::Deck => ("slide", "slides"),
             Kind::Doc => ("block", "blocks"),
+            Kind::Sheet => ("cell", "cells"),
         };
         format!(
             "{} {}",
@@ -70,6 +73,7 @@ fn suffixes(kind: Kind) -> (&'static str, &'static str) {
     match kind {
         Kind::Deck => ("decks", ".deck.json"),
         Kind::Doc => ("docs", ".doc.json"),
+        Kind::Sheet => ("sheets", ".sheet.json"),
     }
 }
 
@@ -95,7 +99,7 @@ pub fn library(files: &Path) -> Vec<Entry> {
     };
     let mut names: HashMap<String, Option<String>> = HashMap::new();
     let mut entries = Vec::new();
-    for kind in [Kind::Deck, Kind::Doc] {
+    for kind in [Kind::Deck, Kind::Doc, Kind::Sheet] {
         let (folder, suffix) = suffixes(kind);
         let mut found = Vec::new();
         walk(&root.join(folder), suffix, 0, &mut found);
@@ -158,6 +162,20 @@ fn read_entry(
                 deck.title.clone(),
                 deck.slides.len(),
                 deck.design.clone(),
+                revision,
+                thumbnail,
+            )
+        }
+        Kind::Sheet => {
+            let sheet = crate::sheet::Sheet::check(&source).ok()?;
+            let revision = sheet.revision();
+            let thumbnail = Some(
+                render_folder(root, kind, &path)?.join(format!("thumb-{}.png", &revision[..8])),
+            );
+            (
+                sheet.title.clone(),
+                sheet.tabs.iter().map(|t| t.cells.len()).sum(),
+                sheet.design.clone(),
                 revision,
                 thumbnail,
             )
@@ -233,6 +251,29 @@ pub fn ensure_thumbnail(files: &Path, entry: &Entry) -> Result<PathBuf> {
                 false,
             )?;
             Ok(root.join(relative))
+        }
+        Kind::Sheet => {
+            let sheet = crate::sheet::Sheet::check(&std::fs::read_to_string(&entry.path)?)
+                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+            ensure!(
+                sheet.revision() == entry.revision,
+                "the sheet changed; list the library again"
+            );
+            let rect = "A1:L6".parse::<crate::sheet::address::Range>()?.bounds();
+            let assets = entry.path.parent().context("sheet folder")?.join("assets");
+            let bytes = crate::sheet::render::png(&sheet, &sheet.tabs[0], rect, Some(&assets))?;
+            let folder = target.parent().context("render folder")?;
+            ensure!(
+                !folder.is_symlink() && !target.is_symlink(),
+                "render cache must not contain symlinks"
+            );
+            crate::deck::write_atomic(&target, &bytes)?;
+            for old in std::fs::read_dir(folder)?.flatten() {
+                if old.file_name().to_string_lossy().starts_with("thumb-") && old.path() != target {
+                    let _ = std::fs::remove_file(old.path());
+                }
+            }
+            Ok(target)
         }
         Kind::Doc => {
             let doc = Doc::check(&std::fs::read_to_string(&entry.path)?)

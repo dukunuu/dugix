@@ -14,6 +14,32 @@ pub enum Show {
     Both,
 }
 
+/// Changed stored cells, including cleared cells, qualified by displayed tab name.
+#[must_use]
+pub fn changed_cells(before: &Sheet, after: &Sheet) -> Vec<String> {
+    let mut changed = std::collections::BTreeSet::new();
+    for tab in &after.tabs {
+        let old = before.tabs.iter().find(|t| t.id == tab.id);
+        for key in tab
+            .cells
+            .keys()
+            .chain(old.into_iter().flat_map(|t| t.cells.keys()))
+        {
+            if old.and_then(|t| t.cells.get(key)) != tab.cells.get(key) {
+                changed.insert(format!("{}!{key}", tab.name));
+            }
+        }
+    }
+    for tab in before
+        .tabs
+        .iter()
+        .filter(|t| !after.tabs.iter().any(|n| n.id == t.id))
+    {
+        changed.extend(tab.cells.keys().map(|key| format!("{}!{key}", tab.name)));
+    }
+    changed.into_iter().collect()
+}
+
 fn flat(text: &str) -> String {
     text.replace(['\t', '\r', '\n'], " ")
 }

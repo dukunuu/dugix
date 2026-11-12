@@ -79,14 +79,19 @@ impl CommentTurn {
         let mut parts = Vec::new();
         if !self.edited_blocks.is_empty() {
             let ids = self.edited_blocks.iter().cloned().collect::<Vec<_>>();
+            let unit = if is_sheet(&self.comment.deck) {
+                "cell"
+            } else {
+                "block"
+            };
             parts.push(if ids.len() <= 8 {
                 format!(
-                    "edited block{} {}",
+                    "edited {unit}{} {}",
                     if ids.len() == 1 { "" } else { "s" },
                     ids.join(", ")
                 )
             } else {
-                format!("edited {} blocks", ids.len())
+                format!("edited {} {unit}s", ids.len())
             });
         }
         if !self.edited.is_empty() {
@@ -144,12 +149,46 @@ fn block_revisions(path: &Path) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
+fn is_sheet(path: &Path) -> bool {
+    FileKind::of_path(path) == FileKind::Sheet
+}
+
+fn cell_revisions(path: &Path) -> Vec<(String, String)> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| nexus_core::sheet::Sheet::check(&s).ok())
+        .map(|sheet| {
+            sheet
+                .tabs
+                .iter()
+                .flat_map(|tab| {
+                    tab.cells.iter().map(|(a1, cell)| {
+                        (
+                            format!("{}!{a1}", tab.name),
+                            serde_json::to_string(cell).expect("cell JSON"),
+                        )
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn is_doc(path: &Path) -> bool {
     FileKind::of_path(path) == FileKind::Doc
 }
 
 fn model_replies(comment: &StudioComment) -> usize {
     let model = |role: &feedback::Role| matches!(role, feedback::Role::Model);
+    if is_sheet(&comment.deck) {
+        return nexus_core::sheet::feedback::load(&comment.deck)
+            .unwrap_or_default()
+            .iter()
+            .filter(|t| t.id == comment.thread)
+            .flat_map(|t| &t.messages)
+            .filter(|m| model(&m.role))
+            .count();
+    }
     if is_doc(&comment.deck) {
         return doc::feedback::load(&comment.deck)
             .unwrap_or_default()
@@ -250,6 +289,7 @@ impl AppView {
         };
         std::fs::create_dir_all(files.join("decks"))?;
         std::fs::create_dir_all(files.join("docs"))?;
+        std::fs::create_dir_all(files.join("sheets"))?;
         let path = std::path::absolute(path)?;
         self.studio.last_deck = Some(path.clone());
         if let Some(canvas) = &mut self.studio.canvas {
@@ -280,6 +320,12 @@ impl AppView {
 
     pub fn handle_studio_message(&mut self, message: Message) -> Result<()> {
         match message {
+            message @ (Message::SheetFocus { .. } | Message::SheetComment { .. }) => {
+                return self.handle_sheet_message(message);
+            }
+            message @ Message::Reply { .. } if message.path().is_some_and(is_sheet) => {
+                return self.handle_sheet_message(message);
+            }
             message @ (Message::DocFocus { .. } | Message::DocComment { .. }) => {
                 return self.handle_doc_message(message);
             }
@@ -337,6 +383,57 @@ impl AppView {
                 }
             }
             Message::Open { .. } | Message::Theme { .. } | Message::Activity { .. } => {}
+        }
+        Ok(())
+    }
+
+    fn handle_sheet_message(&mut self, message: Message) -> Result<()> {
+        match message {
+            Message::SheetFocus { path, tab, range } => {
+                let selection = format!("{tab}!{range}");
+                self.deck_link.lock().expect("deck link").focus =
+                    Some((path.clone(), selection.clone(), vec![]));
+                self.studio.focus = Some(Focus {
+                    deck: path,
+                    slide: selection,
+                    blocks: vec![],
+                    doc: false,
+                });
+            }
+            Message::SheetComment {
+                path,
+                thread,
+                tab,
+                range,
+                quote,
+                text,
+            } => {
+                let built = self.sheet_comment_text(&path, &thread, &tab, &range, &quote, &text);
+                self.enqueue_studio_comment(path, thread, built)?;
+            }
+            Message::Reply {
+                deck_path,
+                thread_id,
+                text,
+            } => {
+                let built = (|| {
+                    let threads = nexus_core::sheet::feedback::load(&deck_path)?;
+                    let thread = threads
+                        .iter()
+                        .find(|t| t.id == thread_id)
+                        .context("studio replied in a thread that no longer exists")?;
+                    self.sheet_comment_text(
+                        &deck_path,
+                        &thread_id,
+                        &thread.anchor.tab,
+                        &thread.anchor.range,
+                        &thread.anchor.quote,
+                        &text,
+                    )
+                })();
+                self.enqueue_studio_comment(deck_path, thread_id, built)?;
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -581,6 +678,38 @@ impl AppView {
         ))
     }
 
+    fn sheet_comment_text(
+        &self,
+        path: &Path,
+        thread: &str,
+        tab: &str,
+        range: &str,
+        quote: &str,
+        text: &str,
+    ) -> Result<String> {
+        let sheet = nexus_core::canvas::files::read_sheet(path)?;
+        let tab = sheet
+            .tabs
+            .iter()
+            .find(|t| t.id == tab || t.name.eq_ignore_ascii_case(tab))
+            .context("the commented tab no longer exists")?;
+        let _: nexus_core::sheet::address::Range = range.parse()?;
+        let shown = path
+            .strip_prefix(self.files_dir())
+            .unwrap_or(path)
+            .display();
+        let quote: String = quote
+            .chars()
+            .map(|c| if c == '\n' { ' ' } else { c })
+            .take(SUMMARY_CHARS)
+            .collect();
+        Ok(format!(
+            "Comment on {shown} · {}!{range} \"{quote}\": {text}\nthread {thread} · revision {}",
+            tab.name,
+            &sheet.revision()[..12]
+        ))
+    }
+
     pub fn poll_studio(&mut self) {
         let mut received = Vec::new();
         let mut problem = None;
@@ -609,7 +738,14 @@ impl AppView {
                         deck_path: path.clone(),
                     });
                 }
-                canvas.send(if is_doc(&path) {
+                canvas.send(if is_sheet(&path) {
+                    let (tab, range) = slide.rsplit_once('!').unwrap_or(("Sheet1", "A1"));
+                    Message::SheetFocus {
+                        path,
+                        tab: tab.into(),
+                        range: range.into(),
+                    }
+                } else if is_doc(&path) {
                     Message::DocFocus {
                         deck_path: path,
                         block: Some(slide).filter(|block| !block.is_empty()),
@@ -635,8 +771,12 @@ impl AppView {
         if !same_file(path, &turn.comment.deck) {
             return;
         }
-        if is_doc(path) {
-            let next = block_revisions(path);
+        if is_doc(path) || is_sheet(path) {
+            let next = if is_sheet(path) {
+                cell_revisions(path)
+            } else {
+                block_revisions(path)
+            };
             let before = turn.edited_blocks.clone();
             for (id, revision) in &next {
                 if !turn
@@ -763,7 +903,9 @@ impl AppView {
         }
         let text = self.studio.queued.pop_front().expect("a queued comment");
         let comment = self.studio.comments.pop_front().expect("queued identity");
-        let (slides, blocks) = if is_doc(&comment.deck) {
+        let (slides, blocks) = if is_sheet(&comment.deck) {
+            (Vec::new(), cell_revisions(&comment.deck))
+        } else if is_doc(&comment.deck) {
             (Vec::new(), block_revisions(&comment.deck))
         } else {
             (slide_revisions(&comment.deck), Vec::new())
@@ -803,6 +945,11 @@ impl AppView {
         };
         if self.studio.told.as_ref() == Some(&focus) {
             return text;
+        }
+        if is_sheet(&focus.deck) {
+            let line = format!("studio: viewing {}", focus.slide);
+            self.studio.told = Some(focus);
+            return format!("{text}\n\n{line}");
         }
         if focus.doc {
             let line = match (focus.slide.is_empty(), focus.blocks.first()) {
@@ -1718,6 +1865,59 @@ mod tests {
             activities(&app, "t1").last(),
             Some(&(ActivityState::Done, Some("edited blocks b2, b3")))
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sheet_comments_and_focus_are_carried_into_the_conversation() {
+        let dir = temp();
+        let mut app = view(&dir.0);
+        let mut sheet =
+            nexus_core::sheet::Sheet::from_design("Grid", &nexus_core::design::Design::default());
+        sheet.tabs[0].cells.insert(
+            "B4".into(),
+            nexus_core::sheet::Cell {
+                input: "42".into(),
+                ..Default::default()
+            },
+        );
+        let files = app.files_dir();
+        nexus_core::sheet::storage::save(
+            &files,
+            "sheets/grid.sheet.json",
+            &sheet,
+            nexus_core::deck::history::Who::User,
+        )
+        .unwrap();
+        let path = files.join("sheets/grid.sheet.json");
+        app.handle_studio_message(Message::SheetComment {
+            path: path.clone(),
+            thread: "thread-one".into(),
+            tab: "Sheet1".into(),
+            range: "B4".into(),
+            quote: "42".into(),
+            text: "Explain".into(),
+        })
+        .unwrap();
+        let text = app.studio.queued.front().unwrap();
+        assert!(
+            text.starts_with("Comment on sheets/grid.sheet.json · Sheet1!B4 \"42\": Explain\n"),
+            "{text}"
+        );
+        assert!(text.contains("thread thread-one · revision"));
+        assert!(text.contains(&sheet.revision()[..12]));
+        app.attach_fake_studio();
+        app.handle_studio_message(Message::SheetFocus {
+            path,
+            tab: "Sheet1".into(),
+            range: "B2:C5".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            app.with_studio_context("Question".into()),
+            "Question\n\nstudio: viewing Sheet1!B2:C5"
+        );
+        assert_eq!(app.with_studio_context("Next".into()), "Next");
     }
 
     #[cfg(unix)]

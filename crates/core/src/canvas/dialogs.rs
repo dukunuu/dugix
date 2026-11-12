@@ -194,7 +194,7 @@ pub fn gui_session() -> bool {
 pub const OPEN: &[Filter] = &[
     Filter {
         name: "Decks, docs and imports",
-        extensions: &["json", "pptx", "docx", "dotx", "md"],
+        extensions: &["json", "pptx", "docx", "dotx", "md", "csv", "xlsx"],
     },
     Filter {
         name: "Decks and docs",
@@ -212,6 +212,10 @@ pub const OPEN: &[Filter] = &[
         name: "Markdown",
         extensions: &["md"],
     },
+    Filter {
+        name: "Spreadsheets",
+        extensions: &["csv", "xlsx"],
+    },
 ];
 
 pub const IMAGES: &[Filter] = &[Filter {
@@ -228,6 +232,8 @@ pub const TEMPLATES: &[Filter] = &[Filter {
 pub fn save_filter(extension: &str) -> Vec<Filter> {
     let (name, extensions): (&'static str, &'static [&'static str]) = match extension {
         "pptx" => ("PowerPoint", &["pptx"]),
+        "csv" => ("CSV", &["csv"]),
+        "xlsx" => ("Excel", &["xlsx"]),
         "docx" => ("Word", &["docx"]),
         "pdf" => ("PDF", &["pdf"]),
         "zip" => ("PNG images (zip)", &["zip"]),

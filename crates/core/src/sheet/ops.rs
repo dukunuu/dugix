@@ -56,6 +56,18 @@ pub enum Op {
         at: String,
         count: u32,
     },
+    Copy {
+        tab: String,
+        from: String,
+        to_tab: Option<String>,
+        to: String,
+        cut: bool,
+    },
+    Fill {
+        tab: String,
+        from: String,
+        to: String,
+    },
     Sort {
         tab: String,
         range: String,
@@ -236,6 +248,8 @@ fn step(sheet: &mut Sheet, op: &Op, resolver: Option<&Resolver<'_>>) -> Result<(
         | Op::InsertCols { .. }
         | Op::DeleteCols { .. }
         | Op::Sort { .. }
+        | Op::Copy { .. }
+        | Op::Fill { .. }
         | Op::RenameTab { .. }
         | Op::DeleteTab { .. }
         | Op::MoveTab { .. } => *sheet = super::engine::transform(sheet, op)?,

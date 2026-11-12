@@ -165,11 +165,11 @@ fn the_popup_lists_kind_title_count_and_time_newest_first() {
     assert_eq!(
         body(&screen),
         [
-            "▸ deck  Launch review",
+            "▸ deck   Launch review",
             "1 slide · 3 hours ago",
-            "doc   Q3 memo",
+            "doc    Q3 memo",
             "3 blocks · yesterday · nexus",
-            "deck  Roadmap 2027",
+            "deck   Roadmap 2027",
             "1 slide · 5 days ago",
         ]
     );
@@ -218,7 +218,7 @@ fn the_cursor_moves_and_clamps() {
     f.key(KeyCode::PageDown);
     assert_eq!(f.app.library.selected, 2);
     let screen = f.screen(100, 22);
-    assert!(screen.contains("▸ deck  Roadmap 2027"), "{screen}");
+    assert!(screen.contains("▸ deck   Roadmap 2027"), "{screen}");
 }
 
 #[test]

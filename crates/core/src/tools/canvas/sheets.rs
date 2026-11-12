@@ -14,6 +14,8 @@ delete_rows{tab,at:row,count}\n\
 insert_cols{tab,at:column,count}\n\
 delete_cols{tab,at:column,count}\n\
 sort{tab,range,by:column,desc,header}\n\
+copy{tab,from,to_tab?,to,cut}\n\
+fill{tab,from,to}\n\
 set_col_width{tab,cols:A:C,width}\n\
 set_row_height{tab,rows:1:3,height}\n\
 freeze{tab,rows,cols}\n\
@@ -25,7 +27,7 @@ delete_tab{tab}\n\
 move_tab{tab,after?}\n\
 set_title{title}\n\
 apply_design{design?}\n\
-Each op has op:name; atomic. fmt: num,bold,italic,underline,align:left|center|right,fill,color (theme token or #RRGGBB). Range: A1:F20,B:B,2:4; optional Data! or 'Q3 plan'! prefix (apostrophe escaped ''). Without tab: first tab. Formulas start with =.\n";
+op:name; atomic. fmt: num,bold,italic,underline,align:left|center|right,fill,color(token|#RRGGBB). Range: A1:F20,B:B,2:4; Data! or 'Q3 plan'! prefix (escape ''). Default first tab. Formula: =.\n";
 
 pub(in crate::tools) fn is_sheet(action: &str, v: &Value) -> bool {
     v["path"]
@@ -64,7 +66,7 @@ impl ToolBox {
     }
 
     pub(super) fn sheet_action(&self, action: &str, v: &Value) -> Result<String> {
-        if matches!(action, "deck_comment" | "deck_resolve" | "deck_fonts") {
+        if action == "deck_fonts" {
             bail!("not available for sheets yet");
         }
         if action == "deck_create" {
@@ -93,11 +95,43 @@ impl ToolBox {
                     ));
                 } else {
                     out.push_str(&sheet::outline(&sheet, 4500));
+                    for thread in sheet::feedback::load(&path)?
+                        .iter()
+                        .filter(|t| t.resolved.is_none())
+                    {
+                        let anchor = if thread.orphaned {
+                            "on deleted cells".into()
+                        } else {
+                            let tab = sheet
+                                .tabs
+                                .iter()
+                                .find(|t| t.id == thread.anchor.tab)
+                                .map_or(thread.anchor.tab.as_str(), |t| t.name.as_str());
+                            format!("{tab}!{}", thread.anchor.range)
+                        };
+                        let first = thread
+                            .messages
+                            .first()
+                            .map_or("", |m| m.text.lines().next().unwrap_or_default());
+                        let _ = writeln!(out, "thread {} · {anchor} · {first}", thread.id);
+                    }
                     out.push_str(self.sheet_schema_if_fits(out.chars().count()));
                 }
                 Ok(out)
             }
             "deck_edit" => self.sheet_edit(relative, &path, &sheet, v),
+            "deck_comment" => self.sheet_comment(relative, &path, &sheet, v),
+            "deck_resolve" => {
+                let id = v["thread"].as_str().context("thread is required")?;
+                let mut threads = sheet::feedback::load(&path)?;
+                threads
+                    .iter_mut()
+                    .find(|t| t.id == id)
+                    .context("unknown thread; read for current ids")?
+                    .resolved = Some(sheet::feedback::now());
+                sheet::feedback::save(&path, &threads)?;
+                Ok(format!("resolved thread {id} · {relative}\n"))
+            }
             "deck_view" => {
                 let (tab, range) = selection(&sheet, v)?;
                 sheet::render::view(&sheet, &path, &self.space_files_dir, tab, range)
@@ -227,9 +261,81 @@ impl ToolBox {
             }
             out.push('\n');
         }
+        let mut threads = sheet::feedback::load(path)?;
+        sheet::feedback::reanchor(&mut threads, before, &ops);
+        sheet::feedback::reconcile(&mut threads, &next);
         sheet::storage::save(&self.space_files_dir, relative, &next, Who::Model)?;
-        self.deck_changed(path, Some(String::new()));
+        if !threads.is_empty() {
+            sheet::feedback::save(path, &threads)?;
+        }
+        self.deck_changed(
+            path,
+            sheet::read::changed_cells(before, &next).first().cloned(),
+        );
         Ok(out)
+    }
+
+    fn sheet_comment(
+        &self,
+        relative: &str,
+        path: &Path,
+        sheet: &Sheet,
+        v: &Value,
+    ) -> Result<String> {
+        use sheet::feedback as comments;
+        let text = v["text"].as_str().context("text is required")?;
+        ensure!(
+            !text.trim().is_empty() && text.chars().count() <= 2000,
+            "comment must be 1–2000 characters"
+        );
+        let mut threads = comments::load(path)?;
+        let ops: Vec<sheet::Op> = v
+            .get("ops")
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()?
+            .unwrap_or_default();
+        let resolver = |slug: &str| crate::design::load(&self.space_files_dir, slug);
+        let edits = if ops.is_empty() {
+            vec![]
+        } else {
+            sheet::apply_with_resolver(sheet, &ops, Some(&resolver))?;
+            vec![comments::Edit::new(sheet, ops)]
+        };
+        let id = if let Some(id) = v["thread"].as_str() {
+            let thread = threads
+                .iter_mut()
+                .find(|t| t.id == id)
+                .context("unknown thread; read for current ids")?;
+            ensure!(thread.messages.len() < 100, "thread has 100 messages");
+            thread.messages.push(comments::Message::new_for(
+                comments::Role::Model,
+                text.into(),
+                edits,
+            ));
+            id.to_string()
+        } else {
+            let (tab, range) = selection(sheet, v)?;
+            let range = range.context("range is required")?;
+            let anchor = comments::Anchor::new(sheet, &tab.id, &range.to_string())?;
+            ensure!(threads.len() < 200, "sheet has 200 threads");
+            let id = uuid::Uuid::new_v4().to_string();
+            threads.push(comments::Thread {
+                id: id.clone(),
+                anchor,
+                orphaned: false,
+                severity: comments::Severity::Consider,
+                created: comments::now(),
+                resolved: None,
+                messages: vec![comments::Message::new_for(
+                    comments::Role::Model,
+                    text.into(),
+                    edits,
+                )],
+            });
+            id
+        };
+        comments::save(path, &threads)?;
+        Ok(format!("commented · {relative} · thread {id}\n"))
     }
 
     fn sheet_history(
@@ -322,6 +428,27 @@ fn edited_range(op: &sheet::Op) -> Result<Option<(String, Rect)>> {
                 },
             )
         }
+        Op::Copy {
+            tab,
+            from,
+            to_tab,
+            to,
+            ..
+        } => {
+            let from = from.parse::<Range>()?.bounds();
+            let start: Address = to.parse()?;
+            return Ok(Some((
+                to_tab.as_ref().unwrap_or(tab).clone(),
+                Rect {
+                    start,
+                    end: Address {
+                        row: start.row + from.end.row - from.start.row,
+                        col: start.col + from.end.col - from.start.col,
+                    },
+                },
+            )));
+        }
+        Op::Fill { tab, to, .. } => (tab, to.parse::<Range>()?.bounds()),
         Op::Clear { tab, range, .. }
         | Op::Format { tab, range, .. }
         | Op::Sort { tab, range, .. }
