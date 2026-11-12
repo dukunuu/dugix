@@ -38,6 +38,11 @@ const DURABLE: &[Step] = &[
         name: "research jobs replace watches",
         run: research_jobs_replace_watches,
     },
+    Step {
+        target: 7,
+        name: "share memory chapters between spaces",
+        run: share_memory_chapters,
+    },
 ];
 const CACHE: &[Step] = &[
     Step {
@@ -218,6 +223,13 @@ fn research_jobs_replace_watches(tx: &Transaction<'_>, _ctx: &mut Ctx<'_>) -> Re
         [&now],
     )?;
     tx.execute_batch("DROP TABLE main.watches")?;
+    Ok(())
+}
+
+fn share_memory_chapters(tx: &Transaction<'_>, _ctx: &mut Ctx<'_>) -> Result<()> {
+    tx.execute_batch(
+        "ALTER TABLE main.memory_chapters ADD COLUMN shared_with TEXT NOT NULL DEFAULT '[]'",
+    )?;
     Ok(())
 }
 

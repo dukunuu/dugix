@@ -168,9 +168,35 @@ fn assert_snapshot(file: &str, actual: &str) {
 }
 
 #[test]
+fn memory_sharing_migration_defaults_existing_chapters_and_only_adds_its_column() {
+    let conn = Connection::open_in_memory().unwrap();
+    run(&conn, &DURABLE[..3], &mut context("main", "nexus.db")).unwrap();
+    conn.execute_batch(
+        "INSERT INTO memory_chapters (id, space_id, title, created_at, updated_at)
+         VALUES ('existing', 'home', 'Career', 'created', 'updated')",
+    )
+    .unwrap();
+    let before = schema(&conn, "main");
+    run(&conn, DURABLE, &mut context("main", "nexus.db")).unwrap();
+    let shared: String = conn
+        .query_row(
+            "SELECT shared_with FROM memory_chapters WHERE id = 'existing'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(shared, "[]");
+    let after = schema(&conn, "main");
+    let column = "  shared_with: TEXT not_null=true default=Some(\"'[]'\") pk=0\n";
+    assert!(after.contains(column));
+    assert_eq!(after.replace(column, ""), before);
+    assert_snapshot("durable.txt", &after);
+}
+
+#[test]
 fn fresh_schemas_match_snapshots() {
     let db = Db::open_in_memory().unwrap();
-    assert_eq!(version(db.conn(), "main").unwrap(), 6);
+    assert_eq!(version(db.conn(), "main").unwrap(), 7);
     assert_eq!(version(db.conn(), "cache").unwrap(), 2);
     assert_snapshot("durable.txt", &schema(db.conn(), "main"));
     assert_snapshot("cache.txt", &schema(db.conn(), "cache"));
@@ -184,7 +210,7 @@ fn durable_fixtures_reach_the_fresh_schema_and_preserve_rows() {
         let root = TempRoot::new();
         root.fixture(fixture);
         let db = Db::open(&root.db_path()).unwrap();
-        assert_eq!(version(db.conn(), "main").unwrap(), 6);
+        assert_eq!(version(db.conn(), "main").unwrap(), 7);
         let actual = schema_ignoring_nullability(db.conn(), "main", FIXTURE_NULLABILITY_VARIANTS);
         assert_eq!(actual, expected);
         assert_snapshot("durable.txt", &actual);
@@ -301,7 +327,7 @@ fn unsupported_durable_versions_have_exact_errors() {
         drop(conn);
         let error = Db::open(&root.db_path()).err().unwrap().to_string();
         let expected = if v == 99 {
-            "nexus.db was written by a newer nexus (schema 99, this build knows up to 6); update nexus".into()
+            "nexus.db was written by a newer nexus (schema 99, this build knows up to 7); update nexus".into()
         } else {
             format!(
                 "nexus.db is from a nexus older than 0.1.42 (schema {v}); install nexus-chat 0.1.42 once to upgrade it, then this version"
@@ -417,8 +443,8 @@ fn dropping_the_old_web_cache_exposes_the_device_cache() {
 #[test]
 fn durable_upgrades_preserve_sessions_and_chapters() {
     let fresh = Db::open_in_memory().unwrap();
-    assert_eq!(durable_schema_version(), 6);
-    assert_eq!(version(fresh.conn(), "main").unwrap(), 6);
+    assert_eq!(durable_schema_version(), 7);
+    assert_eq!(version(fresh.conn(), "main").unwrap(), 7);
     let expected = schema_ignoring_nullability(fresh.conn(), "main", FIXTURE_NULLABILITY_VARIANTS);
     assert_snapshot("durable.txt", &expected);
     for fixture in [DEV, RELEASED] {
@@ -436,9 +462,9 @@ fn durable_upgrades_preserve_sessions_and_chapters() {
         .unwrap();
         assert_eq!(
             run(&conn, DURABLE, &mut context("main", "nexus.db")).unwrap(),
-            2
+            3
         );
-        assert_eq!(version(&conn, "main").unwrap(), 6);
+        assert_eq!(version(&conn, "main").unwrap(), 7);
         assert_eq!(
             schema_ignoring_nullability(&conn, "main", FIXTURE_NULLABILITY_VARIANTS),
             expected

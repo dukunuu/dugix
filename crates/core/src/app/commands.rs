@@ -3,6 +3,7 @@
 use anyhow::Result;
 
 use super::{App, FilesTab, WorkMode};
+use crate::memory::ShareTarget;
 
 pub struct Command {
     pub name: &'static str,
@@ -182,7 +183,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "memory",
-        desc: "what nexus remembers — /memory [edit|tidy]",
+        desc: "what nexus remembers — /memory [edit|tidy|share [<chapter> with all|none|<space>[, <space>…]]]",
         aliases: &["remember"],
     },
     Command {
@@ -317,10 +318,54 @@ pub fn command_score(c: &Command, needle: &str) -> Option<i32> {
     best
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MemoryAction {
     Edit,
     Tidy,
+    Share {
+        chapter: String,
+        with: Option<ShareTarget>,
+    },
+}
+
+fn parse_memory(args: &str) -> Result<AppCommand, String> {
+    let action = match args {
+        "" | "edit" => MemoryAction::Edit,
+        "tidy" => MemoryAction::Tidy,
+        "share" => MemoryAction::Share {
+            chapter: String::new(),
+            with: None,
+        },
+        _ => {
+            let usage = "usage: /memory share <chapter> with all|none|<space>[, <space>…]";
+            let rest = args
+                .strip_prefix("share ")
+                .ok_or_else(|| "usage: /memory [edit|tidy]".to_string())?;
+            let (chapter, target) = rest.rsplit_once(" with ").ok_or(usage)?;
+            if chapter.trim().is_empty() || target.trim().is_empty() {
+                return Err(usage.to_string());
+            }
+            let with = match target.trim() {
+                "all" => ShareTarget::All,
+                "none" => ShareTarget::None,
+                names => {
+                    let names: Vec<String> = names
+                        .split(',')
+                        .map(|name| name.trim().to_string())
+                        .collect();
+                    if names.iter().any(String::is_empty) {
+                        return Err(usage.to_string());
+                    }
+                    ShareTarget::Spaces(names)
+                }
+            };
+            MemoryAction::Share {
+                chapter: chapter.trim().to_string(),
+                with: Some(with),
+            }
+        }
+    };
+    Ok(AppCommand::Memory { action })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -595,15 +640,7 @@ impl App {
                 gated: true,
             }),
             "export" => Ok(AppCommand::Export),
-            "memory" => match rest(cmd, token).as_str() {
-                "" | "edit" => Ok(AppCommand::Memory {
-                    action: MemoryAction::Edit,
-                }),
-                "tidy" => Ok(AppCommand::Memory {
-                    action: MemoryAction::Tidy,
-                }),
-                _ => Err("usage: /memory [edit|tidy]".to_string()),
-            },
+            "memory" => parse_memory(&rest(cmd, token)),
             "agent" => {
                 let root = rest(cmd, token);
                 Ok(AppCommand::SetWorkMode {
@@ -805,6 +842,9 @@ impl App {
                     "edit memory in the terminal UI with /memory, or run nexus memory --edit",
                 ),
                 MemoryAction::Tidy => self.memory_tidy()?,
+                MemoryAction::Share { chapter, with } => {
+                    self.memory_share(&chapter, with.as_ref())?;
+                }
             },
             AppCommand::Export => {
                 self.export_report()?;

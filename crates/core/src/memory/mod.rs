@@ -4,6 +4,8 @@
 pub mod book;
 pub mod recall;
 
+use std::collections::BTreeMap;
+
 use anyhow::{Result, bail, ensure};
 use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension as _, params};
@@ -22,6 +24,71 @@ pub const SHORT_ID: usize = 8;
 /// The chapter a legacy `memory.md` is imported into.
 pub const ABOUT_YOU: &str = "About you";
 
+/// Which other spaces can read and write a chapter's facts.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "Vec<String>", into = "Vec<String>")]
+pub enum Share {
+    #[default]
+    Private,
+    All,
+    Spaces(Vec<String>),
+}
+
+impl From<Vec<String>> for Share {
+    fn from(ids: Vec<String>) -> Self {
+        if ids.iter().any(|id| id == "*") {
+            Self::All
+        } else if ids.is_empty() {
+            Self::Private
+        } else {
+            Self::Spaces(ids)
+        }
+    }
+}
+
+impl From<Share> for Vec<String> {
+    fn from(share: Share) -> Self {
+        match share {
+            Share::Private => Self::new(),
+            Share::All => vec!["*".to_string()],
+            Share::Spaces(ids) => ids,
+        }
+    }
+}
+
+/// User-selected sharing targets, using names rather than stored ids.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShareTarget {
+    All,
+    None,
+    Spaces(Vec<String>),
+}
+
+impl ShareTarget {
+    /// Resolve user-facing names to stable space ids.
+    pub fn resolve(&self, conn: &Connection) -> Result<Share> {
+        match self {
+            Self::All => Ok(Share::All),
+            Self::None => Ok(Share::Private),
+            Self::Spaces(names) => {
+                let mut ids = Vec::new();
+                for name in names {
+                    let id = conn
+                        .query_row("SELECT id FROM spaces WHERE name = ?1", [name], |row| {
+                            row.get::<_, String>(0)
+                        })
+                        .optional()?;
+                    let Some(id) = id else {
+                        bail!("no space named {name:?}");
+                    };
+                    ids.push(id);
+                }
+                Ok(Share::Spaces(ids))
+            }
+        }
+    }
+}
+
 /// One chapter of the book.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Chapter {
@@ -32,6 +99,8 @@ pub struct Chapter {
     pub description: String,
     /// Pinned chapters are listed in full in every prompt.
     pub pinned: bool,
+    #[serde(default)]
+    pub shared_with: Share,
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
@@ -77,19 +146,30 @@ fn clean(text: &str, max: usize, what: &str) -> Result<String> {
 }
 
 const CHAPTER_COLUMNS: &str =
-    "id, space_id, title, description, pinned, created_at, updated_at, deleted_at";
+    "id, space_id, title, description, pinned, created_at, updated_at, deleted_at, shared_with";
 const FACT_COLUMNS: &str = "id, space_id, chapter_id, text, created_at, updated_at, deleted_at";
 
 fn chapter_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Chapter> {
     Ok(Chapter {
-        id: r.get(0)?,
-        space_id: r.get(1)?,
-        title: r.get(2)?,
-        description: r.get(3)?,
-        pinned: r.get::<_, i64>(4)? != 0,
-        created_at: r.get(5)?,
-        updated_at: r.get(6)?,
-        deleted_at: r.get(7)?,
+        id: r.get("id")?,
+        space_id: r.get("space_id")?,
+        title: r.get("title")?,
+        description: r.get("description")?,
+        pinned: r.get::<_, i64>("pinned")? != 0,
+        // The baseline migration imports legacy memory before the sharing step.
+        shared_with: match r.as_ref().column_index("shared_with") {
+            Ok(index) => serde_json::from_str(&r.get::<_, String>(index)?).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    index,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?,
+            Err(_) => Share::Private,
+        },
+        created_at: r.get("created_at")?,
+        updated_at: r.get("updated_at")?,
+        deleted_at: r.get("deleted_at")?,
     })
 }
 
@@ -133,15 +213,150 @@ pub fn facts(conn: &Connection, space: &str) -> Result<Vec<Fact>> {
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
+/// Live chapters owned by this space, followed by chapters shared into it.
+pub fn visible_chapters(conn: &Connection, space: &str) -> Result<Vec<Chapter>> {
+    let mut stmt = conn.prepare(
+        "SELECT c.* FROM memory_chapters c
+         WHERE c.deleted_at IS NULL AND (c.space_id = ?1 OR
+             EXISTS (SELECT 1 FROM json_each(c.shared_with) WHERE value IN ('*', ?1)))
+         ORDER BY (c.space_id = ?1) DESC, c.pinned DESC, c.created_at, c.id",
+    )?;
+    Ok(stmt
+        .query_map([space], chapter_row)?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// Live facts belonging to visible chapters, regardless of the fact's space id.
+pub fn visible_facts(conn: &Connection, space: &str) -> Result<Vec<Fact>> {
+    let mut stmt = conn.prepare(
+        "SELECT m.* FROM memories m JOIN memory_chapters c ON c.id = m.chapter_id
+         WHERE m.deleted_at IS NULL AND c.deleted_at IS NULL AND (c.space_id = ?1 OR
+             EXISTS (SELECT 1 FROM json_each(c.shared_with) WHERE value IN ('*', ?1)))
+         ORDER BY m.created_at, m.id",
+    )?;
+    Ok(stmt
+        .query_map([space], fact_row)?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// A visible title, preferring a chapter owned by the current space.
+pub fn find_visible_chapter(
+    conn: &Connection,
+    space: &str,
+    title: &str,
+) -> Result<Option<Chapter>> {
+    Ok(visible_chapters(conn, space)?
+        .into_iter()
+        .find(|chapter| chapter.title.eq_ignore_ascii_case(title.trim())))
+}
+
+/// Set sharing for a chapter, validating and canonicalizing target space ids.
+pub fn share_chapter(conn: &Connection, chapter_id: &str, share: Share) -> Result<Chapter> {
+    let mut chapter = conn.query_row(
+        &format!(
+            "SELECT {CHAPTER_COLUMNS} FROM memory_chapters WHERE id = ?1 AND deleted_at IS NULL"
+        ),
+        [chapter_id],
+        chapter_row,
+    )?;
+    let share = match share {
+        Share::Spaces(mut ids) => {
+            ids.sort();
+            ids.dedup();
+            for id in &ids {
+                ensure!(
+                    *id != chapter.space_id,
+                    "cannot share a chapter with its home space"
+                );
+                let exists: bool = conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM spaces WHERE id = ?1)",
+                    [id],
+                    |row| row.get(0),
+                )?;
+                ensure!(exists, "no space with id {id:?}");
+            }
+            Share::from(ids)
+        }
+        other => other,
+    };
+    chapter.shared_with = share;
+    chapter.updated_at = now();
+    conn.execute(
+        "UPDATE memory_chapters SET shared_with = ?2, updated_at = ?3 WHERE id = ?1",
+        params![
+            chapter.id,
+            serde_json::to_string(&chapter.shared_with)?,
+            chapter.updated_at
+        ],
+    )?;
+    Ok(chapter)
+}
+
+/// Display-only suffixes keyed by chapter id; space names are resolved afresh.
+pub fn share_labels(
+    conn: &Connection,
+    space: &str,
+    chapters: &[Chapter],
+) -> Result<BTreeMap<String, String>> {
+    let mut stmt = conn.prepare("SELECT id, name FROM spaces")?;
+    let names = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<rusqlite::Result<BTreeMap<_, _>>>()?;
+    let mut labels = BTreeMap::new();
+    for chapter in chapters {
+        let label = if chapter.space_id == space {
+            let targets = match &chapter.shared_with {
+                Share::Private => continue,
+                Share::All => "all spaces".to_string(),
+                Share::Spaces(ids) => {
+                    let mut targets: Vec<&str> = ids
+                        .iter()
+                        .map(|id| names.get(id).unwrap_or(id).as_str())
+                        .collect();
+                    targets.sort_unstable();
+                    targets.join(", ")
+                }
+            };
+            format!(" (shared with {targets})")
+        } else {
+            format!(
+                " (shared from {})",
+                names.get(&chapter.space_id).unwrap_or(&chapter.space_id)
+            )
+        };
+        labels.insert(chapter.id.clone(), label);
+    }
+    Ok(labels)
+}
+
+/// The user-facing list shared by `/memory share` and `nexus memory shares`.
+pub fn sharing_list(conn: &Connection, space: &str) -> Result<String> {
+    let chapters = visible_chapters(conn, space)?;
+    let labels = share_labels(conn, space, &chapters)?;
+    let lines: Vec<String> = chapters
+        .iter()
+        .filter_map(|chapter| {
+            labels
+                .get(&chapter.id)
+                .map(|label| format!("- {}{label}", chapter.title))
+        })
+        .collect();
+    Ok(if lines.is_empty() {
+        "no shared memory chapters".to_string()
+    } else {
+        lines.join("\n")
+    })
+}
+
 /// A live chapter by title, ignoring case.
 pub fn find_chapter(conn: &Connection, space: &str, title: &str) -> Result<Option<Chapter>> {
     Ok(conn
         .query_row(
-            &format!(
-                "SELECT {CHAPTER_COLUMNS} FROM memory_chapters
-                 WHERE space_id = ?1 AND deleted_at IS NULL AND lower(title) = lower(?2)
-                 ORDER BY created_at LIMIT 1"
-            ),
+            "SELECT * FROM memory_chapters
+             WHERE space_id = ?1 AND deleted_at IS NULL AND lower(title) = lower(?2)
+             ORDER BY created_at LIMIT 1",
             params![space, title.trim()],
             chapter_row,
         )
@@ -196,15 +411,15 @@ pub fn ensure_chapter(
         title,
         description: description.unwrap_or_default(),
         pinned: pinned.unwrap_or(false),
+        shared_with: Share::Private,
         created_at: stamp.clone(),
         updated_at: stamp,
         deleted_at: None,
     };
     conn.execute(
-        &format!(
-            "INSERT INTO memory_chapters ({CHAPTER_COLUMNS})
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)"
-        ),
+        "INSERT INTO memory_chapters
+         (id, space_id, title, description, pinned, created_at, updated_at, deleted_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)",
         params![
             chapter.id,
             chapter.space_id,
@@ -238,9 +453,16 @@ pub fn add(
     description: Option<&str>,
     pinned: Option<bool>,
 ) -> Result<Added> {
+    let shared = find_visible_chapter(conn, space, chapter_title)?
+        .filter(|chapter| chapter.space_id != space);
+    let (home, description, pinned) = shared
+        .as_ref()
+        .map_or((space, description, pinned), |chapter| {
+            (chapter.space_id.as_str(), None, None)
+        });
     add_capped(
         conn,
-        space,
+        home,
         chapter_title,
         text,
         description,
@@ -292,15 +514,7 @@ fn add_capped(
             duplicate: true,
         });
     }
-    let live: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM memories WHERE space_id = ?1 AND deleted_at IS NULL",
-        [space],
-        |r| r.get(0),
-    )?;
-    ensure!(
-        usize::try_from(live).unwrap_or(usize::MAX) < MAX_FACTS,
-        "memory is full ({MAX_FACTS} facts) — merge or delete facts first"
-    );
+    ensure_capacity(conn, space)?;
     let stamp = now();
     let fact = Fact {
         id: Uuid::new_v4().to_string(),
@@ -331,6 +545,19 @@ fn add_capped(
     })
 }
 
+fn ensure_capacity(conn: &Connection, space: &str) -> Result<()> {
+    let live: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories WHERE space_id = ?1 AND deleted_at IS NULL",
+        [space],
+        |r| r.get(0),
+    )?;
+    ensure!(
+        usize::try_from(live).unwrap_or(usize::MAX) < MAX_FACTS,
+        "memory is full ({MAX_FACTS} facts) — merge or delete facts first"
+    );
+    Ok(())
+}
+
 pub fn chapter_count(conn: &Connection, chapter_id: &str) -> Result<usize> {
     let n: i64 = conn.query_row(
         "SELECT COUNT(*) FROM memories WHERE chapter_id = ?1 AND deleted_at IS NULL",
@@ -344,7 +571,7 @@ pub fn chapter_count(conn: &Connection, chapter_id: &str) -> Result<usize> {
 pub fn resolve_fact(conn: &Connection, space: &str, id: &str) -> Result<Fact> {
     let id = id.trim().trim_start_matches('#');
     ensure!(id.len() >= 4, "fact id {id:?} is too short");
-    let matches: Vec<Fact> = facts(conn, space)?
+    let matches: Vec<Fact> = visible_facts(conn, space)?
         .into_iter()
         .filter(|f| f.id.starts_with(id))
         .collect();
@@ -372,12 +599,20 @@ pub fn update_fact(
         fact.text = clean(text, MAX_FACT_CHARS, "fact")?;
     }
     if let Some(title) = chapter_title {
-        fact.chapter_id = ensure_chapter(conn, space, title, None, None)?.id;
+        let chapter = match find_visible_chapter(conn, space, title)? {
+            Some(chapter) => chapter,
+            None => ensure_chapter(conn, space, title, None, None)?,
+        };
+        if fact.space_id != chapter.space_id {
+            ensure_capacity(conn, &chapter.space_id)?;
+        }
+        fact.chapter_id = chapter.id;
+        fact.space_id = chapter.space_id;
     }
     fact.updated_at = now();
     conn.execute(
-        "UPDATE memories SET text = ?2, chapter_id = ?3, updated_at = ?4 WHERE id = ?1",
-        params![fact.id, fact.text, fact.chapter_id, fact.updated_at],
+        "UPDATE memories SET text = ?2, chapter_id = ?3, updated_at = ?4, space_id = ?5 WHERE id = ?1",
+        params![fact.id, fact.text, fact.chapter_id, fact.updated_at, fact.space_id],
     )?;
     Ok(fact)
 }
@@ -470,6 +705,13 @@ pub fn merge_chapters(conn: &Connection, from: &str, into: &str) -> Result<()> {
 /// Mark every memory row of a deleted space deleted, so the delete syncs.
 pub fn delete_space(conn: &Connection, space: &str) -> Result<()> {
     let stamp = now();
+    conn.execute(
+        "UPDATE memory_chapters SET shared_with = (
+             SELECT json_group_array(value) FROM json_each(memory_chapters.shared_with) WHERE value != ?1
+         ), updated_at = ?2
+         WHERE EXISTS (SELECT 1 FROM json_each(memory_chapters.shared_with) WHERE value = ?1)",
+        params![space, stamp],
+    )?;
     for table in ["memories", "memory_chapters"] {
         conn.execute(
             &format!(
@@ -513,9 +755,10 @@ pub fn restore(conn: &Connection, snapshot: &Snapshot) -> Result<()> {
         conn.execute(
             &format!(
                 "INSERT INTO memory_chapters ({CHAPTER_COLUMNS})
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                  ON CONFLICT(id) DO UPDATE SET title = excluded.title,
                      description = excluded.description, pinned = excluded.pinned,
+                     shared_with = excluded.shared_with,
                      updated_at = excluded.updated_at, deleted_at = excluded.deleted_at"
             ),
             params![
@@ -526,7 +769,8 @@ pub fn restore(conn: &Connection, snapshot: &Snapshot) -> Result<()> {
                 i64::from(c.pinned),
                 c.created_at,
                 stamp,
-                c.deleted_at
+                c.deleted_at,
+                serde_json::to_string(&c.shared_with)?
             ],
         )?;
     }
@@ -535,6 +779,7 @@ pub fn restore(conn: &Connection, snapshot: &Snapshot) -> Result<()> {
             &format!(
                 "INSERT INTO memories ({FACT_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(id) DO UPDATE SET chapter_id = excluded.chapter_id,
+                     space_id = excluded.space_id,
                      text = excluded.text, updated_at = excluded.updated_at,
                      deleted_at = excluded.deleted_at"
             ),

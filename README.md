@@ -56,6 +56,8 @@ nexus export <id> --transcript -o chat.md              # the whole conversation
 nexus backup [-o file.zip]                             # zip db + spaces + skills
 nexus restore file.zip --yes                           # restore a backup (overwrites)
 nexus memory [--space] [--edit]                        # print/edit a space's memory
+nexus memory share <CHAPTER> (--with <SPACE>... | --all | --none) [--space <NAME>]
+nexus memory shares [--space <NAME>]                   # list shared chapters
 nexus instructions [--space] [--edit]                  # print/edit a space's instructions
 nexus files [--space]                                  # list imported files
 nexus models [--backend openrouter]                    # fetch + list model catalogs
@@ -452,7 +454,11 @@ Chat search is available in chat and agent mode, never in research searcher tool
   are listed in full, and matching chapters and docs are named on the message
   they relate to. `/memory` edits it in `$EDITOR`, `/memory tidy` asks the chat
   model to review and clean the memory with its own tool, in the conversation.
-  It lives in `nexus.db` and syncs
+  Chapters are private by default. `/memory share <chapter> with all|none|<space>[, <space>…]`
+  shares a chapter with all or chosen spaces, or makes it private again; `/memory share`
+  lists both directions. Shared chapters show their home space, and the model can read
+  and edit their facts from any recipient space; only you change sharing. The editor
+  still edits only the current space's own chapters. Memory lives in `nexus.db` and syncs
 - **Skills**: Agent Skills-compatible instruction packs (`SKILL.md`) with
   progressive disclosure, project/user/global discovery, bundled resources,
   sandboxed Python virtualenvs, and chat installation

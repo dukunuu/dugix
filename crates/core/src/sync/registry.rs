@@ -247,6 +247,7 @@ pub const TABLES: &[TableSpec] = &[
             "created_at",
             "updated_at",
             "deleted_at",
+            "shared_with",
         ],
         apply_columns: &[
             "id",
@@ -257,6 +258,7 @@ pub const TABLES: &[TableSpec] = &[
             "created_at",
             "updated_at",
             "deleted_at",
+            "shared_with",
         ],
         pk: &["id"],
         cursor: Cursor::UpdatedAt,

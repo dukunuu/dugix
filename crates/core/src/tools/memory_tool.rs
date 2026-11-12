@@ -26,18 +26,21 @@ fn call(ctx: &MemoryCtx, internal: &str, args: &str) -> Result<String> {
     let space = ctx.space_id.as_str();
     Ok(match internal {
         "memory_read" => {
-            let chapters = memory::chapters(&conn, space)?;
-            let facts = memory::facts(&conn, space)?;
+            let chapters = memory::visible_chapters(&conn, space)?;
+            let facts = memory::visible_facts(&conn, space)?;
+            let labels = memory::share_labels(&conn, space, &chapters)?;
             let offset = value["offset"]
                 .as_u64()
                 .map_or(1, |n| usize::try_from(n).unwrap_or(usize::MAX));
             match text("chapter") {
-                None => book::chapter_list(&chapters, &facts, offset),
-                Some(title) => match memory::find_chapter(&conn, space, title)? {
-                    Some(chapter) => book::chapter_page(&chapter, &facts, offset),
+                None => book::chapter_list_with_labels(&chapters, &facts, offset, &labels),
+                Some(title) => match memory::find_visible_chapter(&conn, space, title)? {
+                    Some(chapter) => {
+                        book::chapter_page_with_labels(&chapter, &facts, offset, &labels)
+                    }
                     None => format!(
                         "no chapter titled {title:?}; chapters:\n{}",
-                        book::chapter_list(&chapters, &facts, 1)
+                        book::chapter_list_with_labels(&chapters, &facts, 1, &labels)
                     ),
                 },
             }
@@ -47,7 +50,7 @@ fn call(ctx: &MemoryCtx, internal: &str, args: &str) -> Result<String> {
                 bail!("add needs chapter and text");
             };
             let added = memory::add(&conn, space, chapter, fact, text("description"), pinned)?;
-            if added.duplicate {
+            let mut result = if added.duplicate {
                 format!("already saved as [{}]", added.fact.short_id())
             } else {
                 let mut out = format!(
@@ -62,7 +65,15 @@ fn call(ctx: &MemoryCtx, internal: &str, args: &str) -> Result<String> {
                     );
                 }
                 out
+            };
+            if added.chapter.space_id != space
+                && (text("description").is_some() || pinned.is_some())
+            {
+                result.push_str(
+                    " (description and pin of a shared chapter change only in its home space)",
+                );
             }
+            result
         }
         "memory_update" => {
             let Some(id) = text("id") else {
