@@ -247,12 +247,6 @@ export function fillDownEnd(src, data) {
   }
   return null;
 }
-/** The width that fits the widest of `texts`; `measure(text)` is the pixel width of one. */
-export function fitWidth(texts, measure, { pad = 16, min = 28, max = 600 } = {}) {
-  let widest = 0;
-  for (const t of texts) widest = Math.max(widest, measure(t));
-  return clamp(Math.ceil(widest + pad), min, max);
-}
 
 // -- formats ----------------------------------------------------------------------------------------------
 

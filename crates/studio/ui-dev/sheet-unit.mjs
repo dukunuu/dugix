@@ -383,12 +383,6 @@ test('double-clicking the fill handle fills down to the end of the neighbouring 
   assert.equal(M.fillDownEnd(M.cellRect(1, 1), data({ A1: 'x' })), null, 'no neighbouring data');
   assert.equal(M.fillDownEnd(M.cellRect(5, 2), d), null, 'already at the end');
 });
-test('fitting a column to its widest value', () => {
-  const measure = t => t.length * 7;
-  assert.equal(M.fitWidth(['a', 'abcdef', 'abc'], measure), 6 * 7 + 16);
-  assert.equal(M.fitWidth([], measure), 28, 'never narrower than the minimum');
-  assert.equal(M.fitWidth(['x'.repeat(500)], measure), 600, 'nor wider than the maximum');
-});
 
 // -- showing edits before the backend answers ------------------------------------------------------------------------------
 
