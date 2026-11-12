@@ -11,8 +11,6 @@ use nexus_core::host::{HostConfig, HostServer};
 use super::HostOptions;
 use super::out;
 
-// --- host daemon ---
-
 #[derive(Clone, Copy)]
 pub(super) enum HostServiceAction {
     Install,
@@ -45,7 +43,6 @@ async fn wait_host_tunnel(tunnel: &mut Option<nexus_core::host::process::Tunnel>
     }
 }
 
-/// Run the headless app actor, HTTP/SSE API, optional tunnel, and sleep guard.
 #[allow(clippy::too_many_lines)]
 pub(super) async fn host(options: HostOptions) -> Result<()> {
     let HostOptions {
@@ -83,10 +80,7 @@ pub(super) async fn host(options: HostOptions) -> Result<()> {
     } else {
         None
     };
-    // Providers first: `load_all_providers` only scaffolds the commented
-    // credential template when no config exists yet, and `ensure_host_token`
-    // creates the file. Minting the token first would leave a first-ever
-    // `nexus host` run with a config holding nothing but `host_token`.
+    // Provider loading must scaffold the credential template before token creation creates the config.
     let saved = config::load_all_providers()?;
     let token = config::ensure_host_token()?;
     let mut app = nexus_core::boot(saved).await?;
@@ -114,8 +108,6 @@ pub(super) async fn host(options: HostOptions) -> Result<()> {
             port: server.local_addr().port(),
         })
     } else {
-        // No sidecar: the server remains reachable on loopback and all
-        // shutdown cleanup is still centralized below.
         None
     };
     let mut tunnel = match tunnel_spec.as_ref() {
@@ -131,8 +123,7 @@ pub(super) async fn host(options: HostOptions) -> Result<()> {
                 .and_then(|sidecar| sidecar.public_url().map(str::to_string))
         });
     if let Some(base) = &public_host {
-        // Browser navigations cannot send Authorization. App links therefore
-        // carry the same token as a query parameter; `/v1/*` remains header-only.
+        // Browser navigation needs a query token; `/v1/*` still requires the Authorization header.
         server.set_public_base(Some(base.clone())).await?;
         out(format!("public host: {base}"));
         let healthy = nexus_core::host::process::health_check(base).await;
@@ -205,17 +196,11 @@ pub(super) async fn host(options: HostOptions) -> Result<()> {
                     out(format!("new public host: {base}"));
                     restart_delay = 1;
                 } else if matches!(spec, HostTunnel::Quick { .. }) {
-                    // A replacement quick tunnel gets a *new* hostname, so a
-                    // restart with no discovered URL means the advertised one
-                    // is dead with nothing to replace it: stop handing it out.
-                    // Keep backing off too — spawning succeeds even when
-                    // cloudflared exits immediately, and resetting the delay
-                    // here would respawn it once a second forever.
+                    // Quick-tunnel hostnames change; retire stale URLs and back off even if spawning succeeds.
                     let _ = server.set_public_base(None).await;
                     out("tunnel restarted without a public URL; app links fall back to loopback");
                     restart_delay = (restart_delay * 2).min(30);
                 } else {
-                    // Named tunnels keep the hostname chosen during setup.
                     restart_delay = 1;
                 }
                 tunnel = Some(next);
@@ -285,9 +270,6 @@ fn reuse_named_tunnel(
     })
 }
 
-/// Provision a named tunnel interactively when account/zone IDs were not
-/// supplied through `CF_ACCOUNT_ID`/`CF_ZONE_ID`. Existing local tunnel
-/// configuration is reused without contacting Cloudflare.
 async fn setup_named_tunnel(port: u16) -> Result<nexus_core::host::cloudflare::SetupResult> {
     use nexus_core::host::cloudflare::{
         SetupOptions, list_accounts, list_zones, provision_named_tunnel,
@@ -298,8 +280,6 @@ async fn setup_named_tunnel(port: u16) -> Result<nexus_core::host::cloudflare::S
     {
         return reuse_named_tunnel(&saved, port);
     }
-    // An env override skips both the prompt *and* its listing call — an
-    // empty value is treated as unset rather than sent to the API as an id.
     let env_id = |name: &str| {
         std::env::var(name)
             .ok()

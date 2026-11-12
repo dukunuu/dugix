@@ -18,8 +18,6 @@ impl AppView {
         Ok(())
     }
 
-    /// Spaces matching the current fuzzy filter, best match first. Empty filter
-    /// keeps db order (default first, then creation order).
     pub fn filtered_spaces(&self) -> Vec<&nexus_core::db::Space> {
         let needle = self.space_filter.trim();
         if needle.is_empty() {
@@ -56,7 +54,6 @@ impl AppView {
         self.space_mode = SpaceMode::Create;
     }
 
-    /// A named space cannot be renamed/deleted if it's the default.
     pub fn start_space_rename(&mut self) {
         if let Some(s) = self
             .selected_space()
@@ -104,9 +101,6 @@ impl AppView {
         Ok(())
     }
 
-    /// Delete the highlighted space (default is never offered for delete —
-    /// gated by the popup's key handler). Sessions move to default; if the
-    /// active space was deleted, switch to default.
     pub fn confirm_space_delete(&mut self) -> Result<()> {
         if let Some(s) = self
             .selected_space()
@@ -133,15 +127,11 @@ impl AppView {
         self.popup = Popup::None;
     }
 
-    /// Ctrl+E target for the space picker: the highlighted space's
-    /// instructions file (the event loop owns the editor handoff).
     pub fn space_instructions_target(&self) -> Option<std::path::PathBuf> {
         self.selected_space()
             .and_then(|s| self.core.instructions_path_for_space(&s.name))
     }
 
-    /// Ctrl+K target for the space picker: the highlighted space's name,
-    /// whose memory is rendered for the editor.
     pub fn selected_space_name(&self) -> Option<String> {
         self.selected_space().map(|s| s.name.clone())
     }

@@ -1,6 +1,3 @@
-// Casts here are on bounded values: token counts, byte sizes, and
-// selection indices — never on unbounded input. JSON-derived indices in
-// provider/tools go through try_from instead.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -22,7 +19,6 @@ impl AppView {
         );
     }
 
-    /// Enter in Browse: open the script in $EDITOR.
     pub fn open_selected_script(&mut self) {
         let Some(s) = self.core.caches.scripts.get(self.scripts_selected) else {
             return;
@@ -35,13 +31,11 @@ impl AppView {
         self.pending_editor = Some(PendingEditor::ScriptFile(path));
     }
 
-    /// Ctrl+N: switch to Create mode.
     pub fn start_script_create(&mut self) {
         self.scripts_edit.clear();
         self.scripts_mode = ScriptsMode::Create;
     }
 
-    /// Enter in Create mode: create the file and open in $EDITOR.
     pub fn confirm_script_create(&mut self) -> Result<()> {
         let name = self.scripts_edit.trim().to_string();
         self.scripts_mode = ScriptsMode::Browse;
@@ -54,7 +48,6 @@ impl AppView {
         Ok(())
     }
 
-    /// Ctrl+R in Browse: pre-fill the edit line with the current name.
     pub fn start_script_rename(&mut self) {
         if let Some(s) = self.core.caches.scripts.get(self.scripts_selected) {
             self.scripts_edit = s.name.clone();
@@ -62,7 +55,6 @@ impl AppView {
         }
     }
 
-    /// Enter in Rename mode: rename the file on disk.
     pub fn confirm_script_rename(&mut self) {
         let new = self.scripts_edit.trim().to_string();
         self.scripts_mode = ScriptsMode::Browse;
@@ -79,7 +71,6 @@ impl AppView {
         self.push_status(format!("renamed {} → {new}", s.name));
     }
 
-    /// Ctrl+D confirm: delete the script file from disk.
     pub fn confirm_script_delete(&mut self) -> Result<()> {
         if let Some(s) = self.core.caches.scripts.get(self.scripts_selected).cloned() {
             self.core.delete_script_file(&s.name)?;

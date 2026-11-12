@@ -11,16 +11,12 @@ use nexus_core::space;
 use super::ask::build_app;
 use super::{SkillsCmd, out, truncate};
 
-// --- provider & skill commands ---
-
 pub(super) async fn models(backend: Option<&str>) -> Result<()> {
     let mut app = build_app(None, None).await?;
     if !app.backends.any() {
         bail!("no API keys configured — `nexus login <provider> <key>` or set the env vars");
     }
     app.init();
-    // The catalog fetch is a network call; cap the wait so a hung provider
-    // can't stall the command forever.
     let deadline = tokio::time::sleep(std::time::Duration::from_mins(1));
     tokio::pin!(deadline);
     loop {
@@ -38,8 +34,6 @@ pub(super) async fn models(backend: Option<&str>) -> Result<()> {
         .models
         .iter()
         .filter(|m| {
-            // Match the CLI spelling (openrouter/openai/opencode/codex/mistral) or
-            // the catalog display name ("OpenRouter", …), case-insensitive.
             let prefix = m.backend.key_prefix().trim_end_matches(':');
             backend.is_none_or(|b| {
                 prefix.eq_ignore_ascii_case(b) || m.backend.name().eq_ignore_ascii_case(b)
@@ -47,8 +41,6 @@ pub(super) async fn models(backend: Option<&str>) -> Result<()> {
         })
         .collect();
     if app.models.is_empty() {
-        // The fetch itself failed: surface the last queued status line
-        // ("model fetch failed: …").
         let mut status = String::new();
         while let Some(ev) = app.pop_pending_event() {
             if let app::AppEvent::Status(s) = ev {
@@ -96,8 +88,7 @@ pub(super) async fn login(provider: &str, key: &str, check: bool) -> Result<()> 
     Ok(())
 }
 
-/// The client for a key saved under `provider`. Keys other than
-/// `OpenRouter`'s carry no telling prefix, so the slot decides the backend.
+/// Uses the configured provider because most API keys have no identifying prefix.
 pub(super) fn client_for(provider: &str, key: &str) -> OpenRouter {
     let key = key.to_string();
     match provider {

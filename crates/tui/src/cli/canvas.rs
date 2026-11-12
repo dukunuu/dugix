@@ -40,7 +40,6 @@ pub(super) fn design_files(cmd: DesignCmd, files: &Path) -> Result<()> {
     Ok(())
 }
 
-/// `nexus deck import`: write the imported deck and list what was approximated.
 fn deck_import(path: &Path, out_path: Option<&Path>, files: &Path) -> Result<()> {
     use nexus_core::deck::import;
     let source = if path.exists() {

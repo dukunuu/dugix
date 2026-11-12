@@ -1,10 +1,6 @@
-//! The composer: text editing on the view-owned `TextArea`, OS-clipboard
-//! cut/copy/paste, slash-command autocomplete, and `@`-file autocomplete.
-//! The command catalog itself lives in `nexus_core::app::commands`.
+//! Composer editing, clipboard integration and autocomplete.
 
-// Casts here are on terminal-bounded values (u16/u32 dims, byte colors,
-// glyph counts) — never on unbounded user data. JSON-derived indices in
-// provider/tools go through try_from instead.
+// Numeric casts use terminal-bounded dimensions, colors and glyph counts.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -23,20 +19,13 @@ use crate::app_view::AppView;
 
 const COMPOSER_MULTI_CLICK: Duration = Duration::from_millis(400);
 
-/// What a composer line starting with `!` asks to run.
 #[derive(Debug, PartialEq, Eq)]
 enum UserCommand {
-    /// `!` (or `!tty`) with nothing after it.
     Empty,
-    /// Output captured into the conversation.
     Captured(String),
-    /// Gets the real terminal: `!tty <cmd>`, or a program that needs one
-    /// (`sudo`, `ssh`, `vim`, `less`, …; see `usershell::terminal_program`).
     Interactive(String),
 }
 
-/// Whether a draft is a `!` shell line. A draft that opens with a Markdown
-/// image (`![alt](path)`, which is how a pasted image lands) is a message.
 pub fn is_shell_draft(text: &str) -> bool {
     let Some(rest) = text.strip_prefix('!') else {
         return false;
@@ -48,7 +37,6 @@ pub fn is_shell_draft(text: &str) -> bool {
     !markdown_image
 }
 
-/// Parse a `!` line; `None` means an ordinary message.
 fn parse_user_command(text: &str) -> Option<UserCommand> {
     let text = text.trim();
     if !is_shell_draft(text) {
@@ -69,14 +57,12 @@ fn parse_user_command(text: &str) -> Option<UserCommand> {
     })
 }
 
-/// Visible shell candidates and the word they replace.
 pub struct ShellCompletionState {
     pub candidates: Vec<String>,
     pub selected: usize,
     pub range: std::ops::Range<usize>,
 }
 
-/// A background result, tied to the exact draft and context that requested it.
 pub struct ShellCompletionResult {
     pub text: String,
     pub cursor: usize,
@@ -85,22 +71,16 @@ pub struct ShellCompletionResult {
     pub completion: nexus_core::usershell::Completion,
 }
 
-/// A composer `TextArea` with sane styling: no underlined cursor line, and a
-/// selection highlight that keeps the text readable (default is a blank white bg).
 pub fn new_textarea() -> TextArea<'static> {
     let mut ta = TextArea::default();
     ta.set_cursor_line_style(Style::default());
     ta.set_selection_style(Style::default().bg(Color::Blue).fg(Color::White));
-    // Soft-wrap long lines and grow up to 20 rows like an HTML textarea.
     ta.set_wrap_mode(tui_textarea::WrapMode::WordOrGlyph);
     ta.set_max_rows(20);
     ta
 }
 
-/// Copy `text` to the OS clipboard and format the status-line message for
-/// it: `"copied {n} chars"` on success, `"clipboard unavailable"` if there's
-/// no clipboard or the set failed, or an empty string if `text` was empty
-/// (callers should leave the existing status untouched in that case).
+/// Copies text and returns a status message, leaving empty input unreported.
 pub(crate) fn copy_to_clipboard(clipboard: &mut Option<arboard::Clipboard>, text: &str) -> String {
     if text.is_empty() {
         return String::new();
@@ -116,18 +96,13 @@ pub(crate) fn copy_to_clipboard(clipboard: &mut Option<arboard::Clipboard>, text
     }
 }
 
-/// If pasted text is a single absolute path to an existing regular file
-/// (optionally `file://`-prefixed, quoted or shell-escaped, as file managers
-/// and terminals produce on drag/drop), return the cleaned path.
+/// Recognizes an existing file path in terminal drag-and-drop formats.
 pub(crate) fn pasted_file_path(text: &str) -> Option<std::path::PathBuf> {
     let mut paths = pasted_file_paths(text)?;
     (paths.len() == 1).then(|| paths.remove(0))
 }
 
-/// Pasted text naming one or more existing files, as a drop arrives: the
-/// whole text as one path, or shell words (`My\ File.pdf`, `'a b.txt'`,
-/// `file:///…%20…`) separated by spaces or newlines, every one an absolute
-/// path to a regular file.
+/// Recognizes existing file paths in terminal drag-and-drop formats.
 pub(crate) fn pasted_file_paths(text: &str) -> Option<Vec<std::path::PathBuf>> {
     let file = |word: &str| {
         let word = word
@@ -147,8 +122,6 @@ pub(crate) fn pasted_file_paths(text: &str) -> Option<Vec<std::path::PathBuf>> {
     words.iter().map(|word| file(word)).collect()
 }
 
-/// Split `text` like a shell: whitespace separates words, quotes group, and
-/// a backslash takes the next character literally (outside single quotes).
 fn shell_words(text: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut word = String::new();
@@ -185,7 +158,6 @@ fn shell_words(text: &str) -> Vec<String> {
     words
 }
 
-/// Decode `%XX` escapes in a `file://` URL's path; malformed ones stay.
 fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -209,14 +181,10 @@ fn percent_decode(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Cap on the workspace walk behind `@` completion.
 const PROJECT_FILES_MAX: usize = 20_000;
-/// How long a workspace listing serves `@` before it is walked again.
 const PROJECT_FILES_TTL: Duration = Duration::from_secs(5);
-/// Rows the `@` menu holds; the rest are a keystroke away.
 const AT_MATCHES_MAX: usize = 50;
 
-/// One `@` completion: a path in the agent workspace, or a space file.
 #[derive(Clone, Debug)]
 pub enum AtMatch {
     Project(String),
@@ -224,7 +192,6 @@ pub enum AtMatch {
 }
 
 impl AtMatch {
-    /// What accepting the match inserts.
     pub fn text(&self) -> &str {
         match self {
             Self::Project(path) => path,
@@ -237,8 +204,6 @@ impl AtMatch {
     }
 }
 
-/// Rank `path` for an `@` query: file-name prefix, then file-name substring,
-/// then path substring, then an in-order fuzzy match; `None` when none hit.
 fn at_score(path: &str, query: &str) -> Option<i32> {
     if query.is_empty() {
         return Some(0);
@@ -262,7 +227,6 @@ impl AppView {
         self.input.lines().join("\n")
     }
 
-    /// Replace the composer contents, cursor at end.
     pub fn set_input(&mut self, text: &str) {
         self.shell_state = None;
         self.shell_completion_rx = None;
@@ -280,8 +244,6 @@ impl AppView {
         self.vim.reset();
     }
 
-    /// Copy the current selection to the OS clipboard, then clear the highlight
-    /// (the cleared highlight signals success).
     pub fn copy_selection(&mut self) {
         self.input.copy();
         let text = self.input.yank_text();
@@ -292,10 +254,7 @@ impl AppView {
         }
     }
 
-    /// Copy the current selection to the OS clipboard *without* clearing it —
-    /// `TextArea::copy()` clears the selection as a side effect, which is
-    /// fine for an explicit copy but wrong for keeping the clipboard synced
-    /// while a keyboard (Shift+arrow) selection is still growing.
+    /// Preserves the growing selection that `TextArea::copy()` would clear.
     pub fn copy_selection_live(&mut self) {
         let Some(((r1, c1), (r2, c2))) = self.input.selection_range() else {
             return;
@@ -327,16 +286,11 @@ impl AppView {
         }
     }
 
-    /// Paste `text` into whatever's focused right now: the composer, or the
-    /// currently-open popup's text field, if it has one. Used for both
-    /// bracketed paste and an explicit Ctrl+V (some terminals send neither
-    /// reliably for every popup, so both paths funnel through here).
     pub fn paste(&mut self, text: &str) {
         use nexus_core::app::{AppsMode, FilesMode, SessionMode, SkillsMode, SpaceMode};
         if text.is_empty() {
             return;
         }
-        // Files dropped on /files are imported straight away.
         if self.popup == Popup::Files
             && self.files_tab == nexus_core::app::FilesTab::Files
             && matches!(self.files_mode, FilesMode::Browse | FilesMode::Pick)
@@ -348,7 +302,6 @@ impl AppView {
         }
         match self.popup {
             Popup::None => {
-                // A dropped/pasted file path becomes an import offer instead of text.
                 if let Some(path) = pasted_file_path(text) {
                     self.open_files_popup(nexus_core::app::FilesTab::Files);
                     self.start_files_add();
@@ -419,11 +372,8 @@ impl AppView {
         }
     }
 
-    /// Read `text` from the OS clipboard and paste it into whatever's focused
-    /// (Ctrl+V fallback for terminals that don't send bracketed paste).
+    /// Provides clipboard paste for terminals without reliable bracketed paste.
     pub fn paste_from_clipboard(&mut self) {
-        // An image on the clipboard (screenshot, copied picture) beats text —
-        // but only for the composer; popup fields are text-only.
         if self.popup == Popup::None
             && let Some(img) = self.clipboard.as_mut().and_then(|cb| cb.get_image().ok())
         {
@@ -440,12 +390,6 @@ impl AppView {
         self.paste(&text);
     }
 
-    // --- composer double/triple-click, and word/line-drag extension ---
-
-    /// Register a press at `screen_pos` (raw column/row) against the previous
-    /// one, returning the click count (2 = double, 3+ = triple+) so the mouse
-    /// handler knows whether to word/line-select and, if a drag follows,
-    /// which granularity to extend by.
     pub fn composer_click_down(&mut self, screen_pos: (u16, u16)) -> u8 {
         let count = match self.composer_click {
             Some((t, p)) if t.elapsed() <= COMPOSER_MULTI_CLICK && p == screen_pos => {
@@ -458,15 +402,12 @@ impl AppView {
         count
     }
 
-    /// Select the word at the cursor (already placed via a screen-to-data
-    /// jump) and remember its start as the drag anchor.
     pub fn select_composer_word(&mut self) {
         self.input.cancel_selection();
         self.input.move_cursor(CursorMove::WordBack);
         self.composer_word_anchor = Some(self.input.cursor());
         self.input.start_selection();
-        // WordEnd lands ON the word's last char (inclusive); nudge forward
-        // one so the selection range (which is exclusive) includes it.
+        // TextArea's WordEnd is inclusive, but its selection end is exclusive.
         self.input.move_cursor(CursorMove::WordEnd);
         self.input.move_cursor(CursorMove::Forward);
     }
@@ -479,20 +420,13 @@ impl AppView {
         self.input.move_cursor(CursorMove::End);
     }
 
-    /// Extend a word-mode drag: re-select from the anchor word out to
-    /// whichever word the cursor (already jumped to the drag position) is
-    /// over now, snapping both ends to word boundaries.
     pub fn extend_composer_word_selection(&mut self) {
         let Some(anchor) = self.composer_word_anchor else {
             return;
         };
         let cur = self.input.cursor();
         self.input.cancel_selection();
-        // `anchor` is already the exact start of its word (stored right
-        // after a `WordBack` in `select_composer_word`) — don't jump
-        // back again, or a boundary-aligned anchor would skip to the
-        // *previous* word's start (`WordBack` from an exact word-start
-        // lands on the prior word, matching typical vim `b` semantics).
+        // WordBack at the exact anchor boundary would skip into the previous word.
         self.jump_cursor(anchor);
         if cur >= anchor {
             self.input.start_selection();
@@ -508,8 +442,6 @@ impl AppView {
         }
     }
 
-    /// Extend a line-mode drag: re-select every full line between the anchor
-    /// line and wherever the cursor (already jumped to the drag position) is.
     pub fn extend_composer_line_selection(&mut self) {
         let Some(anchor) = self.composer_word_anchor else {
             return;
@@ -534,15 +466,10 @@ impl AppView {
             .move_cursor(CursorMove::Jump(row as u16, col as u16));
     }
 
-    // --- user-shell completion ---
-
-    /// Whether the composer holds a `!` shell line. `!` lines are an
-    /// agent-mode feature: in chat mode the same text is an ordinary message.
     pub fn shell_draft(&self) -> bool {
         self.work_mode.is_agent() && is_shell_draft(&self.input_text())
     }
 
-    /// Up/Down recall shell history: agent mode, empty or `!` draft.
     pub fn shell_history_mode(&self) -> bool {
         self.work_mode.is_agent() && {
             let text = self.input_text();
@@ -665,10 +592,6 @@ impl AppView {
         self.replace_shell_word(state.range, &candidate);
     }
 
-    // --- slash command autocomplete ---
-
-    /// Fuzzy-ranked command suggestions for the current composer text. Empty
-    /// unless the text is a bare `/token` still being typed (no space yet).
     pub fn command_matches(&self) -> Vec<Match> {
         let text = self.input_text();
         let Some(rest) = text.strip_prefix('/') else {
@@ -685,7 +608,6 @@ impl AppView {
         scored.into_iter().map(|(_, m)| m).collect()
     }
 
-    /// Highlighted suggestion index, clamped to the current match count.
     pub fn command_selected(&self) -> usize {
         let n = self.command_matches().len();
         if n == 0 {
@@ -703,8 +625,6 @@ impl AppView {
         self.cmd_selected = (self.command_selected() as i32 + delta).rem_euclid(n) as usize;
     }
 
-    /// Accept the highlighted suggestion. `run` = execute it now (Enter);
-    /// otherwise just fill it into the composer (Tab).
     pub fn accept_command(&mut self, run: bool) -> Result<()> {
         let matches = self.command_matches();
         let Some(idx) = matches
@@ -724,8 +644,6 @@ impl AppView {
         Ok(())
     }
 
-    /// The `@` token the cursor is in: the query after `@` (owned) and the
-    /// byte offset of `@`. `@` must start a word, so `me@host` stays prose.
     fn at_query(&self) -> Option<(String, usize)> {
         let text = self.input_text();
         let before = text.get(..self.cursor_byte())?;
@@ -744,8 +662,6 @@ impl AppView {
         Some((rest.to_string(), at))
     }
 
-    /// The agent workspace's files, re-walked when the workspace changes or
-    /// the listing is a few seconds old; `None` outside agent mode.
     fn project_files(&mut self) -> Option<std::sync::Arc<Vec<String>>> {
         if !self.work_mode.is_agent() {
             return None;
@@ -783,7 +699,6 @@ impl AppView {
                     .filter_map(|f| Some((at_score(&f.name, &query)?, AtMatch::Space(f.clone())))),
             )
             .collect();
-        // Best score first; ties prefer project files, then shorter paths.
         scored.sort_by(|a, b| {
             b.0.cmp(&a.0)
                 .then(a.1.is_space().cmp(&b.1.is_space()))
@@ -806,8 +721,6 @@ impl AppView {
         self.at_state = Some((matches, selected, at_offset));
     }
 
-    /// Accept the highlighted @-autocomplete match: replace `@<query>` with
-    /// the file name or workspace-relative path.
     pub fn accept_at_match(&mut self) {
         let Some((ref matches, selected, at_offset)) = self.at_state.clone() else {
             return;
@@ -831,8 +744,6 @@ impl AppView {
         *selected = (*selected as i32 + delta).rem_euclid(n) as usize;
     }
 
-    /// Alt+↑: replace the composer with the previous message this session
-    /// sent, stashing the current draft on the first step.
     pub fn recall_prev(&mut self) {
         if self.shell_history_mode() {
             self.recall_shell_prev();
@@ -856,8 +767,6 @@ impl AppView {
         self.set_input(&sent[sent.len() - 1 - back]);
     }
 
-    /// Alt+↓: step forward through recalled messages, back to the stashed
-    /// draft past the newest one.
     pub fn recall_next(&mut self) {
         if let Some((history, index, draft)) = self.shell_recall.take() {
             if index == 0 {
@@ -925,16 +834,12 @@ impl AppView {
         self.shell_recall = Some((history, 0, draft));
     }
 
-    /// Send the composer's current text (Enter): clear, then route through
-    /// `run_command` for `/`-commands, the user-command path for `!cmd`, or
-    /// `Send` for plain messages. Domain failure paths restore the text via
-    /// `AppEvent::ComposerSet`.
     pub fn submit(&mut self) -> Result<()> {
         self.recall = None;
         self.shell_recall = None;
         let text = self.input_text();
         self.clear_input();
-        self.sel.clear(); // history line indices are about to shift
+        self.sel.clear();
         let text = text.trim();
         if text.is_empty() {
             return Ok(());
@@ -954,7 +859,7 @@ impl AppView {
                     self.push_status("wait — response still streaming");
                     self.set_input(text);
                 }
-                // The event loop owns the terminal, so it runs this.
+                // Only the event loop can suspend the terminal for an interactive command.
                 UserCommand::Interactive(cmd) => {
                     self.pending_editor = Some(PendingEditor::UserCommand(cmd));
                 }
@@ -966,8 +871,6 @@ impl AppView {
         Ok(())
     }
 
-    /// `/memory edit`: render the active space's memory and queue it for
-    /// `$EDITOR` (the event loop owns the terminal).
     fn queue_memory_editor(&mut self) {
         if self.core.incognito {
             self.push_status("memory is off in incognito");
@@ -982,9 +885,6 @@ impl AppView {
         }
     }
 
-    /// The command seam's view front: parse into the seam, then execute with
-    /// view interception (popup opens, quit). Unknown commands surface as a
-    /// status line rather than an error.
     pub fn run_command(&mut self, cmd: &str) -> Result<()> {
         match self.core.parse_command(cmd) {
             Ok(cmd) => self.execute(cmd),
@@ -995,9 +895,6 @@ impl AppView {
         }
     }
 
-    /// Execute one command, intercepting the view-only intents (quit, popup
-    /// opens, the watch picker) and delegating everything else to the domain
-    /// `App::execute`.
     pub fn execute(&mut self, cmd: AppCommand) -> Result<()> {
         if self.popup == Popup::Approval
             && !matches!(cmd, AppCommand::Approve { .. } | AppCommand::Cancel { .. })
@@ -1019,12 +916,9 @@ impl AppView {
             }
             AppCommand::OpenModelPicker => self.open_model_picker(),
             AppCommand::OpenLogin => self.open_login_popup(),
-            // A bare `/local` picks interactively; a spec applies directly.
             AppCommand::ConfigureLocal { spec } if spec.trim().is_empty() => {
                 self.open_local_popup();
             }
-            // `/local status` has a table to show, so it opens the picker the
-            // survey renders into rather than only printing a summary line.
             AppCommand::LocalServer { verb, runtime } if verb == "status" => {
                 self.core.manage_local_server(&verb, &runtime);
                 self.open_local_popup();
@@ -1084,9 +978,7 @@ impl AppView {
                 self.core.execute(AppCommand::Harness)?;
                 self.popup = Popup::Harness;
             }
-            // The picker (browse/open/delete watches) works anywhere; creating
-            // one starts research, which from a plain chat would migrate the
-            // conversation — so that part stays research-session-only.
+            // Creating a watch from plain chat would migrate the conversation into research.
             AppCommand::Watch { topic: None } => self.open_watch_picker()?,
             AppCommand::Watch { topic: Some(t) } => {
                 if self.core.is_research_session() {

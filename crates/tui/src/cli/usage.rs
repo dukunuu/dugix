@@ -7,8 +7,6 @@ use nexus_core::space;
 
 use super::{fmt_req, fmt_tokens, fmt_ts, out, truncate};
 
-// --- read-only commands ---
-
 pub(super) fn usage(
     range_key: &str,
     json: bool,
@@ -18,7 +16,7 @@ pub(super) fn usage(
 ) -> Result<()> {
     let space = space::Space::open()?;
     let mut db = db::Db::open(&space.db_path())?;
-    let _ = db.backfill_usage_costs(); // price rows logged before pricing existed
+    let _ = db.backfill_usage_costs();
     if let Some(session) = session {
         out(session_usage_output(&db, session, json)?);
         return Ok(());
@@ -123,8 +121,6 @@ pub(super) fn session_usage_output(db: &db::Db, session: &str, json: bool) -> Re
     ))
 }
 
-/// The headline block: counts, cost, and the hit rate over the rows that can
-/// actually support one.
 fn print_usage_totals(totals: &nexus_core::db::UsageTotals) {
     out(format!("requests: {}", fmt_req(totals.requests)));
     out(format!(
@@ -151,8 +147,6 @@ fn print_usage_totals(totals: &nexus_core::db::UsageTotals) {
     }
 }
 
-/// `82%`, or `—` when nothing in the window can be rated. Never a confident
-/// `0%` for "the provider told us nothing".
 fn fmt_cache_rate(rated_cache_read: u64, rated_prompt: u64) -> String {
     if rated_prompt == 0 {
         return "—".to_string();
@@ -162,10 +156,6 @@ fn fmt_cache_rate(rated_cache_read: u64, rated_prompt: u64) -> String {
     format!("{:.0}%", rate * 100.0)
 }
 
-/// How a model's prompt cache is engaged: `explicit` when the request has to
-/// mark a breakpoint, `auto` when the provider caches on its own. A model
-/// showing 0% under `auto` really did miss; under `explicit` check that
-/// breakpoints are reaching it.
 fn caching_mode(model: &str) -> &'static str {
     if nexus_core::app::model_needs_cache_breakpoints(model) {
         "explicit"
@@ -193,9 +183,7 @@ fn usage_json(
             "completion_tokens": totals.completion_tokens,
             "cache_read_tokens": totals.cache_read_tokens,
             "cache_creation_tokens": totals.cache_creation_tokens,
-            // The rate's numerator and denominator, restricted to rows whose
-            // prompt-token convention is known. Divide these, not the raw
-            // totals: the raw pair can mix conventions.
+            // Raw token totals can mix provider conventions and cannot form a cache-hit ratio.
             "rated_prompt_tokens": totals.rated_prompt_tokens,
             "rated_cache_read_tokens": totals.rated_cache_read_tokens,
             "cost": totals.cost,

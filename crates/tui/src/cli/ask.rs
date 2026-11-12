@@ -11,16 +11,10 @@ use nexus_core::space;
 
 use super::{out, short_id};
 
-// --- app-booting commands (ask / chat / research / watch run) ---
-
-/// Boot the same `App` the TUI boots (creds, backends, app server, toolbox)
-/// and apply the shared `--model` / `--space` overrides.
 pub(super) async fn build_app(model: Option<&str>, space_name: Option<&str>) -> Result<app::App> {
     let saved = config::load_all_providers()?;
     let mut app = nexus_core::boot(saved).await?;
-    // Connectors connect in the background; a headless turn has no UI to
-    // update later, so give the configured ones a moment before the first
-    // request builds its tool list.
+    // Headless requests must wait for background connectors before building their tool list.
     app.connectors
         .wait_ready(std::time::Duration::from_secs(12))
         .await;
@@ -30,15 +24,12 @@ pub(super) async fn build_app(model: Option<&str>, space_name: Option<&str>) -> 
         })?;
     }
     if let Some(m) = model {
-        // Direct poke: no model catalog is fetched headless, so SetModel's
-        // resolution has nothing to resolve against. The next turn validates
-        // the backend.
+        // Headless mode has no catalog for SetModel resolution; the next turn validates the backend.
         app.current_model = Some(m.to_string());
     }
     Ok(app)
 }
 
-/// `--space new:NAME` support: create the space if it doesn't exist yet.
 fn ensure_space(name: &str) -> Result<()> {
     let name = name
         .strip_prefix("new:")
@@ -105,7 +96,6 @@ pub(super) async fn ask_prompt(
     if prompt.trim().is_empty() {
         bail!("empty prompt — pass the question as an argument or pipe it on stdin");
     }
-    // `--space new:NAME` creates the space before the app boots.
     let space_name = match options.space_name {
         Some(n) if n.starts_with("new:") => {
             ensure_space(&n)?;

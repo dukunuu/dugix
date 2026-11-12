@@ -1,6 +1,4 @@
-//! Decorations painted onto a `TextArea` each frame: tree-sitter syntax
-//! colors and the vim Visual selection. Spans for recently drawn sources are
-//! cached, so redrawing an unchanged field never re-parses it.
+//! Cached syntax highlighting and vim selection styling for text fields.
 
 use crate::ui::style::{SyntaxColors, syntax_style};
 use crate::vim::Vim;
@@ -11,17 +9,14 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use tui_textarea::TextArea;
 
-/// How many (language, source) results the per-thread cache keeps.
 const CACHE_LIMIT: usize = 64;
 
-/// Spans by (language, source).
 type SpanCache = HashMap<(String, String), Rc<Vec<Span>>>;
 
 thread_local! {
     static CACHE: RefCell<SpanCache> = RefCell::default();
 }
 
-/// Highlight spans for `source`, cached by content.
 fn spans(source: &str, lang: &str) -> Rc<Vec<Span>> {
     CACHE.with_borrow_mut(|cache| {
         let key = (lang.to_string(), source.to_string());
@@ -37,25 +32,20 @@ fn spans(source: &str, lang: &str) -> Rc<Vec<Span>> {
     })
 }
 
-/// Byte offset of char column `col` in `line` (custom highlights use bytes).
+// TextArea custom highlights use byte offsets rather than character columns.
 fn byte_col(line: &str, col: usize) -> usize {
     line.char_indices().nth(col).map_or(line.len(), |(i, _)| i)
 }
 
-/// What to paint over a field.
 #[derive(Clone, Copy)]
 pub struct Decor<'a> {
-    /// Language for syntax colors (`None` for plain text) and how many
-    /// leading bytes to leave unhighlighted (the `!` of a shell draft).
+    /// Syntax language and leading byte count to leave unhighlighted.
     pub syntax: Option<(&'a str, usize)>,
     pub colors: SyntaxColors,
-    /// The vim state, when vim keys are on for this field.
     pub vim: Option<&'a Vim>,
-    /// Style of the Visual selection.
     pub selection: Style,
 }
 
-/// Repaint `ta`'s custom highlights from scratch.
 pub fn decorate(ta: &mut TextArea<'_>, decor: Decor<'_>) {
     ta.clear_custom_highlight();
     if let Some((lang, skip)) = decor.syntax {
@@ -77,7 +67,6 @@ fn paint_syntax(ta: &mut TextArea<'_>, lang: &str, skip: usize, colors: SyntaxCo
     if spans.is_empty() {
         return;
     }
-    // Byte offset where each line starts in `source`.
     let starts: Vec<usize> = std::iter::once(0)
         .chain(ta.lines().iter().scan(0, |at, line| {
             *at += line.len() + 1;
@@ -99,8 +88,6 @@ fn paint_syntax(ta: &mut TextArea<'_>, lang: &str, skip: usize, colors: SyntaxCo
     }
 }
 
-/// The composer's syntax: a `!` shell draft as bash after its prefix,
-/// everything else as Markdown.
 #[must_use]
 pub fn composer_syntax(text: &str) -> (&'static str, usize) {
     if let Some(rest) = text.strip_prefix("!tty ") {

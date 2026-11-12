@@ -1,6 +1,4 @@
-//! The `/swarm` popup's flow half: roster cursor/mode state and the $EDITOR
-//! persona handoff. `start_swarm_turn`/`stop_swarm`/`on_swarm_update` and the
-//! roster persistence stay in core.
+//! Swarm roster interactions and persona editor handoffs.
 
 use anyhow::Result;
 
@@ -30,8 +28,6 @@ impl AppView {
             nexus_core::app::clamp_cursor(self.swarm_selected, self.core.swarm.cache.len(), delta);
     }
 
-    /// Queue the selected persona (or a new row) as a small structured file
-    /// for `$EDITOR`. Format: `name`, `model`, `---`, then free-form blurb.
     pub fn queue_swarm_persona_editor(&mut self, new: bool) -> Result<()> {
         if new {
             self.core.swarm.cache.push(Persona {
@@ -59,8 +55,6 @@ impl AppView {
         Ok(())
     }
 
-    /// Apply a persona file after `$EDITOR` exits. Leaving a newly-created row
-    /// unnamed cancels it; malformed existing edits leave the roster intact.
     pub fn apply_swarm_persona_editor(&mut self, path: &std::path::Path) -> Result<()> {
         let text = std::fs::read_to_string(path)?;
         let _ = std::fs::remove_file(path);

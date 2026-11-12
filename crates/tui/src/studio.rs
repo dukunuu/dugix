@@ -1,10 +1,4 @@
-//! The terminal's half of the studio link: spawn `nexus-studio --attach`,
-//! read what the canvas says, tell it what the model changed, and turn its
-//! comments into ordinary user messages.
-//!
-//! All of this is view state. Core only knows the shared `deck_link` context
-//! (what studio shows, which decks the model changed), so the headless CLI and
-//! the host are unaffected.
+//! Terminal-side studio linking and comment-to-conversation routing.
 
 use std::collections::{BTreeSet, VecDeque};
 use std::io::{BufRead as _, Write as _};
@@ -20,23 +14,18 @@ use tokio::sync::{Notify, mpsc};
 
 use crate::app_view::AppView;
 
-/// How much of a block's text names it in a comment message.
 const SUMMARY_CHARS: usize = 60;
-/// Characters of the anchored node's text a comment message carries.
 const NODE_TEXT_CHARS: usize = 300;
 
-/// A running studio window.
 struct Canvas {
     child: Option<Child>,
     input: ChildStdin,
     messages: mpsc::UnboundedReceiver<Message>,
     deck: PathBuf,
-    /// Set when the window speaks another link version ("update nexus-studio").
     problem: Arc<Mutex<Option<String>>>,
 }
 
 impl Canvas {
-    /// Best effort: a closed window is noticed through its `Bye`.
     fn send(&mut self, message: Message) {
         if let Ok(line) = Line::encode(message) {
             let _ = self
@@ -50,7 +39,7 @@ impl Canvas {
 impl Drop for Canvas {
     fn drop(&mut self) {
         self.send(Message::Bye);
-        // Reap off-thread; studio also exits when its stdin closes.
+        // Waiting for studio must not block the terminal's event loop.
         if let Some(mut child) = self.child.take() {
             std::thread::spawn(move || {
                 let _ = child.wait();
@@ -59,13 +48,10 @@ impl Drop for Canvas {
     }
 }
 
-/// What studio reported it is looking at.
 #[derive(Clone, PartialEq, Eq)]
 struct Focus {
     deck: PathBuf,
-    /// A slide id, or for a doc the block in view.
     slide: String,
-    /// Selected nodes of a slide, or for a doc the selected text (at most one entry).
     blocks: Vec<String>,
     doc: bool,
 }
@@ -82,7 +68,6 @@ struct CommentTurn {
     task: nexus_core::app::ChatTaskId,
     slides: Vec<(String, String)>,
     edited: BTreeSet<usize>,
-    /// For a doc: each block with its JSON, and the ids that changed in this turn.
     blocks: Vec<(String, String)>,
     edited_blocks: BTreeSet<String>,
     replies: usize,
@@ -141,7 +126,6 @@ fn slide_revisions(path: &Path) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
-/// Each block of a doc file with its JSON, to tell which ones a turn edited.
 fn block_revisions(path: &Path) -> Vec<(String, String)> {
     std::fs::read_to_string(path)
         .ok()
@@ -184,7 +168,6 @@ fn model_replies(comment: &StudioComment) -> usize {
         .count()
 }
 
-/// `paragraph`, `heading 2`, `list`… for a block, as the comment message names it.
 fn block_kind(block: &doc::Block) -> String {
     match &block.kind {
         doc::Kind::Heading { level, .. } => format!("heading {level}"),
@@ -196,11 +179,9 @@ fn block_kind(block: &doc::Block) -> String {
     }
 }
 
-/// Terminal-side link state; lives on `AppView`.
 #[derive(Default)]
 pub struct Studio {
     canvas: Option<Canvas>,
-    /// Comments waiting for a free composer and no streaming reply.
     queued: VecDeque<String>,
     comments: VecDeque<StudioComment>,
     active: Option<CommentTurn>,
@@ -208,19 +189,16 @@ pub struct Studio {
     activities: Vec<Message>,
     last_deck: Option<PathBuf>,
     focus: Option<Focus>,
-    /// What the model was last told, so it hears about a change once.
     told: Option<Focus>,
     warned_draft: bool,
 }
 
 impl Studio {
-    /// Whether a studio window is attached.
     #[must_use]
     pub fn linked(&self) -> bool {
         self.canvas.is_some()
     }
 
-    /// Whether waiting comments or an active comment turn need polling.
     #[must_use]
     pub fn has_queued(&self) -> bool {
         !self.queued.is_empty() || self.active.is_some()
@@ -252,13 +230,10 @@ impl AppView {
         self.space.files_dir(&self.active_space.name)
     }
 
-    /// Wakes the event loop when the model changes a deck or studio speaks.
     pub fn studio_wake(&self) -> Arc<Notify> {
         Arc::clone(&self.deck_link.lock().expect("deck link").notify)
     }
 
-    /// Open or focus the studio linked to this terminal, on `deck` or on the
-    /// one it showed last. With neither, the library opens instead, to choose.
     pub fn open_studio(&mut self, deck: Option<&str>) -> Result<()> {
         if self.incognito {
             bail!("studio isn't available in incognito mode");
@@ -291,7 +266,6 @@ impl AppView {
         Ok(())
     }
 
-    /// Send the current terminal palette on attach and after a theme switch.
     pub fn send_studio_theme(&mut self) {
         if let Some(canvas) = &mut self.studio.canvas {
             canvas.send(Message::Theme {
@@ -300,13 +274,10 @@ impl AppView {
         }
     }
 
-    /// Tool cards hint at `/studio` only while no window is attached, so a
-    /// change of link state re-lays them out.
     fn refresh_tool_cards(&mut self) {
         self.tool_open_gen = self.tool_open_gen.wrapping_add(1);
     }
 
-    /// Apply one message from studio.
     pub fn handle_studio_message(&mut self, message: Message) -> Result<()> {
         match message {
             message @ (Message::DocFocus { .. } | Message::DocComment { .. }) => {
@@ -370,7 +341,6 @@ impl AppView {
         Ok(())
     }
 
-    /// What a doc window says: the block in view, and comments and replies on text.
     fn handle_doc_message(&mut self, message: Message) -> Result<()> {
         match message {
             Message::DocFocus {
@@ -471,7 +441,6 @@ impl AppView {
         self.enqueue_studio_comment(deck, thread, built)
     }
 
-    /// Queue a comment's message for the conversation, or report that it could not be built.
     fn enqueue_studio_comment(
         &mut self,
         deck: PathBuf,
@@ -518,9 +487,7 @@ impl AppView {
         }
     }
 
-    /// `Comment on decks/a.deck.json · slide 2 (b4: Make room…): text`, the
-    /// thread id the model replies with, and the slide as an image. The image
-    /// is a durable snapshot, because the message is replayed every turn.
+    // Replayed messages need a durable slide snapshot, not a reference to its mutable file.
     fn comment_text(
         &self,
         path: &Path,
@@ -558,8 +525,6 @@ impl AppView {
         let image = render::render_snapshot(&deck, path, &files, slide)?;
         let shown = path.strip_prefix(&files).unwrap_or(path).display();
         let number = index + 1;
-        // The anchored node and the revision, so the model can edit at once
-        // instead of reading the whole deck first.
         let assets = path.parent().map(|dir| dir.join("assets"));
         let anchored = block
             .and_then(|id| {
@@ -579,9 +544,6 @@ impl AppView {
         ))
     }
 
-    /// `Comment on docs/q3.doc.json · b4 "Ship the docs canvas": text`, the thread id
-    /// the model replies with, the doc's revision, and the anchored block's text, so
-    /// the model can edit without a `read`. No page image: the text is enough.
     fn doc_comment_text(
         &self,
         path: &Path,
@@ -619,8 +581,6 @@ impl AppView {
         ))
     }
 
-    /// Run from the event loop: apply studio's messages, tell it what the
-    /// model changed, and send a queued comment once nothing is in the way.
     pub fn poll_studio(&mut self) {
         let mut received = Vec::new();
         let mut problem = None;
@@ -692,7 +652,6 @@ impl AppView {
                     turn.edited_blocks.insert(id.clone());
                 }
             }
-            // A change that touches no block (the title, the design) still counts.
             if turn.edited_blocks == before && !slide.is_empty() {
                 turn.edited_blocks.insert(slide.to_string());
             }
@@ -715,7 +674,7 @@ impl AppView {
                 turn.edited.insert(index + 1);
             }
         }
-        // Deck-wide changes (for example a theme) need not alter slide JSON.
+        // Slide JSON alone cannot detect deck-wide changes such as a theme.
         if turn.edited == before
             && let Some(index) = next.iter().position(|(id, _)| id == slide)
         {
@@ -785,8 +744,6 @@ impl AppView {
         reason
     }
 
-    /// One queued comment per call, and only when it cannot disturb anything:
-    /// no reply is streaming, the composer holds no draft, a model is ready.
     fn send_queued_comment(&mut self) {
         if self.studio.queued.is_empty() {
             return;
@@ -840,8 +797,6 @@ impl AppView {
         self.update_studio_waiting();
     }
 
-    /// Append `studio: viewing slide 3, selected b4` to an outgoing message,
-    /// once per change of what studio shows.
     pub fn with_studio_context(&mut self, text: String) -> String {
         let Some(focus) = self.studio.focus.clone().filter(|_| self.studio.linked()) else {
             return text;
@@ -878,9 +833,6 @@ impl AppView {
     }
 }
 
-/// `nexus-studio --attach <deck>` with piped stdio, found beside this binary
-/// first and on `PATH` second, plus a reader thread that forwards its lines
-/// and wakes the event loop. EOF becomes a `Bye`.
 fn spawn(deck: &Path, wake: Arc<Notify>) -> Result<Canvas> {
     let name = if cfg!(windows) {
         "nexus-studio.exe"
@@ -911,7 +863,6 @@ fn spawn(deck: &Path, wake: Arc<Notify>) -> Result<Canvas> {
     attach(child, deck, wake)
 }
 
-/// Wrap a child with piped stdin and stdout as the canvas.
 fn attach(mut child: Child, deck: &Path, wake: Arc<Notify>) -> Result<Canvas> {
     let input = child.stdin.take().context("studio stdin")?;
     let output = child.stdout.take().context("studio stdout")?;
@@ -928,8 +879,6 @@ fn attach(mut child: Child, deck: &Path, wake: Arc<Notify>) -> Result<Canvas> {
                     }
                     wake.notify_one();
                 }
-                // A window on another link version says so once, instead of
-                // seeming to ignore comments.
                 Err(error) if error.to_string().contains("update nexus") => {
                     *seen.lock().expect("studio problem") = Some(error.to_string());
                     wake.notify_one();

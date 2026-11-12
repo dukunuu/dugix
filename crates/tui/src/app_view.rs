@@ -1,8 +1,4 @@
-//! The TUI's view layer: `AppView` wraps the domain `App` plus all UI state —
-//! composer, popup chrome and caches, render state, theme, status line.
-//! `Deref<Target = App>` resolves view-owned fields here and falls through to
-//! the domain for everything else. UI feedback comes back as `AppEvent`s,
-//! which `apply_event` applies to this layer.
+//! View state and UI feedback for the terminal frontend.
 
 use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
@@ -28,8 +24,7 @@ use nexus_core::remote_image::{Fetcher, Status as ImageStatus};
 use std::sync::{Arc, Weak};
 
 thread_local! {
-    // The terminal renders on one thread. A weak context lets all measured
-    // layout helpers use this view's fetcher without retaining a closed view.
+    // Layout helpers must not retain a closed view's fetcher.
     static IMAGE_CONTEXT: std::cell::RefCell<Weak<Fetcher>> = const { std::cell::RefCell::new(Weak::new()) };
 }
 
@@ -39,7 +34,6 @@ pub(crate) fn use_fetcher_for_tests(fetcher: &Arc<Fetcher>) {
     IMAGE_CONTEXT.with_borrow_mut(|context| *context = Arc::downgrade(fetcher));
 }
 
-/// The icon of the site at `origin`, scheduling its download when needed.
 pub(crate) fn favicon(origin: &str) -> ImageStatus {
     IMAGE_CONTEXT.with_borrow(|context| {
         context
@@ -56,9 +50,6 @@ pub(crate) fn remote_image(url: &str) -> ImageStatus {
     })
 }
 
-/// One row standing in for an image that is not on screen: `▣ alt · loading`,
-/// `▣ alt · host (couldn't load)`, or `▣ alt · host` when images are off. It
-/// never exceeds `max_width`: the host goes first, then the alt text is cut.
 pub(crate) fn image_placeholder(
     url: &str,
     alt: &str,
@@ -109,8 +100,6 @@ thread_local! {
         std::cell::RefCell::default();
 }
 
-/// Half-block rows for a cached PNG, memoized so a layout does not decode the
-/// file on every frame.
 fn pixel_lines(
     path: &std::path::Path,
     width: u16,
@@ -154,8 +143,7 @@ fn pixel_lines(
     Some(lines)
 }
 
-/// Fixed-height, cell-sized previews for tiles and thumbnails. Loading, failure
-/// and disabled states occupy the exact same reservation as decoded pixels.
+/// Reserves the same geometry for loaded, pending and unavailable images.
 pub(crate) fn image_lines(
     url: &str,
     alt: &str,
@@ -186,7 +174,6 @@ pub(crate) fn image_lines(
     lines
 }
 
-/// Built-in start-screen banner (override with `banner.txt` in the config dir).
 const BANNER: &str = r"
 ███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗
 ████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝
@@ -195,73 +182,46 @@ const BANNER: &str = r"
 ██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║
 ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝";
 
-// App state is inherently many booleans (modes, toggles, dirty flags).
 #[allow(clippy::struct_excessive_bools)]
 pub struct AppView {
-    /// The domain half — sessions, research pipeline, provider clients,
-    /// tools, db. Everything this view layer doesn't own.
     pub core: App,
 
-    // ── Composer ──────────────────────────────────────────────────────────
-    /// Message composer. A real editor: cursor movement, word-jump, selection,
-    /// cut/copy/paste, undo — all from tui-textarea's default keymap.
     pub input: TextArea<'static>,
-    /// Long-lived OS clipboard handle. Kept alive so X11 keeps serving the
-    /// contents to clipboard managers (recreating per-op drops ownership in ~1ms).
+    /// X11 clipboard ownership must survive between copy operations.
     pub clipboard: Option<arboard::Clipboard>,
-    /// The composer's inner (inside-border) rect from the last render, so mouse
-    /// clicks can be mapped to cursor positions.
     pub input_inner: Rect,
-    /// Composer double/triple-click tracking: (time, screen pos) of the last
-    /// press, and its click count (2 = word select, 3+ = line select), so a
-    /// drag that follows can extend by word/line instead of by char.
     pub composer_click: Option<(std::time::Instant, (u16, u16))>,
     pub composer_click_count: u8,
-    /// Data-space cursor position at the start of a word-mode composer drag,
-    /// so each drag step can re-select from that word outward.
     pub composer_word_anchor: Option<(usize, usize)>,
-    /// Highlighted row in the slash-command autocomplete popup.
     pub cmd_selected: usize,
-    /// Alt+↑/↓ recall: how far back (0 = newest) through this session's sent
-    /// messages, and the draft stashed when recall started.
+    /// Sent-message offset, with zero referring to the newest message.
     pub recall: Option<usize>,
     pub recall_draft: String,
-    /// `@` file autocomplete: (matches, selected, cursor byte offset of `@`).
+    /// Autocomplete matches, selected row and byte offset of `@`.
     pub at_state: Option<(Vec<crate::composer::AtMatch>, usize, usize)>,
-    /// The agent workspace's files behind `@`: (root, walked at, paths).
+    /// Workspace root, listing time and paths for `@` completion.
     pub project_files: Option<(
         std::path::PathBuf,
         std::time::Instant,
         std::sync::Arc<Vec<String>>,
     )>,
-    /// User shell completion uses the same floating menu as slash and @ lists.
     pub shell_state: Option<crate::composer::ShellCompletionState>,
     pub shell_completion_rx:
         Option<tokio::sync::oneshot::Receiver<crate::composer::ShellCompletionResult>>,
-    /// Stable shell-history traversal and its original draft.
     pub shell_recall: Option<(Vec<String>, usize, String)>,
 
-    // ── Popup chrome ──────────────────────────────────────────────────────
-    /// Which modal popover, if any, is open.
     pub popup: Popup,
-    /// The workspace action currently displayed for permission.
     pub approval_request: Option<nexus_core::tools::ApprovalRequest>,
-    /// The core's `approval_shown` when `approval_request` was displayed, so
-    /// the next of two identical queued requests still resets the guards.
+    /// Request generation distinguishes identical queued approvals when resetting guards.
     pub approval_displayed: u64,
-    /// Wrapped-row offset and bounds from the last approval render.
     pub approval_scroll: std::cell::Cell<usize>,
     pub approval_max_scroll: std::cell::Cell<usize>,
     pub approval_page_height: std::cell::Cell<usize>,
-    /// Where the docked approval panel was last drawn, so the wheel over it
-    /// scrolls the request and over the conversation scrolls the transcript.
     pub approval_area: std::cell::Cell<Option<ratatui::layout::Rect>>,
-    /// A shell command stays locked until its final wrapped row has been shown.
+    /// Approval remains locked until the final wrapped row has been shown.
     pub approval_seen_end: std::cell::Cell<bool>,
     pub approval_opened_at: Option<std::time::Instant>,
-    /// Brief input guard, injectable so approval tests need not sleep.
     pub approval_delay: std::time::Duration,
-    /// Model-authored UI state, isolated by message and source revision.
     pub interactive: crate::interactive::Widgets,
     pub spaces_cache: Vec<SpaceRow>,
     pub space_selected: usize,
@@ -269,21 +229,14 @@ pub struct AppView {
     pub space_mode: SpaceMode,
     pub space_edit: String,
     pub session_selected: usize,
-    /// Fuzzy filter typed in the session picker (matches title, slug, and id).
     pub session_filter: FilterInput,
     pub session_mode: SessionMode,
     pub session_edit: String,
-    /// (session id, preview text) of the last session the picker previewed
-    /// from the db — recomputed only when the selection moves.
     pub session_preview: Option<(String, String)>,
     pub files_selected: usize,
     pub files_mode: FilesMode,
     pub files_tab: FilesTab,
-    /// Path being typed/pasted in the files popup's Add mode.
     pub files_edit: String,
-    /// The find picker (`/` or Ctrl+N without a desktop): its home folder,
-    /// typed query, shown results, highlighted row, and the search running
-    /// for the query (Spotlight only outside tests).
     pub picker_home: PathBuf,
     pub picker_query: String,
     pub picker_results: Vec<nexus_core::filesearch::Found>,
@@ -298,7 +251,6 @@ pub struct AppView {
     pub apps_selected: usize,
     pub apps_mode: AppsMode,
     pub apps_edit: String,
-    /// Panels pinned as mini-apps, listed after the web apps in `/apps`.
     pub pinned_apps: Vec<nexus_core::panels::Pinned>,
     pub watch_selected: usize,
     pub watch_mode: WatchMode,
@@ -306,162 +258,89 @@ pub struct AppView {
     pub swarm_popup_mode: SwarmPopupMode,
     pub skills_mode: SkillsMode,
     pub skills_selected: usize,
-    /// GitHub `owner/repo/path` shorthand being typed in Install mode.
     pub skills_edit: String,
-    /// The `/usage` popup: aggregates snapshot + recent-list cursor.
     pub usage_data: Option<nexus_core::app::usage::UsageData>,
     pub usage_scroll: usize,
-    /// Selected failure mode in the `/harness` popup.
     pub harness_selected: usize,
     pub jobs_popup: crate::ui::popups::jobs::JobsPopup,
-    /// The `/library` popup: the space's decks and docs, cursor and mode.
     pub library: crate::ui::popups::library::LibraryPopup,
     pub subagents: crate::ui::popups::subagents::SubagentsPopup,
-    /// The Open and Save dialogs the library's export asks (scripted in tests).
     pub dialogs: Box<dyn nexus_core::canvas::dialogs::Dialogs>,
-    /// The `/connectors` popup: mode, cursors, add form and import rows.
     pub connectors_popup: crate::ui::popups::connectors::ConnectorsPopup,
-    /// Background-process popup selection, output view and kill confirmation.
     pub procs_selected: usize,
     pub procs_output: Option<String>,
     pub procs_scroll: u16,
     pub procs_kill_confirm: Option<String>,
-    /// `/help` popup scroll offset (clamped at render time).
     pub help_scroll: u16,
     pub key_input: String,
-    /// Which backend the current `Popup::Key` entry is for.
     pub key_target: KeyTarget,
     pub login_selected: usize,
-    /// Cursor in the `/local` runtime selector, and whether it was reached
-    /// through `/login` — Esc goes back there, but closes for a bare `/local`.
     pub local_selected: usize,
     pub local_from_login: bool,
     pub settings_selected: usize,
-    /// Text edit buffers for the numeric settings (temperature, `top_p`, `max_tokens`).
     pub settings_inputs: [String; 7],
-    /// Indices into `SETTINGS_GROUPS` currently collapsed (hidden fields).
     pub settings_collapsed: HashSet<usize>,
     pub model_filter: FilterInput,
-    /// Narrow the merged model list to one backend (Ctrl+P cycles it); `None` = all.
     pub model_backend_filter: Option<BackendTag>,
     pub model_focus: ModelPanel,
     pub fav_selected: usize,
     pub avail_selected: usize,
-    /// Last-rendered scroll offset of each model-picker panel (render state
-    /// stashed for click mapping).
     pub fav_offset: usize,
     pub avail_offset: usize,
     pub copy_options: Vec<CopyOption>,
     pub copy_selected: usize,
 
-    // ── Render / view ─────────────────────────────────────────────────────
-    /// Lines scrolled up from the bottom (0 = following the newest lines).
+    /// Lines above the bottom, with zero following new output.
     pub scroll: usize,
-    /// Max useful `scroll` (lines above the viewport), refreshed each render so
-    /// scrolling can be clamped instead of running off into empty space.
     pub max_scroll: usize,
-    /// Rows the history pane showed last frame — the PgUp/PgDn page size.
     pub history_height: usize,
-    /// The popup list drawn last frame (set by `chrome::render_list`,
-    /// cleared at the start of each frame) — maps mouse clicks to rows.
     pub list_hit: std::cell::Cell<Option<crate::ui::popups::chrome::ListHit>>,
-    /// The centered popup drawn last frame (set by `chrome::popup_area`,
-    /// cleared at the start of each frame) — where a border press resizes it.
     pub popup_hit: std::cell::Cell<Option<crate::ui::popups::chrome::PopupHit>>,
-    /// A column or popup-border drag in progress, and the last border press
-    /// (for double-click-to-reset).
     pub drag: Option<crate::resize::Drag>,
     pub edge_click: Option<(std::time::Instant, crate::resize::Grip)>,
-    /// Total rendered lines from the previous render frame, used during streaming
-    /// to keep the viewport pinned when the user has scrolled up.
     pub prev_total: usize,
-    /// Rendered text of the streaming tail from the last frame (empty when
-    /// not streaming). The tail re-renders from scratch every frame, so line
-    /// indices aren't stable — this lets the next frame re-find the line the
-    /// viewport was pinned to by content instead of by index.
+    /// Streaming rewraps invalidate line indices, so viewport anchors use text.
     pub prev_tail: Vec<String>,
-    /// One-shot flag: the user just toggled a display flag (Ctrl+R reasoning,
-    /// Ctrl+T tool detail), so the next frame's cache re-wrap must expand/
-    /// collapse in place — pin the viewport top even when following the bottom
-    /// of a live stream.
+    /// Display toggles must preserve the viewport top even while following a stream.
     pub pin_viewport_top: bool,
-    /// Mouse text-selection over the history pane.
     pub sel: HistorySel,
-    /// Which pane a mouse press is currently interacting with, so drag/release
-    /// route to the right place even when the cursor leaves the pane.
+    /// Drag and release stay with the pressed pane even after the pointer leaves it.
     pub mouse_target: MouseTarget,
-    /// Wrapped-line cache for the transcript, so redraws don't re-render
-    /// markdown for the whole conversation every frame.
     pub history_cache: HistoryCache,
-    /// Shared across replies, layouts and search cards; never synced.
+    /// Device-local image cache shared across replies, layouts and search cards.
     pub remote_images: Arc<Fetcher>,
-    /// Decoded half-block rows for images in the reply that is still streaming,
-    /// so they are not re-decoded every frame.
     pub stream_image_cache:
         std::cell::RefCell<HashMap<(String, usize), Vec<ratatui::text::Line<'static>>>>,
-    /// Disposable, background-rendered TUI diagram previews.
     pub diagrams: crate::diagrams::DiagramCache,
-    /// Site icons drawn over link badges in the history.
     pub favicons: crate::favicons::Favicons,
-    /// Real-graphics pictures drawn over their half-block layout.
     pub pictures: crate::pictures::Pictures,
-    /// The full-screen in-terminal image viewer's state and background jobs.
     pub image_viewer: crate::image_viewer::Viewer,
-    /// Per-session history caches preserved across session switches so
-    /// switching back doesn't re-wrap every message from scratch.
     pub session_caches: HashMap<String, HistoryCache>,
-    /// Whether tool-call blocks show full arguments/results (Ctrl+T).
     pub show_tool_detail: bool,
-    /// Per-message overrides of the global tool-detail flag.
     pub tool_open: HashMap<usize, bool>,
-    /// Individually opened batch sub-cards, keyed by message and call index.
     pub batch_open: HashSet<(usize, usize)>,
-    /// Last focused batch row; Enter toggles it while the composer is empty.
     pub batch_focus: Option<(usize, usize)>,
-    /// Monotonic render generation for tool-card changes.
     pub tool_open_gen: usize,
-    /// The linked studio window and the comments it sent (`crate::studio`).
     pub studio: crate::studio::Studio,
-    /// Session whose message indices the overrides refer to.
     pub tool_session: Option<String>,
-    /// Clicked message and its previous block start, for in-place folding.
     pub tool_click_anchor: Option<(usize, Option<usize>, usize)>,
     pub notification_areas: Vec<(Rect, usize)>,
-    /// The welcome screen's recent-session rows from the last frame, as
-    /// (row rect, session id) — click targets, in `Alt+1…` order.
     pub welcome_targets: Vec<(Rect, String)>,
-    /// Start-screen banner (custom or built-in) and a greeting picked at launch.
     pub banner: String,
     pub greeting: &'static str,
-    /// Color palette — omarchy's theme, else Ghostty's, else the built-in
-    /// ANSI palette. `theme_link` is the last-seen `theme::source_stamp`,
-    /// polled by the event loop to pick up a theme switch live.
     pub theme: Theme,
-    /// How the TUI surface background is painted; persisted per device and
-    /// changed with `/theme opaque` or `/theme transparent`.
     pub background_mode: BackgroundMode,
-    /// Vim keys in the composer and panel text fields (`/vim on|off`,
-    /// persisted as the `keymap` setting; on unless set to `standard`).
     pub vim_enabled: bool,
-    /// The composer's vim mode and pending command.
     pub vim: crate::vim::Vim,
     pub theme_link: String,
-    /// Bumped every time `theme` changes, so the history render cache (which
-    /// bakes colors into cached `Line`s) knows to re-wrap on a theme switch.
+    /// Cached lines embed colors and must be invalidated when the theme changes.
     pub theme_gen: usize,
 
-    // ── Flow chrome ───────────────────────────────────────────────────────
-    /// One-line status, fed by `AppEvent::Status`.
     pub status: String,
-    /// When `status` was set; it clears itself after [`STATUS_TTL`] (errors
-    /// after [`ERROR_STATUS_TTL`]) so stale lines don't linger.
     pub status_at: Option<std::time::Instant>,
     pub should_quit: bool,
-    /// Set by a Ctrl+C that had nothing to undo; a second press soon after
-    /// quits. Any other key disarms it.
     pub quit_armed_at: Option<std::time::Instant>,
-    /// External edit queued for the event loop, which owns terminal
-    /// suspension and knows which app callback should consume the saved file.
+    /// External edits must run in the event loop, which owns terminal suspension.
     pub pending_editor: Option<PendingEditor>,
 }
 
@@ -478,7 +357,6 @@ impl DerefMut for AppView {
     }
 }
 
-/// The db setting behind `/motion`; motion is on unless it says `off`.
 pub(crate) const MOTION_SETTING: &str = "motion";
 
 pub(crate) fn load_motion_enabled(core: &App) -> bool {
@@ -511,18 +389,14 @@ fn load_background_mode(core: &App) -> BackgroundMode {
 }
 
 impl AppView {
-    // Long by design (one initializer per view-state field).
     #[allow(clippy::too_many_lines)]
     pub fn new(mut core: App) -> Self {
         core.interactive_ui = true;
         core.interactive_approvals = true;
-        // Rebuild with the approver and `propose_command` this frontend offers.
         core.refresh_toolbox();
         if let Err(error) = core.collect_job_notifications() {
             core.push_status(format!("jobs notifications: {error}"));
         }
-        // `App::new` queues the launch status line as an event; seed the
-        // view's status field from it so the first frame reads correctly.
         let status = core
             .pop_pending_event()
             .map(|ev| match ev {
@@ -692,10 +566,6 @@ impl AppView {
         }
     }
 
-    /// Apply one view-side event to this layer's state. Domain handlers run
-    /// separately in the event loop; these are the events that carry UI
-    /// feedback from domain paths (status lines, composer restore, viewport
-    /// and render-cache invalidation, the login fallback).
     pub fn apply_event(&mut self, ev: &AppEvent) {
         match ev {
             AppEvent::Status(s) => {
@@ -762,9 +632,6 @@ impl AppView {
         }
     }
 
-    /// Change and persist the TUI background mode. With no argument, cycles
-    /// between opaque and transparent; explicit values are useful for scripts
-    /// and command history.
     pub fn set_background_mode(&mut self, requested: &str) -> Result<()> {
         let requested = requested.trim();
         let mode = if requested.is_empty() {
@@ -788,8 +655,6 @@ impl AppView {
         Ok(())
     }
 
-    /// Turn vim keys on or off and persist the choice. With no argument,
-    /// toggles.
     pub fn set_keymap(&mut self, requested: &str) -> Result<()> {
         let enabled = match requested.trim() {
             "" => !self.vim_enabled,
@@ -808,8 +673,6 @@ impl AppView {
         Ok(())
     }
 
-    /// Turn panel motion on or off and persist the choice. With no argument,
-    /// toggles.
     pub fn set_motion(&mut self, requested: &str) -> Result<()> {
         let enabled = match requested.trim() {
             "" => !self.interactive.motion,
@@ -825,8 +688,6 @@ impl AppView {
         Ok(())
     }
 
-    /// Force a full history cache rebuild on the next frame. Used when
-    /// in-place message edits would otherwise leave stale wrapped content.
     pub(crate) fn activate_image_context(&self) -> usize {
         self.remote_images
             .set_enabled(self.core.settings.remote_images);
@@ -841,8 +702,6 @@ impl AppView {
         self.history_cache = HistoryCache::default();
     }
 
-    /// Ctrl+O: navigate to the session linked in the message under the
-    /// selection. Selection state is read here; the domain resolves the link.
     pub fn open_session_link(&mut self) {
         let owner = self.sel.owner_at_selection_start();
         self.core.open_session_link(owner);
@@ -855,10 +714,7 @@ impl AppView {
         }
     }
 
-    /// Copy a message's exact original content by its index into
-    /// `core.messages` (streaming reply uses index `messages.len()`) — not
-    /// the on-screen, wrap-reconstructed text a long-press selects for
-    /// highlighting.
+    /// Copies original message text, using `messages.len()` for the streaming reply.
     pub fn copy_message(&mut self, idx: usize) {
         let text = match self.core.messages.get(idx) {
             Some(m) if m.role == "assistant" => Some(nexus_core::markdown::to_plain(&m.content)),
@@ -873,9 +729,6 @@ impl AppView {
         }
     }
 
-    /// Index into `settings_inputs` for any typed (non-toggle, non-picker)
-    /// field. `None` both for non-text fields and when a group header is
-    /// selected.
     pub fn text_index(&self) -> Option<usize> {
         match self.settings_field()? {
             SettingsField::RemoteImages
@@ -897,17 +750,13 @@ impl AppView {
         }
     }
 
-    /// Ctrl+↑: open the live per-searcher activity view. Caller already
-    /// gates this on a research job running.
     pub fn open_research_live(&mut self) {
         self.core.research.live_input.clear();
         self.popup = Popup::ResearchLive;
     }
 }
 
-/// How long an ordinary status line stays up.
 pub const STATUS_TTL: std::time::Duration = std::time::Duration::from_secs(10);
-/// Errors stay long enough to read after looking back at the terminal.
 pub const ERROR_STATUS_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 
 impl AppView {
@@ -934,15 +783,12 @@ impl AppView {
 }
 
 impl AppView {
-    /// One history page for PgUp/PgDn: the visible rows minus a two-line
-    /// overlap so the reader keeps their place.
     pub fn history_page(&self) -> usize {
         self.history_height.saturating_sub(2).max(1)
     }
 }
 
 impl AppView {
-    /// Open the `n`th (0-based) recent session listed on the welcome screen.
     pub fn open_welcome_session(&mut self, n: usize) -> anyhow::Result<()> {
         let Some((_, id)) = self.welcome_targets.get(n).cloned() else {
             return Ok(());

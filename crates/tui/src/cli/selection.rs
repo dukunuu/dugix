@@ -59,7 +59,6 @@ fn read_primary_selection() -> Option<String> {
     None
 }
 
-/// Build the automatic prompt for the global-selection TUI launcher.
 pub(crate) fn primary_selection_prompt() -> Option<String> {
     read_primary_selection().map(|text| build_selection_prompt(&text))
 }
@@ -97,7 +96,6 @@ fn selection_socket_path() -> Option<PathBuf> {
     unix,
     not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
 ))]
-/// Send a selection prompt to the running TUI, returning whether one accepted it.
 pub(crate) fn send_selection_request(prompt: Option<&str>) -> bool {
     use std::net::Shutdown;
     use std::os::unix::net::UnixStream;
@@ -212,8 +210,6 @@ pub(crate) struct SelectionServer;
     unix,
     not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
 )))]
-// Mirrors the Unix signature so `main` has one call site; there is nothing
-// here that can fail.
 #[allow(clippy::unnecessary_wraps)]
 pub(crate) const fn start_selection_server() -> Result<(
     Option<SelectionServer>,

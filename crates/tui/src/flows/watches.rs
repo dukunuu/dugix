@@ -1,5 +1,4 @@
-//! The `/watch` picker's flow half: browse/confirm/delete state. `create_watch`
-//! and the due-run logic stay in core.
+//! Watch picker interactions.
 
 use anyhow::Result;
 
@@ -24,8 +23,6 @@ impl AppView {
         );
     }
 
-    /// Enter on the watch picker: jump to the watch's own research session
-    /// (the domain switch handles messages/toolbox/viewport reset).
     pub fn confirm_watch_session(&mut self) -> Result<()> {
         if let Some(w) = self.core.caches.watches.get(self.watch_selected).cloned() {
             self.core.switch_to_session_by_id(&w.session_id)?;

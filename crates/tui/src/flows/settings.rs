@@ -1,6 +1,3 @@
-// Casts here are on bounded values: token counts, byte sizes, and
-// selection indices — never on unbounded input. JSON-derived indices in
-// provider/tools go through try_from instead.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -51,8 +48,6 @@ impl AppView {
         self.popup = Popup::Settings;
     }
 
-    /// All currently-visible rows: every group header, plus each group's
-    /// fields when that group isn't collapsed.
     pub fn settings_rows(&self) -> Vec<SettingsRow> {
         let mut rows = Vec::new();
         for (i, g) in SETTINGS_GROUPS.iter().enumerate() {
@@ -71,8 +66,6 @@ impl AppView {
             .unwrap_or(SettingsRow::Group(0))
     }
 
-    /// The field under the cursor, or `None` when a (possibly collapsed)
-    /// group header is selected.
     pub fn settings_field(&self) -> Option<SettingsField> {
         match self.settings_row() {
             SettingsRow::Field(f) => Some(f),
@@ -88,8 +81,6 @@ impl AppView {
         self.settings_selected = (self.settings_selected as i32 + delta).rem_euclid(n) as usize;
     }
 
-    /// Space (or Enter) on a group header collapses/expands it; on a field it
-    /// runs that field's own toggle/cycle behavior.
     pub fn toggle_settings_field(&mut self) {
         match self.settings_row() {
             SettingsRow::Group(i) => {
@@ -160,9 +151,6 @@ impl AppView {
         }
     }
 
-    /// Step the conversation column through `auto → full → 100 → 140 → 180 →
-    /// 220 → auto` (`dir` -1 steps back), persisted. A width that isn't one of
-    /// the stops (the user dragged it) steps to `auto`.
     pub fn cycle_column_width(&mut self, dir: i32) -> Result<()> {
         const STOPS: [&str; 6] = ["auto", "full", "100", "140", "180", "220"];
         let next = STOPS
@@ -174,7 +162,6 @@ impl AppView {
         self.core.set_setting("column_width", STOPS[next])
     }
 
-    /// Expand/collapse stored reasoning traces (Ctrl+R), persisted.
     pub fn toggle_reasoning_view(&mut self) -> Result<()> {
         self.core.settings.show_reasoning = !self.core.settings.show_reasoning;
         self.pin_viewport_top = true;
@@ -195,8 +182,6 @@ impl AppView {
         Ok(())
     }
 
-    /// Type into the focused field: digits/`.` for the numeric rows, any
-    /// printable char for the URL row.
     pub fn settings_input_char(&mut self, c: char) {
         let Some(i) = self.text_index() else { return };
         let numeric = !matches!(
@@ -222,7 +207,6 @@ impl AppView {
         }
     }
 
-    /// Parse the edit buffers into settings and persist everything (on Esc).
     pub fn save_settings(&mut self) -> Result<()> {
         self.core.settings.temperature = self.settings_inputs[0].trim().parse().ok();
         self.core.settings.top_p = self.settings_inputs[1].trim().parse().ok();
@@ -237,9 +221,7 @@ impl AppView {
             .to_string();
         self.core.search.langsearch_key = self.settings_inputs[5].trim().to_string();
 
-        // Write only what changed: every write bumps the row's sync version,
-        // so rewriting untouched settings would make this device win LWW
-        // over edits made elsewhere.
+        // Rewriting unchanged rows bumps sync versions and can overwrite another device's edits.
         let values = [
             ("show_stats", flag(self.core.settings.show_stats)),
             ("show_reasoning", flag(self.core.settings.show_reasoning)),
@@ -265,8 +247,6 @@ impl AppView {
                 changed = true;
             }
         }
-        // Per-space (not a db setting): lives next to the space's other
-        // config files so it travels with the space.
         let blocked_path = self
             .core
             .space

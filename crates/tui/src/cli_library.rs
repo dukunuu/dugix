@@ -1,13 +1,10 @@
-//! `nexus library [--kind deck|doc] [--json]`: the decks and docs of the active
-//! space, newest first, listed the way the TUI's `/library` and studio's
-//! Library list them (`nexus_core::canvas::library`).
+//! Headless listing of the active space's decks and documents.
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use nexus_core::canvas::{self, Entry};
 use nexus_core::deck::link::Kind;
 
-/// What to list: everything, or one kind.
 fn wanted(kind: Option<&str>) -> Result<Option<Kind>> {
     Ok(match kind {
         None => None,
@@ -17,8 +14,7 @@ fn wanted(kind: Option<&str>) -> Result<Option<Kind>> {
     })
 }
 
-/// The lines `nexus library` prints for `entries`: a JSON array, or one aligned
-/// line per file (kind, path in the space, size, age, title).
+/// Formats library entries as JSON or aligned text rows.
 pub fn lines(
     entries: &[Entry],
     kind: Option<&str>,
@@ -59,7 +55,6 @@ pub fn lines(
         .collect())
 }
 
-/// The command: list the active space's library on stdout.
 pub fn run(kind: Option<&str>, json: bool, files: &std::path::Path) -> Result<()> {
     wanted(kind)?;
     for line in lines(&canvas::library(files), kind, json, Utc::now())? {

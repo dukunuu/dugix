@@ -95,7 +95,7 @@ fn sessions_prune(keep: Option<u64>, days: Option<u64>, dry_run: bool) -> Result
     let now = chrono::Utc::now();
     let mut doomed: Vec<db::Session> = Vec::new();
     for sp in db.list_spaces()? {
-        let sessions = db.list_sessions(&sp.id)?; // newest first
+        let sessions = db.list_sessions(&sp.id)?;
         doomed.extend(
             prune_targets(&sessions, keep, days, now)
                 .into_iter()
@@ -167,10 +167,7 @@ pub(super) fn spaces(json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Print a session's latest assistant reply (its research report, for
-/// research sessions) plus the sources it actually cites — the same
-/// assembly as the TUI's /export — or, with `--transcript`, the whole
-/// conversation.
+/// Exports the latest reply with cited sources, or the full transcript.
 pub(super) fn export(reference: &str, transcript: bool, output: Option<&Path>) -> Result<()> {
     let space = space::Space::open()?;
     let db = db::Db::open(&space.db_path())?;
@@ -190,8 +187,7 @@ pub(super) fn export(reference: &str, transcript: bool, output: Option<&Path>) -
                     short_id(&session.id)
                 )
             })?;
-        // Citations are space-wide; keep only the ones this report cites, so
-        // an export never carries another session's sources (matches /export).
+        // Citations are space-wide; exporting all of them would leak other sessions' sources.
         let citations = db.search_citations(&space_id, None)?;
         let urls_in_report: std::collections::HashSet<String> =
             nexus_core::citations::parse_citations(&report)
@@ -215,8 +211,6 @@ pub(super) fn export(reference: &str, transcript: bool, output: Option<&Path>) -
     Ok(())
 }
 
-/// The whole conversation as markdown: one `## role` section per message,
-/// tool calls as JSON code blocks.
 pub(super) fn transcript_markdown(session: &db::Session, messages: &[db::Message]) -> String {
     let mut out = format!("# {}\n\n", session.title);
     for m in messages {
@@ -233,9 +227,7 @@ pub(super) fn transcript_markdown(session: &db::Session, messages: &[db::Message
     out
 }
 
-/// Which sessions would be pruned. `keep` keeps the N most recent per
-/// space; `days` drops anything older than the cutoff; with both, either
-/// rule alone is enough to delete. `sessions` must be newest-first.
+/// Selects sessions exceeding either retention limit from a newest-first list.
 pub(super) fn prune_targets(
     sessions: &[db::Session],
     keep: Option<u64>,
@@ -256,8 +248,6 @@ pub(super) fn prune_targets(
         .map(|(_, s)| s)
         .collect()
 }
-
-// --- local data commands ---
 
 pub(super) fn memory(space_name: Option<&str>, edit: bool) -> Result<()> {
     use nexus_core::memory::{self, book};
@@ -375,8 +365,7 @@ pub(super) fn backup(output: Option<&Path>) -> Result<()> {
         chrono::Utc::now().format("%Y-%m-%d")
     ));
     let path = output.unwrap_or(&default);
-    // In WAL mode recent commits can still live in `nexus.db-wal`. Fold them
-    // into the db file first so the archive is complete on its own.
+    // Recent SQLite commits can live in the WAL; checkpoint them before archiving the database.
     checkpoint_wal(&space.db_path());
     zip_dir(&space.root, path)?;
     out(format!("backed up to {}", path.display()));
@@ -397,16 +386,10 @@ pub(super) fn restore(file: &Path, yes: bool) -> Result<()> {
             bail!("aborted");
         }
     }
-    // The device-local cache.db is keyed to the pre-restore db: stale chunks
-    // and embeddings must not survive the restore. Drop it before unzipping,
-    // then again after (pre-split backups may contain one) — the next launch
-    // recreates it empty and re-indexes on demand.
+    // Invalidate derived caches before and after extraction, since backups can contain stale caches.
     let cache_path = space.root.join("cache.db");
     let _ = std::fs::remove_file(&cache_path);
-    // The current db's WAL sidecars describe the file being replaced; left in
-    // place SQLite would replay them over the restored db. Removed only here,
-    // before extraction — sidecars that arrive *in* the archive belong to the
-    // db that arrives with them.
+    // Remove only pre-restore WAL sidecars to prevent replay over the restored database.
     for suffix in [
         "nexus.db-wal",
         "nexus.db-shm",
@@ -421,16 +404,13 @@ pub(super) fn restore(file: &Path, yes: bool) -> Result<()> {
     Ok(())
 }
 
-/// Fold the write-ahead log back into the db file. Best-effort: a missing db
-/// or a concurrent writer just means the `-wal` sidecar is archived alongside
-/// it, which restores the same way.
+// If checkpointing fails, the archived WAL sidecar still preserves recent commits.
 fn checkpoint_wal(db_path: &Path) {
     if let Ok(conn) = nexus_core::db::open_conn(db_path) {
         let _ = conn.pragma_update(None, "wal_checkpoint", "TRUNCATE");
     }
 }
 
-/// Zip a directory tree into `dst` (relative paths, deflated).
 pub(super) fn zip_dir(src: &Path, dst: &Path) -> Result<()> {
     let file = std::fs::File::create(dst).with_context(|| format!("creating {}", dst.display()))?;
     let mut zip = zip::ZipWriter::new(file);
@@ -453,8 +433,7 @@ fn zip_entries(
         let rel = path
             .strip_prefix(root)
             .with_context(|| format!("path outside root: {}", path.display()))?;
-        // The device-local cache.db is excluded from backups by design — it
-        // is disposable derived state that rebuilds on demand.
+        // Derived caches rebuild on demand and do not belong in backups.
         if rel == std::path::Path::new("cache.db") {
             continue;
         }
@@ -470,8 +449,7 @@ fn zip_entries(
     Ok(())
 }
 
-/// Extract a backup zip into `dest_root`, refusing any entry that could
-/// escape it (absolute paths, `..`, drive prefixes).
+/// Extracts a backup while rejecting paths that escape the destination.
 pub(super) fn unzip_into(archive_path: &Path, dest_root: &Path) -> Result<()> {
     let file = std::fs::File::open(archive_path)
         .with_context(|| format!("opening {}", archive_path.display()))?;

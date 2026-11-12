@@ -1,9 +1,4 @@
-//! Semantic color roles, sourced from the user's active omarchy theme
-//! (`~/.config/omarchy/current/theme/alacritty.toml`) when present, falling
-//! back to the app's original hardcoded ANSI palette otherwise. `events.rs`
-//! polls `source_stamp()` and calls `load()` again when the omarchy
-//! theme symlink changes, so switching themes in omarchy updates the running
-//! app without a restart.
+//! Semantic terminal colors and background modes.
 
 use nexus_core::theme_colors::{Palette, ThemeColors};
 use ratatui::style::{Color, Style};
@@ -12,11 +7,7 @@ pub use nexus_core::theme_colors::source_stamp;
 #[cfg(test)]
 use nexus_core::theme_colors::{Alacritty, ghostty_pairs};
 
-/// How the TUI paints its general background.
-///
-/// Terminal cells do not support alpha blending. `Transparent` uses
-/// [`Color::Reset`] so the terminal's own window opacity remains visible;
-/// `Opaque` paints the active theme's background color into the cells.
+/// Uses the terminal's default background for transparency because cells cannot alpha-blend.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BackgroundMode {
     #[default]
@@ -25,10 +16,8 @@ pub enum BackgroundMode {
 }
 
 impl BackgroundMode {
-    /// Database key used for this per-device UI preference.
     pub const SETTING_KEY: &str = "ui_background";
 
-    /// Stable value persisted in the settings database.
     #[must_use]
     pub const fn key(self) -> &'static str {
         match self {
@@ -37,7 +26,6 @@ impl BackgroundMode {
         }
     }
 
-    /// Human-readable value used in the status line.
     #[must_use]
     pub const fn label(self) -> &'static str {
         self.key()
@@ -51,7 +39,6 @@ impl BackgroundMode {
         }
     }
 
-    /// Parse a `/theme` background argument.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         let value = value.trim();
@@ -75,8 +62,6 @@ impl BackgroundMode {
 #[derive(Clone, Copy)]
 pub struct Theme {
     pub bg: Color,
-    /// Background painted into the TUI surface; derived from `bg` and the
-    /// user's [`BackgroundMode`].
     pub surface: Color,
     pub fg: Color,
     pub fg_dim: Color,
@@ -87,25 +72,16 @@ pub struct Theme {
     pub success: Color,
     pub warning: Color,
     pub error: Color,
-    /// Expanded diff row backgrounds.
     pub diff_add_bg: Color,
     pub diff_del_bg: Color,
     pub user_msg: Color,
     pub assistant_msg: Color,
     pub tool_msg: Color,
     pub research_msg: Color,
-    /// One step up from the surface: selected rows, bubbles, menus. Follows
-    /// the background mode — `Reset` when transparent, so nothing paints an
-    /// opaque block over a see-through terminal.
     pub raised: Color,
-    /// The opaque-mode `raised` shade, kept so switching modes can restore it.
     raised_opaque: Color,
-    /// Contrasting, opaque surface for compact controls and number chips.
     pub control: Color,
-    /// Text-selection highlight background.
     pub selection: Color,
-    /// Filled panel shapes get round end caps (Powerline half circles).
-    /// Only on when the terminal is known to draw them; see [`round_caps`].
     pub round_caps: bool,
 }
 
@@ -129,7 +105,6 @@ impl Default for Theme {
             assistant_msg: Color::White,
             tool_msg: Color::Yellow,
             research_msg: Color::Magenta,
-            // 256-color grays: the named ANSI palette has no in-between shade.
             raised: Color::Indexed(236),
             raised_opaque: Color::Indexed(236),
             control: Color::Indexed(238),
@@ -182,7 +157,7 @@ impl Theme {
         Palette::from_ghostty(colors).map(|palette| Self::from_palette(&palette))
     }
 
-    /// The opaque palette for studio; terminal transparency is not a deck color.
+    /// Keeps studio colors opaque because terminal transparency is not a deck color.
     #[must_use]
     pub fn colors(&self) -> ThemeColors {
         [
@@ -204,7 +179,6 @@ impl Theme {
         .into()
     }
 
-    /// Apply a UI background mode without changing the palette colors.
     pub fn set_background_mode(&mut self, mode: BackgroundMode) {
         (self.surface, self.raised) = match mode {
             BackgroundMode::Opaque => (self.bg, self.raised_opaque),
@@ -217,9 +191,7 @@ impl Theme {
         Style::default().bg(self.surface)
     }
 
-    /// Readable text on a filled `fill`: the theme's background or
-    /// foreground, whichever contrasts more. Bold panel chrome and pills use
-    /// it so light and dark themes both stay legible.
+    /// Chooses readable text for a filled control in light or dark themes.
     #[must_use]
     pub fn on(&self, fill: Color) -> Color {
         let fill = luminance(fill);
@@ -235,8 +207,6 @@ impl Theme {
     }
 }
 
-/// WCAG relative luminance of a terminal color, resolving named and indexed
-/// colors through the standard palette.
 fn luminance(color: Color) -> f64 {
     let hex = color_hex(color);
     let channel = |range: std::ops::Range<usize>| {
@@ -274,7 +244,6 @@ fn color_hex(color: Color) -> String {
     }
 }
 
-/// The shared terminal palette, converted without losing ANSI fallbacks.
 pub fn load() -> Theme {
     let mut theme = Theme::from_palette(&nexus_core::theme_colors::load());
     let var = |name| std::env::var(name).ok();
@@ -287,10 +256,7 @@ pub fn load() -> Theme {
     theme
 }
 
-/// Whether the terminal draws the Powerline half-circle caps (U+E0B4/E0B6).
-/// `NEXUS_ROUND_CAPS=1|0` decides outright. Otherwise: Ghostty, `WezTerm`
-/// and kitty bundle the glyphs whatever the font, and Omarchy installs a Nerd
-/// Font by default. Anything else gets square ends drawn in the same cells.
+// Ghostty, WezTerm and Kitty bundle Powerline glyphs; Omarchy provides a Nerd Font.
 #[must_use]
 pub fn round_caps(
     forced: Option<&str>,

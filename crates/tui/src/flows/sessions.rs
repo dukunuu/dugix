@@ -18,8 +18,6 @@ impl AppView {
         Ok(())
     }
 
-    /// Sessions matching the current fuzzy filter (title, slug, and id), best
-    /// match first. Empty filter keeps the recency order from the db.
     pub fn filtered_sessions(&self) -> Vec<&nexus_core::db::Session> {
         let needle = self.session_filter.trim();
         if needle.is_empty() {
@@ -30,7 +28,6 @@ impl AppView {
         })
     }
 
-    /// The session under the picker cursor (respecting the active filter).
     pub fn selected_session(&self) -> Option<nexus_core::db::Session> {
         self.filtered_sessions()
             .get(self.session_selected)
@@ -45,7 +42,6 @@ impl AppView {
         );
     }
 
-    /// A filter keystroke re-runs the fuzzy match and resets the cursor to the top.
     pub fn session_filter_push(&mut self, c: char) {
         self.session_filter.insert_char(c);
         self.session_selected = 0;
@@ -56,7 +52,6 @@ impl AppView {
         self.session_selected = 0;
     }
 
-    /// Enter rename mode, seeding the edit buffer with the current title.
     pub fn start_rename(&mut self) {
         if let Some(s) = self.selected_session() {
             self.session_edit = s.title;
@@ -79,8 +74,6 @@ impl AppView {
         Ok(())
     }
 
-    /// Delete the highlighted session; if it was the active one, reset to a blank
-    /// state so the stale conversation doesn't linger.
     pub fn confirm_delete(&mut self) -> Result<()> {
         if let Some(s) = self.selected_session() {
             self.core.db.delete_session(&s.id)?;

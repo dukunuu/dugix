@@ -3,8 +3,6 @@ use nexus_core::app::{CopyOption, Popup, code_blocks};
 use crate::app_view::AppView;
 
 impl AppView {
-    /// Open the `/copy` menu for the last assistant reply: the whole response
-    /// plus one entry per fenced code block.
     pub fn open_copy_menu(&mut self) {
         let opts = {
             let Some(msg) = self
@@ -35,7 +33,6 @@ impl AppView {
         self.popup = Popup::Copy;
     }
 
-    /// Copy the highlighted `/copy` menu entry and close the menu.
     pub fn confirm_copy(&mut self) {
         if let Some(text) = self
             .copy_options

@@ -1,13 +1,11 @@
-//! A single-line, cursor-addressable text field with selection and OS
-//! clipboard copy/paste — the popup search/filter boxes (session, space,
-//! model picker, skills install). `Deref<Target = str>` exposes the text.
+//! Single-line popup input with selection and clipboard support.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 #[derive(Default, Clone)]
 pub struct FilterInput {
     text: String,
-    cursor: usize, // char index
+    cursor: usize,
     anchor: Option<usize>,
 }
 
@@ -121,10 +119,7 @@ impl FilterInput {
             .map(|(s, e)| self.text.chars().skip(s).take(e - s).collect())
     }
 
-    /// Handle a cursor/selection/clipboard keystroke. Returns whether the key
-    /// was consumed — callers fall through to their own char-insert/Backspace
-    /// handling (which still goes through `insert_char`/`backspace` above) or
-    /// list-navigation handling when this returns `false`.
+    /// Handles cursor, selection and clipboard keys, returning whether the key was consumed.
     pub fn key(&mut self, key: KeyEvent, clipboard: &mut Option<arboard::Clipboard>) -> bool {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);

@@ -1,6 +1,4 @@
-//! The `/skills` popup's flow half: cursor/mode state and the $EDITOR
-//! handoff. `reload_skills`, the install task, and result handling stay in
-//! core.
+//! Skill picker interactions and editor handoffs.
 
 use nexus_core::app::{Popup, SkillsMode};
 
@@ -15,7 +13,6 @@ impl AppView {
         self.popup = Popup::Skills;
     }
 
-    /// Re-read installed skills from disk, then re-clamp the cursor.
     pub fn reload_skills(&mut self) {
         self.core.reload_skills();
         let len = self.core.skills.len();
@@ -47,8 +44,6 @@ impl AppView {
         }
     }
 
-    /// Parse the typed `owner/repo/path` (or `owner/repo`) and kick off the
-    /// background GitHub fetch (the domain half owns the task).
     pub fn confirm_skill_install(&mut self) {
         let spec = self.skills_edit.clone();
         self.skills_mode = SkillsMode::Browse;
@@ -75,7 +70,6 @@ impl AppView {
         self.skills_mode = SkillsMode::Browse;
     }
 
-    /// Path to the highlighted skill's SKILL.md, for Ctrl+E in the skills popup.
     pub fn skill_edit_path_for_selected(&self) -> Option<std::path::PathBuf> {
         self.core
             .skills

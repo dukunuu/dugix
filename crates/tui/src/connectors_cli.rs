@@ -1,6 +1,4 @@
-//! `nexus connectors list|add|remove|tools|import`: manage MCP connectors
-//! from the shell. These edit `config.toml` and the keychain directly (no
-//! TUI, no model); `tools` connects once to show what a server offers.
+//! Headless MCP connector management.
 
 use std::io::{IsTerminal as _, Write as _};
 use std::time::Duration;
@@ -189,8 +187,7 @@ fn add(
     Ok(())
 }
 
-/// Read a secret from stdin: hidden while typing on a terminal, one line
-/// when piped. Never echoed, never logged.
+/// Reads a secret from stdin without echoing or logging it.
 fn read_secret(prompt: &str) -> Result<String> {
     if !std::io::stdin().is_terminal() {
         let mut line = String::new();

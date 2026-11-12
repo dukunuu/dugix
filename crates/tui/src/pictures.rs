@@ -1,9 +1,4 @@
-//! Sharp pictures in the transcript. Reply pictures are laid out as
-//! half-block rows (two pixels per cell, `ui::cards::image_to_halfblock_lines`)
-//! that any terminal can show and that fix the picture's height. With Kitty
-//! graphics (Ghostty, Kitty, `WezTerm`) the same cells are cleared and the
-//! real picture is drawn over them at the terminal's own resolution: sent
-//! once, then placeholder cells, clipped when it scrolls part-way off.
+//! Kitty image overlays that preserve the transcript's half-block geometry.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -18,21 +13,15 @@ use ratatui_image::sliced::{SlicedImage, SlicedProtocol};
 use ratatui_image::{FilterType, Resize};
 use unicode_width::UnicodeWidthStr;
 
-/// The half-block glyph each picture cell is drawn with.
 const PIXELS: &str = "\u{2580}";
-/// Encoded pictures kept at once.
 const PICTURES_MAX: usize = 16;
 
-/// One picture's half-block block in the transcript.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Region {
-    /// First transcript line.
     pub row: usize,
-    /// Columns before the pixels (the assistant rail).
     pub x: u16,
     pub width: u16,
     pub height: u16,
-    /// What `image_at_line` names: a URL or a local path.
     pub target: String,
 }
 
@@ -40,8 +29,6 @@ fn pixels(line: &Line) -> bool {
     line.spans.iter().any(|span| span.content == PIXELS)
 }
 
-/// Picture blocks overlapping `visible`: runs of half-block lines with the
-/// same target, including a run that starts above the view.
 pub fn regions(lines: &[Line], targets: &[Option<String>], visible: Range<usize>) -> Vec<Region> {
     let picture = |index: usize| {
         lines.get(index).is_some_and(pixels) && targets.get(index).is_some_and(Option::is_some)
@@ -84,24 +71,19 @@ pub fn regions(lines: &[Line], targets: &[Option<String>], visible: Range<usize>
     found
 }
 
-/// Encoded pictures, keyed by file and cell size.
 #[derive(Default)]
 pub struct Pictures {
-    /// Only a Kitty picker; elsewhere the half-blocks stay.
     picker: Option<Picker>,
     encoded: HashMap<(PathBuf, u16, u16), Option<SlicedProtocol>>,
 }
 
 impl Pictures {
-    /// Draw real pictures when the terminal speaks the Kitty graphics protocol.
     pub fn set_picker(&mut self, picker: Picker) {
         self.picker = (picker.protocol_type() == ProtocolType::Kitty).then_some(picker);
         self.encoded.clear();
     }
 
-    /// Cover each region's half-blocks in `viewport` with its picture. `top`
-    /// is the first visible transcript line; `resolve` maps a target to a
-    /// file on this device, or `None` while it is not there yet.
+    /// Overlays pictures on half-block regions relative to the first visible transcript line `top`.
     pub fn paint(
         &mut self,
         buffer: &mut Buffer,

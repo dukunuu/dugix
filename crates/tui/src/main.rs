@@ -29,8 +29,6 @@ use app_view::AppView;
 #[tokio::main]
 async fn main() -> Result<()> {
     let (continue_session, selection_chat, send_only, command) = cli::parse();
-    // A subcommand (ask/usage/sessions/…) runs headless; no subcommand boots
-    // the TUI. Launch flags only make sense when launching the TUI.
     if let Some(cmd) = command {
         if continue_session || selection_chat || send_only {
             anyhow::bail!("launch flags can only be used when launching the TUI");
@@ -55,25 +53,20 @@ async fn main() -> Result<()> {
 
     let mut terminal = ratatui::init();
     diagrams::protect_terminal_from_renderer_panics();
-    // Probe graphics once, before EventStream owns terminal input. Unknown
-    // terminals retain portable half-block previews.
+    // Graphics probing must precede EventStream taking ownership of terminal input.
     let picker = ratatui_image::picker::Picker::from_query_stdio()
         .unwrap_or_else(|_| ratatui_image::picker::Picker::halfblocks());
     app.diagrams.set_picker(picker.clone());
     app.favicons.set_picker(picker.clone());
     app.pictures.set_picker(picker.clone());
     app.image_viewer.set_picker(picker);
-    // Capture mouse so popups are clickable/scrollable and the terminal doesn't
-    // do its own screen-wide text selection. Bracketed paste delivers a native
-    // paste as one event.
     let _ = crossterm::execute!(
         std::io::stdout(),
         crossterm::event::EnableMouseCapture,
         crossterm::event::EnableBracketedPaste,
         crossterm::event::EnableFocusChange
     );
-    // Enhanced keys so the terminal reports Ctrl+Backspace etc. distinctly
-    // (without this, most terminals send the same byte for Backspace).
+    // Most terminals otherwise report Backspace and Ctrl+Backspace as the same byte.
     let enhanced = crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
     if enhanced {
         use crossterm::event::{KeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
@@ -82,13 +75,11 @@ async fn main() -> Result<()> {
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
         );
     }
-    app.init(); // fetch models if a key is already present
+    app.init();
     open_start_session(&mut app, selection_prompt, continue_session, selection_chat)?;
-    app.spawn_update_check(); // once a day: is a newer release out? Says so; never installs
+    app.spawn_update_check();
     app.refresh_codex_in_background();
     let result = events::run(app, &mut terminal, selection_requests).await;
-    // Unix drops the socket and aborts the accept task here; elsewhere
-    // `SelectionServer` is a stub with nothing to release.
     #[allow(clippy::drop_non_drop)]
     drop(selection_server);
     if enhanced {
@@ -114,13 +105,10 @@ fn open_start_session(
     selection_chat: bool,
 ) -> Result<()> {
     if let Some(prompt) = selection_prompt {
-        // Selection mode is a real TUI launch: submit the protected prompt to
-        // the same event loop so the answer streams into the open chat.
         app.execute(nexus_core::app::AppCommand::Send { text: prompt })?;
         cli::clear_primary_selection();
     } else if continue_session || selection_chat {
-        // Explicit `--continue` (and selection mode with no selection) wins
-        // over a stale `nexus open` handoff file.
+        // Explicit launch flags take precedence over a stale session handoff.
         let _ = std::fs::remove_file(app.space.root.join("pending-open"));
         if let Some((space_id, session)) = app.db.latest_session()? {
             if app.active_space.id != space_id
@@ -133,8 +121,6 @@ fn open_start_session(
             app.push_status("no previous session — send a message to start one".to_string());
         }
     } else {
-        // `nexus open <session>` handoff: the CLI wrote a pending-open file —
-        // jump straight into that session (switching to its space first).
         let handoff = app.space.root.join("pending-open");
         if let Ok(id) = std::fs::read_to_string(&handoff) {
             let _ = std::fs::remove_file(&handoff);

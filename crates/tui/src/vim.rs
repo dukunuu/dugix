@@ -1,43 +1,27 @@
-//! Modal vim keys over a `tui_textarea::TextArea`: Normal, Insert, Visual and
-//! Visual-line modes, operators (`d c y`) over motions, counts, `.` repeat, a
-//! single unnamed register and change-sized undo. It holds no app state; the
-//! caller asks [`Vim::key`] first and keeps its own handling for whatever
-//! comes back as [`Outcome::Passthrough`]. See `docs/editor.md`.
+//! Modal vim editing for text fields; callers handle passthrough keys.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tui_textarea::{CursorMove, TextArea};
 
-/// The db setting that stores the keymap (`vim` or `standard`).
 pub const KEYMAP_SETTING: &str = "keymap";
 
-/// The editing mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Mode {
-    /// Typing goes into the text; every key but Esc passes through.
     #[default]
     Insert,
-    /// Keys are commands.
     Normal,
-    /// Charwise selection.
     Visual,
-    /// Linewise selection.
     VisualLine,
 }
 
-/// What the caller should do with a key after [`Vim::key`].
 #[derive(Debug, PartialEq, Eq)]
 pub enum Outcome {
-    /// Vim consumed it.
     Handled,
-    /// Not vim's: run the caller's usual handling.
     Passthrough,
-    /// Enter in Normal mode: submit, as Enter does without vim.
     Submit,
-    /// Esc in Normal mode with nothing pending: leave, as Esc does without vim.
     Leave,
 }
 
-/// A (row, char column) buffer position.
 type Pos = (usize, usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,7 +83,6 @@ impl Motion {
     }
 }
 
-/// Where a motion lands and how an operator treats the span it covers.
 struct Target {
     pos: Pos,
     linewise: bool,
@@ -117,19 +100,15 @@ struct Edit {
     after: Snapshot,
 }
 
-/// Vim state for one text field.
 #[derive(Default)]
 pub struct Vim {
     mode: Mode,
     count: Option<usize>,
     op: Option<(Op, Option<usize>)>,
     prefix: Option<char>,
-    /// Keys of the command in progress, for `.`.
     keys: Vec<KeyEvent>,
-    /// A change that continued into Insert mode, still collecting keys.
     recording: Option<Vec<KeyEvent>>,
     last_change: Vec<KeyEvent>,
-    /// The command just run was `u`, Ctrl+R or `.`: never recorded for `.`.
     skip_record: bool,
     replaying: bool,
     register: String,
@@ -139,7 +118,6 @@ pub struct Vim {
     insert_start: Option<Snapshot>,
     undo: Vec<Edit>,
     redo: Vec<Edit>,
-    /// The buffer as vim last left it; any other change clears the undo stack.
     seen: Option<Vec<String>>,
 }
 
@@ -168,14 +146,11 @@ fn first_non_blank(line: &[char]) -> usize {
         .unwrap_or(line.len())
 }
 
-/// The last column Normal mode may rest on.
 fn last_col(line: &[char]) -> usize {
     line.len().saturating_sub(1)
 }
 
-/// Word class at a position: 0 blank (or the virtual newline at a line's
-/// end), 1 keyword (or any non-blank for WORDs), 2 punctuation, 3 an empty
-/// line, which is a word of its own.
+// Vim treats an empty line as a word rather than whitespace.
 fn class(text: &[Vec<char>], (row, col): Pos, big: bool) -> u8 {
     let line = &text[row];
     if line.is_empty() {
@@ -277,7 +252,6 @@ fn word_back(text: &[Vec<char>], from: Pos, big: bool) -> Pos {
     at
 }
 
-/// Characters between two ordered positions, newlines counted as one.
 fn span_len(text: &[Vec<char>], a: Pos, b: Pos) -> usize {
     if a.0 == b.0 {
         return b.1.saturating_sub(a.1);
@@ -309,13 +283,11 @@ fn is_plain(key: KeyEvent) -> bool {
 }
 
 impl Vim {
-    /// The current mode.
     #[must_use]
     pub fn mode(&self) -> Mode {
         self.mode
     }
 
-    /// The mode's status label.
     #[must_use]
     pub fn label(&self) -> &'static str {
         match self.mode {
@@ -326,8 +298,6 @@ impl Vim {
         }
     }
 
-    /// Back to Insert with nothing pending, for a buffer that was replaced
-    /// (sent, cleared, recalled). The register and `.` survive.
     pub fn reset(&mut self) {
         self.mode = Mode::Insert;
         self.clear_pending();
@@ -338,7 +308,6 @@ impl Vim {
         self.seen = None;
     }
 
-    /// The Visual selection as an ordered, end-exclusive range to paint.
     #[must_use]
     pub fn visual_range(&self, ta: &TextArea<'_>) -> Option<(Pos, Pos)> {
         let text = chars(ta);
@@ -356,7 +325,6 @@ impl Vim {
         }
     }
 
-    /// Handle one key. Insert mode passes everything but Esc through.
     pub fn key(&mut self, ta: &mut TextArea<'_>, key: KeyEvent) -> Outcome {
         if self.mode == Mode::Insert {
             return self.insert_key(ta, key);
@@ -513,7 +481,6 @@ impl Vim {
         }
     }
 
-    /// Normal mode never rests past the last character.
     fn clamp(&self, ta: &mut TextArea<'_>) {
         if self.mode == Mode::Insert {
             return;
@@ -669,8 +636,6 @@ impl Vim {
         self.clamp(ta);
     }
 
-    /// Where `motion` lands from the cursor. `op` widens `l`/`$` to the
-    /// line's end so operators reach the last character.
     fn target(
         &mut self,
         ta: &TextArea<'_>,
@@ -803,7 +768,6 @@ impl Vim {
         self.chars_op(ta, op, a, b);
     }
 
-    /// `dd`, `cc`, `yy` with a count.
     fn lines_op(&mut self, ta: &mut TextArea<'_>, op: Op, count: usize) {
         let row = ta.cursor().0;
         let last = ta.lines().len() - 1;
@@ -983,7 +947,6 @@ impl Vim {
         self.mode = Mode::Insert;
     }
 
-    /// Replay the last change as one undo step; a count replaces its count.
     fn repeat(&mut self, ta: &mut TextArea<'_>, count: Option<usize>) {
         let mut keys = self.last_change.clone();
         if keys.is_empty() {
@@ -1064,14 +1027,12 @@ impl Vim {
                 self.visual_op(ta, op, linewise);
             }
             'p' | 'P' => {
-                // The selection goes; the register keeps what was yanked.
                 let (register, was_linewise) = (self.register.clone(), self.linewise);
                 let top = self.anchor.0.min(ta.cursor().0);
                 self.mode = Mode::Normal;
                 self.visual_op(ta, Op::Delete, linewise);
                 self.register = register;
                 self.linewise = was_linewise;
-                // Deleting the last lines leaves the cursor above the gap.
                 let before = !linewise || ta.cursor().0 >= top;
                 self.put(ta, before, 1);
             }
@@ -1102,7 +1063,6 @@ impl Vim {
     }
 }
 
-/// An operator's count times its motion's, or None when neither was typed.
 fn combine(a: Option<usize>, b: Option<usize>) -> Option<usize> {
     match (a, b) {
         (None, None) => None,
@@ -1119,7 +1079,6 @@ fn is_word_end(text: &[Vec<char>], at: Pos) -> bool {
     cls != 0 && next(text, at).is_none_or(|n| class(text, n, false) != cls)
 }
 
-/// The next (or previous) blank line beyond the current paragraph.
 fn paragraph(text: &[Vec<char>], row: usize, forward: bool) -> usize {
     let last = text.len() - 1;
     let step = |r: usize| {

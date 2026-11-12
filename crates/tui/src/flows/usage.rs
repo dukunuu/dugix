@@ -1,5 +1,4 @@
-//! The `/usage` popup's flow half: open/refresh/scroll state. The aggregate
-//! load and the range preference stay in core.
+//! Usage dashboard interactions.
 
 use nexus_core::app::Popup;
 
@@ -7,8 +6,6 @@ use crate::app_view::AppView;
 
 impl AppView {
     pub fn open_usage_popup(&mut self) {
-        // Recompute historical costs from the current catalog before
-        // rendering — rows logged before pricing existed stay accurate.
         self.core.backfill_usage_costs();
         self.usage_data = Some(self.core.load_usage());
         self.usage_scroll = 0;
@@ -23,7 +20,6 @@ impl AppView {
         }
     }
 
-    /// `/help` or F1: the keybinding + command reference, from the top.
     pub fn open_help(&mut self) {
         self.help_scroll = 0;
         self.popup = Popup::Help;
@@ -34,8 +30,6 @@ impl AppView {
         self.usage_data = Some(self.core.load_usage());
     }
 
-    /// Switch the dashboard's time window (`←/→` in the popup), persist the
-    /// choice, and reload. `dir < 0` steps backwards through the cycle.
     pub fn cycle_usage_range(&mut self, dir: i32) {
         self.core.usage_range = if dir >= 0 {
             self.core.usage_range.next()
@@ -47,7 +41,6 @@ impl AppView {
         self.refresh_usage();
     }
 
-    /// Scroll the recent-requests list. Returns the new cursor for the UI.
     pub fn scroll_usage(&mut self, delta: i32) {
         let Some(data) = &self.usage_data else { return };
         let max = data.recent.len().saturating_sub(1);

@@ -1,6 +1,3 @@
-// Casts here are on bounded values: token counts, byte sizes, and
-// selection indices — never on unbounded input. JSON-derived indices in
-// provider/tools go through try_from instead.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -22,8 +19,6 @@ impl AppView {
         );
     }
 
-    /// Enter in Browse: open the image in the viewer (terminal first, the
-    /// system viewer as the fallback).
     pub fn open_selected_image(&mut self) {
         let Some(img) = self.core.caches.images.get(self.images_selected).cloned() else {
             return;
@@ -43,7 +38,6 @@ impl AppView {
         }
     }
 
-    /// Ctrl+D confirm: delete the image file from disk and refresh.
     pub fn confirm_images_delete(&mut self) -> Result<()> {
         if let Some(img) = self.core.caches.images.get(self.images_selected).cloned() {
             self.core.delete_image_file(&img.name)?;

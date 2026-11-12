@@ -1,14 +1,5 @@
-//! CLI subcommands — everything `nexus` can do headless.
-//!
-//! Arg parsing is clap; dispatch happens in `main.rs` before the TUI boots.
-//! Commands that only read state (`usage`, `sessions`, `spaces`, `export`,
-//! `status`, `doctor`, `backup`, `memory`, …) open the `SQLite` db directly
-//! and never touch the network, while `ask`/`chat`/`research`/`watch run`
-//! boot the same `App` the TUI does and drive its pipelines headlessly (see
-//! `app/headless.rs`).
+//! Headless commands and launch flags for the terminal frontend.
 
-// Casts here are on bounded display values (token counts, byte sizes) for
-// human-readable scaling — never on unbounded input.
 #![allow(clippy::cast_precision_loss)]
 
 use std::io::Write as _;
@@ -583,9 +574,7 @@ pub enum SyncCmd {
     },
 }
 
-/// Parse argv and return the launch flags plus requested subcommand. `None`
-/// means no subcommand — the caller launches the TUI. Help/version/parse
-/// errors are handled by clap (it exits the process).
+/// Parses launch flags and an optional headless command, exiting on help or invalid arguments.
 pub fn parse() -> (bool, bool, bool, Option<Command>) {
     let cli = Cli::parse();
     (
@@ -596,8 +585,7 @@ pub fn parse() -> (bool, bool, bool, Option<Command>) {
     )
 }
 
-/// Run a parsed subcommand.
-#[allow(clippy::too_many_lines)] // one dispatch arm per CLI subcommand
+#[allow(clippy::too_many_lines)]
 pub async fn run(cmd: Command) -> Result<()> {
     match cmd {
         Command::Ask {
@@ -755,11 +743,8 @@ pub(super) struct HostOptions {
     setup: bool,
     service_action: Option<HostServiceAction>,
 }
-// --- helpers ---
 
-/// Find a session by full id, kebab slug, or uuid prefix, across all
-/// spaces. Returns the owning space id alongside — `Session` rows don't
-/// carry it, and citations are keyed by space.
+/// Resolves an ID, slug or UUID prefix to a session and its owning space.
 pub(crate) fn resolve_session(db: &db::Db, reference: &str) -> Result<(String, db::Session)> {
     for sp in db.list_spaces()? {
         for s in db.list_sessions(&sp.id)? {
@@ -774,8 +759,6 @@ pub(crate) fn resolve_session(db: &db::Db, reference: &str) -> Result<(String, d
     bail!("no session matching {reference:?} — `nexus sessions` lists them")
 }
 
-/// Resolve a `--space` name to the name of an existing space (defaulting to
-/// the default space when no name is given).
 fn resolve_space_name(db: &db::Db, space_name: Option<&str>) -> Result<String> {
     if let Some(name) = space_name {
         db.list_spaces()?
@@ -793,9 +776,7 @@ fn resolve_space_name(db: &db::Db, space_name: Option<&str>) -> Result<String> {
     }
 }
 
-/// Write a line to stdout; exit quietly when the reader closed the pipe
-/// (`nexus usage | head`) — coreutils behavior, not Rust's default panic
-/// on EPIPE.
+/// Writes stdout without panicking when a pipe reader exits early.
 pub(crate) fn out(line: impl std::fmt::Display) {
     let mut stdout = std::io::stdout();
     if writeln!(stdout, "{line}").is_err() {
@@ -803,7 +784,6 @@ pub(crate) fn out(line: impl std::fmt::Display) {
     }
 }
 
-/// Tokens in human scale: `122.2k`, `5.9M`.
 fn fmt_tokens(n: u64) -> String {
     match n {
         0..=999 => n.to_string(),
@@ -812,7 +792,6 @@ fn fmt_tokens(n: u64) -> String {
     }
 }
 
-/// Thousands-separated request count — std format! has no grouping spec.
 fn fmt_req(n: u64) -> String {
     let s = n.to_string();
     let mut out = String::with_capacity(s.len() + s.len() / 3);
@@ -825,14 +804,10 @@ fn fmt_req(n: u64) -> String {
     out
 }
 
-/// First 8 chars of a session uuid — enough to disambiguate in listings,
-/// and accepted by `nexus export` (prefix match).
 fn short_id(id: &str) -> String {
     id.chars().take(8).collect()
 }
 
-/// Truncate to `max` chars (not bytes — titles can carry multi-byte
-/// glyphs), with an ellipsis when cut.
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         return s.to_string();
@@ -843,12 +818,10 @@ fn truncate(s: &str, max: usize) -> String {
     )
 }
 
-/// `2026-08-12T23:15:00Z` → `2026-08-12T23:15` — ASCII-safe char take.
 fn fmt_ts(rfc3339: &str) -> String {
     rfc3339.chars().take(16).collect()
 }
 
-/// File size in human scale.
 fn human_size(bytes: u64) -> String {
     const KB: f64 = 1024.0;
     if bytes < 1024 {

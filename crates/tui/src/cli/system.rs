@@ -10,8 +10,6 @@ use nexus_core::train;
 use super::providers::client_for;
 use super::{TrainCmd, out, resolve_session};
 
-// --- status-ish commands ---
-
 pub(super) fn status() -> Result<()> {
     let creds = config::load_creds_offline();
     let dirs = config::project_dirs()?;
@@ -40,7 +38,6 @@ pub(super) fn status() -> Result<()> {
     Ok(())
 }
 
-// Long by design: one checklist fn per check line.
 #[allow(clippy::too_many_lines)]
 pub(super) async fn doctor(network: bool) -> Result<()> {
     let dirs = config::project_dirs()?;
@@ -52,7 +49,6 @@ pub(super) async fn doctor(network: bool) -> Result<()> {
         }
     };
 
-    // Data dir + db.
     let data_dir = dirs.data_dir();
     let db_path = data_dir.join("nexus.db");
     check(
@@ -70,8 +66,7 @@ pub(super) async fn doctor(network: bool) -> Result<()> {
         integrity.as_deref().unwrap_or("unreadable"),
     );
 
-    // Device-local cache db: disposable, so absent or empty is healthy — it
-    // is recreated on the next launch and re-indexes on demand.
+    // A missing or empty cache is healthy because it rebuilds on demand.
     let cache_path = data_dir.join("cache.db");
     match std::fs::metadata(&cache_path) {
         Err(_) => check("cache db", true, "absent (created on next launch)"),
@@ -99,7 +94,6 @@ pub(super) async fn doctor(network: bool) -> Result<()> {
         }
     }
 
-    // Config parses.
     let cfg_path = config::config_path()?;
     let cfg_ok = match std::fs::read_to_string(&cfg_path) {
         Ok(text) => toml::from_str::<toml::Value>(&text).is_ok(),
@@ -115,7 +109,6 @@ pub(super) async fn doctor(network: bool) -> Result<()> {
         },
     );
 
-    // Optional external tools.
     for tool in ["ffmpeg", "ollama", "node", "npm", "cloudflared"] {
         let present = std::process::Command::new(tool)
             .arg("--version")
@@ -132,7 +125,6 @@ pub(super) async fn doctor(network: bool) -> Result<()> {
         );
     }
 
-    // Live provider check.
     if network {
         let creds = config::load_creds_offline();
         let providers = [
@@ -177,8 +169,6 @@ pub(super) async fn update() -> Result<()> {
     Ok(())
 }
 
-/// Jump into a session: write a handoff file the TUI reads at boot, then
-/// launch it.
 pub(super) fn open(reference: &str) -> Result<()> {
     let space = space::Space::open()?;
     let db = db::Db::open(&space.db_path())?;
@@ -228,7 +218,7 @@ pub(super) fn train_export(cmd: TrainCmd) -> Result<()> {
     if let Some(codex) = saved.codex {
         secrets.extend([codex.access, codex.refresh]);
     }
-    // Also redact environment credentials when an on-disk key took precedence.
+    // Environment credentials remain secret even when an on-disk key takes precedence.
     secrets.extend(
         config::SECRET_ENV_VARS
             .iter()
@@ -258,8 +248,7 @@ pub(super) fn train_export(cmd: TrainCmd) -> Result<()> {
         out: output,
         split,
     };
-    // App.models is memory-only, with no persisted distillability metadata.
-    // Do not fetch a catalog or silently assume a license for an offline export.
+    // Offline export must not fetch a catalog or assume a license without persisted metadata.
     let report = train::export(
         &store,
         &options,

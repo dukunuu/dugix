@@ -13,7 +13,6 @@ use crate::app_view::AppView;
 use crate::ui;
 use nexus_core::app::{AppCommand, AppEvent, ModelPanel, MouseTarget, Popup, WorkMode};
 
-/// Ctrl+E in the space picker edits that space's instructions file.
 fn edit_file_target(app: &AppView, key: &KeyEvent) -> Option<std::path::PathBuf> {
     if !(app.popup == Popup::Space
         && app.space_mode == nexus_core::app::SpaceMode::Browse
@@ -25,7 +24,6 @@ fn edit_file_target(app: &AppView, key: &KeyEvent) -> Option<std::path::PathBuf>
     app.space_instructions_target()
 }
 
-/// Ctrl+K in the space picker edits that space's memory: the space's name.
 fn memory_edit_target(app: &AppView, key: &KeyEvent) -> Option<String> {
     (app.popup == Popup::Space
         && app.space_mode == nexus_core::app::SpaceMode::Browse
@@ -35,8 +33,6 @@ fn memory_edit_target(app: &AppView, key: &KeyEvent) -> Option<String> {
     .flatten()
 }
 
-/// Render a space's memory to Markdown, hand it to `$EDITOR`, and apply the
-/// result as a diff.
 fn edit_memory(app: &mut AppView, terminal: &mut DefaultTerminal, space: &str) {
     match app.core.memory_edit_file(space) {
         Ok(path) => edit_memory_file(app, terminal, space, &path),
@@ -44,7 +40,6 @@ fn edit_memory(app: &mut AppView, terminal: &mut DefaultTerminal, space: &str) {
     }
 }
 
-/// Open a rendered memory file in `$EDITOR`, then apply it.
 fn edit_memory_file(
     app: &mut AppView,
     terminal: &mut DefaultTerminal,
@@ -61,7 +56,6 @@ fn edit_memory_file(
     }
 }
 
-/// Ctrl+E in the skills popup opens the highlighted skill's SKILL.md.
 fn skill_edit_target(app: &AppView, key: &KeyEvent) -> Option<std::path::PathBuf> {
     if !(app.popup == Popup::Skills
         && app.skills_mode == nexus_core::app::SkillsMode::Browse
@@ -73,7 +67,6 @@ fn skill_edit_target(app: &AppView, key: &KeyEvent) -> Option<std::path::PathBuf
     app.skill_edit_path_for_selected()
 }
 
-/// Ctrl+E in the settings popup opens the app's base system prompt.
 fn system_prompt_edit_target(app: &AppView, key: &KeyEvent) -> Option<std::path::PathBuf> {
     if !(app.popup == Popup::Settings
         && key.modifiers.contains(KeyModifiers::CONTROL)
@@ -93,8 +86,6 @@ pub fn run(
         let result = Box::pin(run_loop(&mut app, terminal, selection_requests)).await;
         app.cancel_chat_tasks();
         app.procs.shutdown().await;
-        // Servers started with `/local start` are Nexus's to clean up; ones the
-        // user started elsewhere are untouched.
         app.stop_local_servers().await;
         result
     })
@@ -118,7 +109,6 @@ async fn next_shell_completion(
     }
 }
 
-/// The reply a background job will send, or never while none is running.
 async fn next_reply<T>(receiver: &mut Option<tokio::sync::oneshot::Receiver<T>>) -> Option<T> {
     match receiver {
         Some(receiver) => receiver.await.ok(),
@@ -126,7 +116,6 @@ async fn next_reply<T>(receiver: &mut Option<tokio::sync::oneshot::Receiver<T>>)
     }
 }
 
-// Long by design (event loop).
 #[allow(clippy::too_many_lines)]
 async fn run_loop(
     app: &mut AppView,
@@ -134,23 +123,19 @@ async fn run_loop(
     mut selection_requests: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
 ) -> Result<()> {
     let mut reader = EventStream::new();
-    // Cheap poll for a theme switch (omarchy's symlink, Ghostty's config) so
-    // changing the terminal theme restyles the running app.
     let mut theme_poll = tokio::time::interval(std::time::Duration::from_secs(2));
     let mut jobs_poll = tokio::time::interval(std::time::Duration::from_secs(60));
     loop {
         crate::interactive::flush_settled(app);
         app.sync_approval_popup();
         take_proposed_command(app);
-        // Locally-queued UI feedback (status lines, composer restore,
-        // viewport resets) applies before the draw so it lands on the same
-        // frame as the action that caused it.
+        // Apply queued feedback before drawing to avoid a frame of stale UI state.
         while let Some(ev) = app.pop_pending_event() {
             app.apply_event(&ev);
         }
         terminal.draw(|f| ui::render(f, app))?;
         if app.should_quit {
-            // Save anything the throttled loop flush hasn't yet.
+            // Throttled persistence may still have unsaved changes at shutdown.
             crate::interactive::flush(app);
             break;
         }
@@ -166,9 +151,7 @@ async fn run_loop(
         let studio_retry = app.studio.has_queued();
         tokio::select! {
             () = images.changed() => {}
-            // Studio spoke, closed, or the model changed a deck.
             () = studio_wake.notified() => app.poll_studio(),
-            // A waiting studio comment re-checks for a free composer.
             () = async {
                 if studio_retry {
                     tokio::time::sleep(std::time::Duration::from_millis(400)).await;
@@ -180,8 +163,7 @@ async fn run_loop(
                 Some(Ok(Event::Key(k))) if k.kind == KeyEventKind::Press
                     || (k.kind == KeyEventKind::Repeat && app.popup == Popup::InteractiveUi
                         && app.interactive.input_focused()) => {
-                    // A failed action is reported, never fatal: one bad db
-                    // write or editor exit must not kill in-flight streams.
+                    // An action failure must not terminate unrelated in-flight streams.
                     if let Err(e) = on_key(app, terminal, k) {
                         app.push_status(format!("error: {e:#}"));
                     }
@@ -194,8 +176,6 @@ async fn run_loop(
                         app.push_status(format!("error: {e:#}"));
                     }
                 }
-                // Terminal-native paste (bracketed paste) — goes to whatever's
-                // focused: the composer, or a popup's text field.
                 Some(Ok(Event::Paste(text))) => {
                     app.paste(&text);
                 }
@@ -236,9 +216,6 @@ async fn run_loop(
                 }
             }
             event = app.core.next_event() => {
-                // View-side events (status line, composer restore, viewport
-                // reset) apply to the view layer; domain events go to their
-                // handlers, which may push more pending events in turn.
                 app.apply_event(&event);
                 match event {
                     AppEvent::Status(_)
@@ -256,8 +233,6 @@ async fn run_loop(
                     }
                     AppEvent::Models(r) => {
                         app.on_models_result(r);
-                        // First key just landed and nothing picked yet → jump
-                        // into the picker (the domain can't open popups).
                         if !app.core.models.is_empty()
                             && app.core.current_model.is_none()
                             && app.popup == Popup::None
@@ -273,8 +248,6 @@ async fn run_loop(
                     AppEvent::LocalServers(r) => app.on_local_status(r),
                     AppEvent::Research(r) => {
                         app.on_research_done(r);
-                        // The job's channel closed: close the live view and
-                        // clear its steer input.
                         if app.core.research.rx.is_none() {
                             app.core.research.live_input.clear();
                             if app.popup == Popup::ResearchLive {
@@ -295,8 +268,6 @@ async fn run_loop(
                     std::future::pending::<()>().await;
                 }
             } => app.tick_spinner(),
-            // Long-press (held, unmoved) copies the message, code block, or
-            // link under the pointer.
             () = async {
                 match long_deadline {
                     Some(d) => tokio::time::sleep(d.saturating_duration_since(std::time::Instant::now())).await,
@@ -316,7 +287,6 @@ async fn run_loop(
                     None => std::future::pending::<()>().await,
                 }
             } => app.expire_status(),
-            // Tick once a second on the start screen so the clock stays live.
             () = async {
                 if welcome {
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -331,7 +301,6 @@ async fn run_loop(
                     std::future::pending::<()>().await;
                 }
             } => crate::interactive::live::tick(app),
-            // About 15 frames a second while a canvas on screen is moving.
             () = async {
                 if animating {
                     tokio::time::sleep(std::time::Duration::from_millis(66)).await;
@@ -360,8 +329,6 @@ async fn run_loop(
     Ok(())
 }
 
-/// One key press: external-editor shortcuts first (this loop owns the
-/// terminal), then the focused popup's or the composer's handler.
 fn on_key(app: &mut AppView, terminal: &mut DefaultTerminal, k: KeyEvent) -> Result<()> {
     if let Some(path) = edit_file_target(app, &k) {
         edit_in_external_editor(terminal, &path)?;
@@ -383,8 +350,7 @@ fn on_key(app: &mut AppView, terminal: &mut DefaultTerminal, k: KeyEvent) -> Res
         }
     } else {
         handle_key(app, k)?;
-        // /edit queued an app file — open it now (this loop
-        // owns the terminal, run_command doesn't).
+        // External editors must run here because this loop owns terminal suspension.
         if let Some(edit) = app.pending_editor.take() {
             match edit {
                 nexus_core::app::PendingEditor::AppFile(path) => {
@@ -425,9 +391,6 @@ fn on_key(app: &mut AppView, terminal: &mut DefaultTerminal, k: KeyEvent) -> Res
 }
 
 fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
-    // Ctrl+C backs out one step — close the popup, stop the reply being
-    // viewed, clear the draft — and quits only on a second press with
-    // nothing left to undo, so a stray press can't kill streams or a draft.
     if key.modifiers.contains(KeyModifiers::CONTROL)
         && !key.modifiers.contains(KeyModifiers::SHIFT)
         && key.code == KeyCode::Char('c')
@@ -438,9 +401,7 @@ fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
         return ctrl_c(app);
     }
     app.quit_armed_at = None;
-    // Ctrl+V pastes into whatever's focused (composer or a popup's text
-    // field) — a fallback for terminals that don't send bracketed paste for
-    // every popup, or don't send it at all.
+    // Some terminals do not reliably send bracketed paste, so support clipboard paste too.
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('v') {
         app.paste_from_clipboard();
         return Ok(());
@@ -487,11 +448,9 @@ fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
     Ok(())
 }
 
-/// How long a first Ctrl+C keeps the quit armed.
 const QUIT_CONFIRM_WINDOW: std::time::Duration = std::time::Duration::from_millis(1500);
 
 fn ctrl_c(app: &mut AppView) -> Result<()> {
-    // In the image viewer Ctrl+C copies the picture; Esc closes.
     if app.popup == Popup::ImageViewer {
         app.viewer_action(crate::image_viewer_actions::Action::CopyImage);
         return Ok(());
@@ -525,8 +484,6 @@ fn ctrl_c(app: &mut AppView) -> Result<()> {
     Ok(())
 }
 
-/// A `propose_command` lands in the composer only when it is empty; a draft
-/// is never replaced, so the proposal shows as a status line instead.
 fn take_proposed_command(app: &mut AppView) {
     let Some(cmd) = app.core.approvals.proposed_command.take() else {
         return;
@@ -538,8 +495,6 @@ fn take_proposed_command(app: &mut AppView) {
     }
 }
 
-/// Suspend the TUI, run `child` with the real terminal, then restore it and
-/// force a full redraw (its contents are gone after the child exits).
 fn with_terminal_suspended<T>(
     terminal: &mut DefaultTerminal,
     child: impl FnOnce() -> T,
@@ -561,13 +516,7 @@ fn with_terminal_suspended<T>(
     Ok(result)
 }
 
-/// Hand the real terminal to an interactive `!` command (`!tty`, `sudo`,
-/// `ssh`, …) the way `$EDITOR` gets it: what the user types, passwords
-/// included, never passes through nexus. Its output stays on screen until
-/// the user presses Enter. Returns its exit code and whether it started.
-/// Run a `!` command on the real terminal, in the user's shell setup (when
-/// a captured `!` already loaded it) and the tracked `!` directory; returns
-/// the directory it ended in so `!sudo …`/`!ssh` keep the same cwd rules.
+// Interactive input, including passwords, must go directly to the child rather than through Nexus.
 fn run_interactive_command(
     terminal: &mut DefaultTerminal,
     cmd: &str,
@@ -606,9 +555,6 @@ fn run_interactive_command(
     Ok((exit, started, next_dir))
 }
 
-/// Suspend the TUI, open `path` in `$EDITOR` (falling back to `vi`), then
-/// restore the terminal and force a full redraw (its contents are gone after
-/// the editor exits).
 fn edit_in_external_editor(terminal: &mut DefaultTerminal, path: &std::path::Path) -> Result<()> {
     let editor_raw = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
     let mut parts = editor_raw.split_whitespace();
@@ -622,8 +568,7 @@ fn edit_in_external_editor(terminal: &mut DefaultTerminal, path: &std::path::Pat
     match status {
         Ok(code) if code.success() => Ok(()),
         Ok(code) => {
-            // Non-zero exit (vim `:cq`, user abort, etc.) — the terminal is
-            // restored but the caller should not consume the edited file.
+            // Editors use nonzero exit codes (such as vim's :cq) to discard edits.
             Err(anyhow::anyhow!(
                 "editor exited with code {}",
                 code.code().unwrap_or(-1)
@@ -643,7 +588,6 @@ fn open_new_session(app: &mut AppView, incognito: bool) -> Result<()> {
     Ok(())
 }
 
-// Long by design (key dispatch).
 #[allow(clippy::too_many_lines)]
 fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
     if app.shell_state.is_some() {
@@ -677,8 +621,6 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
         app.shell_recall = None;
     }
 
-    // Slash-command autocomplete captures navigation while it's showing. Typing
-    // (chars/backspace) still falls through so the list keeps filtering.
     if !app.command_matches().is_empty() {
         match key.code {
             KeyCode::Up => {
@@ -705,7 +647,6 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
         }
     }
 
-    // @-file autocomplete — only when no slash command is showing.
     if app.at_state.is_some() {
         match key.code {
             KeyCode::Up => {
@@ -728,8 +669,6 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
         }
     }
 
-    // Vim gets the key first; whatever it passes on keeps today's handling,
-    // and Normal-mode Enter/Esc act exactly like plain Enter/Esc.
     let key = if app.vim_enabled {
         match app.vim.key(&mut app.input, key) {
             crate::vim::Outcome::Handled => {
@@ -763,11 +702,7 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
             app.start_shell_completion();
         }
         KeyCode::Enter if shift || ctrl => app.input.insert_newline(),
-        // A parked survey gate (survey answer or plan approval) intercepts
-        // Enter — but only while the *viewed* session is the gated one, so a
-        // gate in another session can never swallow typing. The reply routes
-        // to the pipeline; an empty input means "approve" (plan) / "skip
-        // ahead" (survey). Normal typing is untouched.
+        // A gate in another session must not consume this session's input.
         KeyCode::Enter if app.survey_gate_targets_current_session() => {
             let text = app.input_text();
             app.set_input("");
@@ -787,13 +722,9 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
             app.batch_focus = None;
             app.submit()?;
         }
-        // Ctrl+Shift+C copies the composer's selection for terminals that
-        // forward it (a mouse selection copies on release everywhere).
         KeyCode::Char('a') if ctrl => app.input.select_all(),
         KeyCode::Char('c' | 'C') if ctrl && shift => app.copy_selection(),
         KeyCode::Char('x') if ctrl => app.cut_selection(),
-        // Ctrl+R expands/collapses stored reasoning traces (editor's redo is
-        // shadowed here — the composer rarely needs it).
         KeyCode::Char('r') if ctrl => app.toggle_reasoning_view()?,
         KeyCode::Char('t') if ctrl => {
             app.show_tool_detail = !app.show_tool_detail;
@@ -804,46 +735,31 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
             app.tool_click_anchor = None;
             app.pin_viewport_top = true;
         }
-        // Ctrl+N starts a regular session; Ctrl+Shift+N starts an incognito
-        // session. Both shortcuts also switch modes when needed.
         KeyCode::Char('n' | 'N') if ctrl && shift => open_new_session(app, true)?,
         KeyCode::Char('n' | 'N') if ctrl => open_new_session(app, false)?,
         KeyCode::Char('o') if ctrl && app.sel.selected_text().is_some() => {
             app.open_session_link();
         }
-        // Ctrl+↑ opens the live research-activity view (per-searcher
-        // reasoning/tool calls) — only while a research job is running.
         KeyCode::Up if ctrl && app.research.rx.is_some() => app.open_research_live(),
-        // Otherwise it opens this conversation's sub-agents while it has some.
         KeyCode::Up if ctrl && ui::popups::subagents::has_live(app) => {
             ui::popups::subagents::open(app);
         }
-        // Alt+↑/↓ recall this session's sent messages into the composer.
         KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT) => app.recall_prev(),
         KeyCode::Down if key.modifiers.contains(KeyModifiers::ALT) => app.recall_next(),
-        // Ctrl+G opens the context breakdown (system/memory/conversation/skills).
-        // (Not Ctrl+I: that's the same byte as Tab on terminals without the
-        // Kitty keyboard protocol, so it'd be unreachable on many of them.)
+        // Ctrl+I aliases Tab on terminals without the Kitty keyboard protocol.
         KeyCode::Char('g') if ctrl => app.popup = Popup::Context,
         KeyCode::F(1) => app.open_help(),
         KeyCode::F(2) => crate::interactive::focus(app),
-        // Alt+1…4 reopen the welcome screen's recent sessions.
         KeyCode::Char(c @ '1'..='4')
             if key.modifiers.contains(KeyModifiers::ALT) && !app.welcome_targets.is_empty() =>
         {
             app.open_welcome_session(c as usize - '1' as usize)?;
         }
-        // Ctrl+Backspace deletes the previous word. (Alt+Backspace and Ctrl+W
-        // also do this via the editor's default keymap.)
         KeyCode::Backspace if ctrl => {
             app.input.delete_word();
             app.refresh_at_matches();
             return Ok(());
         }
-        // Up/Down move the composer cursor within a multi-row message first;
-        // only once it's already at the top/bottom row do they scroll history.
-        // Shift+Up/Down falls through to the default keymap instead, so it
-        // extends the selection rather than being swallowed by this.
         KeyCode::Up if !shift && !ctrl && app.shell_history_mode() => app.recall_prev(),
         KeyCode::Down if !shift && !ctrl && app.shell_history_mode() => app.recall_next(),
         KeyCode::Up if !shift => {
@@ -871,12 +787,8 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
                 .min(app.max_scroll);
         }
         KeyCode::PageDown => app.scroll = app.scroll.saturating_sub(app.history_page()),
-        // Ctrl+Home/End jump to the start/end of the conversation (plain
-        // Home/End stay with the composer's line editing).
         KeyCode::Home if ctrl => app.scroll = app.max_scroll,
         KeyCode::End if ctrl => app.scroll = 0,
-        // Esc stops the streaming response or clears the composer. A parked
-        // research job is stopped from the live view (Ctrl+↑, then Ctrl+X).
         KeyCode::Esc if app.batch_focus.is_some() => {
             app.batch_focus = None;
             app.tool_open_gen = app.tool_open_gen.wrapping_add(1);
@@ -885,10 +797,7 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
         KeyCode::Esc => {
             app.set_input("");
         }
-        // Everything else (chars, word-jump, selection, cut/copy/paste, undo)
-        // goes to the editor via its default keymap. A keyboard (Shift+arrow)
-        // selection has no "release" event like a mouse drag does, so keep
-        // the clipboard synced to it live instead of requiring Ctrl+Shift+C.
+        // Keyboard selections have no release event, so synchronize their clipboard content live.
         _ => {
             app.input.input(key);
             if app.input.is_selecting() {
@@ -900,8 +809,6 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
     Ok(())
 }
 
-/// Mouse in the main view (no popup): composer click/drag places the cursor and
-/// selects; history click/drag/double/triple selects text; wheel scrolls.
 fn handle_input_mouse(app: &mut AppView, m: MouseEvent) {
     let over_input = app.input_inner.contains(Position::new(m.column, m.row));
     match m.kind {
@@ -957,11 +864,7 @@ fn handle_input_mouse(app: &mut AppView, m: MouseEvent) {
             match app.mouse_target {
                 MouseTarget::History => {
                     let p = app.sel.pos_at(m.column, m.row);
-                    // The timer normally handles a long press while the
-                    // button is held.  Also check on release: some terminal
-                    // event streams do not wake the timer reliably while a
-                    // mouse button is down, and may only deliver the next
-                    // event when the button is released.
+                    // Some terminals do not wake the held-button timer until release.
                     let long_press = app.sel.check_long_press();
                     let long_press_handled = long_press.is_some() || app.sel.is_long_pressed();
                     if let Some(long_press) = long_press {
@@ -990,10 +893,6 @@ fn handle_input_mouse(app: &mut AppView, m: MouseEvent) {
                         None => {}
                     }
                 }
-                // A drag in the composer selects text; releasing copies it
-                // immediately, same as releasing a history-pane selection.
-                // A plain click (no drag) never starts a selection, so this
-                // doesn't fire just from placing the cursor.
                 MouseTarget::Input if app.input.is_selecting() => app.copy_selection(),
                 MouseTarget::Input | MouseTarget::None => {}
             }
@@ -1007,20 +906,13 @@ fn handle_input_mouse(app: &mut AppView, m: MouseEvent) {
     }
 }
 
-/// Move the composer cursor to the clicked cell. ponytail: screen row/col mapped
-/// straight to data line/char — exact when the composer isn't wrapped/scrolled
-/// (tui-textarea keeps its screen<->data map private).
+// TextArea hides its screen-to-data map, so wrapped or scrolled clicks are approximate.
 fn composer_jump(app: &mut AppView, m: MouseEvent) {
     let row = m.row.saturating_sub(app.input_inner.y);
     let col = m.column.saturating_sub(app.input_inner.x);
     app.input.move_cursor(CursorMove::Jump(row, col));
 }
 
-/// Mouse over list/text popups (model and interactive outputs have their own
-/// hit-testing): the wheel sends Up/Down to the popup's own key handler, so
-/// lists move their selection and text popups scroll; a click on a list row
-/// selects it, and a click on the already-selected row activates it (Enter).
-/// Routing through the key handlers keeps each popup's modes and filters.
 fn handle_popup_mouse(app: &mut AppView, m: MouseEvent) -> Result<()> {
     let press = |app: &mut AppView, code: KeyCode| handle_key(app, KeyEvent::from(code));
     match m.kind {
@@ -1051,14 +943,10 @@ fn handle_popup_mouse(app: &mut AppView, m: MouseEvent) -> Result<()> {
     }
 }
 
-/// Route mouse events: composer click/drag when no popup is open, else the
-/// open popup.
-#[allow(clippy::too_many_lines)] // one early return per popup that owns the pointer
+#[allow(clippy::too_many_lines)]
 fn handle_mouse(app: &mut AppView, m: MouseEvent, screen: Rect) -> Result<()> {
     if app.popup == Popup::Approval {
-        // The approval sits in the composer's place: the wheel over it
-        // scrolls the request, over the conversation scrolls the transcript.
-        // Clicks never answer an approval.
+        // Mouse clicks must never grant approval.
         let over_panel = app
             .approval_area
             .get()
@@ -1086,8 +974,6 @@ fn handle_mouse(app: &mut AppView, m: MouseEvent, screen: Rect) -> Result<()> {
         ui::popups::image_viewer::mouse(app, m);
         return Ok(());
     }
-    // The column edge and popup borders resize before anything else sees the
-    // press; a press that misses them falls through unchanged.
     if crate::resize::mouse(app, m, screen) {
         return Ok(());
     }
@@ -1141,7 +1027,7 @@ fn handle_mouse(app: &mut AppView, m: MouseEvent, screen: Rect) -> Result<()> {
         MouseEventKind::Down(MouseButton::Left) => {
             if let Some((p, inner, offset)) = panel {
                 let index = offset + (m.row - inner.y) as usize;
-                app.pick_model_at(p, index)?; // no-op if index is past the list
+                app.pick_model_at(p, index)?;
             }
         }
         MouseEventKind::ScrollDown => {

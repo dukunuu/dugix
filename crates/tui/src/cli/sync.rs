@@ -10,10 +10,6 @@ use nexus_core::space;
 
 use super::{SyncCmd, out, short_id};
 
-// --- sync commands ---
-
-/// Temporary workspace for bundle extraction and SSH replies. Cleanup runs
-/// on every return path, including malformed bundles and failed SSH calls.
 struct SyncTempDir {
     path: PathBuf,
 }
@@ -37,8 +33,6 @@ impl Drop for SyncTempDir {
     }
 }
 
-/// `nexus sync` dispatch: the export/import subcommands, or the positional
-/// target — a shared dir (mailbox sync) or `ssh://user@host`.
 pub(super) fn sync_cmd(cmd: Option<SyncCmd>, target: Option<&Path>) -> Result<()> {
     match cmd {
         Some(SyncCmd::Export { peer, dir }) => sync_export(peer.as_deref(), dir.as_deref()),
@@ -61,9 +55,6 @@ pub(super) fn sync_cmd(cmd: Option<SyncCmd>, target: Option<&Path>) -> Result<()
     }
 }
 
-/// `nexus sync export`: the changeset JSON on stdout; with `--dir`, the
-/// blobs go into `DIR/blobs/` too. The cursor advance waits for the peer's
-/// ack (see the roadmap's ack design).
 fn sync_export(peer: Option<&str>, dir: Option<&Path>) -> Result<()> {
     let space = space::Space::open()?;
     let db = db::Db::open(&space.db_path())?;
@@ -86,10 +77,6 @@ fn sync_export(peer: Option<&str>, dir: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
-/// `nexus sync import`: apply a changeset (or zip bundle) from a file or
-/// stdin, then print the reply — this device's export + ack — on stdout.
-/// The ssh transport pipes a bundle in and expects a bundle out
-/// (`--bundle`); plain JSON is the default for interactive use.
 fn sync_import(path: Option<&Path>, bundle_reply: bool) -> Result<()> {
     let space = space::Space::open()?;
     let db = db::Db::open(&space.db_path())?;
@@ -123,8 +110,7 @@ fn sync_import(path: Option<&Path>, bundle_reply: bool) -> Result<()> {
     )?;
     reply.ack = Some(cursors);
     if bundle_reply {
-        // Zip writers need a seekable sink — write the reply bundle to a
-        // temp file, then stream it out.
+        // Zip writers require a seekable sink, so stdout must be staged through a file.
         let reply_path = tmp.path().join("reply.bundle");
         nexus_core::sync::write_bundle(&db, &space, &reply, std::fs::File::create(&reply_path)?)?;
         std::io::copy(
@@ -137,7 +123,7 @@ fn sync_import(path: Option<&Path>, bundle_reply: bool) -> Result<()> {
     Ok(())
 }
 
-/// The import's log line — stderr, because stdout carries the reply.
+// stdout carries the protocol reply; diagnostics must go to stderr.
 fn print_sync_summary(cs: &nexus_core::sync::Changeset, summary: &nexus_core::sync::ApplySummary) {
     eprintln!(
         "imported from {} ({}) — {} rows applied, {} skipped, {} tombstones, {} acks, {} files kept, {} pulled, {} missing",
@@ -156,9 +142,7 @@ fn print_sync_summary(cs: &nexus_core::sync::Changeset, summary: &nexus_core::sy
     }
 }
 
-/// Write a mailbox file through a temporary sibling and rename it into place.
-/// Readers either see the previous complete changeset or the new complete
-/// one, never a half-written JSON document.
+// Atomic replacement prevents peers from reading partial changesets.
 fn write_sync_file(path: &Path, bytes: &[u8]) -> Result<()> {
     let name = path
         .file_name()
@@ -176,19 +160,13 @@ fn write_sync_file(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Bidirectional mailbox sync over a shared directory: consume every
-/// foreign `*.changeset.json` (rows, tombstones, embedded acks, blobs),
-/// then leave this device's own changeset + blobs + ack behind for the
-/// peer to pick up. Works on a shared/USB/scp'd dir.
 fn sync_dir(dir: &Path) -> Result<()> {
     let space = space::Space::open()?;
     let db = db::Db::open(&space.db_path())?;
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     let my_id = db.device_id()?;
     let own_path = dir.join(format!("{my_id}.changeset.json"));
-    // Our previous reply is still an outbound message until a peer imports
-    // it. Preserve its ack when this device is run again before that peer;
-    // dropping the file would silently lose the only copy of the ack.
+    // Preserve pending outbound acknowledgments until a peer imports them.
     let pending_ack = if own_path.is_file() {
         let bytes = std::fs::read(&own_path)
             .with_context(|| format!("reading pending {}", own_path.display()))?;
@@ -217,8 +195,6 @@ fn sync_dir(dir: &Path) -> Result<()> {
         let cs: nexus_core::sync::Changeset = serde_json::from_slice(&std::fs::read(entry.path())?)
             .with_context(|| format!("parsing {}", entry.path().display()))?;
         if cs.device_id == my_id {
-            // Keep our outbound file until a peer consumes it. It is read
-            // above only to preserve its ack; it is replaced atomically below.
             continue;
         }
         let (summary, cursors) = nexus_core::sync::apply_changeset(&db, &space, &cs, Some(dir))?;
@@ -227,22 +203,11 @@ fn sync_dir(dir: &Path) -> Result<()> {
         if !senders.contains(&cs.device_id) {
             senders.push(cs.device_id);
         }
-        // Consume the changeset. Blob files are retained as a bounded
-        // per-name mailbox cache: deleting them here races with another
-        // device's outbound export when peers share one directory, while
-        // hash verification makes stale payloads harmless.
+        // Retain blobs to avoid racing a peer's export; hash verification rejects stale payloads.
         std::fs::remove_file(entry.path())?;
     }
-    // Our reply: an export for whoever we just imported from (a full
-    // export on a cold dir) plus the ack of what we took in. The peer is
-    // the mail's sender, not this run's reply cursors — on an ack-only
-    // round the cursors are empty but the push cursors were just advanced.
-    // With no mail at all (a solo re-run), fall back to the peer we most
-    // recently synced with so we don't blast a full export.
-    // A single changeset can carry an ack for many senders, but its row
-    // export can only be delta-filtered for one peer. When several peers
-    // posted mail in the same pass, use a full export so none of them gets
-    // its push cursor acknowledged without receiving this device's rows.
+    // Ack-only replies have no cursors: identify peers by sender, or reuse the last peer without mail.
+    // Multiple senders need a full export so none is acknowledged without receiving our rows.
     let peer: Option<String> = match senders.as_slice() {
         [peer] if reply_cursors.is_empty() => Some(peer.clone()),
         [] if reply_cursors.is_empty() => db
@@ -251,9 +216,7 @@ fn sync_dir(dir: &Path) -> Result<()> {
             .filter(|s| s.push_cursor.is_some())
             .max_by(|a, b| a.last_synced_at.cmp(&b.last_synced_at))
             .map(|s| s.peer_id.clone()),
-        // A pending ack means another outbound exchange is still in flight;
-        // use a full export so replacing the mailbox file cannot drop rows
-        // associated with that pending message.
+        // A full export preserves rows from the exchange whose acknowledgment is still pending.
         _ => None,
     };
     let mut cs =
@@ -272,11 +235,6 @@ fn sync_dir(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Sync over ssh: bundle this device's export (+ blobs) into a zip, pipe
-/// it into `ssh host "nexus sync import --bundle"`, and apply the reply
-/// bundle (the peer's export + blobs + ack). The peer's device id is
-/// remembered in the local `sync_ssh_peer` setting — per-peer cursors
-/// live under it.
 fn sync_ssh(host: &str) -> Result<()> {
     let space = space::Space::open()?;
     let db = db::Db::open(&space.db_path())?;
@@ -290,8 +248,7 @@ fn sync_ssh(host: &str) -> Result<()> {
         remote_peer.as_deref(),
         &nexus_core::sync::device_name(),
     )?;
-    // Carry our pull cursors for the remote — without the ack it would
-    // re-export everything on every round.
+    // Without pull-cursor acknowledgments the peer would re-export everything each round.
     if let Some(peer) = &remote_peer {
         cs.ack = Some(nexus_core::sync::build_ack(&db, peer)?);
     }

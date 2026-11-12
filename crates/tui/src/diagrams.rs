@@ -1,7 +1,4 @@
-//! TUI-only Mermaid previews. Layout, rasterization and graphics encoding run
-//! on bounded background jobs; draw only places already-encoded images.
-//! Sources and fixed-height preview slots remain in the transcript, so late
-//! results cannot change its geometry or enter the provider's conversation.
+//! Mermaid previews rendered off the draw path into fixed-height transcript slots.
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -19,7 +16,7 @@ use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::sliced::{SlicedImage, SlicedProtocol};
 use tokio::sync::mpsc;
 
-/// Reserved even while a diagram streams or a renderer is still working.
+/// Keeps transcript geometry stable while previews load.
 pub const PREVIEW_ROWS: u16 = 12;
 const MAX_SOURCE_BYTES: usize = 16 * 1024;
 const MAX_SOURCE_LINES: usize = 128;
@@ -32,9 +29,7 @@ thread_local! {
     static IN_RENDER_JOB: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Install after `ratatui::init`: its global panic hook otherwise restores
-/// the terminal even for renderer panics that we catch in a worker. All other
-/// panics retain the normal terminal restoration and reporting behavior.
+/// Install after `ratatui::init` to prevent caught renderer panics from restoring the terminal.
 pub fn protect_terminal_from_renderer_panics() {
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -54,8 +49,6 @@ fn render_safely<T>(render: impl FnOnce() -> Result<T>) -> Result<T, String> {
     )
 }
 
-/// A preview region in the line-based transcript; its source is also retained
-/// in the normal fenced-code copy metadata.
 #[derive(Clone, Debug)]
 pub struct Placement {
     pub row: usize,
@@ -83,13 +76,11 @@ struct Entry {
     touched: u64,
 }
 
-/// Completion delivered only to the TUI event loop, never to core/host events.
 pub struct Completion {
     key: Key,
     result: Result<SlicedProtocol, String>,
 }
 
-/// Small, disposable preview cache. No output files, network access, or Node.
 pub struct DiagramCache {
     picker: Picker,
     entries: HashMap<Key, Entry>,
@@ -116,14 +107,11 @@ impl Default for DiagramCache {
 }
 
 impl DiagramCache {
-    /// Called after terminal initialization, before the terminal event reader.
     pub fn set_picker(&mut self, picker: Picker) {
         self.clear();
         self.picker = picker;
     }
 
-    /// Discard previews on session/space changes. Running jobs still count
-    /// toward the concurrency bound; their stale completions are ignored.
     pub fn clear(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.entries.clear();
@@ -143,8 +131,7 @@ impl DiagramCache {
         }
     }
 
-    /// Request only visible, closed fences, then paint the ready image or a
-    /// bounded error. This never decodes, lays out, rasterizes or encodes.
+    /// Paints cached previews without running layout, rasterization or encoding on the draw path.
     pub fn paint(
         &mut self,
         frame: &mut Frame,
@@ -169,7 +156,7 @@ impl DiagramCache {
                 continue;
             }
             let area = Rect::new(
-                viewport.x + 4, // assistant rail + code-box border/padding
+                viewport.x + 4, // Match the transcript's assistant rail and code-box padding.
                 viewport.y,
                 placement.width.min(viewport.width.saturating_sub(4)),
                 viewport.height.min(32_767),
@@ -195,8 +182,7 @@ impl DiagramCache {
                 entry.touched = self.clock;
                 match &entry.state {
                     State::Ready(image) => {
-                        // The generic iTerm2 sliced widget cannot safely clip
-                        // both ends at once. Keep source visible on tiny views.
+                        // The iTerm2 sliced widget cannot safely clip both ends at once.
                         if self.picker.protocol_type() == ProtocolType::Iterm2
                             && y < 0
                             && i32::from(y) + i32::from(image.size().height)
@@ -217,8 +203,6 @@ impl DiagramCache {
         if self.entries.contains_key(key) || self.in_flight >= MAX_JOBS || key.width == 0 {
             return;
         }
-        // Synchronous TestBackend callers need no runtime and never launch
-        // workers. The real TUI always has one.
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
@@ -297,8 +281,7 @@ fn rasterize(source: &str, width: u16, dark: bool, picker: &Picker) -> Result<Dy
     if dark {
         options.theme = mermaid_rs_renderer::Theme::dark();
     }
-    // Avoid this library's persistent font cache. The supported kinds use
-    // this setting throughout layout; other kinds have unchecked font I/O.
+    // Supported renderers honor this setting throughout layout, avoiding persistent font-cache I/O.
     options.layout.fast_text_metrics = true;
     let layout = compute_layout(&parsed.graph, &options.theme, &options.layout);
     let svg = render_svg(&layout, &options.theme, &options.layout);
