@@ -1,8 +1,5 @@
-//! Test-only MCP servers: one protocol brain (`Mock::respond`) behind two
-//! doors -- an in-process HTTP server on 127.0.0.1 (JSON or SSE bodies, a
-//! 2026-style flavor, a 2025-style flavor, a 401 flavor) and a stdio server
-//! the test executable runs when re-launched with a marker environment
-//! variable. No npx, no network, no real keychain.
+//! Test-only MCP servers: one protocol brain (`Mock::respond`) behind an in-process HTTP door
+//! and a stdio door. No npx, no network, no real keychain.
 
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -24,7 +21,6 @@ pub enum Flavor {
     LegacyRpcError { version: &'static str },
 }
 
-/// One request the server saw.
 #[derive(Clone, Debug)]
 pub struct Seen {
     pub method: String,
@@ -32,7 +28,6 @@ pub struct Seen {
     pub body: Value,
 }
 
-/// One tool definition as JSON.
 pub fn tool(name: &str, description: &str, annotations: Option<Value>) -> Value {
     let mut tool = json!({
         "name": name,
@@ -45,10 +40,9 @@ pub fn tool(name: &str, description: &str, annotations: Option<Value>) -> Value 
     tool
 }
 
-/// A tiny valid-looking PNG payload (not a real image; the tests never decode it).
+/// A tiny valid-looking PNG payload; nothing decodes it.
 pub const PNG_B64: &str = "iVBORw0KGgo=";
 
-/// The tools every mock offers.
 pub fn standard_tools() -> Vec<Value> {
     let read = || Some(json!({"readOnlyHint": true, "openWorldHint": false}));
     vec![
@@ -157,8 +151,7 @@ impl Mock {
         json!({"jsonrpc": "2.0", "id": id, "result": result})
     }
 
-    /// Answer one JSON-RPC message with zero or more messages (pending
-    /// notifications first, then the response).
+    /// Answer one JSON-RPC message with zero or more messages (pending notifications first, then the response).
     pub fn respond(&self, message: &Value) -> Vec<Value> {
         let Some(method) = message.get("method").and_then(Value::as_str) else {
             return Vec::new();
@@ -223,8 +216,7 @@ impl Mock {
             }
             other => Self::rpc_error(id, -32601, &format!("Method not found: {other}")),
         };
-        // Notifications raised while handling this request go out ahead of
-        // its response, as a server streaming them would.
+        // Notifications raised while handling this request go out ahead of its response, as a server streaming them would.
         let mut out: Vec<Value> = std::mem::take(&mut *self.pending_notifications.lock().unwrap());
         out.push(response);
         out
@@ -270,8 +262,7 @@ impl Mock {
             "input" => Self::ok(id, json!({"resultType": "input_required", "content": []})),
             "rpc_error" => Self::rpc_error(id, -32000, &self.rpc_error_message),
             "slow" => {
-                // Only the stdio child may block its (single) thread; the
-                // HTTP door sleeps asynchronously before replying.
+                // Only the stdio child may block its (single) thread; the HTTP door sleeps asynchronously before replying.
                 if std::env::var("NEXUS_MCP_STDIO_MOCK").is_ok() {
                     std::thread::sleep(std::time::Duration::from_secs(3));
                 }
@@ -298,7 +289,6 @@ impl Mock {
     }
 }
 
-/// An in-process HTTP server around a [`Mock`].
 pub struct HttpMock {
     pub mock: Arc<Mock>,
     pub addr: SocketAddr,
@@ -451,8 +441,7 @@ fn route(mock: &Mock, method: &str, headers: &HashMap<String, String>, json: &Va
     let modern = matches!(mock.flavor, Flavor::Modern);
     let is_request = json.get("id").is_some_and(|id| !id.is_null());
     if modern {
-        // 2026 servers need the version in _meta on every request, and the
-        // routing headers.
+        // 2026 servers need the version in _meta on every request, and the routing headers.
         let meta_ok = json["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"]
             == "2026-07-28"
             && json["params"]["_meta"]["io.modelcontextprotocol/clientInfo"]["name"]
@@ -509,12 +498,8 @@ fn route(mock: &Mock, method: &str, headers: &HashMap<String, String>, json: &Va
     reply
 }
 
-/// The stdio door: run by the test executable when re-launched with
-/// `NEXUS_MCP_STDIO_MOCK` set (see `tests::stdio_mock_server`).
-///
-/// Mode words, comma separated: `modern` | `legacy` | `legacy-rpc`;
-/// `crash_after=N` exits after N answered requests; `ttl=MS`; `cancel_log`
-/// appends cancellations to the file named by `NEXUS_MCP_STDIO_LOG`.
+/// The stdio door, run by the test executable when re-launched with `NEXUS_MCP_STDIO_MOCK`.
+/// Mode words, comma separated: `modern` | `legacy` | `legacy-rpc`; `crash_after=N`; `ttl=MS`; `cancel_log`.
 pub fn run_stdio(mode: &str) {
     use std::io::{BufRead as _, Write as _};
     let words: Vec<&str> = mode.split(',').collect();

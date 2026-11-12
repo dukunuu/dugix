@@ -1,18 +1,5 @@
 //! Turning any file into text the index and the model can read.
-//!
-//! [`to_text`] is the one entry point: it detects the file's type from its
-//! content (the extension is only a hint), converts it to Markdown-ish text
-//! with a built-in converter, and says how it was read. Indexing, the
-//! `files` tool, the workspace `fs` tool and web fetches all go through it,
-//! so what the model reads is what was indexed — and a binary file is never
-//! decoded as text.
-//!
-//! Built-in converters (no external tools): plain text, HTML, SVG, CSV/TSV,
-//! RTF, OOXML (docx/pptx/xlsx), ODF, EPUB, mail (eml/mbox), notebooks,
-//! subtitles and PDF text. Slower or heavier conversions are *planned* here
-//! and run later in the background ([`external`]): pandoc, antiword/catdoc,
-//! `LibreOffice`, ffprobe/whisper, and the user's `[extract.converters]`
-//! hooks. Scanned PDFs and images are indexed by filename for direct viewing.
+//! [`to_text`] detects the type from content, converts it, and says how it was read.
 
 mod detect;
 pub mod embedding;
@@ -31,50 +18,38 @@ pub use external::{Converted, ExtractConfig, Hook};
 
 const CHUNK_LINES: usize = 40;
 
-/// Bumped whenever extraction output changes for files already indexed: the
-/// rescan re-extracts any file indexed by an older extractor, once.
+/// Bumped whenever extraction output changes: the rescan re-extracts files indexed by an older extractor.
 pub const EXTRACTOR_VERSION: i64 = 1;
 
-/// Settled index status for a PDF without a text layer.
 pub const SCANNED_PDF_STATUS: &str = "ok · scanned pdf (no text layer)";
 
 /// Resolution of cached PDF pages, shared by embedding and direct viewing.
 pub(crate) const PAGE_DPI: u32 = 150;
 
-/// Files up to this size are read whole; bigger ones are only sniffed (text
-/// is read up to the limit, media is handled by path, the rest is metadata).
+/// Files up to this size are read whole; bigger ones are only sniffed.
 const MAX_READ: u64 = 64 * 1024 * 1024;
 
-/// Documents (PDF, office, EPUB) are read whole up to this size.
 const MAX_DOCUMENT: u64 = 1024 * 1024 * 1024;
 
-/// What happened when a file was read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
-    /// `Extracted::text` is the file's text (possibly empty = nothing in it).
     Text,
-    /// An image, or a PDF with no text layer: nothing to read as text. It is
-    /// embedded as an image when the embedder accepts images, and the model
-    /// looks at it directly.
+    /// An image, or a PDF with no text layer: nothing to read as text, but it can be embedded and viewed.
     Visual,
-    /// A background converter (named) will run; `text` is what the built-in
-    /// converter already produced, if anything.
+    /// A background converter (named) will run; `text` is what the built-in converter already produced.
     Pending(&'static str),
-    /// No text can be had; only metadata is indexed. Holds the status.
+    /// No text can be had; only metadata is indexed, with the status.
     Metadata(String),
-    /// Reading failed.
     Failed(String),
 }
 
-/// The result of reading one file.
 #[derive(Debug, Clone)]
 pub struct Extracted {
     /// Markdown-ish text. Never raw bytes of a binary file.
     pub text: String,
     /// The type, detected from content.
     pub kind: Kind,
-    /// Human-readable extra facts (zip members, printable strings, …) that
-    /// go into the metadata chunk when there is no text.
+    /// Human-readable extra facts (zip members, printable strings, …) for the metadata chunk.
     pub notes: Vec<String>,
     /// How the text was produced (`html → text`); `None` = read as is.
     pub via: Option<String>,
@@ -107,8 +82,7 @@ impl Extracted {
         }
     }
 
-    /// The status for the files list and the chunks to index, for a file
-    /// called `name` of `size` bytes.
+    /// The status for the files list and the chunks to index for a file called `name` of `size` bytes.
     pub fn index(&self, name: &str, size: u64) -> (String, Vec<(String, String)>) {
         let metadata = |reason: &str| metadata_chunk(name, self, size, reason);
         match &self.outcome {
@@ -155,24 +129,20 @@ impl Extracted {
     }
 }
 
-/// Whether a files-list status means "read fine" (`ok`, `ok · html → text`,
-/// `ok — 2 pages failed …`).
+/// Whether a files-list status means "read fine" (`ok`, `ok · html → text`).
 pub fn status_is_ok(status: &str) -> bool {
     status == "ok" || status.starts_with("ok ")
 }
 
-/// Whether a status marks a background converter in flight.
 pub fn status_is_queued(status: &str) -> bool {
     status.starts_with("convert:")
 }
 
-/// Read `path` and convert it to text, using the real environment's
-/// converters (`PATH` tools and `[extract.converters]` hooks).
+/// Read `path` and convert it to text with the real environment's converters.
 pub fn to_text(path: &Path) -> Extracted {
     to_text_with(path, &ExtractConfig::load())
 }
 
-/// [`to_text`] with explicit converter settings.
 pub fn to_text_with(path: &Path, cfg: &ExtractConfig) -> Extracted {
     let name = path
         .file_name()
@@ -188,7 +158,6 @@ pub fn to_text_with(path: &Path, cfg: &ExtractConfig) -> Extracted {
             Err(e) => failed(Kind::Binary("unknown"), format!("reading {name}: {e}")),
         };
     }
-    // Too big to hold: sniff the head and handle by kind.
     let mut head = vec![0u8; detect::SNIFF_BYTES];
     let read = std::fs::File::open(path)
         .and_then(|mut f| std::io::Read::read(&mut f, &mut head))
@@ -196,8 +165,7 @@ pub fn to_text_with(path: &Path, cfg: &ExtractConfig) -> Extracted {
     head.truncate(read);
     let kind = detect_head(&head, name);
     let ext = extension(name);
-    // Documents are parsed whole anyway (a PDF's xref sits at its end, a
-    // zip's directory too), so a big book or scan is still read, as before.
+    // Documents are parsed whole anyway: a PDF's xref sits at its end, a zip's directory too.
     let document = kind == Kind::Pdf
         || matches!(
             ext.as_str(),
@@ -246,7 +214,7 @@ fn failed(kind: Kind, message: String) -> Extracted {
     }
 }
 
-/// Convert in-memory file contents. `name` is only an extension hint.
+/// Convert in-memory file contents; `name` is only an extension hint.
 #[allow(clippy::too_many_lines)]
 pub fn to_text_bytes(bytes: &[u8], name: &str, cfg: &ExtractConfig) -> Extracted {
     use formats::OfficeKind;
@@ -307,7 +275,6 @@ pub fn to_text_bytes(bytes: &[u8], name: &str, cfg: &ExtractConfig) -> Extracted
         Kind::Mbox => Extracted::with_text(kind, formats::mbox_text(bytes), Some("mbox → text")),
         Kind::Ipynb => match text_of(kind).and_then(|t| formats::ipynb_text(&t)) {
             Ok(text) => Extracted::with_text(kind, text, Some("notebook → text")),
-            // Not a notebook after all: it is still JSON text.
             Err(_) => Extracted::with_text(
                 Kind::Json,
                 text_of(kind).unwrap_or_default().trim().to_string(),
@@ -369,8 +336,7 @@ pub fn to_text_bytes(bytes: &[u8], name: &str, cfg: &ExtractConfig) -> Extracted
         }
         _ => failed(kind, "unsupported file".to_string()),
     };
-    // A configured hook or an installed converter takes over (or finishes
-    // what the built-in one could not).
+    // A configured hook or an installed converter takes over, or finishes what the built-in could not.
     let base_empty = ex.text.trim().is_empty();
     if matches!(
         ex.outcome,
@@ -392,8 +358,7 @@ fn delimiter(text: &str) -> char {
     }
 }
 
-/// The type of the file at `path`, judged from its first bytes only (a zip
-/// is reported as an archive). `Binary("unknown")` if it cannot be read.
+/// The type of the file at `path`, judged from its first bytes only; a zip is reported as an archive.
 pub fn detect_path(path: &Path) -> Kind {
     let mut head = vec![0u8; detect::SNIFF_BYTES];
     let Ok(read) =
@@ -410,8 +375,7 @@ pub fn detect_path(path: &Path) -> Kind {
     )
 }
 
-/// Run the background converter for the file at `path` (see
-/// [`Outcome::Pending`]).
+/// Run the background converter for the file at `path`.
 pub fn convert_file(path: &Path, cfg: &ExtractConfig) -> std::result::Result<Converted, String> {
     let mut head = vec![0u8; detect::SNIFF_BYTES];
     let read = std::fs::File::open(path)
@@ -435,9 +399,7 @@ pub fn convert_file(path: &Path, cfg: &ExtractConfig) -> std::result::Result<Con
     external::convert(path, kind, cfg)
 }
 
-/// Text for a fetched web resource: its type comes from the bytes, the
-/// `Content-Type` is only a hint. Binary content becomes a one-line note
-/// instead of mojibake.
+/// Text for a fetched web resource; the `Content-Type` is only a hint.
 pub fn from_fetched(bytes: &[u8], content_type: &str) -> String {
     let ct = content_type.to_lowercase();
     let mut ex = to_text_bytes(bytes, "", &ExtractConfig::none());
@@ -463,7 +425,6 @@ pub fn from_fetched(bytes: &[u8], content_type: &str) -> String {
     }
 }
 
-/// Names inside a zip, as metadata notes.
 fn zip_listing(bytes: &[u8]) -> Vec<String> {
     let Ok(zip) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) else {
         return Vec::new();
@@ -484,9 +445,7 @@ fn zip_listing(bytes: &[u8]) -> Vec<String> {
     vec![line]
 }
 
-/// Printable runs of at least six characters, kept only when they look like
-/// real words (mostly letters, not base64 or hex), capped. Gives an
-/// unknown binary a few searchable hints (embedded titles, paths, names).
+/// Printable runs that look like real words, giving an unknown binary a few searchable hints.
 pub fn printable_strings(bytes: &[u8]) -> Vec<String> {
     const MAX_STRINGS: usize = 20;
     const MAX_CHARS: usize = 1500;
@@ -525,9 +484,7 @@ pub fn printable_strings(bytes: &[u8]) -> Vec<String> {
     }
 }
 
-/// A searchable fallback for a file whose contents are empty, binary, or
-/// otherwise not extractable.  Keeping this in the FTS/embedding input means
-/// every imported file still has an index entry and can be found by name.
+/// A searchable fallback so every imported file has an index entry and can be found by name.
 pub fn metadata_chunks(name: &str) -> Vec<(String, String)> {
     vec![(
         "file metadata".to_string(),
@@ -537,8 +494,7 @@ pub fn metadata_chunks(name: &str) -> Vec<(String, String)> {
     )]
 }
 
-/// The metadata chunk for a file read as `ex`: name, detected type, size and
-/// why there is no text, plus any notes (zip members, printable strings).
+/// The metadata chunk for a file read as `ex`: name, type, size, why there is no text, and any notes.
 fn metadata_chunk(name: &str, ex: &Extracted, size: u64, reason: &str) -> (String, String) {
     let mut text = format!(
         "uploaded file: {name}\ntype: {} ({})\nsize: {} bytes\nNo text could be extracted from this file; search by its file name.\nstatus: {reason}",
@@ -553,8 +509,7 @@ fn metadata_chunk(name: &str, ex: &Extracted, size: u64, reason: &str) -> (Strin
     ("file metadata".to_string(), text)
 }
 
-/// A PDF's text with its outline (table of contents) in front. `Ok("")`
-/// means a PDF without a text layer (scanned).
+/// A PDF's text with its outline in front; `Ok("")` means no text layer (scanned).
 pub fn pdf_text(bytes: &[u8]) -> Result<String> {
     let toc = pdf_toc(bytes);
     let text = pdf_extract::extract_text_from_mem(bytes)
@@ -569,8 +524,7 @@ pub fn pdf_text(bytes: &[u8]) -> Result<String> {
     }
 }
 
-/// Extract the PDF outline/bookmarks tree as indented text, or empty string
-/// if the PDF has no outline (most scanned PDFs won't).
+/// The PDF outline tree as indented text, empty when there is no outline.
 fn pdf_toc(bytes: &[u8]) -> String {
     use pdf_extract::{Document, Object};
     let Ok(doc) = Document::load_mem(bytes) else {
@@ -641,25 +595,18 @@ fn walk_outline(
         let title = decode_pdf_string(title_bytes);
         if !title.is_empty() {
             let indent = "  ".repeat(depth);
-            // ponytail: no page number extraction from Dest — the PDF
-            // outline's Dest can be a named destination, an explicit
-            // page reference, or absent. Page numbers from the outline
-            // would require resolving the Dest against the page tree,
-            // which is complex and rarely critical.
+            // No page numbers: an outline Dest can be a named destination, a page reference, or absent.
             let _ = writeln!(out, "{indent}{title}");
         }
     }
-    // Children
     if let Ok(Object::Reference(child_id)) = dict.get(b"First") {
         walk_outline(doc, *child_id, depth + 1, out);
     }
-    // Siblings
     if let Ok(Object::Reference(next_id)) = dict.get(b"Next") {
         walk_outline(doc, *next_id, depth, out);
     }
 }
 
-/// Split extracted text into ~40-line chunks labeled with their line range.
 pub fn chunk_lines(text: &str) -> Vec<(String, String)> {
     if text.trim().is_empty() {
         return Vec::new();
@@ -676,7 +623,6 @@ pub fn chunk_lines(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Whether a lowercased file extension is a supported image type.
 pub fn is_image_ext(ext: &str) -> bool {
     matches!(ext, "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp")
 }
@@ -688,8 +634,7 @@ pub enum ToolError {
     Failed(String),
 }
 
-/// Run a command, mapping a missing binary to `ToolError::MissingTools` and a
-/// non-zero exit to `Failed` with its stderr.
+/// Run a command; a missing binary is `MissingTools`, a non-zero exit `Failed` with its stderr.
 fn run_tool(
     cmd: &mut std::process::Command,
     name: &str,
@@ -710,8 +655,7 @@ fn run_tool(
     Ok(out.stdout)
 }
 
-/// Render a PDF's pages to PNGs in `tmp` with pdftoppm, returned in document
-/// order (pdftoppm zero-pads page numbers, so a lexical sort is page order).
+/// Render a PDF's pages to PNGs in `tmp`, in document order (pdftoppm zero-pads page numbers).
 pub fn render_pdf_pages(
     pdftoppm: &str,
     path: &Path,
@@ -736,10 +680,6 @@ pub fn render_pdf_pages(
 }
 
 /// Read a PDF's page count from its index using poppler's pdfinfo.
-///
-/// # Errors
-/// Returns [`ToolError::MissingTools`] when pdfinfo is missing, or
-/// [`ToolError::Failed`] when it fails or reports no valid page count.
 pub fn pdf_page_count(pdfinfo: &str, pdf: &Path) -> std::result::Result<u32, ToolError> {
     let output = run_tool(std::process::Command::new(pdfinfo).arg(pdf), "pdfinfo")?;
     parse_pdf_page_count(&String::from_utf8_lossy(&output))
@@ -753,7 +693,6 @@ fn parse_pdf_page_count(output: &str) -> std::result::Result<u32, ToolError> {
         .ok_or_else(|| ToolError::Failed("pdfinfo: missing or invalid page count".to_string()))
 }
 
-/// Render one PDF page to `out` as a PNG at the requested DPI.
 pub fn render_pdf_page(
     pdftoppm: &str,
     pdf: &Path,
@@ -786,9 +725,7 @@ pub fn render_pdf_page(
     result.map(|_| ())
 }
 
-/// Build a minimal valid PDF: one page, optionally with `text` drawn in
-/// Helvetica. Offsets are computed at runtime so the xref is always correct.
-/// Test fixture shared with `app::files` tests.
+/// A minimal valid PDF: one page, optionally with `text` drawn in Helvetica.
 #[cfg(test)]
 pub(crate) fn minimal_pdf(text: Option<&str>) -> Vec<u8> {
     if let Some(t) = text {
@@ -864,7 +801,6 @@ mod tests {
         dir
     }
 
-    /// Write `bytes` as `name` in a fresh temp dir and read it back.
     fn read(name: &str, bytes: &[u8]) -> Extracted {
         let path = temp_dir().join(name);
         std::fs::write(&path, bytes).unwrap();
@@ -895,8 +831,6 @@ mod tests {
 
     #[test]
     fn unknown_binary_never_becomes_text_and_gets_a_metadata_chunk() {
-        // Replaces `unknown_binary_is_an_error`: a binary is no longer an
-        // error, it is indexed by metadata with a status that says why.
         let ex = read("blob.bin", &[0u8, 159, 146, 150]);
         assert!(ex.text.is_empty(), "binary must never be decoded as text");
         assert_eq!(ex.kind, Kind::Binary("unknown"));
@@ -913,7 +847,6 @@ mod tests {
 
     #[test]
     fn html_is_converted_not_indexed_as_markup() {
-        // Replaces the html half of `generic_code_files_are_plain_text`.
         let dir = temp_dir();
         for (name, body, expected) in [
             ("page.html", "<main>hello</main>", "hello"),
@@ -968,7 +901,6 @@ mod tests {
             assert!(ex.text.contains("HELLO PDF"), "{name}: {:?}", ex.text);
             assert_eq!(ex.index(name, 1).0, "ok");
         }
-        // No text layer: searchable by name, not decoded.
         let ex = read("scan.pdf", &minimal_pdf(None));
         assert_eq!(ex.outcome, Outcome::Visual);
         assert_eq!(
@@ -978,7 +910,6 @@ mod tests {
                 metadata_chunks("scan.pdf"),
             )
         );
-        // A broken PDF is an error with a metadata chunk, never garbage text.
         let ex = read("broken.pdf", b"%PDF-1.7\nnot really a pdf \x00\x01\x02");
         let (status, chunks) = ex.index("broken.pdf", 20);
         assert!(status.starts_with("error:"), "{status}");
@@ -1022,11 +953,9 @@ mod tests {
             assert!(ex.text.contains(needle), "{name}: {:?}", ex.text);
             assert_eq!(ex.index(name, 1).0, status, "{name}");
         }
-        // JSON stays as it is.
         let ex = read("a.json", br#"{"a": 1}"#);
         assert_eq!(ex.text, r#"{"a": 1}"#);
         assert_eq!(ex.index("a.json", 1).0, "ok");
-        // Not actually a notebook: kept as JSON text.
         let ex = read("fake.ipynb", br#"{"not": "a notebook"}"#);
         assert_eq!(ex.text, r#"{"not": "a notebook"}"#);
     }

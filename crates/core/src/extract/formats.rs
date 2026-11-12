@@ -1,6 +1,5 @@
 //! Built-in converters: office and ODF documents, EPUB, RTF, mail, notebooks,
-//! subtitles, delimited tables and SVG. No external tools, no new crates —
-//! zipped XML is scanned with the shared tokenizer, the rest is plain text.
+//! subtitles, delimited tables and SVG. No external tools, no new crates.
 
 use std::fmt::Write as _;
 use std::io::{Cursor, Read};
@@ -12,7 +11,6 @@ use super::markup::{Tok, Tokens, attr, decode_entities};
 
 /// Largest single zip entry read into memory (zip-bomb guard).
 const MAX_ENTRY: u64 = 64 * 1024 * 1024;
-/// Largest converted text a built-in converter returns.
 pub const MAX_TEXT: usize = 48 * 1024 * 1024;
 
 type Zip<'a> = zip::ZipArchive<Cursor<&'a [u8]>>;
@@ -46,9 +44,7 @@ pub enum OfficeKind {
     Xlsx,
 }
 
-/// Pull text out of an OOXML zip by scanning member XML for text tags.
-/// ponytail: tag scanning, not an XML parser — swap in a real parser only if
-/// a document breaks it.
+/// Pull text out of an OOXML zip by scanning member XML for text tags, not by parsing XML.
 // ZIP entry names are case-sensitive by spec, so these prefix/extension
 // comparisons must stay exact (the lint targets display-extension matches).
 #[allow(clippy::case_sensitive_file_extension_comparisons)]
@@ -96,9 +92,8 @@ pub fn office_text(bytes: &[u8], kind: &OfficeKind) -> Result<String> {
             }
         }
         OfficeKind::Xlsx => {
-            // Cell strings live in sharedStrings; numbers inline in each sheet.
-            // ponytail: dumps values without cell positions — searchable, not a
-            // faithful table; switch to the calamine crate if layout matters.
+            // Cell strings live in sharedStrings; numbers inline in each sheet. Values are dumped
+            // without cell positions: searchable, not a faithful table.
             if let Some(xml) = read_entry(&mut zip, "xl/sharedStrings.xml") {
                 out.push_str(&xml_tag_texts(&xml, "t").join("\n"));
                 out.push('\n');
@@ -122,8 +117,7 @@ pub fn office_text(bytes: &[u8], kind: &OfficeKind) -> Result<String> {
     Ok(out.trim().to_string())
 }
 
-/// Every text content of `<tag ...>text</tag>` occurrences in `xml`, entities
-/// unescaped. Skips self-closing `<tag/>`.
+/// Every text content of `<tag ...>text</tag>` in `xml`, entities unescaped, skipping self-closing tags.
 pub fn xml_tag_texts(xml: &str, tag: &str) -> Vec<String> {
     let open = format!("<{tag}");
     let close = format!("</{tag}>");
@@ -163,9 +157,7 @@ pub fn xml_unescape(s: &str) -> String {
 
 // --- ODF -----------------------------------------------------------------
 
-/// Text of an `OpenDocument` file (odt / ods / odp) from its `content.xml`:
-/// headings and paragraphs, `[slide N]` markers, spreadsheet rows as
-/// ` | `-joined lines under a `[sheet]` marker.
+/// Text of an `OpenDocument` file from its `content.xml`, with `[slide N]` and `[sheet]` markers.
 #[allow(clippy::too_many_lines)]
 pub fn odf_text(bytes: &[u8]) -> Result<String> {
     let mut zip = open_zip(bytes)?;
@@ -296,8 +288,7 @@ fn collapse_spaces(s: &str) -> String {
 
 // --- EPUB ----------------------------------------------------------------
 
-/// An EPUB's text: the OPF spine in reading order, each XHTML document
-/// converted like any other HTML page.
+/// An EPUB's text: the OPF spine in reading order, each XHTML document converted like any other HTML page.
 pub fn epub_text(bytes: &[u8]) -> Result<String> {
     let mut zip = open_zip(bytes)?;
     let names = entry_names(&mut zip);
@@ -479,9 +470,8 @@ struct RtfGroup {
     uc: usize,
 }
 
-/// Plain text of an RTF document: control words dropped, `\par` / `\tab`
-/// honoured, `\'hh` and `\uN` escapes decoded, non-text destinations
-/// (fonts, styles, pictures, headers) skipped.
+/// Plain text of an RTF document: control words dropped, `\par` / `\tab` honoured, escapes decoded,
+/// non-text destinations (fonts, styles, pictures, headers) skipped.
 #[allow(clippy::too_many_lines)]
 pub fn rtf_text(src: &str) -> String {
     let b = src.as_bytes();
@@ -837,8 +827,7 @@ fn mail_parts(m: &Mail<'_>, depth: usize, acc: &mut MailText) {
     }
 }
 
-/// One RFC 822 message: the interesting headers, then the text body (plain
-/// part preferred, HTML converted otherwise) and the names of attachments.
+/// One RFC 822 message: the interesting headers, then the text body (plain part preferred) and the attachments.
 pub fn eml_text(raw: &[u8]) -> String {
     let m = split_mail(raw);
     let mut out = String::new();
@@ -913,8 +902,7 @@ fn source_text(v: Option<&serde_json::Value>) -> String {
     }
 }
 
-/// A Jupyter notebook as Markdown: markdown cells verbatim, code cells in
-/// fences with their text / error outputs (images are noted, not inlined).
+/// A Jupyter notebook as Markdown: markdown cells verbatim, code cells in fences with their outputs.
 pub fn ipynb_text(json: &str) -> Result<String> {
     let nb: serde_json::Value = serde_json::from_str(json).context("parsing notebook JSON")?;
     let cells = nb
@@ -988,8 +976,7 @@ pub fn ipynb_text(json: &str) -> Result<String> {
 
 // --- subtitles -----------------------------------------------------------
 
-/// SRT / `WebVTT` as `[hh:mm:ss] cue text` lines: indices, styling tags and
-/// header blocks dropped, multi-line cues joined.
+/// SRT / `WebVTT` as `[hh:mm:ss] cue text` lines: indices, styling tags and header blocks dropped.
 pub fn subtitles_text(text: &str, vtt: bool) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut ts = String::new();
@@ -1004,7 +991,6 @@ pub fn subtitles_text(text: &str, vtt: bool) -> String {
         cue.clear();
     };
     if vtt {
-        // Skip the header block.
         for l in lines.by_ref() {
             if l.trim().is_empty() {
                 break;
@@ -1110,8 +1096,7 @@ fn records(text: &str, delim: char) -> impl Iterator<Item = Vec<String>> + '_ {
     })
 }
 
-/// A CSV / TSV file: a Markdown preview of the first rows, then the full
-/// text, so both a glance and exact values are searchable.
+/// A CSV / TSV file: a Markdown preview of the first rows, then the full text.
 pub fn delimited_text(text: &str, delim: char) -> String {
     const PREVIEW_ROWS: usize = 11; // header + 10
     const MAX_COLS: usize = 20;

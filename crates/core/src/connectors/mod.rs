@@ -1,23 +1,5 @@
 //! Connectors: an MCP client that lets the model use outside services.
-//!
-//! A connector is a hosted server (Streamable HTTP) or a local one (stdio)
-//! speaking the Model Context Protocol. The module is layered:
-//!
-//! - `protocol` -- JSON-RPC and the MCP messages we use.
-//! - `transport` -- Streamable HTTP and stdio.
-//! - `client` -- version negotiation (2026-07-28 stateless first, then the
-//!   2025 `initialize` family), timeouts, cancellation, `tools/list`,
-//!   `tools/call`.
-//! - `registry` -- configured connectors, their status and tools, and what the
-//!   model may see and call (naming, the >30-tool meta-tool, policies,
-//!   rug-pull pins, session grants).
-//! - `exec` -- running a tool for the model: approval, the call, results.
-//! - `results` -- rendering `tools/call` content as text.
-//! - `config`, `secrets`, `import` -- the `[connectors.*]` config section, the
-//!   keychain, and importing other tools' MCP configs.
-//!
-//! Design: `docs/connectors.md`. This is phase C1 (tools); OAuth is C2;
-//! resources, prompts and elicitation are C3.
+//! A connector is a hosted (Streamable HTTP) or local (stdio) MCP server.
 
 pub mod client;
 pub mod config;
@@ -39,11 +21,7 @@ pub use registry::{
     Access, ConnectorInfo, Env, Exposure, Registry, Status, Target, ToolRow, Tuning, display_title,
 };
 
-/// Split a command line into an argv without a shell: whitespace separates
-/// words, single or double quotes group them, nothing is expanded.
-///
-/// # Errors
-/// An unterminated quote, or an empty line.
+/// Split a command line into an argv without a shell: nothing is expanded.
 pub fn split_argv(line: &str) -> Result<Vec<String>, String> {
     let mut words = Vec::new();
     let mut current = String::new();

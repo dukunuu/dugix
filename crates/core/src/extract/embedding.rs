@@ -1,9 +1,7 @@
 //! Conservative byte-token windows for `EmbeddingGemma` 2, retaining source lines.
 
-/// Each UTF-8 byte is counted as one token (a conservative upper bound for
-/// byte-fallback tokenizers). Reserve the actual document prefix plus 32
-/// special tokens inside a 1,000-token target, far below the 8,192 budget.
-/// Windows overlap by up to 100 bytes, including when one line is very long.
+/// Each UTF-8 byte counts as one token (a conservative bound for byte-fallback tokenizers),
+/// and windows overlap by up to 100 bytes, including when one line is very long.
 #[must_use]
 pub fn chunk_text(text: &str, filename: &str) -> Vec<(String, String)> {
     let prefix = format!("title: {filename} | text: ");

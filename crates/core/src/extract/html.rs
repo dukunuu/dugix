@@ -1,10 +1,5 @@
-//! HTML/XHTML to readable Markdown: headings, lists, tables, code and quotes
-//! survive; scripts, styles, SVG, inline `data:` blobs and layout chrome do
-//! not. Chat-export pages (Discord, Telegram) keep their author / time /
-//! message structure as `[time] author: message` lines.
-//!
-//! The output is one block per line with no blank lines, so a paginated read
-//! is not mostly whitespace and an embedding chunk is mostly signal.
+//! HTML/XHTML to readable Markdown: headings, lists, tables, code and quotes survive;
+//! scripts, styles, SVG, inline `data:` blobs and layout chrome do not.
 
 use std::fmt::Write as _;
 
@@ -151,7 +146,6 @@ impl Conv {
         }
     }
 
-    /// Finish the current line.
     fn flush(&mut self) {
         // Keep leading indentation (list nesting); drop trailing space.
         let text = self.line.trim_end();
@@ -175,7 +169,6 @@ impl Conv {
         }
     }
 
-    /// Append inline text, collapsing whitespace.
     fn push_inline(&mut self, text: &str) {
         let capturing = self
             .open
@@ -373,8 +366,7 @@ impl Conv {
             n if BLOCK.contains(&n) => self.block(),
             _ => {}
         }
-        // After the generic block handling, so a message body's `[time] author:`
-        // prefix is not flushed onto its own line.
+        // After the generic block handling, so a message body's `[time] author:` prefix is not flushed onto its own line.
         self.chat_start(name, attrs);
     }
 
@@ -598,7 +590,6 @@ const fn is_base64(b: u8) -> bool {
     b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'=' | b'-' | b'_')
 }
 
-/// Convert an HTML (or XHTML) document or fragment to Markdown.
 pub fn to_markdown(html: &str) -> String {
     let mut conv = Conv::new(profile_for(html));
     for tok in Tokens::new(html) {

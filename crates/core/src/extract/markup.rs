@@ -1,11 +1,9 @@
-//! A lenient HTML/XML tokenizer plus entity decoding, shared by every
-//! markup converter (HTML, SVG, ODF, EPUB, mail bodies). It never fails: bad
-//! markup degrades to text, and the iterator always terminates.
+//! A lenient HTML/XML tokenizer plus entity decoding, shared by every markup converter.
+//! It never fails: bad markup degrades to text, and the iterator always terminates.
 
 use std::borrow::Cow;
 
-/// One lexical piece of a markup document. Names are lowercased; `attrs` is
-/// the raw attribute text (look values up with [`attr`]).
+/// One lexical piece of a markup document; names are lowercased and `attrs` is the raw attribute text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Tok<'a> {
     Text(&'a str),
@@ -38,7 +36,6 @@ impl<'a> Tokens<'a> {
     }
 }
 
-/// Byte offset of the first ASCII-case-insensitive `needle` in `hay`.
 fn find_ci(hay: &str, needle: &str) -> Option<usize> {
     let (h, n) = (hay.as_bytes(), needle.as_bytes());
     if n.is_empty() || h.len() < n.len() {
@@ -109,7 +106,6 @@ impl<'a> Iterator for Tokens<'a> {
                 self.pos += 1;
                 return Some(Tok::Text("<"));
             }
-            // Start tag: name, then attributes up to the unquoted `>`.
             let name_end = body
                 .find(|c: char| c.is_whitespace() || c == '/' || c == '>')
                 .unwrap_or(body.len());
@@ -148,7 +144,7 @@ impl<'a> Iterator for Tokens<'a> {
     }
 }
 
-/// The (entity-decoded) value of attribute `name` in a raw attribute string.
+/// The entity-decoded value of attribute `name` in a raw attribute string.
 pub fn attr(attrs: &str, name: &str) -> Option<String> {
     let b = attrs.as_bytes();
     let mut i = 0;
@@ -197,7 +193,7 @@ pub fn attr(attrs: &str, name: &str) -> Option<String> {
     None
 }
 
-/// Decode HTML/XML character references. Unknown names are left as written.
+/// Decode HTML/XML character references; unknown names are left as written.
 pub fn decode_entities(s: &str) -> Cow<'_, str> {
     if !s.contains('&') {
         return Cow::Borrowed(s);

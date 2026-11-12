@@ -1,10 +1,5 @@
 //! The `[connectors.*]` section of `config.toml`, typed but forgiving.
-//!
-//! Reading never fails the whole file: a connector that does not parse is
-//! reported and skipped while the others load. Writing edits the file in
-//! place (`config::edit_config_at`), touching only the keys it owns, so
-//! `[provider]`, `[agent]`, comments-free formatting aside, every other
-//! section and any key a newer build added survives a round trip.
+//! Reading reports and skips a bad connector; writing touches only the keys it owns.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -19,7 +14,6 @@ use serde::{Deserialize, Serialize};
 pub enum Policy {
     /// Runs without asking (as long as its definition is unchanged).
     Allow,
-    /// Always shows the approval panel.
     Ask,
     /// Hidden from the model and refused if called.
     Deny,
@@ -37,7 +31,6 @@ impl Policy {
         }
     }
 
-    /// The config word.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -56,11 +49,9 @@ pub enum AuthKind {
     None,
     /// A static bearer token held in the keychain.
     Bearer,
-    /// OAuth (C2); stored and shown, not yet driven.
     Oauth,
 }
 
-/// One `[connectors.<name>]` table.
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConnectorConfig {
     /// A hosted server (Streamable HTTP).
@@ -116,7 +107,6 @@ impl fmt::Debug for ConnectorConfig {
 }
 
 impl ConnectorConfig {
-    /// A hosted connector.
     #[must_use]
     pub fn remote(url: &str) -> Self {
         Self {
@@ -126,7 +116,6 @@ impl ConnectorConfig {
         }
     }
 
-    /// A local connector.
     #[must_use]
     pub fn local(command: Vec<String>) -> Self {
         Self {
@@ -136,14 +125,12 @@ impl ConnectorConfig {
         }
     }
 
-    /// The explicit policy for a tool, if the user set one.
     #[must_use]
     pub fn policy(&self, tool: &str) -> Option<Policy> {
         self.tools.get(tool).and_then(|word| Policy::parse(word))
     }
 
-    /// Where it connects, with any query string or credentials removed:
-    /// safe for status lines, logs and snapshots.
+    /// Where it connects, with query string and credentials removed: safe for logs and snapshots.
     #[must_use]
     pub fn target_label(&self) -> String {
         match &self.url {
@@ -153,10 +140,6 @@ impl ConnectorConfig {
     }
 
     /// Structural checks shared by every way a connector gets added.
-    ///
-    /// # Errors
-    /// The connector has neither or both of `url` and `command`, a bad URL
-    /// scheme, or an empty command.
     pub fn validate(&self) -> Result<()> {
         match (&self.url, self.command.is_empty()) {
             (Some(_), false) => bail!("a connector is either a url or a command, not both"),
@@ -173,9 +156,6 @@ impl ConnectorConfig {
 }
 
 /// `https` anywhere, `http` only for loopback (local servers and tests).
-///
-/// # Errors
-/// The URL does not parse, or uses plain `http` for a non-loopback host.
 pub fn validate_url(url: &str) -> Result<()> {
     let parsed = reqwest::Url::parse(url.trim()).map_err(|_| anyhow::anyhow!("not a valid url"))?;
     match parsed.scheme() {
@@ -186,7 +166,6 @@ pub fn validate_url(url: &str) -> Result<()> {
     }
 }
 
-/// Whether a URL points at this machine.
 #[must_use]
 pub fn is_loopback(url: &reqwest::Url) -> bool {
     matches!(url.host_str(), Some("localhost" | "127.0.0.1"))
@@ -243,10 +222,7 @@ pub fn slug(text: &str) -> String {
     }
 }
 
-/// A connector name suggested by what the user typed: the service in a URL
-/// (`https://mcp.linear.app/mcp` -> `linear`) or the package/program in a
-/// command line (`npx -y @modelcontextprotocol/server-filesystem` ->
-/// `filesystem`).
+/// A connector name suggested by what the user typed: the service in a URL or the program in a command line.
 #[must_use]
 pub fn suggest_name(target: &str) -> String {
     let target = target.trim();
@@ -308,7 +284,6 @@ pub fn suggest_name(target: &str) -> String {
     slug(base)
 }
 
-/// What reading the config found.
 #[derive(Debug, Default)]
 pub struct Loaded {
     pub connectors: BTreeMap<String, ConnectorConfig>,
@@ -316,10 +291,6 @@ pub struct Loaded {
     pub problems: Vec<String>,
 }
 
-/// Read every `[connectors.*]` table from the config file at `path`.
-///
-/// # Errors
-/// The file exists but is unreadable or not valid TOML.
 pub fn load_at(path: &Path) -> Result<Loaded> {
     let root = crate::config::read_table_at(path)?;
     let mut loaded = Loaded::default();
@@ -360,9 +331,6 @@ fn section<'a>(root: &'a mut toml::Table, name: &str) -> Result<&'a mut toml::Ta
 }
 
 /// Add a connector; refuses to replace an existing one.
-///
-/// # Errors
-/// The name is invalid or taken, the connector is invalid, or the write fails.
 pub fn add_at(path: &Path, name: &str, config: &ConnectorConfig) -> Result<()> {
     if !valid_name(name) {
         bail!("connector names are 1-32 characters of a-z, 0-9, - and _");
@@ -386,9 +354,6 @@ pub fn add_at(path: &Path, name: &str, config: &ConnectorConfig) -> Result<()> {
 }
 
 /// Remove a connector's table. Returns whether it existed.
-///
-/// # Errors
-/// The write fails.
 pub fn remove_at(path: &Path, name: &str) -> Result<bool> {
     let mut existed = false;
     crate::config::edit_config_at(path, |root| {
@@ -423,10 +388,6 @@ fn edit_connector(
     })
 }
 
-/// Enable or disable a connector.
-///
-/// # Errors
-/// The connector does not exist or the write fails.
 pub fn set_enabled_at(path: &Path, name: &str, on: bool) -> Result<()> {
     edit_connector(path, name, |table| {
         table.insert("enabled".into(), toml::Value::Boolean(on));
@@ -443,9 +404,6 @@ fn sub_table<'a>(table: &'a mut toml::Table, key: &str) -> Result<&'a mut toml::
 }
 
 /// Set (or with `None`, clear) the policy for one tool.
-///
-/// # Errors
-/// The connector does not exist or the write fails.
 pub fn set_policy_at(path: &Path, name: &str, tool: &str, policy: Option<Policy>) -> Result<()> {
     edit_connector(path, name, |table| {
         let tools = sub_table(table, "tools")?;
@@ -465,9 +423,6 @@ pub fn set_policy_at(path: &Path, name: &str, tool: &str, policy: Option<Policy>
 }
 
 /// Always allow a tool: write `allow` and pin the definition hash.
-///
-/// # Errors
-/// The connector does not exist or the write fails.
 pub fn always_allow_at(path: &Path, name: &str, tool: &str, hash: &str) -> Result<()> {
     edit_connector(path, name, |table| {
         sub_table(table, "tools")?.insert(tool.into(), toml::Value::String("allow".into()));
@@ -477,9 +432,6 @@ pub fn always_allow_at(path: &Path, name: &str, tool: &str, hash: &str) -> Resul
 }
 
 /// Set or clear a pin without touching the policy.
-///
-/// # Errors
-/// The connector does not exist or the write fails.
 pub fn set_pin_at(path: &Path, name: &str, tool: &str, hash: Option<&str>) -> Result<()> {
     edit_connector(path, name, |table| {
         let pins = sub_table(table, "pins")?;
@@ -499,9 +451,6 @@ pub fn set_pin_at(path: &Path, name: &str, tool: &str, hash: Option<&str>) -> Re
 }
 
 /// Store a fallback secret in the connector's table (no keychain available).
-///
-/// # Errors
-/// The connector does not exist or the write fails.
 pub fn set_secret_at(path: &Path, name: &str, kind: &str, value: Option<&str>) -> Result<()> {
     edit_connector(path, name, |table| {
         let secrets = sub_table(table, "secrets")?;

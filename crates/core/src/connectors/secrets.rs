@@ -1,11 +1,5 @@
-//! Connector secrets: bearer tokens, `keychain:<name>` environment values
-//! and header values. They live in the OS keychain (service `nexus-chat`,
-//! account `connector:<name>:<kind>`) through the `keyring` crate. When no
-//! keychain is usable they fall back to the connector's own table in
-//! `config.toml` (written 0600) and the user is warned once.
-//!
-//! The store sits behind a trait so every test uses an in-memory one and
-//! nothing here ever touches the developer's real keychain.
+//! Connector secrets: bearer tokens and `keychain:<name>` values, kept in the OS keychain.
+//! With no usable keychain they fall back to the connector's table in `config.toml` (0600), warned once.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -15,19 +9,14 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 use tokio::sync::mpsc::UnboundedSender;
 
-/// The keychain service all connector secrets share.
 pub const SERVICE: &str = "nexus-chat";
 
-/// Prefix marking a config value as "look this up in the keychain".
 pub const KEYCHAIN_PREFIX: &str = "keychain:";
 
-/// Why a store call failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SecretError {
-    /// No usable keychain on this machine/session (headless Linux, locked,
-    /// permission denied). The caller falls back to the config file.
+    /// No usable keychain (headless Linux, locked, permission denied); the caller falls back to the config file.
     Unavailable(String),
-    /// Anything else.
     Other(String),
 }
 
@@ -71,15 +60,13 @@ pub(super) fn redact_value(value: Value, secrets: &[String]) -> Value {
 
 /// A place secrets can be kept, addressed by account name.
 pub trait SecretStore: Send + Sync {
-    /// The secret, or `None` when there is none.
     fn get(&self, account: &str) -> Result<Option<String>, SecretError>;
-    /// Create or replace.
     fn set(&self, account: &str, secret: &str) -> Result<(), SecretError>;
     /// Remove; a missing entry is not an error.
     fn delete(&self, account: &str) -> Result<(), SecretError>;
 }
 
-/// The real thing: the OS keychain via `keyring`.
+/// The OS keychain via `keyring`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct KeyringStore;
 
@@ -122,8 +109,7 @@ impl SecretStore for KeyringStore {
     }
 }
 
-/// An in-memory store, for tests. `unavailable` makes it behave like a
-/// machine without a keychain.
+/// An in-memory store for tests; `unavailable` makes it behave like a machine without a keychain.
 #[derive(Debug, Default)]
 pub struct MemoryStore {
     entries: Mutex<HashMap<String, String>>,
@@ -131,7 +117,6 @@ pub struct MemoryStore {
 }
 
 impl MemoryStore {
-    /// A store that always reports "no keychain".
     #[must_use]
     pub fn unavailable() -> Self {
         Self {
@@ -140,19 +125,16 @@ impl MemoryStore {
         }
     }
 
-    /// How many secrets it holds.
     #[must_use]
     pub fn len(&self) -> usize {
         self.entries.lock().expect("memory store").len()
     }
 
-    /// Whether it holds none.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    /// The accounts it holds, sorted.
     #[must_use]
     pub fn accounts(&self) -> Vec<String> {
         let mut accounts: Vec<String> = self
@@ -219,8 +201,7 @@ pub struct Vault {
 }
 
 impl Vault {
-    /// A vault over `store`. `config_path` enables the fallback; `notes`
-    /// receives the one-time warning when it is used.
+    /// A vault over `store`; `config_path` enables the fallback and `notes` receives the one-time warning.
     #[must_use]
     pub fn new(
         store: Arc<dyn SecretStore>,
@@ -283,11 +264,7 @@ impl Vault {
         }
     }
 
-    /// Store a secret. The keychain is preferred; when it is unavailable the
-    /// connector's config table holds it and a one-time warning is sent.
-    ///
-    /// # Errors
-    /// Neither the keychain nor the config file could take it.
+    /// Store a secret, preferring the keychain and falling back to the config table.
     pub fn set(&self, connector: &str, kind: &str, secret: &str) -> Result<Placed, String> {
         match self.store.set(&Self::account(connector, kind), secret) {
             Ok(()) => {
@@ -321,8 +298,7 @@ impl Vault {
         }
     }
 
-    /// Resolve a config value: `keychain:<kind>` is looked up, anything else
-    /// is returned as written.
+    /// Resolve a config value: `keychain:<kind>` is looked up, anything else is returned as written.
     #[must_use]
     pub fn resolve(&self, connector: &str, value: &str) -> Option<String> {
         match value.strip_prefix(KEYCHAIN_PREFIX) {
@@ -426,7 +402,6 @@ mod tests {
         vault.delete("a", "bearer");
         assert_eq!(vault.get("a", "bearer"), None);
         assert_eq!(vault.get("b", "bearer").as_deref(), Some("tok-b"));
-        // No fallback path and no keychain: the error says so, without the secret.
         let bare = Vault::new(Arc::new(MemoryStore::unavailable()), None, None);
         let error = bare.set("a", "bearer", "tok-zzz").unwrap_err();
         assert!(!error.contains("tok-zzz"));

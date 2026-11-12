@@ -1,9 +1,5 @@
-//! JSON-RPC 2.0 and the slice of MCP the connectors use: `server/discover`,
-//! `initialize`, `tools/list` (cursor pagination), `tools/call`, the
-//! `notifications/*` we send or react to, content blocks, tool annotations
-//! and the 2026 `resultType` field. Parsing is deliberately lenient: servers
-//! in the wild omit optional fields, so every accessor falls back to a
-//! default instead of failing the whole message.
+//! JSON-RPC 2.0 and the slice of MCP the connectors use.
+//! Parsing is lenient: servers omit optional fields, so accessors fall back to defaults.
 
 use std::fmt;
 
@@ -13,29 +9,21 @@ use serde_json::{Map, Value, json};
 pub const PROTOCOL_2026: &str = "2026-07-28";
 /// The version offered when a server does not know `server/discover`.
 pub const OFFER_LEGACY: &str = "2025-11-25";
-/// Versions accepted from an `initialize` answer.
 pub const ACCEPT_LEGACY: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26"];
 
-/// `_meta` key carrying the protocol version on 2026 requests.
 pub const META_PROTOCOL: &str = "io.modelcontextprotocol/protocolVersion";
-/// `_meta` key carrying the client capabilities on 2026 requests.
 pub const META_CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";
-/// `_meta` key carrying the client identity on 2026 requests.
 pub const META_CLIENT_INFO: &str = "io.modelcontextprotocol/clientInfo";
 
-/// A single JSON-RPC message (request, response batch member, notification).
 pub const MAX_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
 
-/// JSON-RPC "method not found".
 pub const METHOD_NOT_FOUND: i64 = -32601;
 
-/// The identity nexus announces to servers.
 #[must_use]
 pub fn client_info() -> Value {
     json!({"name": "nexus-chat", "version": env!("CARGO_PKG_VERSION")})
 }
 
-/// A JSON-RPC error object.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RpcError {
     pub code: i64,
@@ -66,8 +54,6 @@ pub enum Message {
 }
 
 impl Message {
-    /// Decode one JSON value, or a JSON-RPC batch (an array) into its
-    /// members. Unrecognisable shapes are dropped.
     #[must_use]
     pub fn parse_all(value: &Value) -> Vec<Self> {
         match value {
@@ -76,7 +62,6 @@ impl Message {
         }
     }
 
-    /// Decode a single message object.
     #[must_use]
     pub fn parse(value: &Value) -> Option<Self> {
         let object = value.as_object()?;
@@ -113,7 +98,6 @@ impl Message {
     }
 }
 
-/// A request message.
 #[must_use]
 pub fn request(id: u64, method: &str, params: Value) -> Value {
     let mut message = json!({"jsonrpc": "2.0", "id": id, "method": method});
@@ -121,7 +105,6 @@ pub fn request(id: u64, method: &str, params: Value) -> Value {
     message
 }
 
-/// A notification message (no id, no answer).
 #[must_use]
 pub fn notification(method: &str, params: Option<Value>) -> Value {
     let mut message = json!({"jsonrpc": "2.0", "method": method});
@@ -131,7 +114,6 @@ pub fn notification(method: &str, params: Option<Value>) -> Value {
     message
 }
 
-/// A success answer to a server-initiated request.
 #[must_use]
 pub fn response_ok(id: &Value, result: Value) -> Value {
     let mut message = json!({"jsonrpc": "2.0", "id": id});
@@ -139,13 +121,11 @@ pub fn response_ok(id: &Value, result: Value) -> Value {
     message
 }
 
-/// An error answer to a server-initiated request.
 #[must_use]
 pub fn response_error(id: &Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
 }
 
-/// The `_meta` object every 2026 request carries.
 #[must_use]
 pub fn client_meta() -> Value {
     json!({
@@ -155,7 +135,6 @@ pub fn client_meta() -> Value {
     })
 }
 
-/// Add the client `_meta` to a params object (creating it when absent).
 #[must_use]
 pub fn with_meta(params: Value) -> Value {
     let mut object = match params {
@@ -178,8 +157,7 @@ pub fn with_meta(params: Value) -> Value {
     Value::Object(object)
 }
 
-/// Tool annotations (`readOnlyHint` and friends). `None` means "unspecified";
-/// the spec defaults then apply to anything that matters for safety.
+/// Tool annotations; `None` is unspecified, and the spec defaults apply wherever safety depends on it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Annotations {
     pub title: Option<String>,
@@ -216,8 +194,7 @@ impl Annotations {
         self.read_only == Some(true) && self.destructive != Some(true)
     }
 
-    /// The annotations as words for an approval panel, following the spec
-    /// defaults for anything left unspecified.
+    /// The annotations as words for an approval panel, with the spec defaults applied.
     #[must_use]
     pub fn words(&self) -> String {
         let mut words = Vec::new();
@@ -246,7 +223,6 @@ impl Annotations {
     }
 }
 
-/// One tool as listed by a server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolInfo {
     pub name: String,
@@ -284,9 +260,8 @@ impl ToolInfo {
         })
     }
 
-    /// `sha256(name + description + inputSchema + annotations)`, hex. Any
-    /// change a server makes to what the model (or the user) was told about
-    /// the tool changes the hash.
+    /// `sha256` over name, description, inputSchema and annotations, hex: any change
+    /// to what the model was told about the tool changes it.
     #[must_use]
     pub fn definition_hash(&self) -> String {
         use sha2::{Digest, Sha256};
@@ -311,7 +286,6 @@ impl ToolInfo {
     }
 }
 
-/// One `tools/list` page.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ToolsPage {
     pub tools: Vec<ToolInfo>,
@@ -419,13 +393,10 @@ impl Content {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResultType {
     Complete,
-    /// The server wants input (elicitation); not supported before C3.
     InputRequired,
-    /// Anything else the server invents.
     Other,
 }
 
-/// A decoded `tools/call` result.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallResult {
     pub content: Vec<Content>,
@@ -458,8 +429,7 @@ impl CallResult {
     }
 }
 
-/// Serialize with object keys sorted, so equal values hash equally whatever
-/// order a server (or the JSON library's map) emits them in.
+/// Serialize with object keys sorted, so equal values hash equally whatever order a server emits them in.
 #[must_use]
 pub fn canonical_json(value: &Value) -> String {
     fn write(value: &Value, out: &mut String) {

@@ -1,7 +1,5 @@
-//! Integration tests for connectors: the client, the registry and the
-//! toolbox against mock MCP servers on both transports. Everything runs
-//! in-process or through the current test executable: no npx, no network,
-//! no real keychain.
+//! Integration tests for connectors: the client, the registry and the toolbox against mock MCP servers.
+//! Everything runs in-process or through the current test executable: no network, no real keychain.
 
 use std::collections::VecDeque;
 use std::future::Future;
@@ -19,8 +17,7 @@ use super::registry::{Access, Env, Registry, Status, Tuning};
 use super::secrets::{MemoryStore, Vault};
 use crate::tools::{ApprovalRequest, Approver, Decision, ToolBox, ToolExecutor};
 
-/// The stdio door: when the test executable is re-launched with the marker
-/// variable it becomes an MCP server on stdin/stdout; otherwise it passes.
+/// The stdio door: with the marker variable set, the test executable becomes an MCP server on stdin/stdout.
 #[test]
 fn stdio_mock_server() {
     if let Ok(mode) = std::env::var("NEXUS_MCP_STDIO_MOCK") {
@@ -342,8 +339,7 @@ async fn an_expired_2025_session_is_renegotiated_once() {
     let mut mock = Mock::new(Flavor::Legacy {
         version: "2025-06-18",
     });
-    // initialized(1) + three tools/list pages(2-4) are fine; the next request
-    // is refused.
+    // initialized, then three tools/list pages, then the session expires.
     mock.expire_session_after = Some(4);
     let server = HttpMock::start(mock).await;
     let rig = rig();
@@ -553,7 +549,6 @@ async fn connector_tools_follow_the_builtins_in_stable_order_and_nothing_changes
         plain.connectors = None;
         serde_json::to_string(&plain.defs()).unwrap()
     };
-    // A registry with no connectors leaves the list byte-identical.
     assert_eq!(
         serde_json::to_string(&toolbox(&rig, None).defs()).unwrap(),
         baseline
@@ -578,7 +573,6 @@ async fn connector_tools_follow_the_builtins_in_stable_order_and_nothing_changes
     sorted.sort();
     assert_eq!(tail, sorted, "ordered by connector, then tool");
     assert!(tail[0].starts_with("alpha__") && tail[25].starts_with("zeta__"));
-    // Disabling a connector removes only its tools.
     rig.registry.set_enabled("zeta", false).unwrap();
     assert_eq!(toolbox(&rig, None).defs().len(), builtin.len() + 13);
 }
@@ -622,7 +616,7 @@ async fn over_thirty_tools_become_a_meta_tool_with_search_call_and_promotion() {
     let hits: Vec<_> = found.lines().filter(|l| l.starts_with("demo__")).collect();
     assert_eq!(hits.len(), 8, "{found}");
     assert!(found.contains("schema: {"), "{found}");
-    // Every hit really is about issues (12 candidates, 8 shown).
+    // Every hit is about issues; only 8 of 12 candidates are shown.
     for hit in &hits {
         let number: usize = hit["demo__tool_".len()..][..2].parse().unwrap();
         assert_eq!(number % 3, 1, "{hit}");
@@ -803,7 +797,6 @@ async fn a_401_needs_auth_and_a_bearer_token_from_the_keychain_connects() {
     let server = HttpMock::start(mock).await;
     let mut rig = rig();
 
-    // No auth configured: the server says 401 and points at its metadata.
     rig.registry
         .add("plain", ConnectorConfig::remote(&server.url()))
         .unwrap();
@@ -816,7 +809,6 @@ async fn a_401_needs_auth_and_a_bearer_token_from_the_keychain_connects() {
         Some("http://127.0.0.1/.well-known/oauth-protected-resource")
     );
 
-    // Bearer configured but no token stored: needs sign-in, nothing is sent.
     let seen_before = server.mock.seen.lock().unwrap().len();
     let mut config = ConnectorConfig::remote(&server.url());
     config.auth = AuthKind::Bearer;
@@ -830,7 +822,6 @@ async fn a_401_needs_auth_and_a_bearer_token_from_the_keychain_connects() {
     ));
     assert_eq!(server.mock.seen.lock().unwrap().len(), seen_before);
 
-    // Wrong token: 401 again.
     rig.registry
         .add_with_secrets(
             "wrong",
@@ -841,7 +832,6 @@ async fn a_401_needs_auth_and_a_bearer_token_from_the_keychain_connects() {
     rig.registry.wait_ready(Duration::from_secs(10)).await;
     assert!(matches!(rig.status("wrong"), Status::NeedsAuth { .. }));
 
-    // Right token, stored through the vault: connected, sent as a bearer header.
     rig.registry
         .add_with_secrets("good", config, &[("bearer".into(), TOKEN.into())])
         .unwrap();
@@ -893,7 +883,6 @@ async fn a_401_needs_auth_and_a_bearer_token_from_the_keychain_connects() {
 
 #[tokio::test]
 async fn http_error_bodies_that_echo_a_credential_are_scrubbed() {
-    // A server that answers 500 and repeats the Authorization header back.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -1089,7 +1078,6 @@ async fn a_crashing_stdio_server_restarts_with_backoff_then_lands_in_an_error_st
         4,
         "no further restarts"
     );
-    // Its tools are gone from the model's view.
     assert!(rig.registry.exposure().defs.is_empty());
 }
 
@@ -1178,7 +1166,6 @@ async fn chat_mode_asks_before_a_write_and_shows_what_it_will_do() {
     let rig = rig();
     rig.add_http("demo", &server.url()).await;
 
-    // Headless (no approver): refuses rather than acting.
     let (text, status) = toolbox(&rig, None).run("demo__write_note", "{}").await;
     assert!(text.starts_with("needs approval"), "{text}");
     assert_eq!(status, "blocked");
@@ -1210,14 +1197,12 @@ async fn chat_mode_asks_before_a_write_and_shows_what_it_will_do() {
     );
     assert!(!request.summary.contains("definition changed"));
 
-    // A destructive tool says so in words.
     let approver = Scripted::new(&[Decision::Deny]);
     toolbox(&rig, Some(&approver))
         .run("demo__delete_note", "{}")
         .await;
     let words = approver.requests.lock().unwrap()[0].summary.clone();
     assert!(words.starts_with("writes · may delete"), "{words}");
-    // A big argument is previewed in the summary and complete in the detail.
     let approver = Scripted::new(&[Decision::Deny]);
     toolbox(&rig, Some(&approver))
         .run(
@@ -1266,7 +1251,6 @@ async fn allow_for_the_session_remembers_until_the_conversation_changes() {
     rig.registry.reset_session();
     tb.run("demo__write_note", "{}").await;
     assert_eq!(approver.asked(), 2, "a new conversation asks again");
-    // The grant was for that tool only.
     let other = Scripted::new(&[Decision::Deny]);
     toolbox(&rig, Some(&other))
         .run("demo__delete_note", "{}")
@@ -1301,7 +1285,6 @@ async fn always_allow_writes_policy_and_a_pin_to_config_and_survives_a_restart()
     );
     assert!(rig.registry.is_read_only(&rig.target("demo__write_note")));
 
-    // A fresh process (new registry, same config, same server) still trusts it...
     rig.keep_dir = true;
     let again = rig_in(rig.dir.clone(), rig.store.clone());
     again.registry.load().unwrap();
@@ -1310,12 +1293,10 @@ async fn always_allow_writes_policy_and_a_pin_to_config_and_survives_a_restart()
         again.registry.access(&again.target("demo__write_note")),
         Access::Free
     );
-    // ...but not a tool it never allowed.
     assert!(matches!(
         again.registry.access(&again.target("demo__delete_note")),
         Access::Ask { changed: false }
     ));
-    // Clearing the policy forgets the pin too.
     again
         .registry
         .set_policy("demo", "write_note", None)
@@ -1342,7 +1323,6 @@ async fn a_changed_definition_falls_back_to_ask_and_the_panel_says_so() {
         Access::Free
     );
 
-    // The server quietly rewrites the tool.
     {
         let mut tools = server.mock.tools.lock().unwrap();
         let note = tools
@@ -1370,14 +1350,12 @@ async fn a_changed_definition_falls_back_to_ask_and_the_panel_says_so() {
             requests[1].summary
         );
     }
-    // Allowing it for the session pins the new definition for that session.
     assert_eq!(
         rig.registry.access(&rig.target("demo__write_note")),
         Access::Free
     );
     tb.run("demo__write_note", "{}").await;
     assert_eq!(approver.asked(), 2);
-    // And a session grant is invalidated by another change.
     {
         let mut tools = server.mock.tools.lock().unwrap();
         tools
@@ -1415,13 +1393,11 @@ async fn deny_hides_the_tool_and_refuses_the_call() {
     assert_eq!(row.policy, Some(Policy::Deny));
     assert_eq!(row.access, Access::Denied);
     assert!(row.words.starts_with("writes · may delete"));
-    // The config survived untouched in every other respect.
     let text = std::fs::read_to_string(&rig.config_path).unwrap();
     assert!(
         text.contains("delete_note = \"deny\"") && text.contains("sk-keep-me"),
         "{text}"
     );
-    // Un-denying brings it back.
     rig.registry
         .set_policy("demo", "delete_note", None)
         .unwrap();
@@ -1522,7 +1498,6 @@ async fn load_syncs_with_the_config_file_and_reports_bad_entries() {
     rig.registry.wait_ready(Duration::from_secs(10)).await;
     assert_eq!(rig.registry.infos().len(), 1);
     assert!(matches!(rig.status("a"), Status::Connected { .. }));
-    // Editing the file by hand and reloading removes what vanished.
     std::fs::write(
         &rig.config_path,
         "[provider]\nopenrouter_key = \"sk-keep-me\"\n",
