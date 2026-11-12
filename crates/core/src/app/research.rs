@@ -827,13 +827,13 @@ impl super::App {
             }
             ResearchUpdate::Done(Ok(report)) => {
                 let report = if let Ok(Some(prev_citations)) =
-                    self.previous_citations_for_watch_session(&session_id, &space_id)
+                    self.previous_citations_for_research_job(&session_id, &space_id)
                 {
                     let new_sources =
-                        crate::app::watches::new_sources_since(&report, &prev_citations);
+                        crate::app::research_jobs::new_sources_since(&report, &prev_citations);
                     format!(
                         "{}\n\n{}",
-                        crate::app::watches::diff_section("", &report, &new_sources),
+                        crate::app::research_jobs::diff_section(&new_sources),
                         report
                     )
                 } else {

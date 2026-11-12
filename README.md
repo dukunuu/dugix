@@ -708,7 +708,7 @@ crates/core/        nexus-chat-core (lib crate `nexus_core`) — domain only, ze
 │   ├── chat.rs     request lifecycle: history build, streaming, tool loop
 │   ├── research.rs the research pipeline: survey → plan → searchers → …
 │   ├── swarm.rs    multi-persona roundtable
-│   ├── watches.rs  standing research jobs
+│   ├── research_jobs.rs  repeating research jobs and report diffs
 │   ├── usage.rs    usage/cost analytics
 │   ├── sessions.rs, spaces.rs, models.rs, backends.rs, memory.rs
 │   ├── files.rs, images.rs, scripts.rs, apps.rs   space artifacts

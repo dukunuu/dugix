@@ -410,7 +410,7 @@ async fn slash_watch_creates_research_job_and_direct_research_runner_reuses_it()
         .unwrap();
     fixture.app.backends.local =
         Some(OpenRouter::local(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap());
-    fixture.app.create_watch("topic");
+    fixture.app.repeat_research("topic");
     let job = fixture.app.db.list_jobs().unwrap().pop().unwrap();
     assert_eq!(job.spec.kind, "research");
     assert_eq!(job.spec.topic.as_deref(), Some("topic"));

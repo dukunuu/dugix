@@ -4,8 +4,7 @@ use std::fmt::Write as _;
 
 use crate::jobs::Job;
 
-pub fn diff_section(previous_report: &str, new_report: &str, new_sources: &[String]) -> String {
-    let _ = (previous_report, new_report);
+pub fn diff_section(new_sources: &[String]) -> String {
     let mut out = String::from("## What changed since last run\n\n");
     if new_sources.is_empty() {
         out.push_str("No new sources since the last run.\n");
@@ -31,15 +30,15 @@ pub fn new_sources_since(new_report: &str, previous_citations: &[String]) -> Vec
 }
 
 impl super::App {
-    pub fn create_watch(&mut self, topic: &str) {
+    pub fn repeat_research(&mut self, topic: &str) {
         if topic.is_empty() {
             self.push_status("usage: /watch <topic>".to_string());
             return;
         }
-        self.create_watch_with_interval(topic, 1440);
+        self.repeat_research_every(topic, 1440);
     }
 
-    pub(crate) fn create_watch_with_interval(&mut self, topic: &str, interval_minutes: i64) {
+    pub(crate) fn repeat_research_every(&mut self, topic: &str, interval_minutes: i64) {
         if self.start_research_job(
             crate::jobs::research::spec(topic, Some(interval_minutes)),
             false,
@@ -83,7 +82,7 @@ impl super::App {
     }
 
     // Completion may arrive after a space switch; use the report's space, not the active space.
-    pub fn previous_citations_for_watch_session(
+    pub fn previous_citations_for_research_job(
         &self,
         session_id: &str,
         space_id: &str,
@@ -96,7 +95,7 @@ impl super::App {
         else {
             return Ok(None);
         };
-        // Unrelated reports in the same space must not suppress this watch's new sources.
+        // Unrelated reports in the same space must not suppress this job's new sources.
         let slug = super::sessions::slugify(w.spec.topic.as_deref().unwrap_or(&w.spec.prompt));
         let prefix = format!("research-{slug}-");
         let rows = self.db.search_citations(space_id, Some(&prefix))?;
@@ -127,7 +126,7 @@ mod tests {
     fn test_app() -> App {
         let db = Db::open_in_memory().unwrap();
         let root =
-            std::env::temp_dir().join(format!("nexus-watches-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("nexus-research-jobs-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
         let space = Space { root };
         App::new(db, Some("k"), space)
@@ -157,7 +156,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_watch_run_repoints_the_watch_at_its_new_session() {
+    async fn a_rerun_repoints_the_job_at_its_new_session() {
         let mut a = test_app();
         a.current_model = Some("openai/gpt-5-mini".to_string());
         let space_id = a.active_space.id.clone();
@@ -165,21 +164,21 @@ mod tests {
         let first_session =
             a.db.create_session("first run", "openai/gpt-5-mini", &space_id, "chat")
                 .unwrap();
-        let watch_id = create_research_job(&a, "rust async runtimes", &first_session.id);
+        let job_id = create_research_job(&a, "rust async runtimes", &first_session.id);
 
-        assert!(a.run_research_job(&research_job(&a, &watch_id)));
+        assert!(a.run_research_job(&research_job(&a, &job_id)));
 
-        let updated = research_job(&a, &watch_id);
+        let updated = research_job(&a, &job_id);
         assert_ne!(
             updated.session_id, first_session.id,
-            "a watch run should repoint the watch at the session its re-run actually used, \
+            "a rerun should repoint the job at the session its re-run actually used, \
              not leave it pinned to the first run's session forever"
         );
         assert!(updated.last_run_at.is_some());
     }
 
     #[tokio::test]
-    async fn a_watch_run_only_touches_the_watch_whose_job_actually_started() {
+    async fn a_rerun_only_touches_the_job_that_actually_started() {
         let mut a = test_app();
         a.current_model = Some("openai/gpt-5-mini".to_string());
         let space_id = a.active_space.id.clone();
@@ -190,36 +189,36 @@ mod tests {
         let second_session =
             a.db.create_session("second run", "openai/gpt-5-mini", &space_id, "chat")
                 .unwrap();
-        let watch_a = create_research_job(&a, "rust async runtimes", &first_session.id);
-        let watch_b = create_research_job(&a, "wasm gc proposal", &second_session.id);
+        let job_a = create_research_job(&a, "rust async runtimes", &first_session.id);
+        let job_b = create_research_job(&a, "wasm gc proposal", &second_session.id);
 
-        assert!(a.run_research_job(&research_job(&a, &watch_a)));
-        assert!(!a.run_research_job(&research_job(&a, &watch_b)));
+        assert!(a.run_research_job(&research_job(&a, &job_a)));
+        assert!(!a.run_research_job(&research_job(&a, &job_b)));
 
-        let updated_a = research_job(&a, &watch_a);
-        let updated_b = research_job(&a, &watch_b);
+        let updated_a = research_job(&a, &job_a);
+        let updated_b = research_job(&a, &job_b);
 
         assert_ne!(
             updated_a.session_id, first_session.id,
-            "watch_a's job actually started, so it should be repointed at its new session"
+            "job_a's job actually started, so it should be repointed at its new session"
         );
         assert!(
             updated_a.last_run_at.is_some(),
-            "watch_a's job actually started, so it should be touched"
+            "job_a's job actually started, so it should be touched"
         );
 
         assert_eq!(
             updated_b.session_id, second_session.id,
-            "watch_b's job never started (guard fired) — it must not be repointed"
+            "job_b's job never started (guard fired) — it must not be repointed"
         );
         assert!(
             updated_b.last_run_at.is_none(),
-            "watch_b's job never started (guard fired) — touching it would falsely mark it caught up \
+            "job_b's job never started (guard fired) — touching it would falsely mark it caught up \
              and make it silently skip a full interval"
         );
     }
 
-    fn watch(topic: &str, interval_hours: i64, last_run_at: Option<&str>) -> Job {
+    fn repeating_job(topic: &str, interval_hours: i64, last_run_at: Option<&str>) -> Job {
         Job {
             id: "w1".to_string(),
             space_id: "space-1".to_string(),
@@ -233,8 +232,8 @@ mod tests {
     }
 
     #[test]
-    fn never_run_watch_is_always_due() {
-        let w = watch("topic", 24, None);
+    fn never_run_repeating_job_is_always_due() {
+        let w = repeating_job("topic", 24, None);
         let now = chrono::DateTime::parse_from_rfc3339("2026-07-07T00:00:00+00:00")
             .unwrap()
             .to_utc();
@@ -242,8 +241,8 @@ mod tests {
     }
 
     #[test]
-    fn watch_run_recently_is_not_due() {
-        let w = watch("topic", 24, Some("2026-07-07T00:00:00+00:00"));
+    fn repeating_job_run_recently_is_not_due() {
+        let w = repeating_job("topic", 24, Some("2026-07-07T00:00:00+00:00"));
         let now = chrono::DateTime::parse_from_rfc3339("2026-07-07T05:00:00+00:00")
             .unwrap()
             .to_utc();
@@ -251,8 +250,8 @@ mod tests {
     }
 
     #[test]
-    fn watch_past_its_interval_is_due() {
-        let w = watch("topic", 24, Some("2026-07-06T00:00:00+00:00"));
+    fn repeating_job_past_its_interval_is_due() {
+        let w = repeating_job("topic", 24, Some("2026-07-06T00:00:00+00:00"));
         let now = chrono::DateTime::parse_from_rfc3339("2026-07-07T01:00:00+00:00")
             .unwrap()
             .to_utc();
@@ -261,11 +260,7 @@ mod tests {
 
     #[test]
     fn diff_section_lists_new_sources_when_present() {
-        let section = diff_section(
-            "# Old Report\nOld body.",
-            "# New Report\nNew body.",
-            &["https://new-source.example".to_string()],
-        );
+        let section = diff_section(&["https://new-source.example".to_string()]);
         assert!(
             section.contains("What changed since last run"),
             "{section:?}"
@@ -278,7 +273,7 @@ mod tests {
 
     #[test]
     fn diff_section_empty_new_sources_still_produces_a_header() {
-        let section = diff_section("old", "new", &[]);
+        let section = diff_section(&[]);
         assert!(section.contains("What changed since last run"));
         assert!(!section.contains("New sources"));
     }
@@ -293,7 +288,7 @@ mod tests {
     }
 
     #[test]
-    fn previous_citations_for_watch_session_is_scoped_to_the_watchs_own_reports() {
+    fn previous_citations_for_research_job_is_scoped_to_its_own_reports() {
         let a = test_app();
         let space_id = a.active_space.id.clone();
         let session =
@@ -322,14 +317,14 @@ mod tests {
         .unwrap();
 
         let prev = a
-            .previous_citations_for_watch_session(&session.id, &space_id)
+            .previous_citations_for_research_job(&session.id, &space_id)
             .unwrap();
-        let prev = prev.expect("watch session with prior citations should yield Some");
+        let prev = prev.expect("research job session with prior citations should yield Some");
         assert_eq!(prev, vec!["https://own-report.example".to_string()]);
         assert!(
             !prev.contains(&"https://unrelated.example".to_string()),
             "an unrelated citation elsewhere in the space must not suppress a source as \
-             already-cited for this watch: {prev:?}"
+             already-cited for this job: {prev:?}"
         );
     }
 
@@ -341,7 +336,7 @@ mod tests {
     }
 
     #[test]
-    fn previous_citations_for_watch_session_prefix_collision_doesnt_match_longer_slugs() {
+    fn previous_citations_for_research_job_prefix_collision_doesnt_match_longer_slugs() {
         let a = test_app();
         let space_id = a.active_space.id.clone();
 
@@ -364,12 +359,12 @@ mod tests {
         .unwrap();
 
         let prev_rust = a
-            .previous_citations_for_watch_session(&session_rust.id, &space_id)
+            .previous_citations_for_research_job(&session_rust.id, &space_id)
             .unwrap();
         assert!(
             prev_rust.is_none(),
-            "rust watch should return None (no prior citations for itself), \
-             not see rust-async watch's citations (would show prefix collision bug): {prev_rust:?}"
+            "the rust job should return None (no prior citations for itself), \
+             not see the rust-async job's citations (would show prefix collision bug): {prev_rust:?}"
         );
     }
 }

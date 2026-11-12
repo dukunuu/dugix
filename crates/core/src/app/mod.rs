@@ -69,8 +69,8 @@ mod tests;
 mod tool_view;
 mod transcribe;
 pub use tool_view::{BatchEntry, Source, ToolOutcome, ToolView, tool_call_view};
+mod research_jobs;
 pub mod usage;
-mod watches;
 pub use backends::{Backends, composite_id};
 pub use chat::{
     MERMAID_PREVIEW_EXAMPLES, code_blocks, human_size, pick_greeting, user_command_outcome,

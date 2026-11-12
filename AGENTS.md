@@ -65,7 +65,7 @@ The README has the full tree; the parts agents touch most:
 | `crates/core/src/app/commands.rs` | `AppCommand` seam + `/`-command catalog (`COMMANDS`, `fuzzy_score`): `parse_command` + `execute` (the `/`-string front is `run_command`) |
 | `crates/core/src/app/chat.rs` | request lifecycle: history build, streaming, tool loop |
 | `crates/core/src/app/research.rs` | research pipeline: survey → plan → searchers → synthesis → critic → verifier → writer |
-| `crates/core/src/app/swarm.rs`, `watches.rs` | roundtable / repeating research jobs and report diffs; `/research` creates a one-off research job, `/watch <topic>` a daily one, both listed in `/jobs` (`w` toggles daily). Repeat runs use `nexus jobs daemon` or `nexus jobs run-due` from cron |
+| `crates/core/src/app/swarm.rs`, `research_jobs.rs` | roundtable / repeating research jobs and report diffs; `/research` creates a one-off research job, `/watch <topic>` a daily one, both listed in `/jobs` (`w` toggles daily). Repeat runs use `nexus jobs daemon` or `nexus jobs run-due` from cron |
 | `crates/core/src/app/usage.rs` | usage & cost analytics (`/usage`); Ctrl+G shows tool-definition context tokens and the session's total cost, requests and tokens; `nexus usage --session <id> [--json]` prints every request and the total |
 | `crates/core/src/app/sessions.rs`, `spaces.rs`, `models.rs` | state backends |
 | `crates/core/src/app/memory.rs` | memory glue: the frozen `## Memory` table of contents, per-message `recall` hint rows, `$EDITOR` round trip, `/memory tidy` asks the chat model to review and clean the memory with its own tool, in the conversation |

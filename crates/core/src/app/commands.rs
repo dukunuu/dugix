@@ -684,7 +684,7 @@ impl App {
             | AppCommand::OpenProcs
             | AppCommand::OpenHelp
             | AppCommand::Watch { topic: None } => {}
-            AppCommand::Watch { topic: Some(topic) } => self.create_watch(&topic),
+            AppCommand::Watch { topic: Some(topic) } => self.repeat_research(&topic),
             AppCommand::UnpinPanel { name } => self.unpin_panel(&name)?,
             AppCommand::RenamePanel { from, to } => self.rename_panel(&from, &to)?,
             AppCommand::AddConnector {

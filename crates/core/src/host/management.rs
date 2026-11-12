@@ -293,7 +293,7 @@ pub fn create_watch(
         .into_iter()
         .map(|watch| watch.id)
         .collect();
-    app.create_watch_with_interval(topic, interval_hours * 60);
+    app.repeat_research_every(topic, interval_hours * 60);
     list_watches(app)?
         .into_iter()
         .find(|watch| !before.contains(&watch.id) && watch.topic == topic)
