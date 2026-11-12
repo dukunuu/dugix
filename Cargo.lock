@@ -3060,7 +3060,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nexus-chat"
-version = "0.1.42"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -3092,7 +3092,7 @@ dependencies = [
 
 [[package]]
 name = "nexus-chat-core"
-version = "0.1.42"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -3146,7 +3146,7 @@ dependencies = [
 
 [[package]]
 name = "nexus-studio"
-version = "0.1.42"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "image",
