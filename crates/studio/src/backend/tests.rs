@@ -149,7 +149,6 @@ fn autosave_and_save_are_atomic_and_reload_exactly() {
         &mut backend,
         json!({"command":"Apply", "ops":[{"op":"set_notes", "slide":"s1", "notes":"A speaker note"}]}),
     ));
-    // Autosave: the edit is in the file before anyone asks to save.
     assert_eq!(read_deck(&backend.path).unwrap(), backend.deck);
     let deck = backend.deck.clone();
     success(send(&mut backend, json!({"command":"Save", "deck":deck})));
@@ -412,7 +411,6 @@ fn an_external_deck_edit_reloads_as_one_undo_step_and_flashes_the_changed_nodes(
     let mut backend = temp.backend();
     let original = backend.deck.clone();
     assert!(backend.poll().unwrap().is_none(), "nothing changed yet");
-    // One model edit touching two blocks and a note, written in one rename.
     let external = external_edit(
         &backend,
         json!([
@@ -443,7 +441,6 @@ fn an_external_deck_edit_reloads_as_one_undo_step_and_flashes_the_changed_nodes(
         "and is not reloaded twice"
     );
 
-    // Cmd+Z takes the model's edit back, in the file as well; redo restores it.
     success(send(&mut backend, json!({"command":"Undo"})));
     assert_eq!(backend.deck, original);
     assert_eq!(read_deck(&backend.path).unwrap(), original);
@@ -516,7 +513,6 @@ fn model_comments_arrive_by_file_and_do_not_drop_local_commands() {
     assert!(changed.is_empty());
     assert_eq!(backend.undo.len(), 0, "comments never touch the undo stack");
 
-    // A local note while the model's comment exists keeps both, in the shared file.
     let anchor = json!({"slide":"s1","block":null,"x":2,"y":2});
     success_or_feedback(send(
         &mut backend,
@@ -594,7 +590,6 @@ fn a_suggested_edit_previews_applies_as_one_undo_step_and_persists_its_status() 
         feedback::load(&backend.path).unwrap()[0].messages[0].edits[0].status,
         EditStatus::Applied
     );
-    // An applied edit cannot be applied twice.
     assert!(matches!(
         send(
             &mut backend,
@@ -615,7 +610,6 @@ fn dismissed_and_outdated_edits_are_not_applicable() {
     let edit_id = thread.messages[0].edits[0].proposal.id.clone();
     feedback::save(&backend.path, &[thread]).unwrap();
     backend.poll().unwrap();
-    // The block the edit guards changes in the file: the edit goes stale.
     external_edit(
         &backend,
         json!([{"op":"update_node","id":"b1","fields":{"text":"Changed meanwhile"},"base_hash":backend.deck.node("b1").unwrap().hash()}]),
@@ -651,7 +645,6 @@ fn comments_go_to_nexus_only_over_the_link_and_only_when_linked() {
     let temp = Temp::new();
     let mut backend = temp.backend();
     let anchor = json!({"slide":"s1","block":"b1","x":210,"y":390});
-    // Standalone: a note is kept; sending is refused with the way to link.
     success_or_feedback(send(
         &mut backend,
         json!({"command":"CommentCreate","anchor":anchor,"text":"Local note","send":false}),
@@ -712,7 +705,6 @@ fn link_messages_open_focus_and_close_without_losing_history() {
         json!({"command":"Apply","ops":[{"op":"set_notes","slide":"s1","notes":"Edit"}]}),
     ));
     let here = backend.path.clone();
-    // Opening the deck that is already open (even by another spelling) keeps undo.
     let spelled = here
         .parent()
         .unwrap()
@@ -725,7 +717,6 @@ fn link_messages_open_focus_and_close_without_losing_history() {
     assert!(
         matches!(backend.receive_link(Link::Focus { deck_path: here.clone(), slide: "s2".into(), blocks: vec![] }).unwrap(), Event::Focus { slide } if slide == "s2")
     );
-    // A focus for another deck is ignored.
     assert!(matches!(
         backend
             .receive_link(Link::Focus {
@@ -736,7 +727,6 @@ fn link_messages_open_focus_and_close_without_losing_history() {
             .unwrap(),
         Event::Deck { .. }
     ));
-    // Opening another deck switches to it, with a fresh history.
     let other = temp.0.join("files/decks/other.deck.json");
     atomic_write(
         &other,
@@ -833,7 +823,6 @@ fn a_version_one_deck_opens_as_version_two_and_is_saved_that_way() {
     };
     assert_eq!(deck.slides[0].children[0].id, "b1");
     assert_eq!(hashes["b1"], deck.node("b1").unwrap().hash());
-    // The file is migrated by the first write, not by opening it.
     let on_disk: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     assert_eq!(on_disk["version"], 1);
     success(send(
@@ -895,7 +884,6 @@ fn deck_fonts_are_served_from_the_assets_folder() {
 fn comments_are_pinned_in_slide_pixels_and_old_grid_sidecars_are_converted() {
     let temp = Temp::new();
     let mut backend = temp.backend();
-    // An anchor outside the 1920 x 1080 slide is refused.
     let out = json!({"slide":"s1","block":null,"x":1920,"y":10});
     assert!(matches!(
         send(
@@ -962,15 +950,12 @@ fn studio_writes_keep_the_replaced_version_in_the_decks_history() {
             .starts_with(backend.path.parent().unwrap().join(".history"))
     );
 
-    // Undo and redo are writes too; each keeps what it replaced, and an
-    // identical revision is never kept twice in a row.
     success(send(&mut backend, json!({"command":"Undo"})));
     let versions = kept(&backend);
     assert_eq!(versions.len(), 2);
     assert_eq!(versions[1].rev8, after_apply.revision()[..8]);
     success(send(&mut backend, json!({"command":"Redo"})));
     assert_eq!(kept(&backend).len(), 3);
-    // Saving the same deck again replaces nothing.
     let current = serde_json::to_value(&backend.deck).unwrap();
     success(send(&mut backend, json!({"command":"Save","deck":current})));
     assert_eq!(kept(&backend).len(), 3);
@@ -1010,8 +995,6 @@ fn opening_a_pptx_imports_it_beside_the_decks_and_reports_approximations_once() 
     assert_eq!(backend.path.parent().unwrap(), decks);
     assert!(backend.path.to_string_lossy().ends_with(".deck.json"));
     assert!(backend.undo.is_empty());
-    // Warnings are reported with the open only, and a second open never
-    // overwrites the first import.
     let first = backend.path.clone();
     let Event::Deck {
         import_warnings, ..
@@ -1023,7 +1006,6 @@ fn opening_a_pptx_imports_it_beside_the_decks_and_reports_approximations_once() 
     success(send(&mut backend, json!({"command":"Open","path":pptx})));
     assert_ne!(backend.path, first);
     assert!(first.is_file() && backend.path.is_file());
-    // Not a presentation: a clear error, and the open deck stays open.
     let bogus = temp.0.join("broken.pptx");
     fs::write(&bogus, b"nothing").unwrap();
     let open = backend.path.clone();
@@ -1081,7 +1063,6 @@ fn history_lists_previews_and_restores_kept_decks() {
             json!({"command":"Apply","ops":[{"op":"set_notes","slide":first,"notes":notes}]}),
         ));
     }
-    // Newest first; each is the deck before an edit, with who made the edit.
     let versions = history(&mut backend);
     assert_eq!(versions.len(), 2);
     assert!(
@@ -1092,7 +1073,6 @@ fn history_lists_previews_and_restores_kept_decks() {
     );
     let oldest = versions[1].id.clone();
 
-    // A preview reads the kept deck and writes nothing.
     let on_disk = fs::read(&backend.path).unwrap();
     let event = send(
         &mut backend,
@@ -1111,7 +1091,6 @@ fn history_lists_previews_and_restores_kept_decks() {
     assert_eq!(fs::read(&backend.path).unwrap(), on_disk);
     assert_eq!(history(&mut backend).len(), 2);
 
-    // Restoring is an ordinary write: one undo step, and the deck it replaced is kept.
     success(send(
         &mut backend,
         json!({"command":"HistoryRestore","id":oldest}),
@@ -1127,7 +1106,6 @@ fn history_lists_previews_and_restores_kept_decks() {
     success(send(&mut backend, json!({"command":"Undo"})));
     assert_eq!(backend.deck.slides[0].notes, "second edit");
 
-    // A version that is no longer kept is an error, not a blank page.
     for command in ["HistoryPreview", "HistoryRestore"] {
         let event = send(&mut backend, json!({"command":command,"id":"nope"}));
         assert!(matches!(event, Event::Error { .. }), "{event:?}");
@@ -1162,7 +1140,6 @@ fn a_shape_becomes_a_masked_image_in_place_as_one_undo_step() {
     assert!(matches!(swapped.kind, Kind::Image { .. }));
     assert_eq!(swapped.mask, Some(deck::Mask::Circle));
     assert_eq!(backend.undo.len(), undo_depth + 1);
-    // "Use as mask for image below": the photo takes the box and outline.
     let hash = backend.deck.node("photo-a").unwrap().hash();
     success(send(
         &mut backend,

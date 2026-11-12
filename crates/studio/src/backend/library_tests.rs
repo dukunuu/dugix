@@ -105,7 +105,6 @@ fn studio_started_with_no_file_shows_the_library_and_writes_nothing() {
     assert!(home && current.is_none());
     assert_eq!(items.len(), 1);
 
-    // The first real change writes the file and ends "home".
     let event = send(
         &mut backend,
         json!({"command":"Apply","ops":[{"op":"add_slide","slide":{"id":"s1","children":[]}}]}),
@@ -200,7 +199,6 @@ fn thumbnails_are_served_from_the_last_listing_and_nothing_else() {
             .thumbnail_job("nexus://localhost/assets/x.png")
             .is_err()
     );
-    // After the file changes, the old key is no longer served.
     let stale = items[0].thumb.clone().unwrap();
     let relative = items[0].relative.clone();
     send(
@@ -231,7 +229,6 @@ fn library_open_switches_between_decks_and_docs_and_keeps_undo_for_the_open_file
     );
     assert!(matches!(event, Event::Deck { .. }), "{event:?}");
     assert!(!backend.is_doc());
-    // Edit, then "open" the same file: the undo history survives.
     send(
         &mut backend,
         json!({"command":"Apply","ops":[{"op":"set_notes","slide":"s1","notes":"n"}]}),
@@ -294,7 +291,6 @@ fn library_paths_are_confined_to_the_space() {
         ));
     }
     assert!(outside.is_file() && hidden.is_file());
-    // Commands outside the protocol are refused like any other.
     assert!(matches!(
         send(
             &mut backend,
@@ -310,7 +306,6 @@ fn rename_changes_the_title_of_any_file_and_keeps_the_open_one_undoable() {
     let talk = temp.deck("decks/talk.deck.json", "Talk");
     temp.doc("docs/memo.doc.json", "Memo", "# Memo\n\nHello.\n");
     let (mut backend, _) = temp.opened(&talk, []);
-    // Another file: the file changes, the window does not.
     let (items, ..) = library(send(
         &mut backend,
         json!({"command":"LibraryRename","path":"docs/memo.doc.json","title":"Q3 memo"}),
@@ -324,7 +319,6 @@ fn rename_changes_the_title_of_any_file_and_keeps_the_open_one_undoable() {
         "Q3 memo"
     );
     assert_eq!(backend.deck.title, "Talk");
-    // The open deck: the window updates and Cmd+Z takes it back.
     let event = send(
         &mut backend,
         json!({"command":"LibraryRename","path":"decks/talk.deck.json","title":"Q3 review"}),
@@ -336,7 +330,6 @@ fn rename_changes_the_title_of_any_file_and_keeps_the_open_one_undoable() {
     assert_eq!(read_deck(&talk).unwrap().title, "Q3 review");
     send(&mut backend, json!({"command":"Undo"}));
     assert_eq!(read_deck(&talk).unwrap().title, "Talk");
-    // The open doc.
     send(
         &mut backend,
         json!({"command":"LibraryOpen","path":"docs/memo.doc.json"}),
@@ -386,7 +379,6 @@ fn delete_moves_to_the_trash_and_the_open_file_hands_the_window_back_to_the_libr
     assert_eq!(current.as_deref(), Some("decks/talk.deck.json"));
     assert!(!home);
     assert!(fs::read_dir(temp.files().join(".trash")).unwrap().count() == 1);
-    // Deleting the file that is open.
     let (items, current, home, _) = library(send(
         &mut backend,
         json!({"command":"LibraryDelete","path":"decks/talk.deck.json"}),
@@ -402,7 +394,6 @@ fn delete_moves_to_the_trash_and_the_open_file_hands_the_window_back_to_the_libr
         fs::read_dir(temp.files().join(".trash")).unwrap().count(),
         2
     );
-    // The window keeps working: a new deck is a real file again.
     let event = send(&mut backend, json!({"command":"NewDeck","title":"Fresh"}));
     assert!(
         matches!(event, Event::Deck { home: false, .. }),
@@ -433,11 +424,8 @@ fn export_asks_where_pre_filled_with_the_title_and_writes_there() {
         !temp.files().join("exports").exists(),
         "nothing went to exports/"
     );
-    // Reveal works for what the dialog wrote (and only for such files).
     assert!(backend.exports.contains(&path));
 
-    // The folder is remembered, per space, for the next dialog; a missing
-    // extension is added; an existing file is replaced.
     fs::write(&second.with_extension("pdf"), b"old").unwrap();
     let event = send(&mut backend, json!({"command":"ExportAs","format":"pdf"}));
     let Event::Exported { path, .. } = event else {
@@ -668,13 +656,11 @@ fn open_dialog_opens_nexus_files_and_imports_office_and_markdown_files() {
         matches!(event, Event::Doc { .. }) && backend.is_doc(),
         "{event:?}"
     );
-    // A PowerPoint file becomes a new deck in the space, then opens.
     let event = send(&mut backend, json!({"command":"OpenDialog"}));
     assert!(matches!(event, Event::Deck { .. }), "{event:?}");
     assert!(backend.path.starts_with(temp.files().join("decks")));
     assert_ne!(backend.path, talk);
     assert!(!backend.is_doc());
-    // The approximations of the import are reported once, with that event.
     let Event::Deck {
         import_warnings, ..
     } = send(&mut backend, json!({"command":"Load"}))
@@ -682,7 +668,6 @@ fn open_dialog_opens_nexus_files_and_imports_office_and_markdown_files() {
         panic!("a deck event");
     };
     assert!(import_warnings.is_empty(), "{import_warnings:?}");
-    // A Word file and a Markdown file become new docs, with a notice.
     let event = send(&mut backend, json!({"command":"OpenDialog"}));
     let Event::Doc {
         doc,
@@ -707,7 +692,6 @@ fn open_dialog_opens_nexus_files_and_imports_office_and_markdown_files() {
         (doc.title.as_str(), relative.as_str()),
         ("Field notes", "docs/field-notes.doc.json")
     );
-    // Anything else is refused, and a cancel changes nothing.
     let event = send(&mut backend, json!({"command":"OpenDialog"}));
     assert!(matches!(event, Event::Error { .. }), "{event:?}");
     let event = send(&mut backend, json!({"command":"OpenDialog"}));
@@ -751,18 +735,15 @@ fn dialog_paths_never_reach_the_page_except_as_the_result_of_an_export() {
     let out = temp.0.join("Secret folder");
     fs::create_dir_all(&out).unwrap();
     let (mut backend, _) = temp.opened(&talk, [Some(out.join("a.pptx"))]);
-    // The listing, the deck event and cancelled dialogs carry no outside path.
     for command in [json!({"command":"Library"}), json!({"command":"Load"})] {
         let wire = send(&mut backend, command).script();
         assert!(!wire.contains("Secret folder"), "{wire}");
     }
-    // The Exported event names the file the user just chose, for Reveal.
     let event = send(&mut backend, json!({"command":"ExportAs","format":"pptx"}));
     let Event::Exported { path, .. } = event else {
         panic!("exported");
     };
     assert!(path.starts_with(&out));
-    // And Reveal refuses a file that was not exported by this window.
     assert!(matches!(
         send(&mut backend, json!({"command":"Reveal","path":talk})),
         Event::Error { .. }
@@ -796,7 +777,6 @@ fn the_library_page_is_embedded_and_builds_only_text_nodes() {
     ] {
         assert!(!source.contains(forbidden), "library.js uses {forbidden}");
     }
-    // Every import resolves to an embedded module.
     for line in source
         .lines()
         .filter(|l| l.trim_start().starts_with("import "))
@@ -805,16 +785,15 @@ fn the_library_page_is_embedded_and_builds_only_text_nodes() {
         let resolved = format!("/{}", target.trim_start_matches("./"));
         assert!(embedded(&resolved).is_some(), "library.js imports {target}");
     }
-    // The page links the stylesheet and holds the mount point before the
-    // presentation markup that the HTML export embeds.
+    // The mount point must stay out of the presentation markup the HTML export
+    // embeds.
     let (_, index) = embedded("/index.html").unwrap();
     assert!(index.contains("href=\"/library.css\""));
     assert!(
         index.find("id=\"library\"").unwrap() < index.find("id=\"presentation\"").unwrap(),
         "the library mount stays out of the exported presentation"
     );
-    // The window can only reach the library through the embedded page: no new
-    // remote origin was added to its policy (the policy test pins the rest).
+    // The library page must add no remote origin to the policy.
     assert!(!source.contains("http://") && !source.contains("https://"));
 }
 
@@ -834,7 +813,6 @@ fn a_dialog_is_shown_off_the_backend_and_finished_with_the_answer() {
     ] {
         assert!(backend.prepare_dialog(source).is_none(), "{source}");
     }
-    // A job that cannot start answers with its error.
     assert!(
         backend
             .prepare_dialog(
@@ -853,8 +831,7 @@ fn a_dialog_is_shown_off_the_backend_and_finished_with_the_answer() {
         .prepare_dialog(r#"{"command":"ExportAs","format":"pptx"}"#)
         .unwrap()
         .unwrap();
-    // The dialog runs on another thread, as the window does it; meanwhile the
-    // backend answers anything else.
+    // The dialog runs on another thread, as the window does it.
     let shown = std::thread::spawn(move || job.ask());
     let during = send(&mut backend, json!({"command":"Library"}));
     assert!(matches!(during, Event::Library { .. }));
@@ -863,7 +840,6 @@ fn a_dialog_is_shown_off_the_backend_and_finished_with_the_answer() {
         panic!("exported");
     };
     assert_eq!(path, out.join("t.pptx"));
-    // A cancel finishes as Idle.
     let job = backend
         .prepare_dialog(r#"{"command":"SaveCopy"}"#)
         .unwrap()
@@ -871,7 +847,6 @@ fn a_dialog_is_shown_off_the_backend_and_finished_with_the_answer() {
     let event = backend.finish_dialog(job.ask());
     assert!(matches!(event, Event::Idle {}), "{event:?}");
     assert_eq!(dialogs.requests().len(), 2);
-    // And a failure after the dialog is an Error event, not a panic.
     let bad = Scripted::new([Some(out.join("missing-folder/x.pptx"))]);
     backend.dialogs = Arc::new(bad);
     let job = backend
@@ -895,7 +870,6 @@ fn image_dialog_and_pasted_bytes_store_a_sanitized_png_with_the_deck() {
         .unwrap();
     let (mut backend, dialogs) = temp.opened(&talk, [Some(photo.clone()), None]);
     let before = backend.deck.clone();
-    // The picker stores a PNG copy beside the deck; the page sees only that.
     let event = send(&mut backend, json!({"command":"PickImage"}));
     let Event::Asset { src } = &event else {
         panic!("{event:?}")
@@ -909,12 +883,10 @@ fn image_dialog_and_pasted_bytes_store_a_sanitized_png_with_the_deck() {
         "importing an image never edits the deck"
     );
     assert_eq!(dialogs.requests()[0].filters, ["Images"]);
-    // A cancel is quiet.
     assert!(matches!(
         send(&mut backend, json!({"command":"PickImage"})),
         Event::Idle {}
     ));
-    // Pasted bytes take the same path, and the same image is the same asset.
     let data: String = fs::read(&stored)
         .unwrap()
         .iter()
@@ -928,7 +900,6 @@ fn image_dialog_and_pasted_bytes_store_a_sanitized_png_with_the_deck() {
         matches!(&event, Event::Asset { src: pasted } if pasted == src),
         "{event:?}"
     );
-    // Bytes that are not an image are refused.
     let event = send(
         &mut backend,
         json!({"command":"ImportAssetData","data":"00ff00ff"}),

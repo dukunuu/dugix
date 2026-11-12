@@ -1,8 +1,5 @@
 //! Doc mode: the studio backend owns one `*.doc.json` the way it owns a deck.
-//!
-//! Every edit is a batch of doc operations (`doc::direct`), written to the file
-//! at once and kept as one undo step; the model's edits reload as one undo step
-//! too. Comments live in the shared sidecar (`doc::feedback`).
+//! Every edit is a batch of operations written at once as one undo step.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -17,7 +14,7 @@ use super::{
     atomic_write, bail, ensure, image_hash, read_bounded, stamp,
 };
 
-/// Pages are drawn this wide in pixels; the UI shows them at fit-width.
+/// Drawn this wide; the UI shows them at fit-width.
 const PAGE_PNG_WIDTH: u32 = 1400;
 
 /// One open document: its text, undo stacks and comment threads.
@@ -29,7 +26,6 @@ pub struct DocSession {
     pages: RefCell<Option<PageCache>>,
 }
 
-/// Paginated pages of one revision, with PNGs drawn when first asked for.
 struct PageCache {
     revision: String,
     pages: Vec<layout::Page>,
@@ -55,7 +51,6 @@ pub struct DesignState {
     pub(super) name: String,
     pub(super) colors: BTreeMap<String, String>,
     pub(super) fonts: BTreeMap<String, String>,
-    /// The design's revision moved since the doc copied it.
     pub(super) update_available: bool,
     pub(super) template: bool,
 }
@@ -73,7 +68,7 @@ pub struct DesignInfo {
 #[derive(Debug, Serialize)]
 pub struct PageInfo {
     pub(super) n: usize,
-    /// Points; the pages share one size, but each is told for safety.
+    /// Points.
     pub(super) width: f64,
     pub(super) height: f64,
     pub(super) src: String,
@@ -100,7 +95,6 @@ fn checked(doc: &Doc) -> Result<Doc> {
     Doc::check(&serde_json::to_string(doc)?).map_err(|e| anyhow::anyhow!("{}", located(&e)))
 }
 
-/// Blocks that are new or different in `next`.
 fn changed_blocks(before: &Doc, next: &Doc) -> Vec<String> {
     next.blocks
         .iter()
@@ -134,7 +128,6 @@ pub(super) fn docs_dir(files_dir: &Path) -> Result<PathBuf> {
     Ok(docs)
 }
 
-/// A fresh doc following the space's default design.
 fn blank_doc(files_dir: &Path, title: &str) -> Doc {
     let slug = nexus_core::design::default_slug(files_dir).unwrap_or_else(|_| "nexus".into());
     let design = nexus_core::design::load(files_dir, &slug).unwrap_or_default();
@@ -143,7 +136,6 @@ fn blank_doc(files_dir: &Path, title: &str) -> Doc {
     doc
 }
 
-/// A new doc file for a path that does not exist yet.
 pub(super) fn create_doc_file(files_dir: &Path, path: &Path, title: &str) -> Result<Doc> {
     let doc = checked(&blank_doc(files_dir, title))?;
     atomic_write(path, &serde_json::to_vec_pretty(&doc)?)?;
@@ -151,13 +143,11 @@ pub(super) fn create_doc_file(files_dir: &Path, path: &Path, title: &str) -> Res
 }
 
 impl Backend {
-    /// Whether a doc, not a deck, is open.
     #[cfg(test)]
     pub fn is_doc(&self) -> bool {
         self.doc.is_some()
     }
 
-    /// The open document's title.
     #[must_use]
     pub fn title(&self) -> &str {
         self.doc
@@ -204,7 +194,6 @@ impl Backend {
         }
     }
 
-    /// `docs/q3.doc.json` for display; the file name outside the space.
     fn doc_relative(&self) -> String {
         self.files_dir
             .canonicalize()
@@ -247,8 +236,7 @@ impl Backend {
         }
     }
 
-    /// Content hashes of the images and fonts the doc names, so the page can
-    /// cache them by content.
+    /// Content hashes of the doc's images and fonts, so the page can cache by content.
     fn doc_asset_hashes(&self, doc: &Doc) -> BTreeMap<String, String> {
         let root = asset_root(&self.path).ok();
         let local = |src: &str| {
@@ -300,7 +288,6 @@ impl Backend {
 
     // -- opening ---------------------------------------------------------------
 
-    /// Read a doc from disk and make it the open document.
     pub(super) fn open_doc_file(&mut self, path: PathBuf) -> Result<()> {
         let doc = if path.exists() {
             read_doc(&path)?
@@ -344,7 +331,6 @@ impl Backend {
         Ok(())
     }
 
-    /// Re-find anchors and recheck suggestions against the current text.
     pub(super) fn reanchor_threads(&mut self) {
         let resolver = self.doc_resolver();
         if let Some(session) = self.doc.as_mut() {
@@ -365,7 +351,7 @@ impl Backend {
 
     // -- writing ---------------------------------------------------------------
 
-    /// Write the doc file, first keeping the version it replaces in history.
+    /// Write the doc, first keeping the version it replaces in history.
     fn write_doc(&self, doc: &Doc) -> Result<()> {
         self.home.set(false);
         // History is a safety net: failing to keep a version must not block a save.
@@ -377,7 +363,6 @@ impl Backend {
         atomic_write(&self.path, &serde_json::to_vec_pretty(doc)?)
     }
 
-    /// Make `next` the document: one undo step, written at once.
     pub(super) fn replace_doc(&mut self, next: Doc) -> Result<()> {
         if self.session()?.doc != next {
             self.write_doc(&next)?;
@@ -399,8 +384,7 @@ impl Backend {
 
     // -- commands --------------------------------------------------------------
 
-    /// The doc half of `execute`. Commands that only make sense for decks fail
-    /// with a plain sentence rather than touching the doc.
+    /// The doc half of `execute`.
     #[allow(clippy::too_many_lines)]
     pub(super) fn doc_execute(&mut self, command: Command) -> Result<Event> {
         match command {
@@ -503,7 +487,6 @@ impl Backend {
         Ok(self.doc_event())
     }
 
-    /// Store an image by content next to the doc; the page gets its `assets/…` name.
     pub(super) fn doc_store_image(&self, bytes: &[u8], label: &str) -> Result<String> {
         let stem = Path::new(label)
             .file_stem()
@@ -521,7 +504,7 @@ impl Backend {
 
     // -- external changes ------------------------------------------------------
 
-    /// The doc half of `sync`: one external change of the file is one undo step.
+    /// The doc half of `sync`: one external change is one undo step.
     pub(super) fn doc_sync(&mut self) -> Result<(Option<Event>, bool)> {
         let doc_stamp = stamp(&self.path);
         let comments_stamp = stamp(&comments::sidecar(&self.path));
@@ -577,8 +560,8 @@ impl Backend {
     ) -> Result<Event> {
         let format: doc::export::Format = format.parse()?;
         let session = self.session()?;
-        // Markdown names its images beside it, so they are copied into
-        // `exports/assets/` by content, as the canvas tool does.
+        // Markdown names its images beside it, so they are copied by content into
+        // `exports/assets/`.
         let output = self.doc_output(
             &session.doc,
             &session.threads,
@@ -595,8 +578,8 @@ impl Backend {
         })
     }
 
-    /// A doc as a file in `format`, not yet written anywhere. Markdown's images
-    /// are copied by content into `md_images`.
+    /// A doc as a file in `format`, not yet written; Markdown's images are copied
+    /// into `md_images`.
     pub(super) fn doc_output(
         &self,
         doc: &Doc,
@@ -606,8 +589,7 @@ impl Backend {
         template: Option<&str>,
         md_images: &Path,
     ) -> Result<nexus_core::deck::export::Export> {
-        // The assets folder is checked (and made) the way every deck and doc
-        // operation does before anything reads from it.
+        // Check (and make) the assets folder before anything reads from it.
         asset_root(path)?;
         nexus_core::canvas::files::doc_output(
             &self.files_dir,
@@ -711,7 +693,6 @@ impl Backend {
         }
     }
 
-    /// Commands that only make sense with a doc open fail in deck mode.
     pub(super) fn refuse_doc_command(command: &Command) -> Result<()> {
         ensure!(
             !matches!(
@@ -750,8 +731,7 @@ impl Backend {
         )
     }
 
-    /// Switch to another document (`Open`, `NewDoc`, `NewDeck`) from either mode.
-    /// Returns `None` when the command is not a switch.
+    /// Switch to another document; `None` when the command is not a switch.
     pub(super) fn switch_document(&mut self, command: &Command) -> Result<Option<Event>> {
         match command {
             Command::Open { path } if is_doc_path(path) => {
@@ -759,7 +739,7 @@ impl Backend {
             }
             Command::NewDoc { title } => self.new_doc(title)?,
             Command::Open { .. } | Command::NewDeck { .. } if self.doc.is_some() => {
-                // Leaving doc mode: the deck path re-enters deck mode with a clean slate.
+                // Leaving doc mode: the deck path re-enters it with a clean slate.
                 let leaving = self.doc.take();
                 let result = match command {
                     Command::Open { path } => self.open_path(absolute(path)?),

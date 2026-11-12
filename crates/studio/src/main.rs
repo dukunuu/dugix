@@ -25,10 +25,10 @@ const HOME: &str = "nexus://localhost/index.html";
 
 enum Message {
     Command(String),
-    /// A native dialog was answered (on its helper thread): finish the command.
+    /// A native dialog was answered on its helper thread.
     Dialog(backend::Answer),
     Link(LinkMessage),
-    /// A line from nexus that speaks another link version: the window says so.
+    /// A line from nexus that speaks another link version.
     LinkError(String),
     Poll,
 }
@@ -127,7 +127,7 @@ fn main() -> Result<()> {
 }
 
 /// The link's reader (nexus → studio on stdin, only when attached) and the
-/// 500 ms tick that notices changes the model makes to the deck file.
+/// 500 ms poll for changes the model makes to the deck file.
 fn start_threads(proxy: &EventLoopProxy<Message>, attached: bool) {
     if attached {
         let link_proxy = proxy.clone();
@@ -162,7 +162,6 @@ fn start_threads(proxy: &EventLoopProxy<Message>, attached: bool) {
     });
 }
 
-/// One `nexus://` request: embedded UI, deck assets, or a vetted remote image.
 async fn respond(backend: &Arc<Mutex<Backend>>, uri: &str) -> Response<Vec<u8>> {
     let (remote, thumbnail) = {
         let backend = backend.lock().expect("backend lock");
@@ -191,8 +190,8 @@ async fn respond(backend: &Arc<Mutex<Backend>>, uri: &str) -> Response<Vec<u8>> 
     Response::builder()
         .status(status)
         .header("Content-Type", mime)
-        // WebKit custom schemes can have an opaque origin. Only
-        // embedded pages may navigate here; allow their ES modules.
+        // WebKit custom schemes can have an opaque origin: only embedded pages may
+        // navigate here, and their ES modules need this too.
         .header("Access-Control-Allow-Origin", "*")
         .header("Content-Security-Policy", csp())
         .header("X-Content-Type-Options", "nosniff")
@@ -223,8 +222,8 @@ fn handle_message(
         Message::Command(source) => match backend.prepare_dialog(&source) {
             // A native dialog is shown by a helper thread, never inside this
             // handler: macOS runs the panel on the main thread (rfd hands it
-            // over), and the window's event handler and the backend stay free
-            // while it is open. The answer comes back as `Message::Dialog`.
+            // over), and the backend stays free while it is open. The answer
+            // comes back as `Message::Dialog`.
             Some(Ok(job)) => {
                 let proxy = proxy.clone();
                 std::thread::spawn(move || {
@@ -261,8 +260,8 @@ fn handle_message(
     (format!("nexus studio — {}", backend.title()), script)
 }
 
-/// A library thumbnail, drawn off the backend's lock so a slow render never
-/// holds up a click, and one at a time so a full library does not start dozens.
+/// A library thumbnail, drawn off the backend's lock and one at a time so a full
+/// library does not start dozens of renders.
 async fn thumbnail_bytes(
     files: PathBuf,
     entry: nexus_core::canvas::Entry,
@@ -322,7 +321,7 @@ fn csp() -> &'static str {
 #[cfg(test)]
 mod tests {
     /// The page may load only its own origin and `data:` images, and may not connect
-    /// anywhere. Doc mode adds no source to it.
+    /// anywhere.
     #[test]
     #[cfg(not(target_os = "windows"))]
     fn the_content_security_policy_is_unchanged() {

@@ -1,5 +1,5 @@
-//! The doc editor's UI modules: embedded and served, free of HTML injection, kept to the
-//! core's spacing numbers, and (when `node` is installed) tested as pure functions.
+//! The doc editor's UI modules: embedded, served, free of HTML injection, and tested
+//! as pure functions when `node` is installed.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -10,8 +10,8 @@ fn ui_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("ui")
 }
 
-/// `node` 22 or newer, which imports the UI's ES modules directly. Absent on some CI
-/// images; the tests that need it then skip with a note rather than fail.
+/// `node` 22 or newer, which imports the UI's ES modules directly; the tests that
+/// need it skip when it is absent.
 fn node() -> Option<String> {
     let output = Command::new("node").arg("--version").output().ok()?;
     let version = String::from_utf8(output.stdout).ok()?;
@@ -77,8 +77,7 @@ fn every_doc_module_is_embedded_and_every_import_resolves() {
         }
     }
     assert!(seen >= 12, "the doc UI has its modules and stylesheet");
-    // The shell page links the stylesheet and holds the mount point, before the
-    // presentation markup the HTML export embeds.
+    // The mount point must stay out of the presentation markup the HTML export embeds.
     let (_, index) = embedded("/index.html").unwrap();
     assert!(index.contains("href=\"/doc/doc.css\""));
     assert!(

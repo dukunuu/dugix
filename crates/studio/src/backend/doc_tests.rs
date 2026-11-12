@@ -1,5 +1,5 @@
-//! Doc mode of the backend: the file is the source of truth, every `DocApply`
-//! is one undo step, and comments and suggestions share the model's sidecar.
+//! Doc mode of the backend: the file is the source of truth, and every `DocApply`
+//! is one undo step.
 
 use nexus_core::deck::history::Who;
 use nexus_core::deck::link::Message as Link;
@@ -22,7 +22,6 @@ impl Temp {
     fn doc_path(&self) -> PathBuf {
         self.files().join("docs/q3.doc.json")
     }
-    /// A backend with `docs/q3.doc.json` open.
     fn backend(&self) -> Backend {
         let mut doc = Doc::from_design("Q3 strategy", &nexus_core::design::Design::default());
         doc.blocks = doc::markdown::parse_document(
@@ -105,7 +104,6 @@ fn opens_a_doc_by_path_and_loads_it() {
     assert!(!can_undo && !linked);
     assert_eq!(design.name, "nexus");
     assert!(!design.update_available);
-    // A doc that does not exist yet is created, as a deck is.
     let fresh = temp.files().join("docs/new.doc.json");
     let backend = Backend::start(Some(&fresh), &temp.files(), &temp.0.join("data2")).unwrap();
     assert!(fresh.is_file() && backend.is_doc());
@@ -134,7 +132,6 @@ fn each_apply_is_one_undo_step_and_reaches_the_file_at_once() {
     assert_eq!(on_disk(&backend), doc, "autosaved");
     let session = backend.session().unwrap();
     assert_eq!(session.undo.len(), 1, "two operations, one undo step");
-    // A failed batch changes nothing and says where.
     let error = send(
         &mut backend,
         json!({"command":"DocApply","ops":[{"op":"delete_blocks","ids":["nope"]}]}),
@@ -145,7 +142,6 @@ fn each_apply_is_one_undo_step_and_reaches_the_file_at_once() {
     assert!(message.contains("nope"), "{message}");
     assert_eq!(on_disk(&backend), doc);
     assert_ne!(on_disk(&backend), start);
-    // History keeps the version a user write replaced.
     let kept = nexus_core::deck::history::list(&backend.path).unwrap();
     assert!(kept.iter().any(|e| e.who == "user"), "{kept:?}");
 }
@@ -173,7 +169,6 @@ fn undo_and_redo_are_written_to_the_file_so_the_model_sees_them() {
     let (doc, ..) = doc_event(send(&mut backend, json!({"command":"Undo"})));
     assert_eq!(doc, start);
     assert_eq!(on_disk(&backend), start);
-    // Nothing left to undo: not an error, not a change.
     let (again, ..) = doc_event(send(&mut backend, json!({"command":"Undo"})));
     assert_eq!(again, start);
 }
@@ -198,7 +193,6 @@ fn an_external_edit_reloads_as_one_undo_step_listing_the_changed_blocks() {
     assert_eq!(text(&doc, "b2"), "Written by the model.");
     assert!(backend.poll().unwrap().is_none(), "reported once");
     assert_eq!(backend.session().unwrap().undo.len(), 1);
-    // Cmd+Z takes the model's whole edit back, and the file says so.
     let (undone, ..) = doc_event(send(&mut backend, json!({"command":"Undo"})));
     assert_eq!(undone, original);
     assert_eq!(on_disk(&backend), original);
@@ -231,7 +225,6 @@ fn the_file_wins_when_a_local_action_races_an_external_change() {
     assert_eq!(changed, ["b2"]);
     assert!(notice.unwrap().contains("changed on disk first"));
     assert_eq!(text(&on_disk(&backend), "b2"), "Model first.");
-    // A focus report does not trip over a changed file; it is answered as usual.
     model_edit(
         &temp,
         json!([{"op":"update_block","id":"b2","patch":{"text":"Model again."}}]),
@@ -251,7 +244,6 @@ fn the_file_wins_when_a_local_action_races_an_external_change() {
 fn comments_are_anchored_to_text_ranges_and_share_the_sidecar() {
     let temp = Temp::new();
     let mut backend = temp.backend();
-    // Not linked: Send is refused, a note is not.
     let anchor = json!({"block":"b2","range":{"start":8,"end":11},"quote":"18%"});
     let refused = send(
         &mut backend,
@@ -270,7 +262,6 @@ fn comments_are_anchored_to_text_ranges_and_share_the_sidecar() {
     assert_eq!(threads[0].anchor.range, Some(Range { start: 8, end: 11 }));
     let stored = comments::load(&backend.path).unwrap();
     assert_eq!(stored[0].messages[0].text, "Cite this");
-    // Bad anchors fail where the anchor is wrong.
     for (bad, why) in [
         (
             json!({"block":"b2","range":{"start":8,"end":11},"quote":"19%"}),
@@ -288,7 +279,6 @@ fn comments_are_anchored_to_text_ranges_and_share_the_sidecar() {
         };
         assert!(message.to_lowercase().contains(why), "{message}");
     }
-    // Linked: Send goes out as a doc comment, then a reply.
     backend.linked = true;
     backend.outgoing.clear();
     send(
@@ -316,7 +306,6 @@ fn comments_are_anchored_to_text_ranges_and_share_the_sidecar() {
     assert!(
         matches!(&backend.outgoing[1], Link::Reply { thread_id: t, text, .. } if *t == thread_id && text == "Because Q3.")
     );
-    // Resolve and reopen.
     send(
         &mut backend,
         json!({"command":"CommentResolve","thread":thread_id}),
@@ -334,7 +323,6 @@ fn comments_are_anchored_to_text_ranges_and_share_the_sidecar() {
         ),
         Event::Error { .. }
     ));
-    // The model's reply in the sidecar arrives through the poll.
     let mut threads = comments::load(&backend.path).unwrap();
     threads[0].messages.push(comments::Message::new_for(
         comments::Role::Model,
@@ -356,14 +344,12 @@ fn a_local_edit_keeps_comment_anchors_on_their_text() {
         &mut backend,
         json!({"command":"DocCommentCreate","anchor":{"block":"b2","range":{"start":8,"end":11},"quote":"18%"},"text":"Cite","send":false}),
     );
-    // Typing before the quote shifts it; the anchor follows its text.
     send(
         &mut backend,
         json!({"command":"DocApply","ops":[{"op":"update_block","id":"b2","patch":{"text":"This year we grew **18%** while churn fell."}}]}),
     );
     let stored = comments::load(&backend.path).unwrap();
     assert_eq!(stored[0].anchor.range, Some(Range { start: 18, end: 21 }));
-    // Rewriting the quote degrades to the block; undo brings the range back.
     send(
         &mut backend,
         json!({"command":"DocApply","ops":[{"op":"update_block","id":"b2","patch":{"text":"Growth was strong."}}]}),
@@ -436,7 +422,6 @@ fn a_suggestion_previews_applies_as_one_undo_step_and_can_be_dismissed() {
     let (one_id, two_id) = (edit_id(&one), edit_id(&two));
     comments::save(&backend.path, &[one, two]).unwrap();
     backend.poll().unwrap().expect("threads arrived");
-    // Preview names what would change and writes nothing.
     let before = on_disk(&backend);
     let preview = send(
         &mut backend,
@@ -452,7 +437,6 @@ fn a_suggestion_previews_applies_as_one_undo_step_and_can_be_dismissed() {
     assert!(matches!(&changed[0].kind, BlockKind::Paragraph { text } if text.contains("18.4%")));
     assert!(removed.is_empty());
     assert_eq!(on_disk(&backend), before);
-    // Apply is one undo step and settles the edit.
     let (doc, ..) = doc_event(send(
         &mut backend,
         json!({"command":"ApplyEdit","owner":"t1","edit":one_id}),
@@ -466,7 +450,6 @@ fn a_suggestion_previews_applies_as_one_undo_step_and_can_be_dismissed() {
         EditStatus::Pending,
         "an edit to another block stays valid"
     );
-    // The same edit cannot be applied twice.
     assert!(matches!(
         send(
             &mut backend,
@@ -474,7 +457,6 @@ fn a_suggestion_previews_applies_as_one_undo_step_and_can_be_dismissed() {
         ),
         Event::Error { .. }
     ));
-    // Dismiss keeps the text and settles the edit.
     let dismissed = send(
         &mut backend,
         json!({"command":"DismissEdit","owner":"t2","edit":two_id}),
@@ -553,7 +535,6 @@ fn accept_all_is_one_undo_step_and_reject_all_changes_no_text() {
     );
     let (undone, ..) = doc_event(send(&mut backend, json!({"command":"Undo"})));
     assert_eq!(undone, start);
-    // Reject all on fresh suggestions.
     let again = suggestion_thread(
         &backend,
         "t3",
@@ -576,7 +557,6 @@ fn accept_all_is_one_undo_step_and_reject_all_changes_no_text() {
 fn every_format_exports_under_exports_without_overwriting_and_reveal_is_confined() {
     let temp = Temp::new();
     let mut backend = temp.backend();
-    // An image block, so Markdown has something to bring along.
     let bytes = (0..png_hex().len() / 2)
         .map(|i| u8::from_str_radix(&png_hex()[i * 2..i * 2 + 2], 16).unwrap())
         .collect::<Vec<_>>();
@@ -611,7 +591,6 @@ fn every_format_exports_under_exports_without_overwriting_and_reveal_is_confined
         );
         seen.push(path);
     }
-    // Markdown carries its image into exports/assets.
     let md = fs::read_to_string(&seen[2]).unwrap();
     let image = md
         .split("](")
@@ -622,14 +601,12 @@ fn every_format_exports_under_exports_without_overwriting_and_reveal_is_confined
         .unwrap()
         .trim();
     assert!(exports.join(image).is_file(), "{image}");
-    // Never overwrites.
     let Event::Exported { path, .. } =
         send(&mut backend, json!({"command":"DocExport","format":"md"}))
     else {
         panic!("second export")
     };
     assert!(path.to_string_lossy().ends_with(" (2).md"), "{path:?}");
-    // Errors: unknown format, relative destination, doc unchanged.
     for bad in [
         json!({"command":"DocExport","format":"rtf"}),
         json!({"command":"DocExport","format":"md","path":"relative.md"}),
@@ -640,7 +617,6 @@ fn every_format_exports_under_exports_without_overwriting_and_reveal_is_confined
         backend.session().unwrap().undo.len() == 1,
         "exporting is not an edit"
     );
-    // Reveal only reaches what this window exported.
     assert!(matches!(
         send(
             &mut backend,
@@ -675,7 +651,6 @@ fn page_preview_serves_core_rendered_pngs_keyed_by_revision() {
         cache_control(&format!("nexus://localhost{}", pages[0].src), &bytes),
         "no-store"
     );
-    // Unknown pages and other revisions are refused.
     for bad in [
         "/pages/00000000-1.png",
         &format!("/pages/{}-99.png", &revision[..8]),
@@ -688,7 +663,6 @@ fn page_preview_serves_core_rendered_pngs_keyed_by_revision() {
             "{bad}"
         );
     }
-    // After an edit the old pages are stale until the preview asks again.
     send(
         &mut backend,
         json!({"command":"DocApply","ops":[{"op":"set_title","title":"Changed"}]}),
@@ -727,7 +701,6 @@ fn imported_images_are_stored_by_content_beside_the_doc_and_stay_confined() {
         .join(src.strip_prefix("assets/").unwrap());
     assert!(file.is_file());
     assert!(file.starts_with(temp.files().join("docs")));
-    // The same bytes land on the same file, and the page can fetch it.
     let Event::Asset { src: again } = send(
         &mut backend,
         json!({"command":"DocImportAsset","name":"other.png","data":png_hex()}),
@@ -750,7 +723,6 @@ fn imported_images_are_stored_by_content_beside_the_doc_and_stay_confined() {
             .0,
         "image/png"
     );
-    // A block can then use it, and the doc event lists its hash.
     let (doc, ..) = doc_event(send(
         &mut backend,
         json!({"command":"DocApply","ops":[{"op":"insert_blocks","blocks":[{"kind":"image","src":src,"alt":"Shot"}]}]}),
@@ -764,7 +736,6 @@ fn imported_images_are_stored_by_content_beside_the_doc_and_stay_confined() {
         panic!("doc")
     };
     assert_eq!(assets.get(&src).map(String::len), Some(64));
-    // Not an image, not hex, too big, and a path outside the doc's folder.
     for bad in [
         json!({"command":"DocImportAsset","name":"x.png","data":"68656c6c6f"}),
         json!({"command":"DocImportAsset","name":"x.png","data":"zz"}),
@@ -787,7 +758,6 @@ fn imported_images_are_stored_by_content_beside_the_doc_and_stay_confined() {
             .serve("nexus://localhost/assets/%2e%2e/q3.doc.json")
             .is_err()
     );
-    // An image dropped by path comes in as a stored copy, not a reference to the path.
     let outside = temp.0.join("photo.png");
     fs::write(
         &outside,
@@ -812,7 +782,6 @@ fn imported_images_are_stored_by_content_beside_the_doc_and_stay_confined() {
 fn designs_are_listed_and_applied_and_an_update_is_announced() {
     let temp = Temp::new();
     let mut backend = temp.backend();
-    // A stored design the doc can switch to.
     let mut warm = nexus_core::design::Design::default();
     warm.name = "Warm".into();
     warm.colors.insert("accent".into(), "#c0392b".into());
@@ -821,7 +790,6 @@ fn designs_are_listed_and_applied_and_an_update_is_announced() {
         panic!("designs")
     };
     let slugs: Vec<_> = available.iter().map(|d| d.slug.as_str()).collect();
-    // The stored design sorts in with nexus and the curated presets.
     assert!(
         slugs.contains(&"warm") && slugs.contains(&"editorial") && slugs.is_sorted(),
         "{slugs:?}"
@@ -846,7 +814,6 @@ fn designs_are_listed_and_applied_and_an_update_is_announced() {
         (design.name.as_str(), design.update_available),
         ("Warm", false)
     );
-    // The design moves on: the doc says an update is available, and applying it follows.
     warm.colors.insert("accent".into(), "#8e44ad".into());
     nexus_core::design::storage::save(&temp.files(), "warm", &warm).unwrap();
     let Event::Doc { design, .. } = send(&mut backend, json!({"command":"Load"})) else {
@@ -893,7 +860,6 @@ fn focus_goes_out_on_the_link_only_when_linked_and_the_model_can_move_it() {
             selection: Some("Goals".into()),
         }]
     );
-    // Nexus moves the window to a block.
     let moved = backend
         .receive_link(Link::DocFocus {
             deck_path: backend.path.clone(),
@@ -902,7 +868,6 @@ fn focus_goes_out_on_the_link_only_when_linked_and_the_model_can_move_it() {
         })
         .unwrap();
     assert!(matches!(moved, Event::DocFocus { block: Some(b) } if b == "b5"));
-    // And to another file entirely.
     let other = temp.files().join("docs/other.doc.json");
     let hello = backend.outgoing.len();
     let opened = backend
@@ -915,7 +880,6 @@ fn focus_goes_out_on_the_link_only_when_linked_and_the_model_can_move_it() {
     assert!(
         matches!(&backend.outgoing[hello..], [Link::Hello { deck_path }] if *deck_path == other)
     );
-    // Opening the file that is already open keeps its undo history.
     send(
         &mut backend,
         json!({"command":"DocApply","ops":[{"op":"set_title","title":"Kept"}]}),
@@ -944,7 +908,6 @@ fn doc_and_deck_commands_stay_on_their_own_side_and_files_switch_modes() {
         );
     }
     assert!(backend.is_doc());
-    // Opening a deck leaves doc mode with the deck's own state.
     let deck_path = temp.files().join("decks/talk.deck.json");
     nexus_core::deck::write_atomic(
         &deck_path,
@@ -966,7 +929,6 @@ fn doc_and_deck_commands_stay_on_their_own_side_and_files_switch_modes() {
             "{doc_only}"
         );
     }
-    // A failed switch leaves the open document alone.
     let event = send(
         &mut backend,
         json!({"command":"Open","path":temp.files().join("docs/broken.doc.json")}),
@@ -983,7 +945,6 @@ fn doc_and_deck_commands_stay_on_their_own_side_and_files_switch_modes() {
     assert!(matches!(bad, Event::Error { .. }));
     assert!(backend.is_doc());
     assert!(backend.path.ends_with("broken.doc.json"));
-    // A new doc, then a new deck.
     let event = send(&mut backend, json!({"command":"NewDoc","title":"Fresh"}));
     let (doc, ..) = doc_event(event);
     assert_eq!(doc.title, "Fresh");

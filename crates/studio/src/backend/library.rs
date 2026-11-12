@@ -1,10 +1,5 @@
-//! The library and the native dialogs: listing the space's decks and docs, the
-//! commands on one of them, and every place studio asks the operating system
-//! for a file (Open, Export, Save a copy, Add template).
-//!
-//! The page never names a path of its own. A library file is addressed by its
-//! path inside the space files, checked against the space (`canvas::files`);
-//! every other path comes from a dialog the user just answered.
+//! The library and its native dialogs; the page never names a path of its own:
+//! a library file is addressed by its path inside the space files.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -18,7 +13,6 @@ use sha2::{Digest as _, Sha256};
 
 use super::{Backend, Command, Deck, Event, Result, absolute, bail, doc, ensure, read_deck_noted};
 
-/// One card of the Library page.
 #[derive(Debug, Serialize)]
 pub struct Item {
     pub kind: FileKind,
@@ -29,10 +23,8 @@ pub struct Item {
     pub modified: String,
     pub count: usize,
     pub design: Option<String>,
-    /// `/library/<key>.png`, served from the thumbnail cache; `None` when
-    /// there is nothing to draw yet.
+    /// `/library/<key>.png`; `None` when there is nothing to draw yet.
     pub thumb: Option<String>,
-    /// The file open in the window.
     pub current: bool,
 }
 
@@ -46,13 +38,11 @@ fn thumb_key(entry: &Entry) -> String {
     format!("{hex}-{}.png", &entry.revision[..8])
 }
 
-/// The formats of a kind, as the page's Export menu offers them.
 fn deck_format(word: &str) -> Result<nexus_core::deck::export::Format> {
     word.parse()
 }
 
 impl Backend {
-    /// The library path of the open file, when it lives inside the space.
     fn current_relative(&self) -> Option<String> {
         let root = self.files_dir.canonicalize().ok()?;
         let path = self.path.canonicalize().ok()?;
@@ -91,7 +81,6 @@ impl Backend {
         }
     }
 
-    /// The entry a thumbnail URL name belongs to, from the last listing.
     fn thumbnail_entry(&self, name: &str) -> Result<Entry> {
         self.listing
             .borrow()
@@ -101,16 +90,14 @@ impl Backend {
             .ok_or_else(|| anyhow::anyhow!("unknown thumbnail"))
     }
 
-    /// `/library/<key>.png`, drawn on first request. The window serves these
-    /// through [`Backend::thumbnail_job`] without holding the backend.
+    /// `/library/<key>.png`, drawn on first request.
     pub(super) fn serve_thumbnail(&self, name: &str) -> Result<(&'static str, Vec<u8>)> {
         let entry = self.thumbnail_entry(name)?;
         let path = canvas::ensure_thumbnail(&self.files_dir, &entry)?;
         Ok(("image/png", std::fs::read(path)?))
     }
 
-    /// What drawing the thumbnail of `uri` takes, so the caller can do it off
-    /// the backend's lock: the space files and the entry.
+    /// What drawing a thumbnail takes, so the caller can do it off the backend's lock.
     pub fn thumbnail_job(&self, uri: &str) -> Result<(PathBuf, Entry)> {
         let path = super::protocol_path(uri)?;
         let name = path
@@ -146,8 +133,7 @@ impl Backend {
         }))
     }
 
-    /// Open a library file. The file already open stays as it is, with its
-    /// undo history.
+    /// The file already open stays as it is, with its undo history.
     fn library_open(&mut self, relative: &str) -> Result<Event> {
         let (_, file) = files::resolve(&self.files_dir, relative)?;
         if nexus_core::deck::same_file(&file, &self.path) && !self.home.get() {
@@ -193,8 +179,7 @@ impl Backend {
         Ok(event)
     }
 
-    /// The open file was deleted: the window goes back to an empty,
-    /// not-yet-saved deck behind the library.
+    /// The open file was deleted: back to an empty, not-yet-saved deck behind the library.
     fn reset_to_home(&mut self) -> Result<()> {
         self.doc = None;
         self.path = super::new_path(&self.files_dir)?;
@@ -212,13 +197,11 @@ impl Backend {
 
     // -- dialogs ------------------------------------------------------------
     //
-    // A dialog is two steps with the dialog itself in between, so the window
-    // never holds the backend (or the event loop's callback) while one is open:
-    // `dialog_job` works out what to ask, `DialogJob::ask` shows it (the window
-    // does that on a helper thread, which hands the panel to the main thread, as
-    // macOS requires), and `finish_dialog` does the rest with the answer.
+    // A dialog is two steps with the dialog in between, so the window never holds
+    // the backend (or the event loop's callback) while one is open: `dialog_job`
+    // works out what to ask, `DialogJob::ask` shows it on a helper thread (macOS
+    // needs the panel on the main thread), and `finish_dialog` finishes.
 
-    /// Where a dialog starts: the folder this space last exported to.
     fn dialog_start(&self) -> Option<PathBuf> {
         settings::export_dir(&self.data_dir, &self.files_dir)
             .or_else(|| Some(self.files_dir.join("exports")).filter(|p| p.is_dir()))
@@ -229,7 +212,6 @@ impl Backend {
         let _ = settings::remember_export(&self.data_dir, &self.files_dir, exported);
     }
 
-    /// The open file and its kind.
     fn current_file(&self) -> (FileKind, PathBuf) {
         let kind = if self.doc.is_some() {
             FileKind::Doc
@@ -239,7 +221,6 @@ impl Backend {
         (kind, self.path.clone())
     }
 
-    /// The dialog a command needs, or `None` when it is not a dialog command.
     pub fn dialog_job(&mut self, command: &Command) -> Result<Option<DialogJob>> {
         let start_in_space = self.files_dir.canonicalize().ok();
         let (ask, then) = match command {
@@ -284,14 +265,12 @@ impl Backend {
         }))
     }
 
-    /// The window's entry: a dialog job for a raw IPC message, if it is one.
-    /// An error is the reply to a dialog command that could not even start.
+    /// A dialog job for a raw IPC message, if it is one; an error is the reply.
     pub fn prepare_dialog(&mut self, source: &str) -> Option<Result<DialogJob>> {
         let command: Command = serde_json::from_str(source).ok()?;
         self.dialog_job(&command).transpose()
     }
 
-    /// What the user answered, as the event that replies to the command.
     pub fn finish_dialog(&mut self, answer: Answer) -> Event {
         self.finish(answer).unwrap_or_else(|error| Event::Error {
             message: error.to_string(),
@@ -316,7 +295,6 @@ impl Backend {
         }
     }
 
-    /// Store the image an image dialog returned with the open deck or doc.
     fn import_image(&self, chosen: &Path) -> Result<Event> {
         let src = if self.doc.is_some() {
             let bytes = super::read_bounded(chosen, 8 * 1024 * 1024)?;
@@ -327,8 +305,7 @@ impl Backend {
         Ok(Event::Asset { src })
     }
 
-    /// Open what an Open dialog returned: nexus files as they are, a
-    /// `PowerPoint` file as a new deck, a Word or Markdown file as a new doc.
+    /// nexus files open as they are; `PowerPoint`, Word and Markdown files import.
     fn open_chosen(&mut self, chosen: &Path) -> Result<Event> {
         let chosen = absolute(chosen)?;
         let name = chosen
@@ -353,7 +330,6 @@ impl Backend {
         bail!("choose a .deck.json, .doc.json, .pptx, .docx or .md file")
     }
 
-    /// A Word or Markdown file becomes a new doc beside the others, then opens.
     fn import_document(&mut self, source: &Path) -> Result<Event> {
         let docs = doc::docs_dir(&self.files_dir)?;
         let imported = nexus_core::doc::import::file(source, &docs.join("assets"))?;
@@ -414,8 +390,7 @@ impl Backend {
         self.execute(Command::Open { path: target })
     }
 
-    /// What to ask for an export of `source` in `word` format: the title it is
-    /// named after, and the extension that decides the dialog's filter.
+    /// What to ask for an export of `source` in `word` format.
     fn export_job(
         &self,
         source: (FileKind, PathBuf),
@@ -451,7 +426,6 @@ impl Backend {
         ))
     }
 
-    /// Write an export where the Save dialog said.
     fn export_to(
         &mut self,
         source: &(FileKind, PathBuf),
@@ -492,7 +466,6 @@ impl Backend {
         })
     }
 
-    /// What to ask for a copy of the open deck or doc.
     fn save_copy_job(&mut self) -> Result<(Ask, Then)> {
         // A deck that was never written exists only in memory.
         if !self.path.exists() {
@@ -531,7 +504,6 @@ impl Backend {
     }
 }
 
-/// What a dialog asks.
 enum Ask {
     Open {
         title: String,
@@ -546,7 +518,6 @@ enum Ask {
     },
 }
 
-/// What to do with the answer.
 enum Then {
     Open,
     Template,
@@ -560,8 +531,8 @@ enum Then {
     SaveCopy,
 }
 
-/// A native dialog ready to be shown: owns everything it needs, so it can run
-/// on any thread while the backend stays free.
+/// A native dialog ready to be shown, owning everything it needs so it can run on
+/// any thread while the backend stays free.
 pub struct DialogJob {
     dialogs: Arc<dyn Dialogs>,
     ask: Ask,
@@ -569,7 +540,7 @@ pub struct DialogJob {
 }
 
 impl DialogJob {
-    /// Show the dialog and wait for the answer. `None` is a cancel.
+    /// Show the dialog and wait; `None` is a cancel.
     #[must_use]
     pub fn ask(self) -> Answer {
         let chosen = match &self.ask {
@@ -594,7 +565,6 @@ impl DialogJob {
     }
 }
 
-/// A dialog's answer, with what to do next.
 pub struct Answer {
     then: Then,
     chosen: Option<PathBuf>,

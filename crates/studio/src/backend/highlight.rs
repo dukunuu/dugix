@@ -1,11 +1,8 @@
 //! Syntax colors for code blocks: the page sends each block's text and
-//! language, the backend answers with tree-sitter spans in UTF-16 offsets
-//! (what JS strings and DOM ranges count), each tagged with the design color
-//! key it paints in.
+//! language, the backend answers with tree-sitter spans in UTF-16 offsets.
 
 use serde::{Deserialize, Serialize};
 
-/// Most code blocks one request may carry, and the most text in all of them.
 const MAX_BLOCKS: usize = 512;
 const MAX_TEXT: usize = 2 * 1024 * 1024;
 
@@ -50,7 +47,7 @@ fn utf16_spans(text: &str, lang: &str) -> Vec<(usize, usize, &'static str)> {
     if spans.is_empty() {
         return Vec::new();
     }
-    // UTF-16 offset of every byte boundary we may be asked about.
+    // UTF-16 offset of every byte boundary a span may name.
     let mut units = vec![0; text.len() + 1];
     let mut at = 0;
     for (index, ch) in text.char_indices() {

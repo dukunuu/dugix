@@ -8,13 +8,12 @@ use serde::Serialize;
 
 use super::{Backend, Event};
 
-/// One kept version, newest first on the wire. Each is the document as it was
-/// just before an edit; `who` made that edit and `summary` says what it changed.
+/// One kept version: the document as it was just before an edit.
 #[derive(Debug, Serialize)]
 pub struct Version {
-    /// The kept file's stem, unique within the document's history.
+    /// The kept file's stem.
     pub id: String,
-    /// When the edit that replaced this version was made, RFC 3339 UTC.
+    /// RFC 3339 UTC.
     pub at: String,
     /// `user` or `model`.
     pub who: String,
@@ -46,7 +45,6 @@ fn rfc3339(stamp: &str) -> String {
     }
 }
 
-/// What differs between two versions of a doc, in a few words.
 fn describe_doc_change(from: &Doc, to: &Doc) -> String {
     let mut parts = Vec::new();
     if from.title != to.title {
@@ -157,7 +155,7 @@ impl Backend {
         Ok(Event::History { versions })
     }
 
-    /// One kept version, read-only, for the page to show in place of the current one.
+    /// One kept version, for the page to show in place of the current one.
     pub(super) fn history_preview(&self, id: &str) -> Result<Event> {
         let entry = self.history_entry(id)?;
         if self.doc.is_some() {
@@ -180,7 +178,6 @@ impl Backend {
         self.history_entry(id)?.load()
     }
 
-    /// The kept doc to restore.
     pub(super) fn history_doc(&self, id: &str) -> Result<Doc> {
         self.history_entry(id)?.load_for::<Doc>()
     }

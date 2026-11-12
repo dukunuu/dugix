@@ -29,8 +29,7 @@ mod templates;
 use nexus_core::deck::link::{ActivityState, Message as LinkMessage};
 use std::time::SystemTime;
 
-/// All messages accepted from the presentation layer. `Open` and `ImportAsset`
-/// are explicit user-entered paths; deck content can only name safe assets.
+/// All messages accepted from the presentation layer.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "command", deny_unknown_fields)]
 pub enum Command {
@@ -52,11 +51,9 @@ pub enum Command {
     ImportAsset {
         path: PathBuf,
     },
-    /// An image pasted or dropped on a deck: hex bytes, stored like `ImportAsset`.
     ImportAssetData {
         data: String,
     },
-    /// A native Open dialog for an image; replies `Asset` (or `Idle` on cancel).
     PickImage {},
     ListFonts {},
     ImportFont {
@@ -120,11 +117,10 @@ pub enum Command {
         owner: String,
         edit: String,
     },
-    /// A new, empty doc in the space's `docs/` folder.
     NewDoc {
         title: String,
     },
-    /// One undo step: a batch of doc operations (`doc::Op`), checked together.
+    /// One undo step: a batch of operations, checked together.
     DocApply {
         ops: Vec<serde_json::Value>,
     },
@@ -141,26 +137,21 @@ pub enum Command {
         text: String,
         send: bool,
     },
-    /// Accept (one undo step) or reject every pending suggestion.
     DocResolveEdits {
         accept: bool,
     },
-    /// Paginate and serve the pages of the open doc as `/pages/…` images.
     DocPages {},
     DocDesigns {},
-    /// An image pasted or dropped: hex bytes, stored by content in the assets.
     DocImportAsset {
         name: String,
         data: String,
     },
-    /// The block in view and the selected text.
     DocFocus {
         block: Option<String>,
         selection: Option<String>,
     },
     /// The decks and docs of the space, newest first.
     Library {},
-    /// Open a library file by its path inside the space files.
     LibraryOpen {
         path: String,
     },
@@ -177,39 +168,30 @@ pub enum Command {
     LibraryDelete {
         path: String,
     },
-    /// Export a library file through a native Save dialog.
     LibraryExport {
         path: String,
         format: String,
     },
-    /// A native Open dialog: nexus files open, Office and Markdown files import.
+    /// nexus files open; Office and Markdown files import.
     OpenDialog {},
-    /// A native Save dialog for the open file in one of its export formats.
     ExportAs {
         format: String,
         template: Option<String>,
     },
-    /// A native Save dialog for a copy of the open deck or doc with its assets.
     SaveCopy {},
-    /// A native Open dialog for a `PowerPoint` or Word template.
     PickTemplate {},
-    /// The kept versions of the open deck or doc.
     History {},
-    /// One kept version, read-only.
     HistoryPreview {
         id: String,
     },
-    /// Make a kept version the document again: one undo step, kept in history too.
+    /// One undo step, and the replaced version is kept too.
     HistoryRestore {
         id: String,
     },
-    /// The open doc as Markdown, for the source view.
     DocSource {},
-    /// Replace the doc from its Markdown source: one undo step.
     DocApplySource {
         markdown: String,
     },
-    /// Syntax spans for code blocks (no state changes).
     Highlight {
         blocks: Vec<highlight::Request>,
     },
@@ -239,10 +221,9 @@ pub enum Event {
         activities: BTreeMap<String, ThreadActivity>,
         changed: Vec<String>,
         notice: Option<String>,
-        /// Approximations made when a `PowerPoint` file was just imported.
         import_warnings: Vec<String>,
         template: bool,
-        /// Studio opened with no file: the page shows the library.
+        /// No file was given: the page shows the library.
         home: bool,
     },
     Feedback {
@@ -253,19 +234,16 @@ pub enum Event {
     Focus {
         slide: String,
     },
-    /// The open file is a doc.
     Doc {
         doc: nexus_core::doc::Doc,
         colors: ThemeColors,
         revision: String,
-        /// `docs/q3.doc.json`, for display.
         relative: String,
         threads: Vec<nexus_core::doc::feedback::Thread>,
         linked: bool,
         activities: BTreeMap<String, ThreadActivity>,
         changed: Vec<String>,
         notice: Option<String>,
-        /// Content hashes of the doc's images and fonts, by name.
         assets: BTreeMap<String, String>,
         design: doc::DesignState,
         can_undo: bool,
@@ -277,7 +255,6 @@ pub enum Event {
         activities: BTreeMap<String, ThreadActivity>,
         notes: Vec<String>,
     },
-    /// What a suggestion would change, without changing it.
     DocPreview {
         owner: String,
         edit: String,
@@ -316,42 +293,36 @@ pub enum Event {
         path: PathBuf,
         warnings: Vec<String>,
     },
-    /// A copy of the open file, with the assets it uses, was written.
     Saved {
         path: PathBuf,
         assets: usize,
     },
-    /// Every deck and doc of the space.
     Library {
         items: Vec<library::Item>,
-        /// The library path of the open file, when it is inside the space.
+        /// The open file's library path, when it is inside the space.
         current: Option<String>,
-        /// Studio opened with no file.
         home: bool,
-        /// The file an operation just made, to highlight.
         selected: Option<String>,
         notice: Option<String>,
     },
-    /// The kept versions, newest first.
+    /// Newest first.
     History {
         versions: Vec<history::Version>,
     },
-    /// A kept version to show read-only; exactly one of `deck` and `doc` is set.
+    /// Read-only; exactly one of `deck` and `doc` is set.
     HistoryPreview {
         id: String,
         deck: Option<Deck>,
         doc: Option<nexus_core::doc::Doc>,
     },
-    /// The open doc as Markdown (`DocSource`).
     DocSource {
         markdown: String,
         revision: String,
     },
-    /// Syntax spans for the code blocks in a `Highlight` command.
     Highlights {
         blocks: Vec<highlight::Reply>,
     },
-    /// A dialog was cancelled or the command changed nothing on screen.
+    /// A dialog was cancelled or nothing changed.
     Idle {},
     Revealed {},
     Error {
@@ -376,12 +347,11 @@ impl Event {
 
 pub struct Backend {
     pub deck: Deck,
-    /// Set while a doc, not a deck, is open (`deck` is then an unused placeholder).
+    /// Set while a doc is open; `deck` is then a placeholder.
     doc: Option<doc::DocSession>,
     path: PathBuf,
     files_dir: PathBuf,
     recent: PathBuf,
-    /// Revision of the deck as last written to, or read from, the file.
     known_revision: String,
     undo: Vec<Deck>,
     redo: Vec<Deck>,
@@ -394,24 +364,20 @@ pub struct Backend {
     comments_stamp: Option<Stamp>,
     colors: ThemeColors,
     theme_stamp: String,
-    /// Animation data dropped while reading the deck from disk, reported once.
+    /// Animation data dropped on load, reported once.
     load_notes: Vec<String>,
-    /// Approximations from importing a `.pptx`, reported once with the open.
+    /// Import approximations, reported once with the open.
     import_warnings: Vec<String>,
     /// Reveal is limited to files exported by this window, never deck content.
     exports: Vec<PathBuf>,
-    /// Content hashes of deck assets by file, reused while the file's stamp
-    /// is unchanged, so an edit doesn't re-read every image and font.
+    /// Content hashes by file, reused while the file's stamp is unchanged.
     asset_hashes: std::cell::RefCell<std::collections::HashMap<PathBuf, (Stamp, String)>>,
-    /// Native Open and Save dialogs; tests script them.
     dialogs: Arc<dyn Dialogs>,
-    /// Where the data root's small settings live (`studio-settings.json`).
     data_dir: PathBuf,
-    /// Studio started with no file, and nothing has been opened or written since.
+    /// No file was given and nothing has been opened or written since.
     home: std::cell::Cell<bool>,
-    /// The last library listing, which thumbnail requests are answered from.
     listing: std::cell::RefCell<Vec<nexus_core::canvas::Entry>>,
-    /// Approximations from importing a Word or Markdown file, reported once.
+    /// Import approximations, reported once with the open.
     doc_notice: std::cell::RefCell<Option<String>>,
 }
 
@@ -424,9 +390,8 @@ impl Backend {
         Self::open(path, files_dir, data_dir, false)
     }
 
-    /// What the window does: with no file given the library shows, and a blank
-    /// deck stays in memory until it is first edited, so starting studio never
-    /// leaves an empty file in the library.
+    /// With no file given the library shows, and a blank deck stays in memory
+    /// until it is first edited, so studio never leaves an empty file behind.
     pub fn launch(path: Option<&Path>, files_dir: &Path, data_dir: &Path) -> Result<Self> {
         Self::open(path, files_dir, data_dir, true)
     }
@@ -592,7 +557,6 @@ impl Backend {
         images
     }
 
-    /// The content hash of `path`, read only when its stamp changed.
     fn cached_hash(&self, path: &Path, read: impl FnOnce() -> Option<Vec<u8>>) -> Option<String> {
         let current = stamp(path)?;
         if let Some((seen, hash)) = self.asset_hashes.borrow().get(path)
@@ -626,10 +590,8 @@ impl Backend {
                 "command too large"
             );
             // The file wins: when the deck changed under the page, show that
-            // instead of applying an edit made against the old one.
-            // Doc requests that only report (a focus, a comment) leave the
-            // file check to the 500 ms poll, which delivers the reload with
-            // its changed blocks.
+            // instead of applying an edit made against the old one. Doc requests
+            // that only report leave the file check to the 500 ms poll.
             let guarded = self.doc.is_none()
                 || Self::doc_mutates(&command)
                 || matches!(command, Command::Load {});
@@ -645,12 +607,11 @@ impl Backend {
                 }
                 return Ok(event);
             }
-            // Dropped-animation notes are shown once, with the load that found them.
+            // Notes are shown once, with the load that found them.
             if !matches!(command, Command::Load {} | Command::Open { .. }) {
                 self.load_notes.clear();
             }
-            // Import approximations are reported once, with the event that
-            // opens or first loads the imported deck.
+            // Import approximations are reported once, with the open.
             let reports = matches!(command, Command::Load {} | Command::Open { .. });
             let event = self.execute(command);
             if reports {
@@ -663,7 +624,6 @@ impl Backend {
         })
     }
 
-    /// What was dropped while reading the deck, for the page's notice.
     fn load_notice(&self) -> Option<String> {
         (!self.load_notes.is_empty()).then(|| {
             format!(
@@ -804,7 +764,7 @@ impl Backend {
                     src: self.store_deck_image(bytes)?,
                 });
             }
-            // `refuse_doc_command` turned every doc-only command away above.
+            // Every doc-only command was refused above.
             _ => unreachable!("doc commands are refused without a doc"),
         }
         self.known_revision = self.deck.revision();
@@ -830,8 +790,7 @@ impl Backend {
         Ok(())
     }
 
-    /// Notice another writer of the deck or its comments file. One external
-    /// change of the deck is one undo step, so Cmd+Z takes back the model's edit.
+    /// Notice another writer of the deck or its comments file.
     pub fn poll(&mut self) -> Result<Option<Event>> {
         let mut theme_event = None;
         if !self.linked {
@@ -847,7 +806,7 @@ impl Backend {
         Ok(self.sync()?.0.or(theme_event))
     }
 
-    /// The event for what changed on disk, and whether the deck itself was reloaded.
+    /// What changed on disk, and whether the deck itself was reloaded.
     fn sync(&mut self) -> Result<(Option<Event>, bool)> {
         if self.doc.is_some() {
             return self.doc_sync();
@@ -915,8 +874,7 @@ impl Backend {
                         .or_default()
                         .insert(thread_id, ThreadActivity { state, detail });
                 }
-                // Include a just-written deck in this event, so Undo is ready
-                // even when completion beats the periodic filesystem poll.
+                // Include a just-written deck so Undo is ready before the next poll.
                 Ok(self
                     .sync()?
                     .0
@@ -929,7 +887,7 @@ impl Backend {
                 })
             }
             LinkMessage::Open { deck_path } => {
-                // Opening the document that is already open must not drop its undo history.
+                // Reopening the open document must not drop its undo history.
                 if !same_file(&deck_path, &self.path) {
                     let path = absolute(&deck_path)?;
                     if self
@@ -967,9 +925,7 @@ impl Backend {
         self.write_deck(&self.deck)
     }
 
-    /// Write the deck file, first keeping the version it replaces in the
-    /// deck's history (`deck/history.rs`), so the model's `history` action and
-    /// the user can both go back.
+    /// Write the deck, first keeping the version it replaces in history.
     fn write_deck(&self, deck: &Deck) -> Result<()> {
         self.home.set(false);
         // History is a safety net: failing to keep a version must not block a save.
@@ -985,7 +941,6 @@ impl Backend {
         atomic_write(&self.recent, &serde_json::to_vec(&self.path)?)
     }
 
-    /// Read a deck from disk and make it the open document.
     /// Open a deck, or import a `PowerPoint` file and open the result.
     fn open_path(&mut self, path: PathBuf) -> Result<()> {
         if is_pptx(&path) {
@@ -996,7 +951,6 @@ impl Backend {
         }
     }
 
-    /// A `PowerPoint` file becomes a new deck beside the others, then opens.
     fn open_pptx(&mut self, path: &Path) -> Result<()> {
         let imported = deck::import::import_pptx_file(path, &decks_dir(&self.files_dir)?, None)?;
         self.open_document(imported.path, imported.deck)?;
@@ -1033,8 +987,7 @@ impl Backend {
         self.store_deck_image(read_bounded(&path, 8 * 1024 * 1024)?)
     }
 
-    /// Decode, bound and re-encode an image as PNG in the deck's assets; the
-    /// bytes never reach the deck unchecked.
+    /// Decode, bound and re-encode as PNG; the bytes never reach the deck unchecked.
     fn store_deck_image(&self, bytes: Vec<u8>) -> Result<String> {
         let mut reader =
             image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
@@ -1060,8 +1013,8 @@ impl Backend {
         Ok(format!("assets/{name}"))
     }
 
-    /// No caller-provided path is joined to a filesystem root before it has
-    /// passed lexical validation, and canonical containment is checked again.
+    /// No caller path is joined to a root before lexical validation, and canonical
+    /// containment is checked again.
     pub fn serve(&self, uri: &str) -> Result<(&'static str, Vec<u8>)> {
         let path = protocol_path(uri)?;
         if let Some((mime, source)) = embedded(&path) {
@@ -1086,7 +1039,6 @@ impl Backend {
             Some("jpg" | "jpeg") => "image/jpeg",
             Some("webp") => "image/webp",
             Some("gif") => "image/gif",
-            // Fonts imported into the deck (`assets/fonts/`).
             Some("ttf") => "font/ttf",
             Some("otf") => "font/otf",
             Some("woff2") => "font/woff2",
@@ -1117,8 +1069,8 @@ impl Backend {
     }
 }
 
-/// The operating system's dialogs, except in tests, which script their own: a
-/// test must never open a window.
+/// The OS dialogs, except in tests, which script their own: a test must never
+/// open a window.
 fn default_dialogs() -> Arc<dyn Dialogs> {
     #[cfg(test)]
     {
@@ -1135,8 +1087,7 @@ fn stamp(path: &Path) -> Option<Stamp> {
     Some((metadata.modified().ok()?, metadata.len()))
 }
 
-/// A node without its children, so a frame counts as changed only when the
-/// frame itself changed, not when something inside it did.
+/// A node without its children: a frame flashes only when the frame itself changed.
 fn shallow(node: &Node) -> Node {
     let mut copy = node.clone();
     if let Some(children) = copy.children_mut() {
@@ -1145,7 +1096,7 @@ fn shallow(node: &Node) -> Node {
     copy
 }
 
-/// Nodes that are new or different in `next`; every node when the theme changed.
+/// New or changed nodes; every node when the theme changed.
 fn changed_nodes(before: &Deck, next: &Deck) -> Vec<String> {
     let old: Vec<Node> = before
         .slides
@@ -1215,7 +1166,7 @@ fn absolute(path: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// Bytes from hex (the page cannot send a binary message), bounded after decoding.
+/// Bytes from hex, bounded after decoding: the page cannot send a binary message.
 fn decode_hex(data: &str, max: usize) -> Result<Vec<u8>> {
     ensure!(
         data.len() <= max * 2 && data.len().is_multiple_of(2),
@@ -1277,7 +1228,7 @@ fn asset_root(path: &Path) -> Result<PathBuf> {
     Ok(root)
 }
 
-/// Sibling temporary file + rename: no partially written deck is observable.
+/// Temporary file + rename: no partially written deck is observable.
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     deck::write_atomic(path, bytes)
 }
@@ -1310,8 +1261,8 @@ pub fn protocol_path(uri: &str) -> Result<String> {
     } else {
         path
     };
-    // Webviews percent-encode spaces and non-ASCII filenames. Decode exactly
-    // once, then apply the same containment rules to the decoded path.
+    // Webviews percent-encode spaces and non-ASCII names: decode once, then
+    // apply the same containment rules to the decoded path.
     let mut bytes = Vec::with_capacity(path.len());
     let mut input = path.bytes();
     while let Some(byte) = input.next() {
@@ -1338,7 +1289,6 @@ pub fn protocol_path(uri: &str) -> Result<String> {
 }
 
 /// Only byte-addressed asset responses may survive a deck switch or reload.
-/// An unversioned download (including its first remote fetch) stays uncached.
 pub fn cache_control(uri: &str, bytes: &[u8]) -> &'static str {
     if protocol_path(uri).is_ok_and(|p| p.starts_with("/assets/") || p.starts_with("/asset/"))
         && uri

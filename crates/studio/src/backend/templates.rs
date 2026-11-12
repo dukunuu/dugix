@@ -77,9 +77,8 @@ impl Backend {
             }],
             Some(&resolver),
         )?;
-        // The design's Google Fonts join the deck, so the page and exports draw
-        // them; a family that cannot be fetched draws with the fallback.
-        // Tests never reach the network.
+        // The design's Google Fonts join the deck; a family that cannot be fetched
+        // draws with the fallback. Tests never reach the network.
         #[cfg(not(test))]
         if let Ok(http) = nexus_core::deck::google_fonts::Http::new() {
             let installed = nexus_core::deck::text::installed_families();

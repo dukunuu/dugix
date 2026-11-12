@@ -1,6 +1,5 @@
 //! Doc comments share the model tool's sidecar; Send uses only the link.
-//! Suggestions are `replace_text` and other operations the reader applies,
-//! previews or dismisses, each guarded against edits made since.
+//! Suggestions are operations the reader previews, applies or dismisses.
 
 use anyhow::{Context as _, Result, ensure};
 use nexus_core::deck::link::Message as LinkMessage;
@@ -136,8 +135,7 @@ impl Backend {
         Ok(())
     }
 
-    /// What an edit would change: the blocks that would be new or different,
-    /// and the ones that would go. Nothing is written.
+    /// What an edit would change; nothing is written.
     pub(super) fn doc_preview_edit(&self, owner: &str, id: &str) -> Result<Event> {
         let edit = self.doc_edit(owner, id)?;
         ensure!(
@@ -188,8 +186,7 @@ impl Backend {
         Ok(self.doc_feedback_event(vec![]))
     }
 
-    /// Accept or reject every pending suggestion at once; accepting is one undo
-    /// step. A suggestion that no longer applies is marked outdated.
+    /// Accept or reject every pending suggestion; accepting is one undo step.
     pub(super) fn doc_resolve_edits(&mut self, accept: bool) -> Result<()> {
         let pending: Vec<(String, Vec<doc::Op>)> = self
             .session()?

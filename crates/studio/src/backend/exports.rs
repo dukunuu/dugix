@@ -19,7 +19,6 @@ impl Backend {
         })
     }
 
-    /// A deck as a file in `format`, not yet written anywhere.
     pub(super) fn deck_output(
         &self,
         deck: &deck::Deck,
@@ -44,7 +43,7 @@ impl Backend {
         Self::show_in_folder(path)
     }
 
-    /// Open the file manager on `path`, through an argv and never a shell.
+    /// Open the file manager through an argv, never a shell.
     pub(super) fn show_in_folder(path: &Path) -> Result<Event> {
         let (program, args) = reveal_argv(path, std::env::consts::OS);
         let mut child = std::process::Command::new(program).args(args).spawn()?;
