@@ -148,7 +148,6 @@ fn library_is_a_command_with_a_catalog_entry() {
     );
     f.app.run_command("library").unwrap();
     assert_eq!(f.app.popup, Popup::Library);
-    // Headless consumers (CLI, host) never open it, and nothing happens.
     f.app
         .core
         .execute(nexus_core::app::AppCommand::OpenLibrary)
@@ -190,7 +189,6 @@ fn an_empty_library_says_so() {
         "{screen}"
     );
     assert!(screen.contains("esc close"), "{screen}");
-    // The keys that act on a file do nothing without one.
     f.press('e');
     f.press('d');
     f.key(KeyCode::Enter);
@@ -269,7 +267,6 @@ fn e_asks_for_a_format_then_exports_through_the_save_dialog() {
         screen.contains("p pptx · f pdf · g png zip · h html · j json · esc back"),
         "{screen}"
     );
-    // A key that is no format does nothing; Escape goes back.
     f.press('z');
     assert_eq!(
         f.app.library.mode,
@@ -289,7 +286,6 @@ fn e_asks_for_a_format_then_exports_through_the_save_dialog() {
     assert_eq!(asked[0].filters, ["PowerPoint"]);
     assert!(asked[0].start.is_none());
 
-    // A doc offers its own formats; the Save dialog now starts where the last one ended.
     f.key(KeyCode::Down);
     f.press('e');
     let screen = f.screen(100, 22);
@@ -301,7 +297,6 @@ fn e_asks_for_a_format_then_exports_through_the_save_dialog() {
     assert_eq!(&std::fs::read(out.join("memo.docx")).unwrap()[..2], b"PK");
     assert_eq!(dialogs.requests()[1].name, "Q3 memo.docx");
     assert_eq!(dialogs.requests()[1].start.as_deref(), Some(out.as_path()));
-    // The popup stays open on the same row.
     assert_eq!(f.app.popup, Popup::Library);
     assert_eq!(f.app.library.selected, 1);
 }
@@ -350,7 +345,6 @@ fn d_confirms_before_moving_the_file_to_the_trash() {
         "{screen}"
     );
     assert!(screen.contains("y confirm · esc cancel"), "{screen}");
-    // Anything but a yes backs out and nothing is deleted.
     f.press('x');
     assert_eq!(
         f.app.library.mode,
@@ -374,7 +368,6 @@ fn d_confirms_before_moving_the_file_to_the_trash() {
     assert_eq!(f.app.library.entries.len(), 2);
     assert_eq!(f.app.library.selected, 1);
     assert!(std::fs::read_dir(f.files().join(".trash")).unwrap().count() == 1);
-    // Ctrl+D confirms too, like the other popups.
     f.press('d');
     crate::ui::popups::library::handle_key(
         &mut f.app,
@@ -391,7 +384,6 @@ fn studio_without_a_recent_file_opens_the_library_instead() {
     let status = f.status();
     assert_eq!(f.app.popup, Popup::Library, "{status}");
     assert_eq!(f.app.library.entries.len(), 3);
-    // With a file named, studio opens it (here the fake window takes the message).
     f.app.popup = Popup::None;
     f.app.attach_fake_studio();
     f.app.run_command("studio decks/launch.deck.json").unwrap();
@@ -402,7 +394,6 @@ fn studio_without_a_recent_file_opens_the_library_instead() {
             .unwrap()
             .ends_with("decks/launch.deck.json")
     );
-    // And now there is a recent file, so a bare /studio focuses it.
     f.app.run_command("studio").unwrap();
     assert_eq!(f.app.popup, Popup::None);
     assert_eq!(f.status(), "studio focused");
@@ -420,8 +411,7 @@ fn incognito_has_no_library() {
 
 #[test]
 fn the_list_records_where_each_row_is_drawn_for_mouse_clicks() {
-    // Clicks reach the popup as keys (`handle_popup_mouse`) through the list's
-    // hit area: rendering records three lines per entry.
+    // Rendering records three lines per entry; clicks map through that.
     let mut f = Fixture::new();
     f.library();
     f.open();

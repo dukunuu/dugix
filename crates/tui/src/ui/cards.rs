@@ -1,9 +1,8 @@
-//! Transcript card builders: user bubbles, assistant replies (stored and
-//! streaming), tool calls, research/compaction/error rows, session links, and
-//! inline images — each pushes wrapped `Line`s for the history pane.
+//! Transcript card builders: user bubbles, assistant replies, tool calls,
+//! research/compaction/error rows, session links, and inline images.
 
-// Casts here are on terminal-bounded values (u16/u32 dims, byte colors,
-// glyph counts) — never on unbounded user data.
+// Casts here are on terminal-bounded values (dims, byte colors, glyph counts),
+// never on unbounded user data.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -36,10 +35,8 @@ pub(super) struct Regions<'a> {
     pub widgets: &'a mut Vec<crate::interactive::Placement>,
 }
 
-/// Remove `![alt](file)` image references from text — the images themselves
-/// are rendered inline by `render_markdown_images`, so the raw refs must not
-/// also wrap into the body text. Unterminated refs (mid-stream) are kept
-/// verbatim.
+/// Drop `![alt](file)` refs from body text — the images render inline instead.
+/// Unterminated refs (mid-stream) are kept verbatim.
 pub(super) fn strip_markdown_images(content: &str) -> String {
     let mut out = String::with_capacity(content.len());
     let mut cursor = 0;
@@ -77,9 +74,6 @@ fn markdown_images(content: &str) -> Vec<(std::ops::Range<usize>, String, String
 }
 
 /// A user message card: a right-aligned bubble capped at ~60% of the pane.
-/// Its padding follows the configured UI surface background. The `❯ you`
-/// header and time sit inside the bubble; images render inside at the bubble's
-/// width.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn push_user_card(
     out: &mut Vec<Line<'static>>,
@@ -134,9 +128,8 @@ pub(super) fn push_user_card(
         card_img.push(None);
     }
 
-    // Emit: left margin (pane bg) + a rail in the user color + content + pad
-    // to card width. The rail makes the bubble read as a card even when the
-    // raised shade is the terminal's own (transparent) background.
+    // The rail keeps the bubble reading as a card even when the raised shade
+    // is the terminal's own (transparent) background.
     let lead = width.saturating_sub(card_w);
     let rail = Style::default().fg(theme.user_msg).patch(bg_style);
     for (li, line) in card.into_iter().enumerate() {
@@ -184,8 +177,8 @@ pub(super) fn push_tool_call(
     push_tool_call_with_rows(out, content, expanded, settings, width, theme, env, None);
 }
 
-/// A compaction digest at the compaction boundary: what was folded away is
-/// visible in the transcript itself, dimmed so the live conversation leads.
+/// A compaction digest at the compaction boundary, dimmed so the live
+/// conversation leads.
 pub(super) fn push_compaction(
     out: &mut Vec<Line<'static>>,
     content: &str,
@@ -206,7 +199,7 @@ pub(super) fn push_compaction(
 }
 
 /// Memory named for the message below it: one dim line of chapter and doc
-/// titles. The model sees the full hint; the user only needs the names.
+/// titles.
 pub(super) fn push_recall(
     out: &mut Vec<Line<'static>>,
     content: &str,
@@ -244,8 +237,8 @@ pub(super) fn push_skill(
     out.push(Line::from(""));
 }
 
-/// A command the user ran with `!`: the command and how it ended, then the
-/// head of its output (the full output stays in the row).
+/// A command the user ran with `!`: the command, how it ended, and the head of
+/// its output.
 pub(super) fn push_user_command(
     out: &mut Vec<Line<'static>>,
     content: &str,
@@ -280,9 +273,8 @@ pub(super) fn push_user_command(
     out.push(Line::from(""));
 }
 
-/// A transient row while a compaction request runs. Deliberately not a
-/// `Message`: failed or cancelled jobs must vanish without leaving a fake
-/// conversation turn in the database.
+/// A transient row while a compaction request runs, deliberately not a
+/// `Message`: a failed job must leave no fake turn behind.
 pub(super) fn push_compaction_pending(
     out: &mut Vec<Line<'static>>,
     _width: usize,
@@ -343,8 +335,7 @@ pub(super) fn push_error(
     out.push(Line::from(""));
 }
 
-/// Clarifying questions waiting on your chat answer: a question round in the
-/// interactive accent, questions in full text, the guidance footer dimmed.
+/// Clarifying questions waiting on your chat answer.
 pub(super) fn push_survey_section(
     out: &mut Vec<Line<'static>>,
     content: &str,
@@ -374,8 +365,7 @@ pub(super) fn push_survey_section(
     out.push(Line::from(""));
 }
 
-/// A plan waiting on your approval: same shape as a question round — it's
-/// actionable, so it takes the interactive accent.
+/// A plan waiting on your approval, in the same accent as a question round.
 pub(super) fn push_research_plan(
     out: &mut Vec<Line<'static>>,
     content: &str,
@@ -397,10 +387,8 @@ pub(super) fn push_research_plan(
     out.push(Line::from(""));
 }
 
-/// A stored assistant reply: a `✦ <model>` header (persona name in accent
-/// for swarm turns) with the completion time right-aligned, the collapsible
-/// reasoning, inline images, the markdown answer, then a dim stats/phrase
-/// footer. Everything below the header carries the `▎` left rail.
+/// A stored assistant reply: header, reasoning, images, markdown answer, then a
+/// dim stats/phrase footer.
 #[allow(clippy::too_many_lines)] // one card shape per content kind
 #[allow(clippy::too_many_arguments)]
 pub(super) fn push_assistant_stored(
@@ -417,8 +405,7 @@ pub(super) fn push_assistant_stored(
     image_cache: &mut HashMap<(String, usize), Vec<Line<'static>>>,
     regions: Regions<'_>,
 ) {
-    // Header: the assistant glyph + who answered (persona overrides the
-    // model name; personas are agents, so they take the agent color).
+    // A persona overrides the model name and takes the agent color.
     let mut head = vec![Span::styled(
         format!("{} ", glyph::ASSISTANT),
         Style::default()
@@ -506,7 +493,6 @@ pub(super) fn push_assistant_stored(
         }
     }
 
-    // Inline images slot between the reasoning block and the answer body.
     render_markdown_images(
         out,
         content,
@@ -528,7 +514,6 @@ pub(super) fn push_assistant_stored(
     rendered.lines = crate::ui::citations_style::style_confidence_tags(rendered.lines);
     push_rendered(out, code, blocks, rendered, Some(rail), regions);
 
-    // Footer below the response: the phrase, then stats, one separator style.
     let mut stats: Vec<String> = Vec::new();
     if settings.show_stats
         && let (Some(tok), Some(secs)) = (msg.tokens, msg.secs)
@@ -561,8 +546,7 @@ pub(super) fn push_assistant_stored(
     out.push(Line::from(""));
 }
 
-/// A link to another session: the target in the interactive accent, how to
-/// follow it underneath. Content format: `<target_sid>\n<label>`.
+/// A link to another session; content is `<target_sid>\n<label>`.
 pub(super) fn push_session_link(
     out: &mut Vec<Line<'static>>,
     content: &str,
@@ -573,7 +557,7 @@ pub(super) fn push_session_link(
         Some((sid, rest)) => (sid.to_string(), rest.trim().to_string()),
         None => (String::new(), content.to_string()),
     };
-    // Older link rows lead with an emoji; the glyph replaces it.
+    // Stored link rows may lead with an emoji instead of the glyph.
     let label = label
         .trim_start_matches(['\u{1F517}', '↩', ' '])
         .to_string();
@@ -588,8 +572,8 @@ pub(super) fn push_session_link(
     out.push(Line::from(""));
 }
 
-/// The in-progress reply: a `⠹ <model> — <phrase>` header in the spinner
-/// color, the thinking block when present, then the live markdown stream.
+/// The in-progress reply: spinner header, thinking block, then the live
+/// markdown stream.
 pub(super) fn push_assistant_streaming(
     out: &mut Vec<Line<'static>>,
     app: &AppView,
@@ -613,7 +597,6 @@ pub(super) fn push_assistant_streaming(
             Style::default().fg(color),
         ),
     ];
-    // Live elapsed time, right-aligned.
     if let Some(t) = app.active_chat_task() {
         let secs = t.started.elapsed().as_secs();
         let time = format!("{}:{:02}", secs / 60, secs % 60);
@@ -656,9 +639,8 @@ pub(super) fn push_assistant_streaming(
     out.push(Line::from(""));
 }
 
-/// Splice a `markdown::Rendered` into the running line/code/block vecs, keeping
-/// `code` aligned to `out` and offsetting local block ids to global ones. When
-/// `rail` is given it prefixes every body line (the assistant left gutter).
+/// Splice a `markdown::Rendered` into the running line/code/block vecs,
+/// offsetting local block ids and widget rows to global ones.
 pub(super) fn push_rendered(
     out: &mut Vec<Line<'static>>,
     code: &mut Vec<Option<usize>>,
@@ -691,12 +673,9 @@ pub(super) fn push_rendered(
     }
 }
 
-/// Scan content for markdown image references `![alt](file)` and render them
-/// inline. For each match, resolve the file against `images_dir`, render it
-/// with `image_to_halfblock_lines`, and track the lines in `image_at_line`.
-/// Results are cached by (path, width) to avoid re-decoding every frame. When
-/// `prefix` is given (the assistant rail) every pushed line — image rows and
-/// the trailing blank alike — carries it, so the gutter stays continuous.
+/// Render `![alt](file)` refs inline, resolving each against `images_dir` and
+/// caching by (path, width). `prefix` (the assistant rail) is carried by every
+/// pushed line so the gutter stays continuous.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_markdown_images(
     out: &mut Vec<Line<'static>>,
@@ -770,14 +749,10 @@ pub(super) fn render_markdown_images(
     }
 }
 
-/// Max cell-rows a rendered image occupies (click-to-open encourages viewing
-/// full size in an external viewer instead of eating the whole terminal).
+/// Max cell-rows a rendered image occupies, so it can't eat the whole terminal.
 pub(crate) const MAX_IMAGE_ROWS: usize = 20;
 
-/// Render a PNG image as half-block ratatui lines for inline display in the
-/// terminal. Falls back to a text marker if the image can't be loaded.
-/// When the image is taller than `MAX_IMAGE_ROWS`, the last line says "▣ click to open"
-/// so the user knows to click to open the full version.
+/// Render a PNG as half-block lines, or a text marker when it can't be loaded.
 pub(super) fn image_to_halfblock_lines(path: &str, max_width: usize) -> Vec<Line<'static>> {
     let Ok(img) = image::open(path) else {
         return vec![Line::from(Span::raw(format!("{} [image]", glyph::MEDIA)))];
@@ -791,7 +766,6 @@ pub(super) fn image_to_halfblock_lines(path: &str, max_width: usize) -> Vec<Line
     let truncated = cell_h > MAX_IMAGE_ROWS;
     if truncated {
         cell_h = MAX_IMAGE_ROWS - 1;
-        // Recalculate width from capped height to maintain aspect
         let capped_w = (cell_h as f64 * 2.0 * aspect).round().max(1.0) as usize;
         cell_w = cell_w.min(capped_w);
     }
@@ -832,8 +806,7 @@ pub(super) fn wrap_plain(content: &str, width: usize) -> Vec<String> {
     let mut out = Vec::new();
     let content = crate::ui::markdown::terminal_safe(content);
     for raw in content.split('\n') {
-        // List items hang: continuation lines sit under the item's text,
-        // not back at the margin.
+        // Continuation lines sit under the item's text, not back at the margin.
         let hang = " ".repeat(list_hang(raw));
         let opts = textwrap::Options::new(w).subsequent_indent(&hang);
         for piece in textwrap::wrap(raw, opts) {
@@ -843,8 +816,7 @@ pub(super) fn wrap_plain(content: &str, width: usize) -> Vec<String> {
     out
 }
 
-/// Columns before a list item's text — indent plus a `1.`/`1)`/`-`/`*`/`+`/`•`
-/// marker and its space — or the plain indent for a non-list line.
+/// Columns before a list item's text, or the plain indent for a non-list line.
 fn list_hang(line: &str) -> usize {
     let body = line.trim_start();
     let indent = line.len() - body.len();

@@ -82,7 +82,6 @@ pub fn render(f: &mut Frame, app: &AppView) {
             SettingsField::Verbosity => {
                 Span::styled(app.verbosity.clone(), Style::default().fg(app.theme.accent))
             }
-            // Secrets never render in full (the key popup masks too).
             SettingsField::LangsearchKey => numeric(&mask_secret(&app.settings_inputs[5])),
             SettingsField::SearchProvider => Span::styled(
                 app.search.provider.clone(),
@@ -157,8 +156,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
     use nexus_core::app::SettingsField;
-    // The column width has no text to type: Enter, Space and the arrows
-    // cycle it (← goes back), and it saves as it changes.
+    // The column width has no text to type: the arrows and Enter cycle it.
     if app.settings_field() == Some(SettingsField::ColumnWidth) {
         match key.code {
             KeyCode::Enter | KeyCode::Right => return app.cycle_column_width(1),
@@ -167,8 +165,8 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
         }
     }
     match key.code {
-        // Enter on a group header toggles it; on a field it's a no-op here
-        // (fields with an Enter action are handled above).
+        // Enter on a group header toggles it; fields with an Enter action were
+        // handled above.
         KeyCode::Enter if matches!(app.settings_row(), SettingsRow::Group(_)) => {
             app.toggle_settings_field();
         }
@@ -187,8 +185,8 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
     Ok(())
 }
 
-/// `••••••3814`: enough to recognize which key is set, never the key.
-/// Short values mask fully so the tail can't be most of the secret.
+/// `••••••3814`: enough to recognize which key is set, never the key. Short
+/// values mask fully so the tail can't be most of the secret.
 fn mask_secret(s: &str) -> String {
     let s = s.trim();
     let n = s.chars().count();

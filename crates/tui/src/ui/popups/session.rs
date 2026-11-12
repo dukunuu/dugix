@@ -15,10 +15,8 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
     use nexus_core::app::SessionMode;
     let area = chrome::popup_area(app, f.area(), "session", chrome::TALL);
 
-    // Preview strip: the selected session's last exchange, so the picker
-    // tells you what a session is about before you open it. Re-queried only
-    // when the selection changes (selected_session returns an owned clone,
-    // so this must run before filtered_sessions borrows the cache).
+    // Preview strip: the selected session's last exchange. Re-queried only when
+    // the selection changes, and before `filtered_sessions` borrows the cache.
     let sid = app.selected_session().map(|s| s.id).unwrap_or_default();
     if app.session_preview.as_ref().map(|(id, _)| id) != Some(&sid) {
         app.session_preview = app
@@ -33,8 +31,8 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
         .unwrap_or_default();
 
     let sessions = app.filtered_sessions();
-    // Inside the border, minus the scrollbar gutter, the `▸ ` highlight, and
-    // one column of air before the scrollbar.
+    // Inside the border, minus the scrollbar gutter, the `▸ ` highlight, and a
+    // column of air.
     let width = area.width.saturating_sub(6 + 2 * chrome::PAD) as usize;
     let dim = Style::default().fg(app.theme.fg_dim);
     let active_id = app.session.as_ref().map(|s| s.id.clone());
@@ -42,10 +40,8 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
     let items: Vec<ListItem> = sessions
         .iter()
         .map(|s| {
-            // Running work (reply, compaction, research) is the assistant
-            // busy: ⟳ in the agent color. A finished-while-away reply waits
-            // on you: ● in the interactive accent. Otherwise the session's
-            // kind: ↪ linked research, ◇ research.
+            // Running work is the assistant busy; a finished-while-away reply
+            // waits on you; otherwise the session's kind.
             let compacting_here = app.is_compacting_session(&s.id);
             let streaming_here = app.chat_task_for_session(&s.id).is_some();
             let researching_here = app
@@ -68,8 +64,7 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
             } else {
                 None
             };
-            // Title first — it's what people scan for — with the date
-            // right-aligned; widths are display cells (emoji markers are 2).
+            // Widths are display cells, so a two-column marker still lines up.
             let when = crate::ui::fmt_created(&s.created_at);
             let marker_w = marker.as_ref().map_or(0, Span::width);
             let title_max = width.saturating_sub(marker_w + crate::ui::style::width(&when) + 2);
@@ -88,8 +83,7 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
                 Span::raw(" ".repeat(gap)),
                 Span::styled(when, dim),
             ]);
-            // Second line: slug (else a uuid prefix) · model, or an explicit
-            // label while compaction runs so ⟳ never needs guessing.
+            // An explicit label while compaction runs, so ⟳ never needs guessing.
             let slug = s
                 .slug
                 .clone()
@@ -107,8 +101,7 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
         })
         .collect();
 
-    // Title bar doubles as the search box / rename field / delete prompt;
-    // the hint bar sits in the frame footer instead of crowding the title.
+    // The title bar doubles as the search box / rename field / delete prompt.
     let title = match app.session_mode {
         SessionMode::Rename => chrome::input_title(app, "rename session", &app.session_edit, ""),
         SessionMode::ConfirmDelete => {
@@ -155,7 +148,6 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
     };
     use nexus_core::app::SessionMode;
     match app.session_mode {
-        // Renaming: type into the edit buffer; Enter saves, Esc cancels.
         SessionMode::Rename => match classify_edit_key(key) {
             Some(EditAction::Cancel) => app.session_mode = SessionMode::Browse,
             Some(EditAction::Save) => app.confirm_rename()?,
@@ -165,7 +157,6 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
             Some(EditAction::Push(c)) => app.session_edit.push(c),
             None => {}
         },
-        // Delete confirm: Ctrl+D again deletes, Esc cancels, anything else ignored.
         SessionMode::ConfirmDelete => match classify_confirm_delete_key(key) {
             Some(ConfirmDeleteAction::Yes) => app.confirm_delete()?,
             Some(ConfirmDeleteAction::No) => app.session_mode = SessionMode::Browse,
@@ -175,12 +166,11 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
             if key.code == KeyCode::Enter {
                 return app.confirm_session();
             }
-            // Cursor move/select/clipboard on the search filter takes priority
-            // over the rest of Browse mode's bindings.
+            // The search filter's own cursor, select and clipboard keys come
+            // before the rest of Browse mode's bindings.
             if app.session_filter.key(key, &mut app.clipboard) {
                 return Ok(());
             }
-            // Sessions support rename but not create.
             match classify_browse_key(key, false, true) {
                 Some(super::BrowseAction::Close) => app.popup = nexus_core::app::Popup::None,
                 Some(super::BrowseAction::MoveUp) => app.move_session_selection(-1),

@@ -13,8 +13,7 @@ use super::chrome;
 #[path = "context_tests.rs"]
 mod tests;
 
-/// Context breakdown popup (Ctrl+G): estimated tokens spent on system
-/// instructions, memory, skills, tools, and conversation, plus what the
+/// Context breakdown popup (Ctrl+G): estimated tokens per bucket, plus what the
 /// session has spent so far.
 pub fn render(f: &mut Frame, app: &AppView) {
     let b = app.context_breakdown();
@@ -91,7 +90,6 @@ pub fn render(f: &mut Frame, app: &AppView) {
     } else {
         "Ctrl+G toggle · Esc close"
     };
-    // Sized to the content rather than a fixed share of the screen.
     let screen = f.area();
     let width = (screen.width * chrome::SMALL.0 / 100).clamp(40.min(screen.width), screen.width);
     let height = u16::try_from(lines.len() + 2)
@@ -116,7 +114,6 @@ pub fn render(f: &mut Frame, app: &AppView) {
 }
 
 /// What the session has spent so far: cost and requests, then tokens.
-/// Per-request figures already sit on each message.
 fn session_lines(app: &AppView) -> Vec<Line<'static>> {
     let dim = Style::default().fg(app.theme.fg_dim);
     let label = Span::styled(
@@ -180,8 +177,8 @@ fn session_lines(app: &AppView) -> Vec<Line<'static>> {
 /// The turn's and the last request's cache hit rates, when either is known.
 fn cache_lines(app: &AppView) -> Vec<Line<'static>> {
     let dim = Style::default().fg(app.theme.fg_dim);
-    // Cache detail lives here, where the two figures can be labelled apart:
-    // the status line shows the turn, this shows the request behind it.
+    // The two figures can be labelled apart here; the status line shows only
+    // the turn.
     let turn = app.meter.turn_cache;
     let mut lines = Vec::new();
     if turn.rate().is_some() || app.meter.last_cache_rate.is_some() {

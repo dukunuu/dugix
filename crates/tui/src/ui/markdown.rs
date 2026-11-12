@@ -1,8 +1,5 @@
-//! Styled markdown rendering for the history pane (`nexus_core::markdown`
-//! holds the plain-text copy path and the GFM table splitter).
-//! `tui_markdown` styles inline emphasis/code and highlights fenced code, but
-//! leaves block markers as literal text (`# `, `- `, ```` ``` ````); we strip
-//! those so the display — and anything copied from it — is clean text.
+//! Styled markdown for the history pane: `tui_markdown` leaves block markers as
+//! literal text, so they are stripped to keep the display and copies clean.
 
 use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
@@ -29,9 +26,8 @@ pub(crate) fn badge_letter(url: &str) -> Option<char> {
         .map(|letter| letter.to_ascii_uppercase())
 }
 
-/// Put a site badge before every `https://` URL that starts a word: the
-/// host's letter in reversed link color, then [`BADGE_GAP`]. The history view
-/// swaps the badge for the site's icon once one is cached.
+/// Put a site badge before every `https://` URL that starts a word; the history
+/// view swaps it for the site's icon once one is cached.
 fn badge_links(line: &Line, colors: MdColors) -> Line<'static> {
     let badge = Style::default()
         .fg(colors.heading)
@@ -75,10 +71,8 @@ fn char_width(c: char) -> usize {
     c.width().unwrap_or(0)
 }
 
-/// Inline styles in theme colors: code is tinted text rather than a heavy
-/// background block (the library default is white-on-black, invisible on a
-/// dark terminal), links are underlined accent. Everything else defers to
-/// the library's own defaults.
+/// Inline styles in theme colors: tinted code rather than a background block
+/// (the library default is white-on-black) and underlined links.
 #[derive(Clone, Copy, Debug)]
 struct NexusStyleSheet {
     code: Color,
@@ -115,8 +109,8 @@ fn md_options(colors: MdColors) -> Options<NexusStyleSheet> {
     })
 }
 
-/// Rendered markdown: styled/wrapped `lines`, plus, per line, which fenced code
-/// block it belongs to (`code[i]`), and the raw text of each block (`blocks`).
+/// Rendered markdown: styled lines, the fenced block each belongs to, and each
+/// block's raw text.
 #[derive(Default)]
 pub struct Rendered {
     pub lines: Vec<Line<'static>>,
@@ -136,15 +130,8 @@ impl Rendered {
     }
 }
 
-/// Render `content` to styled, width-wrapped lines. Fenced code blocks get a box
-/// drawn around them and are tracked so a long-press can copy the raw code.
-/// GFM pipe tables — which `tui_markdown` doesn't support (it just warns and
-/// drops them) — are pulled out and rendered as a bordered, column-aligned
-/// table before the rest of the content goes through the normal pipeline.
-/// `s` without emoji-presentation selectors (U+FE0F). `⚠️` is `⚠` + VS16:
-/// width tables call it one column, but terminals draw the emoji form two
-/// wide, shifting every table row and wrapped line it sits in. Without the
-/// selector the base glyph renders in its one-column text form everywhere.
+/// Strip emoji-presentation selectors (U+FE0F): width tables call `⚠️` one
+/// column while terminals draw it two, shifting every row it sits in.
 pub fn terminal_safe(s: &str) -> std::borrow::Cow<'_, str> {
     if s.contains('\u{FE0F}') {
         s.replace('\u{FE0F}', "").into()
@@ -255,14 +242,13 @@ fn render_ui(r: &mut Rendered, source: &str, complete: bool, width: usize, color
     let ordinal = r.ui_count;
     r.ui_count += 1;
     // A finished block renders with its broken pieces left out; only one with
-    // nothing usable left falls back to its source.
+    // nothing usable falls back to its source.
     let document = nexus_core::interactive::Document::recover(source);
     let patch = nexus_core::interactive::edit_patch(source).is_some();
     let fallback = width < 8 || (complete && document.is_err() && !patch);
     if fallback {
-        // A finished block that doesn't parse: show up to three errors, then show
-        // the source as written — no card placeholder rows, and only control
-        // characters escaped (escaping quotes made valid JSON look broken).
+        // Show up to three errors, then the source as written, with only control
+        // characters escaped.
         let label = if width < 8 {
             "interactive UI"
         } else {
@@ -374,7 +360,6 @@ fn render_text(r: &mut Rendered, content: &str, width: usize, colors: MdColors) 
         let plain = line_text(line);
         let unstyled = line.spans.iter().all(|s| s.style == Style::default());
 
-        // Fence line toggles a code block; the fence itself isn't shown.
         if unstyled && plain.trim_start().starts_with("```") {
             if in_code {
                 in_code = false;
@@ -382,7 +367,6 @@ fn render_text(r: &mut Rendered, content: &str, width: usize, colors: MdColors) 
             } else {
                 in_code = true;
                 raw.clear();
-                // ```rust → the box's top rule is labelled `rust`.
                 plain
                     .trim_start()
                     .trim_start_matches('`')
@@ -421,7 +405,7 @@ fn render_text(r: &mut Rendered, content: &str, width: usize, colors: MdColors) 
 }
 
 /// A fenced block's content rows, highlighted as one source so multi-line
-/// constructs (block comments, strings) color correctly, then its bottom rule.
+/// constructs (block comments, strings) color correctly.
 fn close_code_block(r: &mut Rendered, raw: &[String], lang: &str, width: usize, colors: MdColors) {
     let source = raw.join("\n");
     if !raw.is_empty() {
@@ -435,8 +419,8 @@ fn close_code_block(r: &mut Rendered, raw: &[String], lang: &str, width: usize, 
     r.blocks.push(source);
 }
 
-/// Top (`lang` given, maybe empty) or bottom rule of a code box, tagged with
-/// the current block id. A non-empty `lang` labels the top rule: `┌─ rust ─┐`.
+/// Top (`lang` given, maybe empty) or bottom rule of a code box, tagged with the
+/// current block id.
 fn push_code_border(r: &mut Rendered, width: usize, lang: Option<&str>, rule: Color) {
     let id = Some(r.blocks.len());
     if width < 2 {
@@ -477,9 +461,8 @@ fn push_code_content(r: &mut Rendered, line: &Line, width: usize, rule: Color) {
     }
 }
 
-/// Render a parsed table as a bordered, column-aligned box. Cell text still
-/// gets inline styling (bold/italic/code) via `tui_markdown`, and wraps within
-/// its column if the table doesn't fit `width`.
+/// Render a parsed table as a bordered, column-aligned box, wrapping cells within
+/// their column when the table doesn't fit `width`.
 fn render_table(
     r: &mut Rendered,
     rows: &[Vec<String>],
@@ -498,8 +481,7 @@ fn render_table(
             colw[i] = colw[i].max(cell.width().max(1));
         }
     }
-    // Shrink the widest columns to fit `width` (border + " x " padding per
-    // column), down to a 3-char floor so cells stay legible.
+    // Shrink the widest columns to fit `width`, down to a 3-char floor.
     let overhead = (ncols + 1) + 2 * ncols;
     let avail = width.saturating_sub(overhead);
     let min_w = 3;
@@ -517,8 +499,8 @@ fn render_table(
         Line::from(Span::styled(s, border_style()))
     };
 
-    // When any body row wraps onto several lines, rule between every body
-    // row so wrapped cells can't run into the next row visually.
+    // Rule between body rows whenever any of them wraps, so cells can't run
+    // together.
     let wraps = rows.iter().skip(1).any(|row| {
         row.iter().zip(&colw).any(|(cell, &w)| {
             styled_cell(cell, colors)
@@ -538,8 +520,7 @@ fn render_table(
     r.push(border('└', '┴', '┘'), None);
 }
 
-/// One logical table row, possibly wrapping to several physical lines if a
-/// cell doesn't fit its column.
+/// One logical table row, possibly wrapping to several physical lines.
 fn push_table_row(
     r: &mut Rendered,
     row: &[String],
@@ -584,8 +565,8 @@ fn push_table_row(
     }
 }
 
-/// Inline-styled spans for one table cell (bold/italic/code), via
-/// `tui_markdown`'s single-line rendering of the cell's own text.
+/// Inline-styled spans for one table cell, via `tui_markdown`'s single-line
+/// rendering of the cell's own text.
 fn styled_cell(text: &str, colors: MdColors) -> Vec<Span<'static>> {
     let rendered = tui_markdown::from_str_with_options(text, &md_options(colors));
     rendered
@@ -608,10 +589,8 @@ enum Block {
     Plain,
 }
 
-/// Decide how a rendered markdown line should be treated. Fenced code is
-/// handled before this, so a styled line here is prose with inline
-/// formatting (`code`, **bold**): its block marker is rewritten inside the
-/// first span and the other spans keep their styles.
+/// Decide how a rendered markdown line should be treated: header, list item, or
+/// plain prose.
 fn classify(line: &Line, plain: &str, heading: Color) -> Block {
     let trimmed = plain.trim_start();
     let unstyled = line.spans.iter().all(|s| s.style == Style::default());
@@ -623,7 +602,7 @@ fn classify(line: &Line, plain: &str, heading: Color) -> Block {
     if (1..=6).contains(&hashes) && trimmed[hashes..].starts_with(' ') {
         let header_style = Style::default().fg(heading).add_modifier(Modifier::BOLD);
         if let Some(mut l) = replace_prefix(line, indent + hashes + 1, "") {
-            // `##   Heading`: extra spaces after the marker aren't content.
+            // Extra spaces after the marker aren't content.
             if let Some(first) = l.spans.first_mut() {
                 first.content = first.content.trim_start().to_string().into();
             }
@@ -644,8 +623,8 @@ fn classify(line: &Line, plain: &str, heading: Color) -> Block {
     Block::Plain
 }
 
-/// `line` with its first `len` bytes (which must sit inside the first span)
-/// replaced by `with`; `None` when the prefix straddles a span boundary.
+/// `line` with its first `len` bytes replaced by `with`; `None` when the prefix
+/// straddles a span boundary.
 fn replace_prefix(line: &Line, len: usize, with: &str) -> Option<Line<'static>> {
     let first = line.spans.first()?;
     let rest = first.content.get(len..)?;
@@ -662,14 +641,8 @@ fn replace_prefix(line: &Line, len: usize, with: &str) -> Option<Line<'static>> 
     Some(Line::from(spans))
 }
 
-/// Word-wrap a styled `Line` to `width` terminal columns, preserving per-span
-/// styling. Wraps by display width (CJK/emoji are 2 columns), not char count,
-/// so wide-glyph content — like a Japanese vocab table — doesn't overflow its
-/// budget. Mouse selection still maps by char index (`selection.rs`), a
-/// close-enough approximation for wide glyphs.
-/// Hard-wrap a code line at `width` display columns, keeping every
-/// character — unlike prose wrapping, leading indentation and runs of
-/// spaces are content here.
+/// Hard-wrap a code line at `width` display columns, keeping every character:
+/// unlike prose wrapping, leading indentation and runs of spaces are content.
 fn wrap_code_line(line: &Line, width: usize) -> Vec<Line<'static>> {
     let width = width.max(1);
     let mut rows: Vec<Vec<(char, Style)>> = vec![Vec::new()];
@@ -730,8 +703,8 @@ fn width_of(v: &[(char, Style)]) -> usize {
     v.iter().map(|&(c, _)| char_width(c)).sum()
 }
 
-/// Flush the accumulated `word` into the current row, wrapping (and hard-breaking
-/// over-long words) as needed. All measured in display columns.
+/// Flush the accumulated `word` into the current row, hard-breaking over-long
+/// words.
 fn place_word(
     rows: &mut Vec<Vec<(char, Style)>>,
     cur: &mut Vec<(char, Style)>,
@@ -893,7 +866,6 @@ mod inline_code_tests {
             .iter()
             .find(|s| s.content.as_ref() == "cargo test");
         let span = code_span.expect("inline code span not found");
-        // Not the library default (white-on-black — invisible on a black bg).
         assert_ne!(
             span.style,
             Style::default().fg(Color::White).bg(Color::Black)
@@ -910,8 +882,6 @@ mod table_tests {
 
     #[test]
     fn cjk_columns_stay_aligned() {
-        // Double-width glyphs must not desync the border from the content —
-        // every row's rendered display width has to match the border's.
         let table = "| 単語 | 読み |\n| --- | --- |\n| 会う | あう |\n| 会社 | かいしゃ |";
         let r = render(table, 40, MdColors::default());
         let widths: Vec<usize> = r
@@ -929,7 +899,6 @@ mod table_tests {
     fn render_produces_a_bordered_box_with_header_separator() {
         let r = render(TABLE, 40, MdColors::default());
         let text: Vec<String> = r.lines.iter().map(line_text).collect();
-        // top border, header, header/body separator, 2 data rows, bottom border.
         assert_eq!(text.len(), 6);
         assert!(text[0].starts_with('┌') && text[0].ends_with('┐'));
         assert!(text[1].contains("Name") && text[1].contains("Age"));
@@ -937,8 +906,6 @@ mod table_tests {
         assert!(text[5].starts_with('└') && text[5].ends_with('┘'));
     }
 
-    /// Inline formatting used to block marker stripping: a bullet or heading
-    /// containing `code` kept its raw `- ` / `## ` while plain ones didn't.
     #[test]
     fn markers_are_stripped_from_lines_with_inline_formatting() {
         let r = render(

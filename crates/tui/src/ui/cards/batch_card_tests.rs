@@ -50,7 +50,6 @@ fn render(
     (lines, hits)
 }
 
-/// Snapshot real terminal cells, normalizing only the right-aligned fold gap.
 fn snapshot(lines: &[Line<'static>]) -> Vec<String> {
     let mut terminal =
         Terminal::new(TestBackend::new(140, u16::try_from(lines.len()).unwrap())).unwrap();

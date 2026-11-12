@@ -1,6 +1,5 @@
-// Casts here are on terminal-bounded values (u16/u32 dims, byte colors,
-// glyph counts) — never on unbounded user data. JSON-derived indices in
-// provider/tools go through try_from instead.
+// Casts here are on terminal-bounded values (dims, byte colors, glyph counts),
+// never on unbounded user data.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -25,9 +24,8 @@ use crate::ui::markdown::line_text;
 
 #[allow(clippy::too_many_lines)] // whole conversation view: header, day dividers, cards, stats
 pub(super) fn render_history(f: &mut Frame, app: &mut AppView, area: Rect) {
-    // Borderless: the conversation fills the whole pane minus the rightmost
-    // column, which is the scrollbar gutter (always reserved so lines don't
-    // shift when the scrollbar appears).
+    // The rightmost column is the scrollbar gutter, always reserved so lines
+    // don't shift when the scrollbar appears.
     let inner = Rect {
         x: area.x,
         y: area.y,
@@ -36,10 +34,8 @@ pub(super) fn render_history(f: &mut Frame, app: &mut AppView, area: Rect) {
     };
     if app.is_welcome() {
         app.max_scroll = 0;
-        // The welcome screen renders no history lines — record an empty
-        // layout so a click here can never map onto the previous session's
-        // stale snapshot and open one of its URLs (or images) instead of
-        // doing nothing.
+        // Record an empty layout so a click here can't map onto the previous
+        // session's stale snapshot and open one of its URLs.
         app.sel.record_render(
             Rect::default(),
             0,
@@ -57,8 +53,8 @@ pub(super) fn render_history(f: &mut Frame, app: &mut AppView, area: Rect) {
     sync_cache(app, width);
     let images_changed = old_image_generation != app.history_cache.image_generation;
 
-    // The in-progress reply changes every frame (spinner, tokens); render it
-    // fresh and splice it after the cached prefix.
+    // The in-progress reply changes every frame, so it renders fresh after the
+    // cached prefix.
     let mut tail: Vec<Line<'static>> = Vec::new();
     let mut tail_code: Vec<Option<usize>> = Vec::new();
     let mut tail_blocks: Vec<String> = Vec::new();
@@ -92,27 +88,16 @@ pub(super) fn render_history(f: &mut Frame, app: &mut AppView, area: Rect) {
     let cached_lines = cache.lines.len();
     let total = cached_lines + tail.len();
 
-    // Scroll: app.scroll counts lines scrolled UP from the bottom (0 = follow bottom).
+    // `app.scroll` counts lines scrolled up from the bottom (0 = follow).
     let height = inner.height as usize;
     app.history_height = height;
     let max_top = total.saturating_sub(height);
     app.max_scroll = max_top; // let the event loop clamp scrolling
 
-    // The rendered line count can change under the viewport: the streaming
-    // tail grows, or a display-flag toggle (Ctrl+R reasoning, Ctrl+T tool
-    // detail) re-wraps the whole cache. Keep the viewport where the user is
-    // reading instead of letting it jump.
-    //
-    // A raw line-count delta only pins correctly when every new line landed
-    // BELOW the viewport. Growth above it (reasoning streaming while the
-    // user reads the answer below it, a tool-call message landing in the
-    // cache, the tail re-wrapping) shifts the content without shifting the
-    // line index, so delta compensation scrolls the wrong text under the
-    // viewport. Instead, re-find the exact line the viewport was pinned to:
-    // the tail re-renders every frame, but a surviving line's text is a
-    // prefix of the line at its new position (only the frontier lines grow),
-    // so the previous frame's viewport-top line can be matched by prefix in
-    // the newly-rendered region and the viewport pinned back onto it.
+    // The line count can change under the viewport, and a raw delta only pins
+    // when all growth landed below it. Growth above shifts the content without
+    // shifting the line index, so instead re-find the previous top line by
+    // prefix (only the frontier lines grow) and pin the viewport back onto it.
     let prev_tail = std::mem::take(&mut app.prev_tail);
     let prev_top = app
         .prev_total
@@ -130,32 +115,23 @@ pub(super) fn render_history(f: &mut Frame, app: &mut AppView, area: Rect) {
     let explicit_toggle = app.pin_viewport_top;
     let clicked = app.tool_click_anchor.take();
     app.pin_viewport_top = false;
-    // Pin only when the user has actually scrolled up, or just toggled a
-    // display flag. While following the bottom (scroll == 0) the viewport
-    // tracks the newest lines — including across the tail→cache transition
-    // when a reply finishes, where delta-compensating would leave the
-    // viewport short of the end of the content (the stored card renders a
-    // couple of lines taller than the streaming tail, so the reply's last
-    // lines would end up hidden below the pane).
+    // While following the bottom the viewport tracks the newest lines, even
+    // across the tail→cache transition, where a stored card renders taller
+    // than the streaming tail.
     let pin_top = app.prev_total > 0 && (explicit_toggle || app.scroll > 0);
-    // A display-flag toggle while following the bottom keeps following the
-    // bottom: the re-wrap's growth belongs above the viewport, so pinning
-    // the top line would push the end of the conversation below the pane
-    // ("the view moves way past the messages").
+    // A toggle while following the bottom keeps following it: the re-wrap's
+    // growth belongs above the viewport.
     let pin = pin_top && !(explicit_toggle && app.scroll == 0);
     if pin
         && !explicit_toggle
         && let Some(anchor) = anchor
         && anchor.chars().count() >= 12
     {
-        // Scrolled up with the viewport inside the streaming tail: pin to
-        // the content line, not the line index.
-        // A very short anchor is a frontier line still being typed, where
-        // the delta path below is exact anyway (all growth is below it) —
-        // and a short prefix could match unrelated lines below the anchor.
+        // Scrolled up inside the streaming tail: pin to the content line, not
+        // the line index. A short anchor is a frontier line still being typed,
+        // where the delta path below is exact and a prefix could match wrongly.
         let prefix: String = anchor.chars().take(24).collect();
-        // The anchor can only have moved into lines rendered since the last
-        // frame: the tail plus any messages appended to the cache.
+        // The anchor can only have moved into lines rendered since last frame.
         let search_from = app.prev_total.saturating_sub(prev_tail.len()).min(total);
         let mut hit: Option<usize> = None;
         let mut i = total;
@@ -180,14 +156,10 @@ pub(super) fn render_history(f: &mut Frame, app: &mut AppView, area: Rect) {
             }
         }
     } else if pin && explicit_toggle {
-        // Display-flag toggle (Ctrl+R reasoning, Ctrl+T tool detail) while
-        // scrolled up: the cache re-wrap preserves every message — only
-        // reasoning / tool-detail blocks inside them appear or disappear —
-        // so pin the viewport to the message the previous frame's top line
-        // belonged to, at the same offset within it. Delta-compensating the
-        // absolute line index would instead land on content shifted by all
-        // the growth above the viewport ("the view jumps way past the
-        // messages").
+        // A display-flag toggle re-wraps in place, so pin the viewport to the
+        // message the previous top line belonged to, at the same offset within
+        // it; the absolute line index would land on content shifted by all the
+        // growth above.
         let mut pinned = clicked.and_then(|(owner, row, old_start)| {
             let new_start = row.map_or_else(
                 || cache.owner.iter().position(|o| *o == Some(owner)),
@@ -202,8 +174,8 @@ pub(super) fn render_history(f: &mut Frame, app: &mut AppView, area: Rect) {
             new_start.map(|new_start| (prev_top + new_start).saturating_sub(old_start))
         });
         if pinned.is_none() && images_changed {
-            // Images can grow inside the same message, above its answer.
-            // Prefer surviving text over the old offset within that message.
+            // Images can grow above the answer, so prefer surviving text over
+            // the old offset within the message.
             for offset in 0..6 {
                 if let Some(text) = app.sel.line_at(prev_top + offset)
                     && text.chars().count() >= 12
@@ -217,16 +189,14 @@ pub(super) fn render_history(f: &mut Frame, app: &mut AppView, area: Rect) {
         if pinned.is_none()
             && let Some(owner) = app.sel.owner_at(prev_top)
         {
-            // The top line's offset within its message block in the
-            // previous render (walk up to the block start).
+            // Walk up to the previous render's block start.
             let mut old_start = prev_top;
             while old_start > 0 && app.sel.owner_at(old_start - 1) == Some(owner) {
                 old_start -= 1;
             }
             let offset = prev_top - old_start;
-            // The same message's block in the new render: the cache prefix
-            // for stored messages, the streaming tail for the in-flight
-            // reply (its owner id is the message count at record time).
+            // The in-flight reply's owner id is the message count at record
+            // time, so its block lives in the tail.
             let (new_start, block_len) = if owner == app.messages.len() {
                 (Some(cached_lines), tail.len())
             } else {
@@ -244,11 +214,8 @@ pub(super) fn render_history(f: &mut Frame, app: &mut AppView, area: Rect) {
             }
         }
         if pinned.is_none() {
-            // Fallback when the message block can't be located (e.g. the
-            // session changed between frames): re-find the previous top
-            // line's text, trying nearby lines first — the top is often a
-            // blank card row or a "▸ reasoning" header whose text the
-            // toggle itself changes.
+            // Fallback: re-find the top line's text nearby — the top is often a
+            // blank row or a header the toggle itself rewrites.
             'candidates: for off in [0, 1, 2, 3, 4, 5, -1, -2, -3, -4, -5] {
                 let li = if off >= 0 {
                     prev_top + off as usize
@@ -261,8 +228,7 @@ pub(super) fn render_history(f: &mut Frame, app: &mut AppView, area: Rect) {
                 if text.chars().count() < 12 {
                     continue;
                 }
-                // Exact text survives the re-wrap; fall back to a prefix
-                // for streaming frontier lines that kept growing.
+                // Exact text survives the re-wrap; a frontier line kept growing.
                 if let Some(hit) = find_line(&cache.lines, &tail, |l| l == text) {
                     pinned = Some((hit as i64 - off).max(0) as usize);
                     break 'candidates;
@@ -294,8 +260,8 @@ pub(super) fn render_history(f: &mut Frame, app: &mut AppView, area: Rect) {
     app.scroll = app.scroll.min(app.max_scroll);
     let top = max_top.saturating_sub(app.scroll);
 
-    // Snapshot the layout + plain text + per-line message owner so mouse
-    // selection can map screen cells and scope a selection to one message.
+    // Snapshot layout, plain text and per-line owner so mouse selection can
+    // map screen cells to a message.
     let cache = &app.history_cache;
     let mut plain = cache.plain.clone();
     plain.extend(tail.iter().map(line_text));
@@ -309,7 +275,6 @@ pub(super) fn render_history(f: &mut Frame, app: &mut AppView, area: Rect) {
     app.sel
         .record_render(inner, top, plain, owner, code, blocks);
 
-    // Paint the selection highlight over the visible slice.
     let cache = &app.history_cache;
     let line_at = |i: usize| {
         if i < cached_lines {
@@ -366,7 +331,7 @@ pub(super) fn render_history(f: &mut Frame, app: &mut AppView, area: Rect) {
         placement.row += cached_lines;
         placement.owner = app.messages.len();
         // Bind mutable state only to stored replies, never to a live task's
-        // shifting message index (parallel tasks/tool rows may share it).
+        // shifting message index.
         placement.complete = false;
         placement
     }));
@@ -389,19 +354,15 @@ pub(super) fn render_history(f: &mut Frame, app: &mut AppView, area: Rect) {
         }
     }
 
-    // Scrollbar in the gutter, only when the conversation overflows. Hand-
-    // drawn: ratatui's `Scrollbar` thumb jumps on every streamed line and
-    // never sits flush at the track bottom (see `render_scrollbar`).
+    // Hand-drawn: ratatui's `Scrollbar` thumb jumps on every streamed line and
+    // never sits flush at the track bottom.
     if total > height {
         render_scrollbar(f, area, total, top, &app.theme);
     }
 }
 
-/// Draw the history scrollbar into the 1-column gutter at `area`'s right
-/// edge. `total` is the rendered line count and `top` the first visible
-/// line. The thumb covers the viewport's fraction of the content and maps
-/// linearly onto the track, so it sits flush against both track ends at the
-/// scroll extremes — no dead gap under the thumb while following the stream.
+/// Draw the history scrollbar into the 1-column gutter at `area`'s right edge;
+/// `total` is the rendered line count and `top` the first visible line.
 fn render_scrollbar(
     f: &mut Frame,
     area: Rect,
@@ -413,12 +374,8 @@ fn render_scrollbar(
     if track == 0 {
         return;
     }
-    // Viewport fraction of the content, at least one cell.
     let thumb_len = (track * track / total).clamp(1, track);
-    // `top` ranges 0..=total-track; map it onto the thumb's travel range
-    // 0..=track-thumb_len so both scroll extremes land flush. (The caller
-    // only renders the scrollbar when `total > height`, so `room` is never
-    // zero — the `unwrap_or(0)` is just a safety net.)
+    // Map `top` onto the thumb's travel range so both scroll extremes land flush.
     let room = total.saturating_sub(track);
     let thumb_top = (top * (track - thumb_len)).checked_div(room).unwrap_or(0);
     let gutter = Rect {
@@ -442,9 +399,7 @@ fn render_scrollbar(
     f.render_widget(Paragraph::new(lines), gutter);
 }
 
-/// Scan the rendered lines (cache prefix + streaming tail) from the bottom
-/// for the last line matching `pred` — used to re-find a pinned viewport
-/// line by text after a cache re-wrap.
+/// Scan the rendered lines from the bottom for the last one matching `pred`.
 fn find_line(
     cache: &[Line<'static>],
     tail: &[Line<'static>],
@@ -468,9 +423,8 @@ fn find_line(
 
 // Long by design (cache sync).
 #[allow(clippy::too_many_lines)]
-/// Bring the cached wrapped prefix up to date: reset on width/flag/session
-/// change, then wrap only messages not yet cached. Stored messages are
-/// append-only, so this is O(new messages) per frame instead of O(all).
+/// Bring the cached wrapped prefix up to date, wrapping only messages not yet
+/// cached: stored messages are append-only, so this is O(new) per frame.
 fn sync_cache(app: &mut AppView, width: usize) {
     let image_generation = app.activate_image_context();
     if app.history_cache.msg_count != app.messages.len() {
@@ -502,42 +456,36 @@ fn sync_cache(app: &mut AppView, width: usize) {
             .wrapping_add(app.tool_open_gen)
             .wrapping_add(image_generation),
     );
-    // Work on a detached cache: the wrap pass reads the domain half
-    // (messages, settings, space) through the `AppView` deref, which borrows
-    // the whole view — it can't overlap a borrow of a view field.
+    // Detach the cache: the wrap pass reads the domain half through the
+    // `AppView` deref, which borrows the whole view.
     let mut cache = std::mem::take(&mut app.history_cache);
     let c = &mut cache;
     if c.key != key || app.messages.len() < c.msg_count {
         if c.key.0 != key.0 {
-            // Session changed — save old cache for later reuse.
             if let Some(sid) = &c.key.0 {
                 app.session_caches.insert(sid.clone(), std::mem::take(c));
             }
-            // Restore cache for the new session if available.
             if let Some(sid) = &key.0
                 && let Some(cached) = app.session_caches.remove(sid)
                 && cached.key == key
                 && cached.msg_count == app.messages.len()
             {
                 *c = cached;
-                // Reattach the restored cache; returning without this left
-                // the view empty for a frame and re-wrapped everything next.
+                // Reattach before returning, or the view renders empty for a frame.
                 app.history_cache = cache;
                 return;
             }
-            // New session or stale cache — full reset.
             *c = HistoryCache {
                 key,
                 ..Default::default()
             };
         } else if app.messages.len() < c.msg_count || c.key.1 != key.1 || c.key.6 != key.6 {
-            // Width or theme changed — full reset (drops image cache too).
             *c = HistoryCache {
                 key,
                 ..Default::default()
             };
         } else {
-            // Only display flags changed — keep image cache, re-wrap messages.
+            // Only display flags changed, so keep the image cache.
             let ic = std::mem::take(&mut c.image_cache);
             *c = HistoryCache {
                 key,
@@ -550,7 +498,6 @@ fn sync_cache(app: &mut AppView, width: usize) {
     for (i, m) in app.messages.iter().enumerate().skip(c.msg_count) {
         let start = c.lines.len();
         let widget_start = c.widgets.len();
-        // Day divider when the conversation crosses a midnight boundary.
         if let Some(day) = m.created_at.as_deref().map(day_of)
             && c.last_day.as_deref() != Some(day)
         {
@@ -647,7 +594,6 @@ fn sync_cache(app: &mut AppView, width: usize) {
 }
 
 /// Toggle only the tool card owning a rendered line, including its preamble.
-/// Keep its header in place on the next re-wrap when scrolled up.
 pub(crate) fn toggle_tool_at_line(app: &mut AppView, line: usize) {
     let Some(owner) = app.sel.owner_at(line) else {
         return;
@@ -727,8 +673,7 @@ pub(crate) fn move_batch_focus(app: &mut AppView, down: bool) {
     }
 }
 
-/// A centered `── label ──` rule, used for day dividers and the welcome
-/// screen's recent-sessions header.
+/// A centered `── label ──` rule.
 pub(super) fn rule_line(
     out: &mut Vec<Line<'static>>,
     label: &str,
@@ -749,8 +694,7 @@ pub(super) fn rule_line(
     )));
 }
 
-/// `2026-08-08T14:32:00Z` -> `2026-08-08` (`created_at` is ISO-8601; the
-/// first 10 bytes of an RFC3339 timestamp are always an ASCII date).
+/// `2026-08-08T14:32:00Z` -> `2026-08-08`.
 pub(super) fn day_of(rfc3339: &str) -> &str {
     rfc3339.get(0..10).unwrap_or(rfc3339)
 }
@@ -848,8 +792,7 @@ mod tests {
         a
     }
 
-    /// The rendered text of the first three rows of the history pane — the
-    /// ground truth of what the user sees at the viewport top.
+    /// The rendered text of the first three rows of the history pane.
     fn visible_snapshot(terminal: &ratatui::Terminal<ratatui::backend::TestBackend>) -> String {
         let buf = terminal.backend().buffer();
         let mut out = String::new();
@@ -973,18 +916,15 @@ mod tests {
         assert_eq!(a.history_cache.msg_count, 2);
         assert_eq!(a.history_cache.plain.len(), n);
 
-        // Same width: appending one message only grows the cache.
         a.messages.push(msg("user", "again"));
         sync_cache(&mut a, 80);
         assert!(a.history_cache.lines.len() > n);
         assert_eq!(a.history_cache.msg_count, 3);
 
-        // Width change: full re-wrap.
         sync_cache(&mut a, 20);
         assert_eq!(a.history_cache.msg_count, 3);
         assert_eq!(a.history_cache.key.1, 20);
 
-        // Ctrl+T flag change: re-wrap so tool-call detail shows.
         a.show_tool_detail = true;
         let before = a.history_cache.lines.len();
         a.messages.push(msg(
@@ -994,7 +934,6 @@ mod tests {
         sync_cache(&mut a, 20);
         assert!(a.history_cache.lines.len() > before);
 
-        // Fewer messages (session cleared): cache resets, no stale lines.
         a.messages.clear();
         sync_cache(&mut a, 20);
         assert_eq!(a.history_cache.lines.len(), 0);
@@ -1020,9 +959,6 @@ mod tests {
         assert!(text.contains("fine-tuning LLMs"), "{text}");
         assert!(text.contains("1. Depth or breadth?"), "{text}");
         assert!(text.contains("Answer in chat"), "{text}");
-        // The survey row is never replayed to the model — the role filter in
-        // build_history skips it (covered in app/chat.rs tests); here we just
-        // verify the renderer picked it up.
         assert!(
             a.history_cache
                 .plain
@@ -1049,8 +985,6 @@ mod tests {
         assert!(text.contains("earlier messages, summarized"), "{text}");
         assert!(text.contains("digest line one"), "{text}");
         assert!(text.contains("digest line two"), "{text}");
-        // The digest appears in the copy/plain view too — it's visible
-        // transcript content, not a hidden sidecar.
         assert!(
             a.history_cache
                 .plain
@@ -1162,7 +1096,6 @@ mod tests {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
-        // Scroll up into the middle of the reasoning block.
         a.scroll = 8;
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
         let before = visible_snapshot(&terminal);
@@ -1171,7 +1104,6 @@ mod tests {
             "viewport should be in the reasoning, got: {before}"
         );
 
-        // Reasoning keeps streaming below the viewport.
         let task = a.chat_tasks.get_mut(&1).unwrap();
         for i in 0..20 {
             write!(
@@ -1205,7 +1137,6 @@ mod tests {
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
 
-        // Scroll up into the answer region (bottom of the streaming tail).
         assert!(a.max_scroll > 0, "needs an overflowing transcript");
         a.scroll = 12;
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
@@ -1215,7 +1146,6 @@ mod tests {
             "viewport should be in the answer, got: {before}"
         );
 
-        // Reasoning keeps streaming above the viewport; answer grows a bit below.
         let task = a.chat_tasks.get_mut(&1).unwrap();
         for i in 0..30 {
             write!(
@@ -1247,7 +1177,6 @@ mod tests {
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
         let before = visible_snapshot(&terminal);
 
-        // Stream finishes: the tail is replaced by the cached stored message.
         a.on_chat_event(1, nexus_core::provider::StreamEvent::Done)
             .unwrap();
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
@@ -1269,7 +1198,6 @@ mod tests {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
-        // Scroll up so the viewport top is inside the reasoning block.
         a.scroll = 5;
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
         let before = visible_snapshot(&terminal);
@@ -1299,8 +1227,6 @@ mod tests {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
-        // Scroll up into the reasoning block (well above where the tool
-        // message will land in the cache).
         a.scroll = 10;
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
         let before = visible_snapshot(&terminal);
@@ -1309,8 +1235,6 @@ mod tests {
             "viewport should be in the reasoning, got: {before}"
         );
 
-        // A tool call completes: with tool detail on, its block is long and
-        // lands in the cache ABOVE the streaming tail.
         a.on_chat_event(
             1,
             nexus_core::provider::StreamEvent::ToolCall {
@@ -1553,7 +1477,6 @@ mod tests {
         let total1 = a.history_cache.lines.len();
         assert!(a.max_scroll > 10, "conversation should overflow the pane");
 
-        // User scrolls up a little, then Ctrl+T expands the tool block.
         a.scroll = 5;
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
         assert_eq!(a.scroll, 5);
@@ -1563,14 +1486,12 @@ mod tests {
         let total2 = a.history_cache.lines.len();
         let delta = total2 as i64 - total1 as i64;
         assert!(delta > 20, "tool detail should add many lines");
-        // Scroll compensated by the delta: the top line stayed put.
         assert_eq!(
             a.scroll,
             5 + delta as usize,
             "viewport top must stay pinned"
         );
 
-        // Ctrl+T again collapses: the viewport returns to the same spot.
         a.show_tool_detail = false;
         a.pin_viewport_top = true;
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
@@ -1586,10 +1507,6 @@ mod tests {
         let total1 = a.history_cache.lines.len();
         assert_eq!(a.scroll, 0, "starts following the bottom");
 
-        // Ctrl+T while following the bottom: the block expands in place and
-        // the viewport keeps following the bottom — the end of the
-        // conversation stays visible instead of the expansion pushing it
-        // below the pane.
         a.show_tool_detail = true;
         a.pin_viewport_top = true;
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
@@ -1598,9 +1515,7 @@ mod tests {
         assert_eq!(a.scroll, 0, "must keep following the bottom");
     }
 
-    /// A tall conversation with reasoning traces on many assistant messages,
-    /// so a show-reasoning toggle re-wraps content above and below the
-    /// viewport, not just below it.
+    /// A tall conversation with reasoning traces on many assistant messages.
     fn tall_reasoning_app() -> AppView {
         let mut a = test_app();
         for i in 0..40 {
@@ -1632,7 +1547,6 @@ mod tests {
         let total1 = a.history_cache.lines.len();
         assert!(a.max_scroll > 10, "conversation should overflow the pane");
 
-        // Scroll up into the middle of the conversation.
         a.scroll = 25;
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
         let before = visible_snapshot(&terminal);
@@ -1641,9 +1555,6 @@ mod tests {
             "viewport should be in the middle of the conversation, got: {before}"
         );
 
-        // Ctrl+R expands reasoning across the whole conversation — most of
-        // the growth lands ABOVE the viewport. The viewport must stay on
-        // the same content, not jump to older messages.
         a.settings.show_reasoning = true;
         a.pin_viewport_top = true;
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
@@ -1655,7 +1566,6 @@ mod tests {
             "viewport content jumped on reasoning toggle: before={before:?} after={after:?}"
         );
 
-        // Collapsing again returns to the same content.
         a.settings.show_reasoning = false;
         a.pin_viewport_top = true;
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
@@ -1674,9 +1584,6 @@ mod tests {
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
         assert_eq!(a.scroll, 0, "starts following the bottom");
 
-        // Ctrl+R while at the bottom: the end of the conversation stays at
-        // the bottom — the last message's reasoning is visible instead of
-        // being pushed below the pane.
         a.settings.show_reasoning = true;
         a.pin_viewport_top = true;
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
@@ -1700,7 +1607,6 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         let mut a = streaming_app(&reasoning, "The answer body.\nSecond answer line.");
-        // One stored tool call that the Ctrl+T toggle will expand.
         a.messages.push(msg(
             "tool_call",
             r#"{"name":"search","arguments":"{}","result":"line one\nline two"}"#,
@@ -1708,7 +1614,6 @@ mod tests {
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
-        // Scroll into the middle of the reasoning (inside the streaming tail).
         a.scroll = 8;
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
         let before = visible_snapshot(&terminal);
@@ -1717,9 +1622,6 @@ mod tests {
             "viewport should be in the tail, got: {before}"
         );
 
-        // Ctrl+T re-wraps the cache (tool detail expands ABOVE the tail)
-        // while the user reads the streaming reply: the tail content must
-        // stay put.
         a.show_tool_detail = true;
         a.pin_viewport_top = true;
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
@@ -1735,15 +1637,13 @@ mod tests {
         terminal: &ratatui::Terminal<ratatui::backend::TestBackend>,
     ) -> Vec<(String, ratatui::style::Color)> {
         let buf = terminal.backend().buffer();
-        // The scrollbar gutter is the reading column's last cell.
         let x = crate::ui::reading_column(buf.area, "auto").right() - 1;
         (0..buf.area.height)
             .map(|y| (buf[(x, y)].symbol().to_string(), buf[(x, y)].fg))
             .collect()
     }
 
-    /// Height of the history pane on an 80x24 terminal with an empty
-    /// composer: 24 minus 3 input rows (1 content + 2 border) minus 1 status.
+    /// Height of the history pane on an 80x24 terminal with an empty composer.
     const HISTORY_H: usize = 20;
 
     #[test]
@@ -1759,7 +1659,6 @@ mod tests {
             a.theme.accent,
             "thumb must sit flush at the track bottom — no dead gap"
         );
-        // The rest of the gutter above it is the dim track.
         assert_eq!(gutter[0].1, a.theme.border_dim);
     }
 
@@ -1786,8 +1685,6 @@ mod tests {
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
         let total = a.history_cache.lines.len();
         assert!(total > HISTORY_H, "conversation should overflow the pane");
-        // Halfway up the conversation: the thumb must sit at the halfway
-        // point of its travel range, with the proportional length.
         a.scroll = a.max_scroll / 2;
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
         let top = a.max_scroll - a.scroll;
@@ -1820,10 +1717,6 @@ mod tests {
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
         assert_eq!(a.scroll, 0, "follows the bottom while streaming");
 
-        // The reply finishes: the tail moves into the cache as a stored card
-        // that renders taller than the streaming tail (reasoning header +
-        // phrase footer). Following the bottom must still show the very end
-        // of the conversation — not a viewport that stops short of it.
         a.on_chat_event(1, nexus_core::provider::StreamEvent::Done)
             .unwrap();
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
@@ -1831,8 +1724,6 @@ mod tests {
             a.scroll, 0,
             "must keep following the bottom after the stream ends"
         );
-        // The pane's bottom row shows the last rendered line of the message
-        // (its trailing blank card row) — nothing is cut off below it.
         let buf = terminal.backend().buffer();
         let col = crate::ui::reading_column(buf.area, "auto");
         let bottom_row: String = (col.x..col.right() - 1)
@@ -1915,7 +1806,6 @@ mod tests {
         );
         let before_lines = a.history_cache.lines.len();
 
-        // Scrolled up, below the picture: its rows arrive above the viewport.
         a.scroll = 25;
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
         let before = visible_snapshot(&terminal);
@@ -1935,7 +1825,6 @@ mod tests {
             "late image rows must not move the viewport"
         );
 
-        // Following the bottom stays at the bottom.
         a.scroll = 0;
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
         let bottom = screen(&terminal);
@@ -1958,7 +1847,6 @@ mod tests {
             "{text}"
         );
 
-        // Turning remote images off: alt text with the host, nothing fetched.
         a.core.settings.remote_images = false;
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
         let text = history_text(&a);
@@ -2016,8 +1904,6 @@ mod card_background_tests {
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 10)).unwrap();
         terminal.draw(|f| crate::ui::render(f, &mut app)).unwrap();
         let buf = terminal.backend().buffer();
-        // The card occupies the right side: find the first "a" of
-        // "a short note" and verify that it uses the configured surface.
         let mut body_start = None;
         for y in 0..buf.area.height {
             for x in 0..buf.area.width {
@@ -2036,7 +1922,6 @@ mod card_background_tests {
             body_bg, app.theme.raised,
             "card should use the raised shade (the terminal's own bg when transparent)"
         );
-        // Right-aligned: the body starts well past the pane's midpoint.
         assert!(
             body_start >= 30,
             "card should be right-aligned, got body start at {body_start}"

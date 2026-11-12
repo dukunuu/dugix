@@ -1,9 +1,5 @@
-//! `/library`: every deck and doc of the space, newest first. Enter opens one in
-//! studio (linking the window), `e` exports it through the operating system's
-//! Save dialog, `d` moves it to the space's `.trash` folder after a confirm.
-//!
-//! The listing, the file operations and the dialogs are `nexus_core::canvas`'s,
-//! shared with studio and `nexus library`; this module only draws and keys.
+//! `/library`: every deck and doc of the space, newest first. The listing, file
+//! operations and dialogs are `nexus_core::canvas`'s; this module only draws.
 
 use std::path::PathBuf;
 
@@ -24,14 +20,11 @@ use crate::ui::style::SEP;
 
 use super::chrome;
 
-/// What the popup is asking right now.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Mode {
     #[default]
     Browse,
-    /// `e`: which format to export the selected file in.
     ExportAs,
-    /// `d`: really move the selected file to the trash folder?
     ConfirmDelete,
 }
 
@@ -217,7 +210,7 @@ fn browse_key(app: &mut AppView, key: KeyEvent) {
     }
 }
 
-/// Enter: open the file in studio, which links the window to this conversation.
+/// Enter: open the file in studio, linking the window to this conversation.
 fn open_selected(app: &mut AppView) {
     let Some(path) = selected(app).map(|entry| entry.path.display().to_string()) else {
         return;

@@ -1,11 +1,5 @@
 //! `/agents` (or Ctrl+↑ while a turn's sub-agents run): the conversation's
-//! `task` sub-agents. The list shows each run's status, model, steps, tokens
-//! and cost; Enter opens its transcript — the prompt, every round's reasoning
-//! and tool calls, the answer, a workspace task's review diff — streaming
-//! while it runs.
-//!
-//! Runs come from `nexus_core::app::subagents`: saved ones are read once when
-//! the popup opens, live ones from memory every frame.
+//! `task` sub-agents, each with a live transcript.
 
 use std::collections::HashMap;
 
@@ -24,19 +18,14 @@ use super::chrome;
 
 #[derive(Default)]
 pub struct SubagentsPopup {
-    /// The conversation whose sub-agents are shown.
     pub session_id: String,
     /// Runs read from the cache when the popup opened.
     pub saved: Vec<SubagentRun>,
-    /// Row in the list (newest first).
     pub selected: usize,
-    /// The run whose transcript is open.
     pub open: Option<String>,
     /// Transcript lines scrolled up from the bottom; 0 follows the end.
     pub scroll: usize,
-    /// Tool cards show their bodies.
     pub tools_open: bool,
-    /// Reasoning collapses to one line per round.
     pub hide_reasoning: bool,
 }
 
@@ -65,7 +54,6 @@ pub fn has_live(app: &AppView) -> bool {
     })
 }
 
-/// Newest first.
 fn runs(app: &AppView) -> Vec<SubagentRun> {
     let mut runs = app.with_live_subagents(app.subagents.saved.clone(), &app.subagents.session_id);
     runs.reverse();
@@ -332,7 +320,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
                 view.hide_reasoning = !view.hide_reasoning;
             }
             KeyCode::Left | KeyCode::Right | KeyCode::Char('h' | 'l') if total > 0 => {
-                // The list is newest first: → goes to the next newer run.
+                // The list is newest first.
                 let newer = matches!(key.code, KeyCode::Right | KeyCode::Char('l'));
                 view.selected = if newer {
                     view.selected.saturating_sub(1)

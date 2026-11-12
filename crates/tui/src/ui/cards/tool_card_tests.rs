@@ -85,7 +85,6 @@ fn doc_cards_hint_at_studio_like_deck_cards() {
             !hint(&text(&card("canvas", args.clone(), result, false, true))),
             "hints off"
         );
-        // Reading, viewing and failing do not invite opening anything.
         let failed = text(&card(
             "canvas",
             args,
@@ -229,7 +228,6 @@ fn connector_calls_show_the_tool_the_connector_arguments_and_a_result_preview() 
     ))
     .remove(0);
     assert!(denied.contains("denied"), "{denied}");
-    // Through the meta-tool the inner tool is what the card names.
     let meta = card(
         "connectors",
         json!({"action": "call", "tool": "linear__get_issue", "arguments": {"id": "LIN-1"}}),
@@ -252,7 +250,6 @@ fn connector_calls_show_the_tool_the_connector_arguments_and_a_result_preview() 
     ))
     .remove(0);
     assert!(search.contains("search connectors"), "{search}");
-    // Expanded: the generic argument table and the full result.
     let expanded = text(&card(
         "linear__create_issue",
         args,
@@ -265,7 +262,6 @@ fn connector_calls_show_the_tool_the_connector_arguments_and_a_result_preview() 
         expanded.contains("title") && expanded.contains("created LIN-42"),
         "{expanded}"
     );
-    // Built-in cards are untouched.
     assert!(
         text(&card(
             "search",
@@ -706,7 +702,6 @@ fn opened_search_card_shows_a_thumbnail_only_beside_results_that_have_one() {
     crate::app_view::use_fetcher_for_tests(&fetcher);
     let baseline = text(&card("search", args.clone(), plain, true, false));
 
-    // Not fetched yet (and no runtime in this test): a compact marker.
     let loading = text(&card("search", args.clone(), &with, true, false));
     assert!(
         loading
@@ -720,8 +715,6 @@ fn opened_search_card_shows_a_thumbnail_only_beside_results_that_have_one() {
     let ready_text = text(&ready);
     let pixel_rows = ready_text.iter().filter(|l| l.contains('▀')).count();
     assert_eq!(pixel_rows, 3, "{ready_text:?}");
-    // Same rows as a result list without images (the text is 3 rows tall
-    // already); the second, image-less result is untouched.
     assert_eq!(ready_text.len(), baseline.len(), "{ready_text:?}");
     assert!(
         ready_text
@@ -730,7 +723,6 @@ fn opened_search_card_shows_a_thumbnail_only_beside_results_that_have_one() {
     );
     assert!(ready.iter().all(|l| l.width() <= 80));
 
-    // Collapsed card is unchanged by thumbnails.
     let collapsed_with = text(&card("search", args.clone(), &with, false, false));
     let collapsed_plain = text(&card("search", args, plain, false, false));
     assert_eq!(collapsed_with, collapsed_plain);

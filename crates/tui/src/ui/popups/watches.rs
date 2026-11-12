@@ -29,7 +29,6 @@ pub fn render(f: &mut Frame, app: &AppView) {
                     Some(t) => crate::ui::fmt_created(t),
                     None => "never".to_string(),
                 };
-                // Next run: last run + interval, or "due" when past.
                 let next = match &w.last_run_at {
                     Some(t) => chrono::DateTime::parse_from_rfc3339(t).ok().map_or_else(
                         || "soon".to_string(),

@@ -1,16 +1,5 @@
-//! The TUI's visual vocabulary. Every screen draws from here so one meaning
-//! always looks one way: a single monochrome glyph per concept (no emoji —
-//! their widths vary by terminal and they clash with the line-art chrome),
-//! one color per role, one way to draw a section header, a separator, or a
-//! line of metadata.
-//!
-//! Color roles:
-//! - `accent`: you, and anything interactive or waiting on your input
-//!   (your turns, the prompt, selections, titles, questions for you)
-//! - `accent2`: the assistant and its agents (replies, tools, research)
-//! - `fg_dim`: metadata (times, stats, sizes, hints)
-//! - `border_dim`: chrome (frames, rules, rails, separators)
-//! - `success` / `warning` / `error`: status, nothing else
+//! The TUI's visual vocabulary: one monochrome glyph and one color per concept
+//! (`accent` for you, `accent2` for the assistant, dim for metadata and chrome).
 
 use nexus_core::highlight::Role;
 use ratatui::style::{Color, Modifier, Style};
@@ -20,79 +9,47 @@ use crate::theme::Theme;
 
 /// One glyph per concept, each a single terminal column.
 pub mod glyph {
-    /// Your turns and the composer prompt.
     pub const YOU: &str = "❯";
-    /// An assistant reply.
     pub const ASSISTANT: &str = "✦";
-    /// A tool call.
     pub const TOOL: &str = "⚒";
-    /// Research: stage rows and research sessions.
     pub const RESEARCH: &str = "◇";
-    /// A question round waiting on your answer.
     pub const QUESTION: &str = "?";
-    /// A plan waiting on your approval.
     pub const PLAN: &str = "☰";
-    /// A compaction digest.
     pub const DIGEST: &str = "≡";
-    /// A link to another session.
     pub const LINK: &str = "↪";
-    /// An image or document placeholder.
     pub const MEDIA: &str = "▣";
-    /// The active model.
     pub const MODEL: &str = "◆";
-    /// The active space.
     pub const SPACE: &str = "⌂";
-    /// Web answer mode.
     pub const WEB: &str = "◎";
-    /// A call to a connected service (an MCP connector).
     pub const CONNECTOR: &str = "⇄";
-    /// Incognito mode.
     pub const INCOGNITO: &str = "◌";
-    /// Something running.
     pub const RUNNING: &str = "⟳";
-    /// Finished while you weren't looking; a toggle that's on.
     pub const DOT: &str = "●";
-    /// A toggle that's off; an inactive choice.
     pub const RING: &str = "○";
-    /// Success.
     pub const OK: &str = "✓";
-    /// Failure.
     pub const FAIL: &str = "✗";
-    /// A warning (text form: one column in every terminal).
+    /// The text form: one column in every terminal.
     pub const WARN: &str = "⚠";
-    /// The selected row; a collapsed section.
     pub const SELECTED: &str = "▸";
-    /// An expanded section.
     pub const EXPANDED: &str = "▾";
-    /// Section-header bar.
     pub const SECTION: &str = "▍";
-    /// A card's left rail.
     pub const RAIL: &str = "▎";
-    /// The unfilled part of a bar.
     pub const TRACK: &str = "░";
-    /// Filled and unfilled portions of a compact panel progress track.
     pub const BAR_FILL: &str = "━";
     pub const BAR_TRACK: &str = "─";
-    /// Half-cell end cap on a compact progress track.
     pub const BAR_END: &str = "╸";
-    /// Bottom-anchored partial cells, one to eight eighths tall.
     pub const LEVELS: [&str; 8] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
-    /// A favorite.
     pub const FAVORITE: &str = "★";
-    /// Accepts images.
     pub const VISION: &str = "⊡";
-    /// Round ends of filled panel shapes (Powerline half circles). Drawn
-    /// only when `Theme::round_caps` says the terminal has them.
+    /// Powerline half circles, drawn only when `Theme::round_caps` says the
+    /// terminal's font has them.
     pub const CAP_LEFT: &str = "\u{e0b6}";
     pub const CAP_RIGHT: &str = "\u{e0b4}";
-    /// Previous / next item in a viewer.
     pub const PREV: &str = "‹";
     pub const NEXT: &str = "›";
 }
 
-/// Big numerals: three rows of half blocks per glyph. Covers digits and the
-/// punctuation numbers carry; `display_font` returns `None` for anything
-/// else, and callers fall back to ordinary text.
+/// Three rows of half blocks per glyph; digits and the punctuation numbers carry.
 const DISPLAY_FONT: [(char, [&str; 3]); 15] = [
     ('0', ["█▀█", "█ █", "▀▀▀"]),
     ('1', ["▀█ ", " █ ", "▀▀▀"]),
@@ -127,8 +84,8 @@ pub fn display_font(text: &str) -> Option<[String; 3]> {
     (!text.is_empty()).then_some(rows)
 }
 
-/// Split a stat like "2.1 MB" or "-40%" into the leading number the display
-/// font can draw and the unit that follows in ordinary text.
+/// Split a stat like "2.1 MB" into the number the display font can draw and
+/// the unit that follows in ordinary text.
 #[must_use]
 pub fn display_split(text: &str) -> (&str, &str) {
     let end = text
@@ -146,10 +103,7 @@ pub fn display_split(text: &str) -> (&str, &str) {
 /// The one separator between inline fields.
 pub const SEP: &str = " · ";
 
-/// Theme colors for syntax roles (`nexus_core::highlight`). Code reuses the
-/// existing roles rather than adding a palette: keywords and markup in
-/// `accent`, calls in `accent2`, literals in the status colors, comments and
-/// punctuation dim.
+/// Theme colors for syntax roles (`nexus_core::highlight`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SyntaxColors {
     pub accent: Color,
@@ -321,8 +275,6 @@ pub fn event_body(text: &str, style: Style) -> Line<'static> {
 mod tests {
     use super::*;
 
-    /// The vocabulary is monochrome: an emoji in any UI string (outside
-    /// tests) would reintroduce varying widths and a second visual language.
     #[test]
     fn ui_strings_use_the_glyph_vocabulary_not_emoji() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");

@@ -1,6 +1,5 @@
-// Casts here are on terminal-bounded values (u16/u32 dims, byte colors,
-// glyph counts) — never on unbounded user data. JSON-derived indices in
-// provider/tools go through try_from instead.
+// Casts here are on terminal-bounded values (dims, byte colors, glyph counts),
+// never on unbounded user data.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -20,9 +19,8 @@ use nexus_core::app::{FilesMode, FilesTab, ImagesMode, ScriptsMode};
 
 use super::chrome;
 
-/// Browse title as a tab strip — `📁 files · images · scripts` with the
-/// active tab bold — so the other tabs (Tab cycles) are visible even with
-/// hints hidden.
+/// Browse title as a tab strip with the active tab bold, so the other tabs (Tab
+/// cycles) stay visible even with hints hidden.
 fn tab_title(app: &AppView, active: FilesTab) -> Line<'static> {
     use crate::ui::style;
     let tabs = [
@@ -81,8 +79,7 @@ fn render_files(f: &mut Frame, app: &AppView) {
             } else {
                 Style::default().fg(app.theme.warning)
             };
-            // Status can carry long error text — cap the meta column so the
-            // name keeps a fair share of the row.
+            // Status can carry long error text, so cap the meta column.
             let meta = chrome::truncate(
                 &format!(
                     "  {}  {}",
@@ -162,8 +159,7 @@ fn render_files(f: &mut Frame, app: &AppView) {
     chrome::render_list(f, list, &mut state, inner, app.caches.files.len(), 1, app);
 }
 
-/// The find picker: recent files, search results or path completions, each
-/// row the name (directories in the accent color) then its folder, dimmed.
+/// The find picker: recent files, search results or path completions.
 fn render_picker(f: &mut Frame, app: &AppView, area: Rect) {
     let home = &app.picker_home;
     let max = (area.width.saturating_sub(5 + 2 * chrome::PAD)) as usize;

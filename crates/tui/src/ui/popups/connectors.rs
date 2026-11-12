@@ -1,12 +1,5 @@
-//! `/connectors`: the MCP connectors and their tools.
-//!
-//! One popup, five modes. The list shows every connector with a status dot
-//! and tool count; Enter opens its tools with per-tool allow / ask / deny and
-//! annotation badges; `a` adds one (URL or command line, name, auth, and a
-//! masked token that goes straight to the keychain); `d` removes after a
-//! confirm; `i` imports servers configured in Claude Desktop, Claude Code and
-//! Cursor. Domain changes go through `AppCommand`; only the bearer token
-//! bypasses it, so a secret never rides a command.
+//! `/connectors`: the MCP connectors and their tools. Domain changes go through
+//! `AppCommand`; only the bearer token bypasses it, so a secret never rides one.
 
 use std::fmt::Write as _;
 
@@ -61,7 +54,6 @@ pub struct ImportRow {
     pub checked: bool,
 }
 
-/// View state for the popup.
 #[derive(Default)]
 pub struct ConnectorsPopup {
     pub mode: Mode,
@@ -456,8 +448,7 @@ fn import_item(row: &ImportRow, width: usize, theme: &crate::theme::Theme) -> Li
     ListItem::new(chrome::fit_line(Line::from(spans), width))
 }
 
-/// The strip under the import list: the file it came from, what moves to
-/// the keychain, and any caveats.
+/// The strip under the import list: source file, keychain moves, caveats.
 fn import_detail(proposal: &Proposal) -> String {
     let file = proposal
         .origin
@@ -755,8 +746,7 @@ fn add_key(app: &mut AppView, key: KeyEvent) {
     }
 }
 
-/// Add the connector the form describes. A bearer token is stored in the
-/// keychain through the registry; everything else is a normal command.
+/// Add the connector the form describes; a bearer token goes to the keychain.
 fn save_add(app: &mut AppView) {
     let form = std::mem::take(&mut app.connectors_popup.add);
     let name = form.name.trim().to_string();

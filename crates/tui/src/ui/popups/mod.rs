@@ -34,17 +34,11 @@ mod tests;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-// Shared key classification for the session/space/skills popups, which share
-// a "browse (filter as you type) / edit text / confirm delete" shape. These
-// helpers decide *which* action a key maps to; each popup's `handle_key`
-// decides what the action does.
+// Shared key classification for the session/space/skills popups: these helpers
+// decide which action a key maps to; each popup decides what the action does.
 
-/// Actions available while browsing a popup's list (the default mode).
-///
-/// `Close`/`MoveUp`/`MoveDown`/`Backspace`/`Filter` are common to all 3
-/// popups' Browse mode. `Create` and `Rename` are gated by
-/// `classify_browse_key`'s `supports_create`/`supports_rename` flags so a
-/// popup that doesn't support one never receives it.
+/// Actions available while browsing a popup's list; `Create` and `Rename` are
+/// gated by `classify_browse_key`'s flags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum BrowseAction {
     Close,
@@ -61,8 +55,7 @@ pub(super) enum BrowseAction {
     ConfirmDelete,
 }
 
-/// Move a list cursor by a paging `BrowseAction`, via the popup's own
-/// clamped move helper. `page` is how many rows a page jump covers.
+/// Move a list cursor by a paging `BrowseAction`; `page` is a page jump.
 pub(super) fn apply_page(mut move_by: impl FnMut(i32), action: BrowseAction, page: i32) {
     match action {
         BrowseAction::PageUp => move_by(-page),
@@ -73,13 +66,8 @@ pub(super) fn apply_page(mut move_by: impl FnMut(i32), action: BrowseAction, pag
     }
 }
 
-/// Maps a keypress to a `BrowseAction` for a popup's Browse mode.
-///
-/// This does NOT handle Enter — session and space each treat Enter as
-/// "open/select the highlighted item", which is entirely popup-specific
-/// (`confirm_session`/`confirm_space`) and has no skills equivalent, so each
-/// `handle_key` still matches `KeyCode::Enter` itself before falling back to
-/// this classifier.
+/// Map a keypress to a `BrowseAction`; Enter is left to each popup, where it
+/// means open/select the highlighted item.
 pub(super) const fn classify_browse_key(
     key: KeyEvent,
     supports_create: bool,
@@ -103,8 +91,7 @@ pub(super) const fn classify_browse_key(
     }
 }
 
-/// Actions available while editing a text field (rename / create / install
-/// prompt). Identical across all 3 popups.
+/// Actions available while editing a text field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum EditAction {
     Cancel,
@@ -130,9 +117,7 @@ pub(super) const fn is_chord(key: KeyEvent) -> bool {
         .intersects(KeyModifiers::CONTROL.union(KeyModifiers::ALT))
 }
 
-/// Actions available while a delete confirmation is showing. Identical
-/// across all 3 popups: Ctrl+D confirms, Esc cancels, everything else is a
-/// no-op.
+/// Actions available while a delete confirmation is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ConfirmDeleteAction {
     Yes,

@@ -123,11 +123,9 @@ fn a_transcript_shows_reasoning_calls_answer_and_live_text() {
     ] {
         assert!(text.contains(expected), "{expected:?} missing:\n{text}");
     }
-    // r folds the reasoning to its one-line summary.
     key(&mut app, KeyCode::Char('r'));
     let folded = screen(&mut app);
     assert!(!folded.contains("checked both"), "{folded}");
-    // Esc goes back to the list, then closes.
     key(&mut app, KeyCode::Esc);
     assert!(app.subagents.open.is_none());
     assert_eq!(app.popup, Popup::Subagents);

@@ -1,14 +1,11 @@
-//! Styled rendering for report citations: re-styling the `[n]` inline
-//! markers (and `‹low›`/`‹med›` confidence tags) across already-rendered
-//! ratatui lines. The parsing half of citations lives in core
-//! (`nexus_core::citations`); this is the terminal-colors half.
+//! Re-styles `[n]` citation markers and `‹low›`/`‹med›` confidence tags across
+//! already-rendered lines; the parsing half lives in `nexus_core::citations`.
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-/// Re-style every `[n]` citation marker across already-rendered `lines`
-/// with `accent`; everything else keeps its existing style. Splits spans as
-/// needed, so a citation embedded mid-span still gets its own styled piece.
+/// Re-style every `[n]` citation marker with `accent`, splitting spans so a
+/// marker embedded mid-span still gets its own styled piece.
 pub fn style_citations(lines: Vec<Line<'static>>, accent: Color) -> Vec<Line<'static>> {
     lines
         .into_iter()
@@ -27,8 +24,7 @@ pub fn style_citations(lines: Vec<Line<'static>>, accent: Color) -> Vec<Line<'st
         .collect()
 }
 
-/// Split one span so each `[n]` substring becomes its own accent-styled
-/// span; everything else keeps the original span's style.
+/// Split one span so each `[n]` substring becomes its own accent-styled span.
 fn split_citation_span(span: &Span<'static>, accent: Color) -> Vec<Span<'static>> {
     let text = span.content.to_string();
     let mut out = Vec::new();
@@ -63,10 +59,8 @@ fn split_citation_span(span: &Span<'static>, accent: Color) -> Vec<Span<'static>
     out
 }
 
-/// Re-style every `‹low›`/`‹med›` confidence tag the Verifier stage emits
-/// (see `VERIFIER_PROMPT` in `app/research.rs`) with a dim modifier;
-/// everything else keeps its existing style. High confidence is the
-/// default (unmarked), so there's nothing to style for it.
+/// Dim every `‹low›`/`‹med›` confidence tag the Verifier stage emits (see
+/// `VERIFIER_PROMPT`); high confidence is the unmarked default.
 pub fn style_confidence_tags(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
     lines
         .into_iter()
@@ -85,8 +79,7 @@ pub fn style_confidence_tags(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
         .collect()
 }
 
-/// Split one span so each `‹...›` confidence tag becomes its own
-/// dim-styled span; everything else keeps the original span's style.
+/// Split one span so each `‹...›` confidence tag becomes its own dim-styled span.
 fn split_confidence_span(span: &Span<'static>) -> Vec<Span<'static>> {
     let text = span.content.to_string();
     let mut out = Vec::new();

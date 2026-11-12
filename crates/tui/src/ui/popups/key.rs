@@ -9,8 +9,7 @@ use nexus_core::app::Popup;
 
 use super::chrome;
 
-/// API-key entry: a centered masked value under the input title, with the
-/// paste hint in the frame footer — same chrome family as every other popup.
+/// API-key entry: a centered masked value under the input title.
 pub fn render(f: &mut Frame, app: &AppView) {
     let outer = chrome::popup_area(app, f.area(), "key", chrome::SMALL);
     let masked = "*".repeat(app.key_input.chars().count());

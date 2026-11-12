@@ -1,8 +1,5 @@
-//! The full-screen image viewer popup: the picture at its zoom with the
-//! terminal's real graphics protocol (via `ratatui-image`), a metadata footer,
-//! the keys and mouse gestures that move, zoom and act on it, and the action
-//! menu. All decoding and encoding happens in `crate::image_viewer`, off the
-//! draw path; the actions themselves live in `crate::image_viewer_actions`.
+//! The full-screen image viewer: the picture at its zoom through the terminal's
+//! graphics protocol, a metadata footer, keys, mouse gestures and an action menu.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use nexus_core::app::Popup;
@@ -23,8 +20,8 @@ use super::chrome;
 const PAN_CELLS: i32 = 4;
 const FAST: i32 = 4;
 
-/// The hint bar's pieces, best first; the bar keeps as many as fit in order
-/// of importance and prints them in reading order.
+/// The hint bar's pieces, best first: the bar keeps as many as fit and prints
+/// them in reading order.
 fn hint(app: &AppView, video: bool, width: u16) -> String {
     let (pan_x, pan_y) = app.image_viewer.can_pan();
     let mut parts: Vec<(u8, usize, String)> = Vec::new();
@@ -207,9 +204,9 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
 
 // ── Edge zones and chevrons ───────────────────────────────────────────────
 
-/// Which neighbour a click at `column` goes to: the outer third of the window
-/// on each side, or just three columns when the picture is wider than the
-/// window (so a pan never ends in an accidental page turn).
+/// Which neighbour a click at `column` goes to: the outer third of the window on
+/// each side, or three columns when the picture pans, so a pan never ends in an
+/// accidental page turn.
 fn edge_step(app: &AppView, body: Rect, column: u16, row: u16) -> Option<isize> {
     if app.image_viewer.items().len() < 2
         || !body.contains(Position::new(column, row))
@@ -231,8 +228,8 @@ fn edge_step(app: &AppView, body: Rect, column: u16, row: u16) -> Option<isize> 
     }
 }
 
-/// A small chevron mid-height at the edge being hovered, so the click target
-/// is discoverable without drawing over the picture the rest of the time.
+/// A small chevron mid-height at the edge being hovered, so the click target is
+/// discoverable without drawing over the picture the rest of the time.
 fn render_chevron(f: &mut Frame, app: &AppView, body: Rect) {
     let Some((column, row)) = app.image_viewer.pointer.hover else {
         return;
@@ -338,10 +335,7 @@ fn menu_row(app: &AppView, menu: Menu, column: u16, row: u16) -> Option<usize> {
 
 // ── Mouse ─────────────────────────────────────────────────────────────────
 
-/// The viewer owns every mouse event while it is open: drag pans a picture
-/// larger than the window, the wheel zooms around the pointer, a double-click
-/// toggles fit / 100%, a click on an edge goes to the neighbouring image, and
-/// a right-click opens the action menu.
+/// The viewer owns every mouse event while it is open.
 pub fn mouse(app: &mut AppView, m: MouseEvent) {
     let pos = (m.column, m.row);
     app.image_viewer.pointer.hover = Some(pos);
@@ -389,8 +383,7 @@ fn drag(app: &mut AppView, pos: (u16, u16)) {
         i32::from(pos.0) - i32::from(drag.last.0),
         i32::from(pos.1) - i32::from(drag.last.1),
     );
-    // Grabbing the picture: it follows the pointer, so the window moves the
-    // other way.
+    // The picture follows the pointer, so the window moves the other way.
     app.image_viewer.pan_px(
         if can_x { -dx * cell_w } else { 0 },
         if can_y { -dy * cell_h } else { 0 },
@@ -455,9 +448,8 @@ fn arrow(app: &mut AppView, dx: i32, dy: i32, fast: bool) {
     }
 }
 
-/// Keys while the menu is open. Returns whether the key was used; any other
-/// key closes the menu and then does its usual thing, so the hotkeys shown in
-/// the menu work from it.
+/// Keys while the menu is open; any other key closes the menu and then does its
+/// usual thing, so the hotkeys shown in the menu work from it.
 fn menu_key(app: &mut AppView, key: KeyEvent) -> bool {
     let Some(menu) = app.image_viewer.pointer.menu else {
         return false;
@@ -481,7 +473,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
     if menu_key(app, key) {
         return;
     }
-    // Ctrl+C (and Cmd+C where the terminal forwards it) copies the picture.
+    // Cmd+C only reaches us on terminals that forward it.
     if key
         .modifiers
         .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER)

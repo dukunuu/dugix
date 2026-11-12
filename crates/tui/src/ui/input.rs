@@ -1,8 +1,8 @@
 //! The composer frame and the menus that float above it: slash commands
 //! and `@` files.
 
-// Casts here are on terminal-bounded values (u16/u32 dims, byte colors,
-// glyph counts) — never on unbounded user data.
+// Casts here are on terminal-bounded values (dims, byte colors, glyph counts),
+// never on unbounded user data.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -20,8 +20,7 @@ use super::{popups, to_color};
 use crate::app_view::AppView;
 use crate::composer::AtMatch;
 
-/// The composer's vim mode in its border: dim while inserting, accent
-/// otherwise.
+/// The composer's vim mode in its border: dim while inserting, accent otherwise.
 fn vim_mode(app: &AppView) -> Option<Span<'static>> {
     app.vim_enabled.then(|| {
         let style = if app.vim.mode() == crate::vim::Mode::Insert {
@@ -38,8 +37,7 @@ fn vim_mode(app: &AppView) -> Option<Span<'static>> {
 pub(super) fn render_input(f: &mut Frame, app: &mut AppView, area: Rect) {
     let hints = !app.settings.hide_hints;
     let busy = app.is_streaming() || app.is_compacting_current_session();
-    // What's running shows regardless of `hide_hints` — it's state, not key
-    // help; only the "Esc to stop" part is a hint.
+    // What's running shows even with hints hidden: it's state, not key help.
     let activity = if app.viewing_stream() {
         Some(if hints {
             "working · Esc to stop".to_string()
@@ -62,8 +60,7 @@ pub(super) fn render_input(f: &mut Frame, app: &mut AppView, area: Rect) {
             .filter(|(id, _)| app.session.as_ref().is_none_or(|s| &s.id != id))
             .map(|(_, topic)| format!("{} researching: {topic}", glyph::RESEARCH))
     };
-    // The border takes the spinner's color while something runs, so the
-    // active state reads at a glance.
+    // The border takes the spinner's color while something runs.
     let border_color = if busy {
         to_color(app.spinner_color())
     } else {
@@ -108,13 +105,12 @@ pub(super) fn render_input(f: &mut Frame, app: &mut AppView, area: Rect) {
         );
     }
     let inner = block.inner(area);
-    app.input_inner = inner; // remembered for mouse click -> cursor mapping
+    app.input_inner = inner; // mouse click -> cursor mapping
     f.render_widget(block, area);
     app.input
         .set_selection_style(Style::default().bg(app.theme.selection).fg(app.theme.fg));
     app.input
         .set_placeholder_style(Style::default().fg(app.theme.fg_dim));
-    // Key tips are hints; with hints hidden the placeholder stays minimal.
     app.input.set_placeholder_text(if app.settings.hide_hints {
         "Ask anything"
     } else {
@@ -129,9 +125,8 @@ pub(super) fn render_input(f: &mut Frame, app: &mut AppView, area: Rect) {
     };
     crate::editor::decorate(&mut app.input, decor);
     f.render_widget(&app.input, inner);
-    // Terminal IMEs draw in-progress (preedit) text at the real cursor, which
-    // otherwise trails wherever the last changed cell was. Park it on the
-    // caret the textarea drew and let the terminal's own cursor show it.
+    // Terminal IMEs draw preedit text at the real cursor, which otherwise
+    // trails the last changed cell; park it on the caret the textarea drew.
     if app.popup == nexus_core::app::Popup::None
         && let Some(caret) = take_caret(f, inner)
     {
@@ -151,7 +146,7 @@ fn take_caret(f: &mut Frame, area: Rect) -> Option<ratatui::layout::Position> {
 }
 
 /// Slash-command autocomplete: a fuzzy-ranked list floating just above the
-/// input box: `/name` in the accent color, its description dimmed alongside.
+/// input box.
 pub(super) fn render_command_popup(f: &mut Frame, app: &AppView, input_area: Rect) {
     if let Some(state) = &app.shell_state {
         let items = state
@@ -178,7 +173,6 @@ pub(super) fn render_command_popup(f: &mut Frame, app: &AppView, input_area: Rec
     if matches.is_empty() {
         return;
     }
-    // Pad the `/name` column so every description starts at the same column.
     let name_w = matches
         .iter()
         .map(|c| crate::ui::style::width(c.name()))
@@ -217,7 +211,7 @@ pub(super) fn render_command_popup(f: &mut Frame, app: &AppView, input_area: Rec
 const MENU_W: u16 = 76;
 
 /// A rounded menu floating just above the composer's left edge, at most ten
-/// rows tall (it scrolls), selection styled like every popup list.
+/// rows tall.
 fn floating_menu(
     f: &mut Frame,
     app: &AppView,
@@ -256,8 +250,7 @@ fn floating_menu(
     f.render_stateful_widget(list, area, &mut state);
 }
 
-/// `@` file autocomplete: agent-workspace paths (name, then dim folder) and
-/// space files (name, then dim size and status) matching the text after `@`.
+/// `@` file autocomplete over agent-workspace paths and space files.
 pub(super) fn render_at_popup(f: &mut Frame, app: &AppView, input_area: Rect) {
     let Some((ref matches, selected, _)) = app.at_state else {
         return;

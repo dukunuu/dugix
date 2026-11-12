@@ -1,7 +1,5 @@
-//! The `/usage` popup: lifetime token, prompt-cache, and cost analytics by
-//! backend and model, plus a scrollable log of recent requests. Rendered as
-//! a dashboard: a hero summary with a cache bar, colored per-backend rows,
-//! ranked model list, and a live-looking recent-request feed.
+//! The `/usage` popup: lifetime token, prompt-cache and cost analytics by backend
+//! and model, plus a scrollable log of recent requests.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
@@ -42,9 +40,8 @@ pub fn render(f: &mut Frame, app: &AppView) {
         return;
     }
 
-    // Allocate rows top-down by priority — summary, backends, models, then
-    // the recent feed takes what's left — so short terminals lose the feed
-    // first rather than squeezing every section at once.
+    // Rows are allocated top-down by priority, so short terminals lose the
+    // recent feed first rather than squeezing every section.
     let mut next_y = inner.y;
     let mut rows_left = inner.height;
     let mut take = |n: u16| {
@@ -78,9 +75,8 @@ pub fn render(f: &mut Frame, app: &AppView) {
         )),
         rows[1],
     );
-    // Header mirrors the row layout exactly — the "  " prefix matches the
-    // "● " marker and the cached cell carries the row's "% " suffix width,
-    // so every numeric column lines up under its label.
+    // The header mirrors the row layout exactly, so every numeric column lines
+    // up under its label.
     let mut backend_lines: Vec<Line> = vec![Line::from(vec![
         Span::styled("  ", dim),
         Span::styled(format!("{:<14}", "backend"), dim),
@@ -174,7 +170,6 @@ pub fn render(f: &mut Frame, app: &AppView) {
         .min(data.recent.len().saturating_sub(visible));
     let mut recent_lines: Vec<Line> = Vec::with_capacity(visible);
     for r in data.recent.iter().skip(top).take(visible) {
-        // Per row: a rate only where the provider's convention is known.
         let cached = r
             .prompt_convention
             .ratio_is_meaningful()
@@ -194,8 +189,8 @@ pub fn render(f: &mut Frame, app: &AppView) {
             Span::styled(format!("{time} "), dim),
             Span::styled("● ", Style::default().fg(backend_color(theme, &r.backend))),
             Span::styled(format!("{model:<24}"), Style::default().fg(theme.fg)),
-            // 13 cells fits the widest possible pair ("999.9m→999.9m"), so
-            // the bar/percent/cost columns never shift row to row.
+            // 13 cells fits the widest pair ("999.9m→999.9m"), so the following
+            // columns never shift row to row.
             Span::styled(format!("{tokens:>13} "), dim),
             Span::styled(
                 "█".repeat(cached.map_or(0, |c| (c * 8.0).round() as usize)),
@@ -223,8 +218,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
     );
 }
 
-/// One line explaining what an absent rate means, so `—` never reads as a
-/// rendering glitch or as a zero.
+/// One line explaining what an absent rate means, so `—` never reads as a zero.
 fn cache_legend(theme: &Theme) -> Line<'static> {
     Line::from(Span::styled(
         "  — = provider reported no cache accounting (or row predates normalization); excluded from rates",
@@ -233,7 +227,7 @@ fn cache_legend(theme: &Theme) -> Line<'static> {
 }
 
 /// Hero summary: colored headline numbers plus a cache bar over all prompt
-/// tokens ever logged.
+/// tokens.
 fn render_summary(f: &mut Frame, app: &AppView, area: Rect) {
     let theme = &app.theme;
     let Some(data) = &app.usage_data else { return };
@@ -268,8 +262,7 @@ fn render_summary(f: &mut Frame, app: &AppView, area: Rect) {
                 .fg(cache_color(theme, cached))
                 .add_modifier(Modifier::BOLD),
         ));
-        // Requests the providers did not account for are excluded from the
-        // rate rather than silently averaged into it.
+        // Unaccounted requests are excluded from the rate, not averaged into it.
         let unrated = t.prompt_tokens.saturating_sub(t.rated_prompt_tokens);
         if unrated > 0 {
             spans.push(Span::styled(
@@ -284,7 +277,6 @@ fn render_summary(f: &mut Frame, app: &AppView, area: Rect) {
     } else {
         Line::from(Span::styled("  no cache data reported", dim))
     };
-    // The legend only earns its line when something was actually excluded.
     let mut lines = vec![headline, Line::from(""), bar_line];
     if t.prompt_tokens > t.rated_prompt_tokens {
         lines.push(cache_legend(theme));
@@ -292,10 +284,8 @@ fn render_summary(f: &mut Frame, app: &AppView, area: Rect) {
     f.render_widget(Paragraph::new(chrome::fit_lines(lines, area.width)), area);
 }
 
-/// The shared `req prompt out cached% cost` cells for a backend/model row.
-/// The header counterpart is built inline with the identical widths (a "  "
-/// name-column prefix and a `{:<6}  ` cached cell carrying the row's "% "
-/// suffix), so label and numbers share column edges.
+/// The shared `req prompt out cached% cost` cells for a backend/model row, at
+/// the same widths as the inline header.
 fn numeric_cells(
     theme: &Theme,
     requests: u64,
@@ -326,11 +316,8 @@ fn numeric_cells(
     ]
 }
 
-/// Cache hit fraction 0..=1 over the rows whose accounting can be trusted.
-///
-/// `None` when nothing in the window is rateable — a provider that reports no
-/// cache accounting, or rows logged before the prompt-token convention was
-/// normalized. Rendered as `—`, never as a confident `0%`.
+/// Cache hit fraction 0..=1 over the rows whose accounting can be trusted;
+/// `None` when nothing in the window is rateable, rendered as `—`.
 fn rate(rated_cache_read: u64, rated_prompt: u64) -> Option<f64> {
     (rated_prompt > 0).then(|| rated_cache_read as f64 / rated_prompt as f64)
 }
@@ -340,8 +327,8 @@ fn fmt_rate(rate: Option<f64>) -> String {
     rate.map_or_else(|| "—".to_string(), |r| format!("{:.0}%", r * 100.0))
 }
 
-/// Threshold color for a cache rate: green ≥70%, yellow ≥40%, red below.
-/// An absent rate is dim — it is not a bad rate, it is no rate.
+/// Threshold color for a cache rate: green ≥70%, yellow ≥40%, red below. An
+/// absent rate is dim: not a bad rate, no rate.
 fn cache_color(theme: &Theme, rate: Option<f64>) -> Color {
     let Some(rate) = rate else {
         return theme.fg_dim;
@@ -390,8 +377,8 @@ fn cost_style(theme: &Theme, cost: f64) -> Style {
     }
 }
 
-/// Aggregate cost: `—` when nothing was billable (no known prices, or all
-/// free-tier usage) — a `$0.00` would falsely imply a priced bill.
+/// Aggregate cost: `—` when nothing was billable, since `$0.00` would falsely
+/// imply a priced bill.
 fn fmt_cost_agg(cost: f64) -> String {
     if cost > 0.0 {
         fmt_cost(Some(cost))
@@ -408,7 +395,6 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
         KeyCode::Down | KeyCode::Char('j') => app.scroll_usage(1),
         KeyCode::PageUp => app.scroll_usage(-10),
         KeyCode::PageDown => app.scroll_usage(10),
-        // Time window: ←/h step back, →/l and t step forward.
         KeyCode::Left | KeyCode::Char('h') => app.cycle_usage_range(-1),
         KeyCode::Right | KeyCode::Char('l' | 't') => app.cycle_usage_range(1),
         KeyCode::Char('r')

@@ -9,9 +9,8 @@ use super::{md_colors, render_markdown_images, strip_markdown_images, wrap_plain
 use crate::ui::dim;
 use crate::ui::style::{self, glyph};
 
-/// A foldable tool summary with type-specific detail behind a colored rail.
-/// What a tool card needs beyond its text: where result images live and
-/// whether a studio window is attached.
+/// What a tool card needs beyond its text: where result images live and whether
+/// a studio window is attached.
 pub(in crate::ui) struct CardEnv<'a> {
     pub files_dir: &'a std::path::Path,
     pub studio_linked: bool,
@@ -324,8 +323,7 @@ fn push_batch_body(
                 row.spans.insert(0, rail.clone());
                 out.push(row);
             }
-            // Deck images have already been parsed; other tools can return
-            // Markdown image references (files/media, for example).
+            // Deck images are already parsed; other tools return Markdown refs.
             push_slide_thumbnails(
                 out,
                 &entry.view,
@@ -362,8 +360,7 @@ fn push_batch_body(
     }
 }
 
-/// A canvas card that created or edited a deck or doc, successfully: the ones
-/// studio can open.
+/// Whether the call created or edited a deck or doc that studio can open.
 fn is_deck_change(view: &nexus_core::app::ToolView) -> bool {
     view.outcome == nexus_core::app::ToolOutcome::Ok
         && (view.verb.starts_with("created deck")
@@ -402,9 +399,8 @@ fn push_slide_thumbnails(
     }
 }
 
-/// What the model thought and said before a round of tool calls, drawn
-/// above the round's first call so a tool loop reads in order: thinking,
-/// calls, thinking, calls, answer. Reasoning folds like a reply's (Ctrl+R).
+/// What the model thought and said before a round of tool calls, drawn above
+/// the round's first call.
 pub(in crate::ui) fn push_round_preamble(
     out: &mut Vec<Line<'static>>,
     reasoning: &[String],
@@ -418,8 +414,7 @@ pub(in crate::ui) fn push_round_preamble(
         .map(|text| text.trim())
         .find(|text| !text.is_empty());
     if let Some(reasoning) = reasoning {
-        // The same rail as a reply's reasoning, so thinking that streamed
-        // live keeps its look when its round's calls land.
+        // The same rail as a reply's reasoning, so live thinking keeps its look.
         let rail = Span::styled(
             format!("{} ", glyph::RAIL),
             Style::default().fg(theme.border_dim),
@@ -577,7 +572,6 @@ fn push_workspace_call(
     }
 }
 
-/// ✗ for a failed call, ⇄ for connectors, ◎ for web tools, ⚒ for everything else.
 fn call_glyph(view: &nexus_core::app::ToolView, failed: bool) -> &'static str {
     if failed {
         glyph::FAIL
@@ -590,7 +584,6 @@ fn call_glyph(view: &nexus_core::app::ToolView, failed: bool) -> &'static str {
     }
 }
 
-/// Web tools: searches of every mode and page fetches.
 fn is_web(view: &nexus_core::app::ToolView) -> bool {
     matches!(
         view.verb.as_str(),
@@ -692,8 +685,8 @@ fn sources_body(
             rows.resize(rows.len().max(start + 3), Line::default());
             for (row, line) in rows[start..].iter_mut().enumerate() {
                 let mut thumbnail = thumbnails.get(row).cloned().unwrap_or_default();
-                // Text markers can be longer than a thumbnail. Clip before
-                // joining so they cannot push the result out of its column.
+                // A text marker can outgrow a thumbnail; clip so it cannot
+                // push the result out of its column.
                 if thumbnail.width() > thumb_width {
                     thumbnail = Line::from(glyph::MEDIA);
                 }
@@ -1034,8 +1027,8 @@ fn markdown_tool_text(text: &str) -> String {
         .collect()
 }
 
-/// Highlighting and wrapping may split escapes across spans or rows. Ignore
-/// Markdown box/table chrome when locating their text, then dim every fragment.
+/// Escapes may be split across spans or rows, so ignore box/table chrome when
+/// locating their text.
 fn dim_tool_escapes(lines: &mut [Line<'static>], dim: Style, rule: ratatui::style::Color) {
     let chrome = |span: &Span<'_>| {
         span.style.fg == Some(rule) && span.content.chars().all(|c| " │┌┐└┘─├┤┬┴┼".contains(c))

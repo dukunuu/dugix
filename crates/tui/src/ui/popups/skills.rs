@@ -22,8 +22,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
         app.skills
             .iter()
             .map(|s| {
-                // Where the skill lives: `nexus` (app-managed, removable) or
-                // the agent tool whose skills root it came from (read-only).
+                // App-managed skills are removable; an agent tool's are read-only.
                 let source = if app.skill_is_app_managed(s) {
                     "nexus".to_string()
                 } else {
@@ -119,8 +118,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
             None => {}
         },
         // Enter arms the highlighted skill for the next message, like
-        // `/<skill-name>`. No rename, and (unlike session/space) no text
-        // filter: plain chars/Backspace are no-ops.
+        // `/<skill-name>`; there is no rename and no text filter.
         SkillsMode::Browse if key.code == crossterm::event::KeyCode::Enter => {
             if let Some(name) = app.skills.get(app.skills_selected).map(|s| s.name.clone()) {
                 app.popup = nexus_core::app::Popup::None;
@@ -150,9 +148,8 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
     }
 }
 
-/// The agent tool a non-app skill came from: the directory holding its
-/// `skills` root (`~/.claude/skills/x` → `.claude`, `./.agents/skills/x` →
-/// `.agents`), looking past a `.system` namespace.
+/// The agent tool a non-app skill came from: the directory holding its `skills`
+/// root, looking past a `.system` namespace.
 fn skill_source(dir: &std::path::Path) -> String {
     let parts: Vec<&str> = dir
         .iter()

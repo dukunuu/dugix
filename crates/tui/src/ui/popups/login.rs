@@ -1,6 +1,4 @@
-//! `/login`'s provider selector: `OpenRouter`, `OpenCode` Go, `OpenAI`,
-//! Codex, Mistral Vibe, or a local runtime (which takes no key and opens
-//! `/local`).
+//! `/login`'s provider selector; a local runtime takes no key and opens `/local`.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;

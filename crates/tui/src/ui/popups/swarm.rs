@@ -97,8 +97,8 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
             None => {}
         },
         SwarmPopupMode::Browse => {
-            // Plain `m` (browse mode types nothing): Ctrl+M is the same byte
-            // as Enter on terminals without the kitty keyboard protocol.
+            // Ctrl+M is the same byte as Enter on terminals without the kitty
+            // keyboard protocol, so only plain `m` can open the picker.
             if key.code == KeyCode::Char('m') {
                 if !app.swarm.cache.is_empty() {
                     app.open_model_picker_for_swarm_persona(app.swarm_selected);

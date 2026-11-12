@@ -162,7 +162,7 @@ fn wave_lines(summary: &str, width: usize, theme: &crate::theme::Theme) -> Vec<L
     lines
 }
 
-/// One plain sentence saying what the agent is asking for, above the preview.
+/// One plain sentence saying what the agent is asking for.
 fn explain(tool: &str, action: &str, text: &str) -> String {
     let text = text
         .split_once('\n')
@@ -218,7 +218,7 @@ fn explain(tool: &str, action: &str, text: &str) -> String {
     }
 }
 
-/// Put the plain-language explanation under the header (first, for a wave).
+/// Put the plain-language explanation under the header, first for a wave.
 fn insert_intro(
     lines: &mut Vec<Line<'static>>,
     request: &nexus_core::tools::ApprovalRequest,
@@ -236,7 +236,7 @@ fn insert_intro(
             .position(|line| line.width() == 0)
             .unwrap_or(lines.len())
     };
-    // Word-wrapped (it's a sentence), then escaped: paths come from the model.
+    // Word-wrapped, then escaped: paths come from the model.
     let dim = Style::default().fg(theme.fg_dim);
     let sentence = if connector {
         format!(
@@ -280,8 +280,6 @@ fn legend(app: &AppView, request: &nexus_core::tools::ApprovalRequest) -> String
         } else {
             String::new()
         };
-        // Short enough for an 80-column terminal; the sentence above the
-        // preview spells out what y and r do.
         format!("y approve all{session} · r one by one · n deny all")
     } else if request.allow_session {
         format!("y allow once · {session} · n deny")
@@ -303,8 +301,7 @@ fn shell_unread(app: &AppView) -> bool {
         && !app.approval_seen_end.get()
 }
 
-/// The request's preview lines (explanation, header, diff or command) at
-/// the panel's inner `width`.
+/// The request's preview lines at the panel's inner `width`.
 fn content_lines(app: &AppView, width: usize) -> Option<Vec<Line<'static>>> {
     let request = app.approval_request.as_ref()?;
     let text = request.detail.as_deref().unwrap_or(&request.summary);
@@ -328,9 +325,8 @@ fn panel_block(app: &AppView) -> ratatui::widgets::Block<'static> {
     chrome::popup_block_focused("", &app.theme, true, chrome::Tone::Normal)
 }
 
-/// How tall the approval panel docked in the composer's place wants to be
-/// in `column`: the whole request when it fits, else about half the screen
-/// (the preview scrolls), never less than 8 rows.
+/// How tall the approval panel docked in `column` wants to be: the whole
+/// request when it fits, else about half the screen.
 #[must_use]
 pub fn docked_height(app: &AppView, column: Rect) -> u16 {
     let frame = panel_block(app).inner(Rect::new(0, 0, column.width, 100));
@@ -347,8 +343,8 @@ pub fn docked_height(app: &AppView, column: Rect) -> u16 {
     wanted.min(cap).min(column.height.saturating_sub(2)).max(4)
 }
 
-/// Draw the approval docked at the bottom of the reading column — the
-/// composer's place — as the main layout does (tests render it alone).
+/// Draw the approval docked at the bottom of the reading column, in the
+/// composer's place.
 #[cfg(test)]
 pub fn render(f: &mut Frame, app: &AppView) {
     let column = crate::ui::reading_column(f.area(), &app.settings.column_width);
@@ -438,7 +434,7 @@ pub fn render_in(f: &mut Frame, app: &AppView, area: Rect) {
 }
 
 /// The pinned key row at the bottom of the popup, dim during the open delay
-/// (when the keys don't work yet).
+/// when the keys don't work yet.
 fn render_legend(f: &mut Frame, app: &AppView, inner: ratatui::layout::Rect, legend: &str) {
     if inner.height < 2 {
         return;

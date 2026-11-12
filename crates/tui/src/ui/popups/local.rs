@@ -1,8 +1,5 @@
-//! `/local`'s runtime selector: Ollama, mlx-lm, mlx-serve, LM Studio, edge0, or off. Unlike
-//! `/login` there is no key to paste — picking a row writes the
-//! machine-local `[local]` block and reloads the catalog. Custom endpoints
-//! and discovery commands stay a config-file (or `/local <runtime> <url>`)
-//! concern; this popup only switches runtimes.
+//! `/local`'s runtime selector: picking a row writes the machine-local `[local]`
+//! block and reloads the catalog; custom endpoints stay a config-file concern.
 
 use std::fmt::Write as _;
 
@@ -23,9 +20,8 @@ use crate::ui::style::glyph;
 /// The runtime rows, plus a trailing "off" row.
 pub const ROW_COUNT: usize = LocalRuntime::ALL.len() + 1;
 
-/// One row: label, the discovery command picking it runs, the endpoint it
-/// would talk to, and whether it's the active runtime. Both hints are shown
-/// because either can be the reason a pick doesn't work.
+/// One row: label, discovery command, endpoint, and whether it is the active
+/// runtime. Both hints are shown because either can explain a failed pick.
 fn row(index: usize, current: Option<&LocalConfig>) -> (String, String, String, bool) {
     match LocalRuntime::ALL.get(index) {
         Some(&runtime) => (
@@ -54,12 +50,8 @@ fn row(index: usize, current: Option<&LocalConfig>) -> (String, String, String, 
 }
 
 /// The server line for a row: whether the endpoint answers, what its process
-/// tree costs, and who started it. Rendered on the endpoint line so a row
-/// stays three lines tall.
-///
-/// Ordered by urgency, because the popup is narrow enough to truncate: the
-/// liveness dot, the memory, the budget warning, then ownership, and the
-/// endpoint last — it is the most predictable part and the one worth losing.
+/// tree costs, and who started it. Ordered by urgency because the popup is
+/// narrow enough to truncate, with the endpoint last as the most predictable.
 fn server_line(status: Option<&RuntimeStatus>, endpoint: &str) -> (String, bool) {
     let Some(status) = status else {
         return (format!("{} {endpoint}", glyph::RING), false);
@@ -166,7 +158,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
         KeyCode::Up => app.move_local_selection(-1),
         KeyCode::Down => app.move_local_selection(1),
         KeyCode::Enter => app.confirm_local_selection(),
-        // Server lifecycle, on the row under the cursor. The "off" row has no
+        // Server lifecycle on the row under the cursor; the "off" row has no
         // server, so these are no-ops there.
         KeyCode::Char('s') => app.local_server_key("start"),
         KeyCode::Char('x') => app.local_server_key("stop"),

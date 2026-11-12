@@ -1,6 +1,5 @@
-//! `/help` (or F1): the keybinding reference plus the slash-command catalog.
-//! Commands render straight from `COMMANDS`, so the list can't drift from
-//! what the composer actually accepts.
+//! `/help` (or F1): the keybinding reference plus the slash-command catalog,
+//! rendered straight from `COMMANDS` so the list can't drift.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
@@ -150,8 +149,8 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
         chrome::Tone::Normal,
     );
     let lines = help_lines(&app.theme, inner.width as usize);
-    // Clamp here, where the viewport height is known, so scrolling past the
-    // end never leaves a blank pane.
+    // Clamp where the viewport height is known, so scrolling past the end
+    // leaves no blank pane.
     let max = u16::try_from(lines.len())
         .unwrap_or(u16::MAX)
         .saturating_sub(inner.height);

@@ -9,29 +9,19 @@ use crate::app_view::AppView;
 use super::chrome;
 use crate::ui::style::glyph;
 
-/// Live per-searcher activity: the same `research_stage` rows shown inline in
-/// the transcript (one per searcher label, updated in place as
-/// Status/ToolCall events arrive — see `run_searcher` in `app/research.rs`),
-/// isolated into their own view plus a steer input line and a queued-steers
-/// section (steers not yet picked up at a round boundary).
+/// Live per-searcher activity: the transcript's `research_stage` rows plus a
+/// steer input line and the still-queued steers.
 pub fn render(f: &mut Frame, app: &AppView) {
     let area = chrome::popup_area(app, f.area(), "research", chrome::WIDE);
 
     let dim = Style::default().fg(app.theme.fg_dim);
-    // The stage rows come from the job-level mirror (`research_stage_rows`),
-    // kept in sync by `mirror_stage` on every `Stage` update regardless of
-    // which session is viewed — no db read (and no silent fallback) inside
-    // rendering, and opening the popup from another session still shows the
-    // job's searchers and steers.
+    // The rows come from the job-level mirror, so opening the popup from another
+    // session still shows the job's searchers.
     let rows = &app.research.stage_rows;
     let mut items: Vec<ListItem> = Vec::new();
-    // Steers queued but not yet drained at a round boundary stay visible
-    // here. The pipeline acknowledges drained steers as `steer #N`
-    // stage rows and the App records those positions in
-    // `research_steer_acked` (parsed from `Stage` updates, so it's correct
-    // even when the popup is opened from another session); steer k is
-    // picked up iff k is in the ack set. The retained log drops acked
-    // entries, so it holds exactly the still-queued steers.
+    // The pipeline acknowledges drained steers as `steer #N` stage rows and the
+    // App records those positions; the retained log drops acked entries, so what
+    // is left is exactly the still-queued steers.
     let pending: Vec<&(usize, String)> = app
         .research
         .steer_log
@@ -63,12 +53,11 @@ pub fn render(f: &mut Frame, app: &AppView) {
             dim,
         ))));
     } else {
-        // Newest agents first so the currently active synthesis/verifier/
-        // writer remains visible even after a full six-searcher fan-out.
+        // Newest agents first, so the active synthesis/verifier/writer stays
+        // visible after a full six-searcher fan-out.
         for content in rows.iter().rev() {
             let (label, detail) = content.split_once(':').unwrap_or((content.as_str(), ""));
             let detail = detail.trim();
-            // A working agent is the assistant busy: ⟳ in the agent color.
             let (mark, color, detail) = if let Some(rest) = detail.strip_prefix("done —") {
                 (glyph::OK, app.theme.success, rest.trim())
             } else if let Some(rest) = detail.strip_prefix("error —") {
@@ -85,8 +74,8 @@ pub fn render(f: &mut Frame, app: &AppView) {
                     Style::default().fg(color).add_modifier(Modifier::BOLD),
                 ),
             ])];
-            // Multi-line details (e.g. critic gaps listed as questions) get
-            // one indented row per line.
+            // Multi-line details, e.g. critic gaps listed as questions, get one
+            // indented row per line.
             for detail_line in detail.lines() {
                 lines.push(Line::from(vec![
                     Span::raw("  "),

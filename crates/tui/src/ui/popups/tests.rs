@@ -338,7 +338,6 @@ fn approval_overflow_is_counted_scrollable_and_reset_for_each_request() {
     let shown = screen.lines().filter(|line| line.contains("+row ")).count();
     assert_eq!(shown + remaining, 40);
     assert!(remaining > 0);
-    // Below the preview: a spacer, the pinned key row, then the border.
     assert!(screen.lines().nth(marker_row + 3).unwrap().contains('╰'));
     for (key, offset) in [
         (crossterm::event::KeyCode::Down, 1),
@@ -398,7 +397,6 @@ fn queued_approvals_show_their_position_and_reset_the_guards_at_the_head() {
     let second = queued.pop().unwrap();
     let screen = render_to_string(120, 24, |f| super::approval::render(f, &app));
     assert!(screen.contains(" approve · 1 of 3 "), "{screen}");
-    // Read the first to its end and let its open delay pass.
     let read_to_end = |app: &mut AppView| {
         while app.approval_scroll.get() < app.approval_max_scroll.get() {
             super::approval::handle_key(app, KeyCode::PageDown.into()).unwrap();
@@ -410,7 +408,6 @@ fn queued_approvals_show_their_position_and_reset_the_guards_at_the_head() {
     read_to_end(&mut app);
     super::approval::handle_key(&mut app, KeyCode::Char('y').into()).unwrap();
     assert_eq!(first.try_recv().unwrap(), Decision::Allow);
-    // The identical second request reaches the head with fresh guards.
     app.sync_approval_popup();
     let assert_fresh = |app: &AppView| {
         assert_eq!(app.popup, nexus_core::app::Popup::Approval);
@@ -426,7 +423,6 @@ fn queued_approvals_show_their_position_and_reset_the_guards_at_the_head() {
     let screen = render_to_string(120, 24, |f| super::approval::render(f, &app));
     assert!(screen.contains(" approve · 1 of 2 "), "{screen}");
     read_to_end(&mut app);
-    // Its tool call going away shows the third, again with fresh guards.
     drop(second);
     app.sync_approval_popup();
     assert_fresh(&app);
@@ -520,7 +516,6 @@ fn approval_popup_combined_wave_snapshot() {
         "2 edits, 1 command\n1. fs edit\n  edit one\n  --- a/one\n  +++ b/one\n  @@ -1 +1 @@\n  -old\n  +new\n2. fs write\n  write two\n3. shell run\n  $ cargo test".into(),
     );
     let root = app.space.root.clone();
-    // The snapshot wraps at the old fixed 112-cell column; `auto` is wider now.
     app.settings.column_width = "112".into();
     app.approvals.pending_request.as_mut().unwrap().action = "3 calls".into();
     app.sync_approval_popup();
@@ -866,11 +861,8 @@ fn local_popup_lists_runtimes_with_discovery_and_endpoint() {
     assert!(screen.contains("ollama list"), "{screen}");
     assert!(screen.contains("http://localhost:8080/v1"), "{screen}");
     assert!(screen.contains("✓ active"), "{screen}");
-    // The picker opens on the configured runtime, not on row 0.
     assert_eq!(app.local_selected, 1);
 
-    // Rows past the fold scroll into view with their own discovery hint, and
-    // a surveyed row shows what its server is costing.
     app.core.local.status = vec![nexus_core::provider::serve::RuntimeStatus {
         runtime: nexus_core::provider::local::LocalRuntime::Edge0,
         endpoint: "http://localhost:8000/v1".into(),
@@ -889,20 +881,15 @@ fn local_popup_lists_runtimes_with_discovery_and_endpoint() {
     app.local_selected = 4;
     let screen = render_to_string(80, 24, |f| super::local::render(f, &app));
     assert!(screen.contains("edge0 models"), "{screen}");
-    // Urgency order: the size and the warning survive the truncation that
-    // eats the endpoint at this width.
     assert!(screen.contains("● 4.2 GB · ⚠ over budget"), "{screen}");
-    // A runtime with no survey row yet reads as down rather than blank.
     assert!(screen.contains("○ http://localhost:1234/v1"), "{screen}");
     assert!(screen.contains("s start"), "{screen}");
-    // Given the room, ownership and the endpoint follow the warning.
     let wide = render_to_string(120, 30, |f| super::local::render(f, &app));
     assert!(
         wide.contains("● 4.2 GB · ⚠ over budget · started here · http://localhos…"),
         "{wide}"
     );
 
-    // Esc closes a bare `/local`, but steps back when `/login` opened it.
     let esc = crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Esc);
     super::local::handle_key(&mut app, esc);
     assert_eq!(app.popup, nexus_core::app::Popup::None);
@@ -920,7 +907,6 @@ fn local_popup_lists_runtimes_with_discovery_and_endpoint() {
 fn login_popup_offers_the_local_runtime_row() {
     let mut app = test_app();
     app.open_login_popup();
-    // The list scrolls; the local row is the last one, past Mistral Vibe.
     for _ in 0..5 {
         app.move_login_selection(1);
     }
@@ -984,20 +970,16 @@ fn usage_popup_renders_dashboard_with_cache_bars_and_tables() {
 
     let screen = render_to_string(96, 40, |f| super::usage::render(f, &app));
 
-    // Section markers + headers.
     assert!(screen.contains("by backend"), "{screen}");
     assert!(screen.contains("most used models"), "{screen}");
     assert!(screen.contains("recent requests"), "{screen}");
-    // Hero summary: request count, cache fraction, cache-write count.
     assert!(screen.contains("2 requests"), "{screen}");
     assert!(screen.contains("cache writes"), "{screen}");
     assert!(screen.contains("% of prompt served from cache"), "{screen}");
-    // Both backends with their glyphs; cache bar glyphs present in rows.
     assert!(screen.contains("OpenRouter"), "{screen}");
     assert!(screen.contains("Codex"), "{screen}");
     assert!(screen.contains('█'), "{screen}");
     assert!(screen.contains('░'), "{screen}");
-    // Models ranked; cost formatting for known vs unknown prices.
     assert!(screen.contains("claude-3.5-sonnet"), "{screen}");
     assert!(screen.contains("$0.0042"), "{screen}");
 }
@@ -1015,8 +997,6 @@ fn hidden_hints_do_not_show_in_popup_titles() {
 #[test]
 fn research_live_popup_shows_agent_lifecycle_and_activity() {
     let mut app = test_app();
-    // The popup renders from the job-level stage-row mirror, kept in sync by
-    // `mirror_stage` on every Stage update.
     app.research.stage_rows = vec![
         "planner: done — proposed 4 questions".to_string(),
         "searcher r1 1/4: working — Searching the web for rust runtimes".to_string(),
@@ -1036,8 +1016,6 @@ fn research_live_popup_shows_agent_lifecycle_and_activity() {
 fn research_live_popup_shows_queued_steers_until_picked_up() {
     let mut app = test_app();
     app.research.steer_log = vec![(1, "look into X".to_string()), (2, "also Y".to_string())];
-    // Steer #1 was already picked up by the pipeline (acknowledged); steer
-    // #2 is still queued and must show in the popup.
     app.research.steer_acked = std::collections::HashSet::from([1]);
     app.research.stage_rows = vec!["steer #1: look into X".to_string()];
 
@@ -1045,7 +1023,6 @@ fn research_live_popup_shows_queued_steers_until_picked_up() {
 
     assert!(screen.contains("queued steers"), "{screen}");
     assert!(screen.contains("● also Y"), "{screen}");
-    // Picked-up steers appear as stage rows, not in the queued list.
     assert!(!screen.contains("● look into X"), "{screen}");
     assert!(screen.contains("○ steer #1"), "{screen}");
 }
@@ -1060,10 +1037,6 @@ fn research_live_popup_queued_status_ignores_steer_text_shape() {
         (4, "same".to_string()),
         (5, "100% done".to_string()),
     ];
-    // Positions 1, 3, 5 are acknowledged (drained by the pipeline); 2 and 4
-    // are still queued. Keying by position — never by steer text — keeps
-    // duplicate, prefix-of-each-other, and LIKE-wildcard text from
-    // collapsing acknowledgements.
     app.research.steer_acked = std::collections::HashSet::from([1, 3, 5]);
     app.research.stage_rows = vec![
         "steer #1: a: b".to_string(),
@@ -1074,10 +1047,8 @@ fn research_live_popup_queued_status_ignores_steer_text_shape() {
     let screen = render_to_string(100, 30, |f| super::research_live::render(f, &app));
 
     assert!(screen.contains("queued steers"), "{screen}");
-    // Position 2 ("a") and position 4 (the second "same") are still queued.
     assert!(screen.contains("● a"), "{screen}");
     assert!(screen.contains("● same"), "{screen}");
-    // Picked-up steers (positions 1, 3, 5) show as rows, never as queued.
     assert!(!screen.contains("● a: b"), "{screen}");
     assert!(!screen.contains("● 100% done"), "{screen}");
     assert!(screen.contains("○ steer #1"), "{screen}");
@@ -1087,10 +1058,6 @@ fn research_live_popup_queued_status_ignores_steer_text_shape() {
 #[test]
 fn research_live_popup_uses_the_job_sessions_rows_from_any_session() {
     let mut app = test_app();
-    // The job runs in session A while the user views session B: the popup
-    // renders from the job-level stage-row mirror (`research_stage_rows`),
-    // which `on_research_done` fills for every Stage update regardless of
-    // what's viewed — no db read and no dependence on the viewed session.
     app.research.running = Some(("job-session".to_string(), "topic".to_string()));
     app.session = Some(
         app.db
@@ -1106,11 +1073,8 @@ fn research_live_popup_uses_the_job_sessions_rows_from_any_session() {
 
     let screen = render_to_string(100, 30, |f| super::research_live::render(f, &app));
 
-    // The job's rows came through the mirror (the viewed session has none).
     assert!(screen.contains("○ steer #1"), "{screen}");
     assert!(screen.contains("✓ planner"), "{screen}");
-    // Acknowledgements are job-global: steer #1 was drained, steer #2 is
-    // still queued.
     assert!(screen.contains("● also Y"), "{screen}");
     assert!(!screen.contains("● look into X"), "{screen}");
 }
@@ -1132,7 +1096,6 @@ fn settings_popup_renders_selected_field_detail() {
 fn settings_popup_has_no_model_rows() {
     let mut app = test_app();
     app.open_settings();
-    // Tall enough that every row is on screen.
     let screen = render_to_string(120, 60, |f| super::settings::render(f, &app));
 
     let model_rows: Vec<&str> = screen
@@ -1198,23 +1161,16 @@ fn new_session_welcome_screen_drops_the_previous_sessions_click_layout() {
     app.session = app.db.get_session(&sid).unwrap();
     app.messages = app.db.load_messages(&sid).unwrap();
 
-    // Render the old session: the history area is clickable now (a click
-    // anywhere inside it maps to a recorded line — which is how a stale
-    // snapshot would resolve the old URL).
     render_to_string(100, 30, |f| crate::ui::render(f, &mut app));
     assert!(
         app.sel.pos_at(10, 5).is_some(),
         "old session layout recorded"
     );
 
-    // Start a new session and render the welcome screen.
     app.run_command("new").unwrap(); // /new
     render_to_string(100, 30, |f| crate::ui::render(f, &mut app));
 
-    // The layout snapshot is empty — clicking where the old URL used to be
-    // must not resolve to anything (it would otherwise open the old link).
     assert_eq!(app.sel.pos_at(10, 5), None);
-    // And the selection itself is cleared by /new.
     assert!(app.sel.selected_text().is_none());
 }
 #[cfg(test)]
@@ -1290,8 +1246,6 @@ mod usage_render_tests {
                 .map(|i| UsageRow {
                     created_at: format!("2026-08-12T23:{:02}:00Z", 15 - i),
                     backend: "OpenRouter".into(),
-                    // Overflow-prone values: "122.2k→672" (10 chars) and
-                    // "120.1k→2.1k" (11 chars) exceed a 9-cell field.
                     model: format!("deepseek/deepseek-v4-flash-0731 ({i})"),
                     prompt_tokens: [122_221, 120_086, 118_690][i],
                     completion_tokens: [672, 2126, 592][i],
@@ -1384,7 +1338,6 @@ mod usage_render_tests {
             .find(|r| r.contains("req") && r.contains("cached") && r.contains("cost"))
             .unwrap();
         let row = rows.iter().find(|r| r.contains("28125")).unwrap();
-        // The "● " marker must have a 2-space header counterpart.
         assert_eq!(
             char_pos(header, "backend"),
             char_pos(row, "OpenCode"),
@@ -1410,8 +1363,6 @@ mod usage_render_tests {
             .iter()
             .find(|r| r.contains("deepseek/deepseek-v3-Flash-07"))
             .unwrap();
-        // Different name lengths must not move the numeric columns.
-        // Right-aligned: the values' right edges must coincide.
         let edge = |line: &str, needle: &str| char_pos(line, needle).map(|c| c + needle.len());
         assert_eq!(edge(short, "28125"), edge(long, "47"), "req column drifts");
         assert_column(header, short, "req", "28125");
@@ -1609,7 +1560,6 @@ fn model_picker_available_panel_uses_its_own_width() {
     for id in ids {
         assert!(screen.contains(id), "{id} truncated:\n{screen}");
     }
-    // Six-char context sizes fit their column whole.
     assert!(screen.contains("262.1k"), "context size clipped:\n{screen}");
 }
 
@@ -1638,7 +1588,6 @@ fn help_popup_lists_keys_and_every_command() {
     let mut app = test_app();
     app.execute(nexus_core::app::AppCommand::OpenHelp).unwrap();
     assert!(app.popup == nexus_core::app::Popup::Help);
-    // Tall enough to show everything without scrolling.
     let screen = render_to_string(140, 140, |f| super::help::render(f, &mut app));
     assert!(screen.contains("composer"), "{screen}");
     assert!(screen.contains("Shift/Ctrl+Enter"), "{screen}");
@@ -1657,7 +1606,6 @@ fn help_popup_scroll_clamps_to_content() {
     app.open_help();
     app.help_scroll = u16::MAX;
     let screen = render_to_string(100, 30, |f| super::help::render(f, &mut app));
-    // Scrolled to the end: the last command is visible, not a blank pane.
     let last = nexus_core::app::COMMANDS.last().unwrap().name;
     assert!(screen.contains(&format!("/{last}")), "{screen}");
     assert!(app.help_scroll < u16::MAX);
@@ -1706,7 +1654,6 @@ fn status_bar_names_the_model_and_keeps_the_space_tag_beside_the_gauge() {
         "context meter on the right:\n{screen}"
     );
 
-    // A status too long for the bar ends in an ellipsis instead of a cut.
     app.status = "x".repeat(200);
     let screen = render_to_string(100, 1, |f| {
         crate::ui::status::render_status(f, &app, f.area());
@@ -1744,7 +1691,6 @@ fn status_line_expires_after_its_ttl() {
     app.expire_status();
     assert!(app.status.is_empty());
 
-    // Errors linger longer.
     app.apply_event(&nexus_core::app::AppEvent::Status("error: boom".into()));
     app.status_at = Some(std::time::Instant::now() - crate::app_view::STATUS_TTL);
     app.expire_status();
@@ -1758,7 +1704,6 @@ fn an_open_popup_dims_the_screen_behind_it_but_not_itself() {
     let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
     terminal.draw(|f| crate::ui::render(f, &mut app)).unwrap();
     let buf = terminal.backend().buffer();
-    // Corner cell: behind the popup, receded. Center cell: inside it.
     assert_eq!(buf[(0, 0)].fg, app.theme.border_dim);
     let inside = (0..100)
         .map(|x| buf[(x, 20)].fg)
@@ -2096,7 +2041,6 @@ fn settings_column_width_row_cycles_and_persists() {
     assert!(screen.contains("column width"), "{screen}");
     assert!(screen.contains("auto"), "{screen}");
 
-    // Enter, Space and → step forward; ← steps back. Esc is the only save/close.
     let mut seen = vec![app.settings.column_width.clone()];
     for code in [
         KeyCode::Enter,
@@ -2127,7 +2071,6 @@ fn settings_column_width_row_cycles_and_persists() {
             .any(|(k, v)| k == "column_width" && v == "220")
     );
 
-    // Saving the popup leaves the width alone.
     press(&mut app, KeyCode::Esc);
     assert!(app.popup == nexus_core::app::Popup::None);
     assert_eq!(app.settings.column_width, "220");
@@ -2379,7 +2322,6 @@ fn connectors_list_shows_status_dots_tool_counts_and_the_selected_detail() {
         screen.contains("5 connectors · ⏎ tools · a add"),
         "{screen}"
     );
-    // Moving the cursor changes the detail strip.
     conn_press(&mut app, crossterm::event::KeyCode::Down);
     let screen = render_to_string(120, 30, |f| super::connectors::render(f, &app));
     assert!(
@@ -2399,7 +2341,6 @@ fn connectors_empty_state_points_at_add_and_import() {
     let screen = render_to_string(120, 24, |f| super::connectors::render(f, &app));
     assert!(screen.contains("no connectors yet"), "{screen}");
     assert!(screen.contains("a adds one, i imports"), "{screen}");
-    // Keys on an empty list are harmless.
     for code in [
         crossterm::event::KeyCode::Enter,
         crossterm::event::KeyCode::Char('d'),
@@ -2437,7 +2378,6 @@ fn connectors_enter_opens_tools_with_badges_and_keys_set_the_policy() {
         screen.contains("the model sees it as linear__create_issue"),
         "{screen}"
     );
-    // allow, then deny, then back to the default.
     conn_press(&mut app, KeyCode::Char('a'));
     let screen = render_to_string(120, 30, |f| super::connectors::render(f, &app));
     assert!(
@@ -2458,7 +2398,6 @@ fn connectors_enter_opens_tools_with_badges_and_keys_set_the_policy() {
         body_lines(&screen)[1].contains("deny   delete_issue"),
         "{screen}"
     );
-    // A denied tool is no longer offered to the model.
     assert!(
         !app.connectors
             .exposure()
@@ -2511,7 +2450,6 @@ fn connectors_add_flow_masks_the_token_and_stores_it_in_the_keychain() {
     super::connectors::open(&mut app);
     conn_press(&mut app, KeyCode::Char('a'));
     assert_eq!(app.connectors_popup.mode, super::connectors::Mode::Add);
-    // An empty target does not advance.
     conn_press(&mut app, KeyCode::Enter);
     assert_eq!(
         app.connectors_popup.add.step,
@@ -2534,7 +2472,6 @@ fn connectors_add_flow_masks_the_token_and_stores_it_in_the_keychain() {
     let screen = render_to_string(100, 24, |f| super::connectors::render(f, &app));
     assert!(screen.contains("token: ******************"), "{screen}");
     assert!(!screen.contains("TOP-SECRET"), "{screen}");
-    // Paste lands in the token field too, newline stripped.
     super::connectors::paste(&mut app, "-pasted\n");
     assert!(app.connectors_popup.add.token.ends_with("-pasted"));
     conn_press(&mut app, KeyCode::Enter);
@@ -2566,7 +2503,6 @@ fn connectors_add_flow_handles_local_commands_bad_names_and_back() {
     );
     conn_press(&mut app, KeyCode::Enter);
     assert_eq!(app.connectors_popup.add.name, "notes");
-    // A bad name stays on the step; Esc steps back; a local command skips auth.
     for _ in 0..5 {
         conn_press(&mut app, KeyCode::Backspace);
     }
@@ -2586,7 +2522,6 @@ fn connectors_add_flow_handles_local_commands_bad_names_and_back() {
         conn_press(&mut app, KeyCode::Backspace);
     }
     type_text(&mut app, "notes");
-    // Local commands only run from the terminal UI.
     app.interactive_ui = true;
     conn_press(&mut app, KeyCode::Enter);
     assert_eq!(app.connectors_popup.mode, super::connectors::Mode::List);
@@ -2620,7 +2555,6 @@ fn connectors_remove_asks_first_and_deletes_the_keychain_entries() {
         screen.contains("remove \"linear\" and its keychain entries?"),
         "{screen}"
     );
-    // Anything but a confirmation backs out.
     conn_press(&mut app, KeyCode::Esc);
     assert_eq!(app.connectors.infos().len(), 5);
     conn_press(&mut app, KeyCode::Char('d'));
@@ -2771,7 +2705,6 @@ fn connector_approvals_offer_session_and_always_and_warn_about_changed_definitio
         lines.last().unwrap(),
         "y allow once · a this tool for the session · A always allow · n deny"
     );
-    // The open delay applies to the new key as well.
     app.approval_delay = std::time::Duration::from_millis(400);
     app.approval_opened_at = Some(std::time::Instant::now());
     super::approval::handle_key(&mut app, KeyEvent::from(KeyCode::Char('A'))).unwrap();
@@ -2780,7 +2713,6 @@ fn connector_approvals_offer_session_and_always_and_warn_about_changed_definitio
     super::approval::handle_key(&mut app, KeyEvent::from(KeyCode::Char('A'))).unwrap();
     assert_eq!(receiver.try_recv().unwrap(), Decision::AllowAlways);
 
-    // A changed definition is called out in the warning color.
     let (mut changed, _receiver) = approval_app(
         "linear",
         "this tool's definition changed since you allowed it\nwrites\n\n{}".into(),
@@ -2852,7 +2784,6 @@ fn image_viewer_chrome_shows_title_footer_and_hints_for_a_generated_png() {
         lines[0].starts_with("\u{256d}") && lines[0].contains(" sunset.png "),
         "{screen}"
     );
-    // The footer row sits just above the bottom border, which carries the hints.
     let footer = lines[lines.len() - 2];
     let size = crate::image_viewer::human_bytes(std::fs::metadata(&pic).unwrap().len());
     assert!(
@@ -2980,7 +2911,6 @@ fn image_viewer_action_menu_lists_every_action_with_its_key() {
         "selection marker: {first}"
     );
     assert!(screen.contains("Enter run"), "{screen}");
-    // The menu sits in the shared rounded chrome.
     assert!(
         screen.contains('\u{256d}') && screen.contains('\u{256f}'),
         "{screen}"
@@ -3053,7 +2983,6 @@ fn image_viewer_shows_a_chevron_only_where_the_pointer_would_turn_the_page() {
     };
     render_to_string(100, 24, |f| super::image_viewer::render(f, &mut app));
     let body = app.image_viewer.body();
-    // First image: nothing to go back to on the left, a chevron on the right.
     hover(&mut app, body.x + 2, body.y + 3);
     let screen = render_to_string(100, 24, |f| super::image_viewer::render(f, &mut app));
     assert!(

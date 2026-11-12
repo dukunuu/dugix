@@ -18,8 +18,6 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
     chrome::popup_area(app, f.area(), "model", MODEL_SIZE);
 
     let fav_focused = app.model_focus == ModelPanel::Favorites;
-    // Short title + the pick target as a footer hint, so the model picker
-    // reads the same from any feature that opens it.
     let picking = match app.model_pick_target {
         nexus_core::app::ModelPickTarget::Session => "picking chat model",
         nexus_core::app::ModelPickTarget::SwarmPersona(_) => "picking persona model",
@@ -34,9 +32,6 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
         )
     };
 
-    // Favorites column. Each panel draws its frame through the shared chrome
-    // (so the border sits on the same rect the mouse hit-tests) and sizes
-    // its rows to its own width.
     let theme = app.theme;
     let fav_inner = chrome::render_hinted(
         f,
@@ -49,7 +44,6 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
     );
     let fav_items = model_items(app, &app.favorite_models(), row_width(fav_inner), true);
     let fav_total = app.favorite_models().len();
-    // Core keeps selection as plain indices; the widget state is render-local.
     let mut fav_state = ListState::default();
     fav_state.select(Some(app.fav_selected));
     chrome::render_list(
@@ -61,13 +55,12 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
         1,
         app,
     );
-    // The widget's scroll offset is render state; stash it for click mapping.
+    // Stash the scroll offset, which is render state, for click mapping.
     app.fav_offset = fav_state.offset();
 
-    // Available column (with the search box in the title).
     let backend = app.model_backend_filter_label();
-    // Show which effort values the focused model accepts, so the Ctrl+T
-    // cycle is predictable before pressing it (e.g. Claude's extra minimal).
+    // Show which effort values the focused model accepts, so the Ctrl+T cycle
+    // is predictable before pressing it.
     let hint = match app.focused_reasoning_hint() {
         Some(accepts) => accepts.clone(),
         None => String::new(),
@@ -110,19 +103,19 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
     app.avail_offset = avail_state.offset();
 }
 
-/// Row text width inside a panel: the inner rect minus the scrollbar gutter,
-/// the `▸ ` highlight symbol, and a column of air before the scrollbar.
+/// Row text width inside a panel: the inner rect minus the scrollbar gutter, the
+/// `▸ ` highlight symbol, and a column of air.
 fn row_width(inner: Rect) -> usize {
     inner.width.saturating_sub(4) as usize
 }
 
-/// Trailing columns every model row reserves: the vision glyph (" ⊡") and
-/// the context window (" {:>6}" — `humanize` yields up to six chars, 131.1k).
+/// Trailing columns every model row reserves: the vision glyph and the context
+/// window (`humanize` yields up to six chars, e.g. `131.1k`).
 const VISION_W: usize = 2;
 const CTX_W: usize = 7;
 
-/// `short` shows the compact `name · backend` label (favorites, where the
-/// model is already known) instead of the full searchable id.
+/// `short` shows the compact `name · backend` label instead of the full
+/// searchable id.
 fn model_items(
     app: &AppView,
     models: &[&Model],
@@ -145,15 +138,15 @@ fn model_items(
             } else {
                 "  ".to_string()
             };
-            // Reasoning badge: [r:high] if set, [r] if supported but off.
+            // [r:high] if set, [r] if supported but off.
             let badge = match app.reasoning_of(&key) {
                 Some("none") => "  [r:off]".to_string(),
                 Some(effort) => format!("  [r:{effort}]"),
                 None if !m.reasoning_efforts.is_empty() => "  [r]".to_string(),
                 None => String::new(),
             };
-            // Every row reserves the same trailing columns — vision glyph,
-            // then the context window — so they line up right-aligned.
+            // Every row reserves the same trailing columns, so they line up
+            // right-aligned.
             let name_w = width.saturating_sub(VISION_W + CTX_W);
             id = chrome::truncate(&id, name_w.saturating_sub(2 + badge.chars().count()));
             let name = format!("{marker}{id}{badge}");
@@ -181,8 +174,8 @@ fn model_items(
 /// The model picker's default size, in percent of the screen.
 const MODEL_SIZE: (u16, u16) = (82, 74);
 
-/// Outer rects of the model picker's two columns (Favorites, Available).
-/// Shared by the renderer and the mouse hit-tester so they always agree.
+/// Outer rects of the model picker's two columns, shared by the renderer and the
+/// mouse hit-tester so they always agree.
 pub fn model_popup_areas(app: &AppView, screen: Rect) -> (Rect, Rect) {
     let outer = chrome::popup_rect(app, screen, "model", MODEL_SIZE);
     let cols =
@@ -201,11 +194,9 @@ pub fn list_inner(outer: Rect) -> Rect {
 pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
-        // Ctrl+P narrows noisy provider catalogs; Ctrl+S favorites; Ctrl+T cycles reasoning effort.
         KeyCode::Char('p') if ctrl => app.cycle_model_backend_filter(),
         KeyCode::Char('s') if ctrl => app.toggle_favorite_focused()?,
         KeyCode::Char('t') if ctrl => app.cycle_reasoning_focused()?,
-        // Cancelling a memory-model pick returns to /config, same as picking one.
         KeyCode::Esc => {
             app.popup = match app.model_pick_target {
                 nexus_core::app::ModelPickTarget::SwarmPersona(_) => Popup::Swarm,
@@ -213,8 +204,6 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
             };
         }
         KeyCode::Enter => app.confirm_model()?,
-        // Tab switches panels; Left/Right/Home/End/Delete/Ctrl+A/C/X/V belong
-        // to the filter box below (cursor move, select, clipboard).
         KeyCode::Tab => app.toggle_model_focus(),
         KeyCode::Up => app.move_model_selection(-1),
         KeyCode::Down => app.move_model_selection(1),
