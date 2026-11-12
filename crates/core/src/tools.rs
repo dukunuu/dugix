@@ -1892,7 +1892,10 @@ impl ToolBox {
                 match self.canvas_action(name, &value).await {
                     Ok(result) => (result, "done".into()),
                     Err(error) => {
-                        let kind = if Self::is_doc(&value) {
+                        let sheet = canvas::sheets::is_sheet(name, &value);
+                        let kind = if sheet {
+                            "sheet"
+                        } else if Self::is_doc(&value) {
                             "doc"
                         } else if name == "canvas_design" {
                             "design"
@@ -1902,7 +1905,9 @@ impl ToolBox {
                         let message = format!("{kind} failed: {error:#}");
                         // A first create usually fails before any result could
                         // carry the field reference; send it with the error.
-                        let schema = if Self::is_doc(&value) {
+                        let schema = if sheet {
+                            self.sheet_schema_if_fits(message.chars().count())
+                        } else if Self::is_doc(&value) {
                             self.doc_schema_if_fits(message.chars().count())
                         } else {
                             self.deck_schema_if_fits(message.chars().count())

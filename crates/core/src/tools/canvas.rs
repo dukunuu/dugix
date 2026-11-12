@@ -41,6 +41,11 @@ mod layout_reference_tests;
 mod page_tests;
 #[path = "canvas/read.rs"]
 mod read;
+#[path = "canvas/sheets.rs"]
+pub(super) mod sheets;
+#[cfg(test)]
+#[path = "canvas/sheets_tests.rs"]
+mod sheets_tests;
 #[cfg(test)]
 #[path = "canvas/template_tests.rs"]
 mod template_tests;
@@ -762,6 +767,9 @@ impl ToolBox {
     pub(super) async fn canvas_action(&self, action: &str, v: &Value) -> Result<String> {
         if action == "canvas_design" {
             return self.canvas_design(v);
+        }
+        if sheets::is_sheet(action, v) {
+            return self.sheet_action(action, v);
         }
         if Self::is_doc(v) {
             return self.doc_action(action, v);

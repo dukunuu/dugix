@@ -181,7 +181,7 @@
   },
   {
     "name": "canvas",
-    "description": "Draft writing as a doc (Markdown), presentations as a deck. Space files: docs/*.doc.json or decks/*.deck.json; kind from path or create.kind (default deck). Decks: choose the look first (design op=list, create.design); build slides with add_slide{layout,slots,after?}; use color roles and named styles; fix taste: and design: lines. Edit directly when asked, comment when reviewing or unsure. One file per request: edit it, no variants or probes. Never invent data, sources or images (src: https or space file). Decks: /studio, 1920x1080 px, auto-layout; view after layout changes. Docs: read outline or blocks; view pages; export docx/pdf/md/html. Atomic ops; ids/hashes automatic. Field references arrive with results. Comments: anchor to a block; one issue, two sentences with why; attach ops for fixes; at most 8, worst first; respect intent and facts; answer the thread.\n- action=create: Create.\n- action=read: Outline/tree, revision, threads. Needs path.\n- action=view: Deck slides: studio focus or sheet. Needs path.\n- action=fonts: Deck and installed families. Needs path.\n- action=edit: Apply ops; shows changed slides. Needs path, ops.\n- action=comment: Pin a comment (ops optional) or reply. Needs path, text.\n- action=resolve: Resolve a comment thread. Needs path, thread.\n- action=history: List or restore earlier versions. Needs path.\n- action=export: Save a file in exports/. Needs path.\n- action=design: Designs and layouts. Needs op.",
+    "description": "Docs: writing (Markdown); decks: slides; sheets: tables; kind from path or create.kind (default deck). Decks: pick a look first (design op=list, create.design); add_slide{layout,slots,after?}; color roles, named styles; fix taste:/design: lines; /studio 1920x1080 px auto-layout; view after layout edits. Edit when asked, comment when reviewing/unsure. One file per request, no variants/probes. Never invent data/sources/images (src: https or space file). Docs: read outline/blocks, view pages, export docx/pdf/md/html. Sheets: inputs only (=formula); read range before editing; edits list error cells. Atomic ops; ids/hashes automatic; field refs in results. Comments: block anchor; one issue, two sentences with why; attach fix ops; max 8, worst first; respect intent/facts; answer threads.\n- action=create: Create.\n- action=read: Outline/tree, revision, threads. Needs path.\n- action=view: Deck slides: studio focus or sheet. Needs path.\n- action=fonts: Deck and installed families. Needs path.\n- action=edit: Apply ops; shows changed slides. Needs path, ops.\n- action=comment: Pin a comment (ops optional) or reply. Needs path, text.\n- action=resolve: Resolve a comment thread. Needs path, thread.\n- action=history: List or restore earlier versions. Needs path.\n- action=export: Save a file in exports/. Needs path.\n- action=design: Designs and layouts. Needs op.",
     "parameters": {
       "properties": {
         "action": {
@@ -215,7 +215,7 @@
           "type": "string"
         },
         "format": {
-          "description": "doc: md; deck: pptx|pdf|png|html|json",
+          "description": "doc: md; deck: pptx|pdf|png|html|json; sheet: csv|xlsx",
           "type": "string"
         },
         "from": {
@@ -226,7 +226,8 @@
           "description": "create kind",
           "enum": [
             "deck",
-            "doc"
+            "doc",
+            "sheet"
           ],
           "type": "string"
         },
@@ -257,11 +258,15 @@
           "type": "object"
         },
         "path": {
-          "description": "decks/name.deck.json or docs/name.doc.json",
+          "description": "decks/name.deck.json, docs/name.doc.json, sheets/name.sheet.json",
           "type": "string"
         },
         "quote": {
           "description": "anchor's plain text",
+          "type": "string"
+        },
+        "range": {
+          "description": "sheet: A1:C9, B:B, 2:4, 'Tab'!A1",
           "type": "string"
         },
         "revision": {

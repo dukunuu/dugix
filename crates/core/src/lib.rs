@@ -31,6 +31,7 @@ pub mod panels;
 pub mod prompts;
 pub mod provider;
 pub mod remote_image;
+pub mod sheet;
 pub mod skills;
 pub mod space;
 pub mod subagent;
