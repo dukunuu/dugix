@@ -1,4 +1,5 @@
 mod backend;
+pub(crate) mod cache_policy;
 pub use backend::{BackendSpec, BackendTag, KeyLogin};
 
 pub mod embedding;
@@ -158,6 +159,8 @@ pub struct ChatParams {
     pub prompt_cache_key: Option<String>,
     /// Request a one-hour TTL on Anthropic cache markers; otherwise use the default.
     pub cache_ttl_1h: bool,
+    /// Opt in to paid twelve-hour caching on newer `OpenAI` Responses models.
+    pub cache_long_openai: bool,
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
     pub max_tokens: Option<u32>,
@@ -421,6 +424,8 @@ pub enum StreamEvent {
     },
     Done,
     Error(String),
+    /// A one-off message for the status line (not part of the transcript).
+    Notice(String),
     /// What a `task` sub-agent is doing, for the live sub-agent view. Its
     /// usage rides here (priced under the sub-agent's own model) rather than
     /// as `Usage`, which would move the parent's context bar.

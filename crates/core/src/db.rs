@@ -15,6 +15,7 @@ use uuid::Uuid;
 #[cfg(test)]
 use crate::provider::ModelPricing;
 
+mod cache_accounting;
 pub(crate) mod chats;
 mod files;
 mod jobs;
@@ -24,6 +25,7 @@ mod subagents;
 mod sync_state;
 mod usage;
 
+pub use cache_accounting::{Classified, LaneState, RequestFacts, Verdict, classify};
 use files::cosine;
 pub use files::{
     add_session_sources, blob_to_vec, cache_get, cache_put, count_files, discarded_domains,

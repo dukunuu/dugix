@@ -55,7 +55,31 @@ const CACHE: &[Step] = &[
         name: "drop watch_jobs",
         run: drop_watch_jobs,
     },
+    Step {
+        target: 3,
+        name: "session prompt prefixes and request cache accounting",
+        run: prompt_cache,
+    },
 ];
+
+fn prompt_cache(tx: &Transaction<'_>, ctx: &mut Ctx<'_>) -> Result<()> {
+    let schema = ctx.schema;
+    tx.execute_batch(&format!(
+        "CREATE TABLE {schema}.session_prefixes (
+            session_id TEXT PRIMARY KEY, generation INTEGER NOT NULL,
+            system TEXT NOT NULL, lead_images_json TEXT, tools_json TEXT NOT NULL,
+            made_at TEXT NOT NULL, identity_hash TEXT NOT NULL
+        );
+        CREATE TABLE {schema}.request_cache (
+            usage_id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, cache_key TEXT NOT NULL,
+            prefix_generation INTEGER NOT NULL, reusable_tokens INTEGER NOT NULL,
+            system_hash TEXT NOT NULL, tools_hash TEXT NOT NULL,
+            gap_secs INTEGER NOT NULL, verdict TEXT NOT NULL
+        );
+        CREATE INDEX {schema}.request_cache_lane ON request_cache (session_id, cache_key, usage_id);"
+    ))?;
+    Ok(())
+}
 
 /// The current version of the durable database schema.
 #[must_use]

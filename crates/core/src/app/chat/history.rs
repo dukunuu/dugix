@@ -9,7 +9,7 @@ use super::ui_repair::{ui_failure_notes, ui_program_history};
 use super::user_command::user_command_replay;
 
 impl App {
-    pub(super) fn model_profile(&self) -> ModelProfile {
+    pub(in crate::app) fn model_profile(&self) -> ModelProfile {
         profile_for(
             self.models.iter().find(|model| {
                 self.current_model.as_deref() == Some(super::composite_id(model).as_str())
@@ -120,11 +120,19 @@ impl App {
     #[allow(clippy::too_many_lines)]
     pub fn build_history(&mut self) -> Vec<ChatMessage> {
         let mut history: Vec<ChatMessage> = Vec::with_capacity(self.messages.len() + 3);
-        history.push(ChatMessage::text("system", self.system_prompt()));
-        if self.current_model_supports_images()
-            && let Some(img_msg) = self.space_images_message()
-        {
-            history.push(img_msg);
+        self.ensure_prompt_prefix();
+        if let Some(prefix) = self.active_prefix() {
+            history.push(ChatMessage::text("system", prefix.system.clone()));
+            if let Some(images) = &prefix.lead_images {
+                history.push(images.clone());
+            }
+        } else {
+            history.push(ChatMessage::text("system", self.system_prompt()));
+            if self.current_model_supports_images()
+                && let Some(images) = self.space_images_message()
+            {
+                history.push(images);
+            }
         }
         if let Some(summary) = self
             .session

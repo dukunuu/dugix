@@ -17,6 +17,7 @@ use reqwest_eventsource::{Event, EventSource};
 use serde::Deserialize;
 use tokio::sync::mpsc;
 
+use super::cache_policy;
 use super::harmony::{self, Piece};
 use super::{
     BackendTag, ChatMessage, ChatParams, Completion, Model, ModelPricing, PromptConvention,
@@ -1890,6 +1891,9 @@ impl OpenRouter {
             }
         }
         add_cache_ttl_1h(&mut body, model, params.cache_ttl_1h);
+        if let Some(obj) = body.as_object_mut() {
+            cache_policy::apply_lifetime(obj, self.tag, model, params);
+        }
         if self.tag == BackendTag::Mistral {
             mistral_body(&mut body);
         }
@@ -1932,8 +1936,37 @@ impl OpenRouter {
         Ok(finish)
     }
 
-    #[allow(clippy::too_many_lines)]
+    /// One request, retried once without a cache-lifetime field the provider refused.
     async fn run_stream_unlogged(
+        &self,
+        model: &str,
+        messages: &[ChatMessage],
+        params: &ChatParams,
+        tools: &[ToolDef],
+        disable_tool_choice: bool,
+        tx: &mpsc::UnboundedSender<StreamEvent>,
+    ) -> Result<Finish> {
+        let first = self
+            .run_stream_attempt(model, messages, params, tools, disable_tool_choice, tx)
+            .await;
+        let Err(error) = &first else {
+            return first;
+        };
+        let Some(rejected) = error.downcast_ref::<cache_policy::FieldRejected>() else {
+            return first;
+        };
+        cache_policy::refuse(self.tag, model, rejected.0);
+        let _ = tx.send(StreamEvent::Notice(format!(
+            "{} rejected {}; continuing without it",
+            self.tag.name(),
+            rejected.0
+        )));
+        self.run_stream_attempt(model, messages, params, tools, disable_tool_choice, tx)
+            .await
+    }
+
+    #[allow(clippy::too_many_lines)]
+    async fn run_stream_attempt(
         &self,
         model: &str,
         messages: &[ChatMessage],
@@ -2019,10 +2052,15 @@ impl OpenRouter {
                     | reqwest_eventsource::Error::InvalidContentType(_, response),
                 ) => {
                     let status = response.status();
-                    let body = response.text().await.unwrap_or_default();
-                    let msg = format!("request failed ({status}): {}", truncate_error_body(&body));
-                    let _ = tx.send(StreamEvent::Error(msg));
+                    let text = response.text().await.unwrap_or_default();
                     es.close();
+                    if status == reqwest::StatusCode::BAD_REQUEST
+                        && let Some(field) = cache_policy::rejected_field(&body, &text)
+                    {
+                        return Err(cache_policy::FieldRejected(field).into());
+                    }
+                    let msg = format!("request failed ({status}): {}", truncate_error_body(&text));
+                    let _ = tx.send(StreamEvent::Error(msg));
                     return Ok(Finish::Errored);
                 }
                 Err(e) => {
@@ -2158,15 +2196,14 @@ impl OpenRouter {
         Ok(h)
     }
 
-    async fn run_codex_stream(
+    fn codex_stream_body(
         &self,
         model: &str,
         messages: &[ChatMessage],
         params: &ChatParams,
         tools: &[ToolDef],
         disable_tool_choice: bool,
-        tx: &mpsc::UnboundedSender<StreamEvent>,
-    ) -> Result<Finish> {
+    ) -> serde_json::Value {
         let mut body = serde_json::json!({
             "model": model,
             "store": false,
@@ -2184,6 +2221,7 @@ impl OpenRouter {
             // cache workers and report no reuse.
             obj.insert("prompt_cache_key".into(), serde_json::json!(key));
         }
+        cache_policy::apply_lifetime(obj, self.tag, model, params);
         if let Some(t) = params.temperature {
             obj.insert("temperature".into(), serde_json::json!(t));
         }
@@ -2196,6 +2234,19 @@ impl OpenRouter {
         if !tools.is_empty() {
             obj.insert("tools".into(), serde_json::json!(codex_tools(tools)));
         }
+        body
+    }
+
+    async fn run_codex_stream(
+        &self,
+        model: &str,
+        messages: &[ChatMessage],
+        params: &ChatParams,
+        tools: &[ToolDef],
+        disable_tool_choice: bool,
+        tx: &mpsc::UnboundedSender<StreamEvent>,
+    ) -> Result<Finish> {
+        let body = self.codex_stream_body(model, messages, params, tools, disable_tool_choice);
         // Not reqwest_eventsource: ChatGPT's backend sends genuine SSE under a
         // Content-Type that crate rejects, discarding the valid body.
         let response = self
@@ -2214,6 +2265,11 @@ impl OpenRouter {
         let status = response.status();
         if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
+            if status == reqwest::StatusCode::BAD_REQUEST
+                && let Some(field) = cache_policy::rejected_field(&body, &text)
+            {
+                return Err(cache_policy::FieldRejected(field).into());
+            }
             let msg = format!("request failed ({status}): {}", truncate_error_body(&text));
             let _ = tx.send(StreamEvent::Error(msg));
             return Ok(Finish::Errored);

@@ -59,6 +59,11 @@ pub fn render(f: &mut Frame, app: &AppView) {
                 app.settings.image_viewer.clone(),
                 Style::default().fg(app.theme.accent),
             ),
+            SettingsField::CacheLifetime => Span::styled(
+                app.settings.cache_lifetime.clone(),
+                Style::default().fg(app.theme.accent),
+            ),
+            SettingsField::CacheLongOpenai => toggle(app.settings.cache_long_openai),
             SettingsField::ColumnWidth => Span::styled(
                 app.settings.column_width.clone(),
                 Style::default().fg(app.theme.accent),

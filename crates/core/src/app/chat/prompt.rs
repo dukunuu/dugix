@@ -160,7 +160,7 @@ impl App {
         Some(s.trim_end().to_string())
     }
 
-    pub(super) fn space_images_message(&self) -> Option<ChatMessage> {
+    pub(in crate::app) fn space_images_message(&self) -> Option<ChatMessage> {
         let files_dir = self.space.files_dir(&self.active_space.name);
         let mut urls: Vec<String> = Vec::new();
         let mut names: Vec<&str> = Vec::new();

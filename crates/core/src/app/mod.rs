@@ -23,6 +23,7 @@ use crate::space::Space;
 
 mod apps;
 mod backends;
+mod cache_accounting;
 mod chat;
 mod chats;
 mod commands;
@@ -39,6 +40,9 @@ mod masking_tests;
 mod memory;
 mod models;
 mod panels;
+#[cfg(test)]
+mod prefix_stability_tests;
+mod prompt_freeze;
 #[cfg(test)]
 mod prompt_snapshots;
 #[cfg(test)]
@@ -428,6 +432,8 @@ pub enum ModelPanel {
 pub struct CacheTally {
     pub prompt_tokens: u64,
     pub cache_read_tokens: u64,
+    pub reusable_tokens: u64,
+    pub reused_tokens: u64,
     /// Requests without cache accounting, excluded from the reported rate.
     pub unrated_requests: u64,
 }
@@ -446,6 +452,18 @@ impl CacheTally {
     #[allow(clippy::cast_precision_loss)]
     pub fn rate(&self) -> Option<f64> {
         (self.prompt_tokens > 0).then(|| self.cache_read_tokens as f64 / self.prompt_tokens as f64)
+    }
+
+    /// Add one request's reusable tokens and how many of them the provider served from cache.
+    pub fn observe_reuse(&mut self, reusable: u64, reused: u64) {
+        self.reusable_tokens += reusable;
+        self.reused_tokens += reused;
+    }
+
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn reuse_rate(&self) -> Option<f64> {
+        (self.reusable_tokens > 0).then(|| self.reused_tokens as f64 / self.reusable_tokens as f64)
     }
 
     #[must_use]
@@ -479,10 +497,12 @@ pub enum SettingsField {
     ReplyStyle,
     ColumnWidth,
     ImageViewer,
+    CacheLifetime,
+    CacheLongOpenai,
 }
 
 impl SettingsField {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 18] = [
         Self::RemoteImages,
         Self::ShowStats,
         Self::ShowReasoning,
@@ -499,6 +519,8 @@ impl SettingsField {
         Self::ReplyStyle,
         Self::ColumnWidth,
         Self::ImageViewer,
+        Self::CacheLifetime,
+        Self::CacheLongOpenai,
     ];
 
     pub const fn label(self) -> &'static str {
@@ -510,6 +532,10 @@ impl SettingsField {
             }
             Self::ImageViewer => {
                 "image viewer (Space cycles auto/terminal/system; auto = in-terminal when graphics are available)"
+            }
+            Self::CacheLifetime => "cache lifetime (Space cycles default/extended)",
+            Self::CacheLongOpenai => {
+                "paid OpenAI 12h cache (GPT-5.6+, Responses only; writes cost 2.5x)"
             }
             Self::ShowStats => "show stats (model · TPS footer)",
             Self::ShowReasoning => "expand reasoning (Ctrl+R)",
@@ -554,7 +580,11 @@ pub const SETTINGS_GROUPS: &[SettingsGroup] = &[
     },
     SettingsGroup {
         name: "Context",
-        fields: &[SettingsField::CompactThreshold],
+        fields: &[
+            SettingsField::CompactThreshold,
+            SettingsField::CacheLifetime,
+            SettingsField::CacheLongOpenai,
+        ],
     },
     SettingsGroup {
         name: "Web Search",
@@ -600,6 +630,8 @@ pub struct Settings {
     /// Fetch untrusted remote images through the device-local safety cache.
     pub remote_images: bool,
     pub reply_style: String,
+    pub cache_lifetime: String,
+    pub cache_long_openai: bool,
     pub image_viewer: String,
     pub show_stats: bool,
     pub show_reasoning: bool,
@@ -620,6 +652,8 @@ impl Default for Settings {
         Self {
             remote_images: true,
             reply_style: "interactive".into(),
+            cache_lifetime: "extended".into(),
+            cache_long_openai: false,
             image_viewer: "auto".into(),
             show_stats: false,
             show_reasoning: false,
@@ -893,6 +927,11 @@ pub struct App {
     pub(crate) memory_tidy_due: usize,
     /// Advance when the serialized prefix changes to select a fresh provider-cache lane.
     pub(crate) cache_epoch: u64,
+    prefixes: prompt_freeze::Prefixes,
+    /// The prefix and cache lane of each session's latest turn, by session id.
+    turn_lanes: HashMap<String, cache_accounting::TurnLane>,
+    /// The latest request seen on each cache lane, by cache key.
+    cache_lanes: HashMap<String, crate::db::LaneState>,
     /// Frozen timestamp preventing clock ticks from invalidating the provider-cache prefix.
     pub(crate) prompt_datetime: String,
     pub index: IndexState,
@@ -1068,6 +1107,9 @@ impl App {
             memory_docs: Vec::new(),
             memory_tidy_due: 0,
             cache_epoch: 0,
+            prefixes: HashMap::new(),
+            turn_lanes: HashMap::new(),
+            cache_lanes: HashMap::new(),
             prompt_datetime: Utc::now().format("%Y-%m-%d %H:%M UTC, %A").to_string(),
             index: IndexState::new(),
             base_system_prompt: config::BASE_SYSTEM_PROMPT.to_string(),
@@ -1499,6 +1541,10 @@ impl App {
             }
             // Settings written by newer builds must remain readable by older clients.
             "popup_sizes" => self.settings.popup_sizes = settings::sanitize_popup_sizes(v),
+            "cache_lifetime" if matches!(v, "default" | "extended") => {
+                self.settings.cache_lifetime = v.to_string();
+            }
+            "cache_long_openai" => self.settings.cache_long_openai = v == "on",
             "reply_style" if REPLY_STYLES.contains(&v) => {
                 if self.settings.reply_style != v {
                     self.settings.reply_style = v.to_string();
@@ -2656,8 +2702,8 @@ mod eval_tests {
     #[test]
     fn boot_backend_wiring_carries_loaded_experiments() {
         let mut app = tests::app_with_key();
-        app.saved.experiments.cache_ttl_1h = true;
+        app.saved.experiments.compaction_itemized = true;
         app.rebuild_all_backends();
-        assert!(app.experiments.cache_ttl_1h);
+        assert!(app.experiments.compaction_itemized);
     }
 }

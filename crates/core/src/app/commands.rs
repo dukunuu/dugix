@@ -41,6 +41,11 @@ pub const COMMANDS: &[Command] = &[
         aliases: &["clear"],
     },
     Command {
+        name: "refresh",
+        desc: "refresh this chat's frozen prompt (one cache miss)",
+        aliases: &[],
+    },
+    Command {
         name: "compact",
         desc: "summarize old messages",
         aliases: &["compaction", "summarize"],
@@ -389,6 +394,7 @@ pub enum AppCommand {
         text: String,
     },
     NewSession,
+    RefreshPrompt,
     Compact,
     OpenSessionPicker,
     OpenSpacePicker,
@@ -587,6 +593,7 @@ impl App {
             "quit" => Ok(AppCommand::Quit),
             "new" => Ok(AppCommand::NewSession),
             "compact" => Ok(AppCommand::Compact),
+            "refresh" => Ok(AppCommand::RefreshPrompt),
             "session" => Ok(AppCommand::OpenSessionPicker),
             "space" => Ok(AppCommand::OpenSpacePicker),
             "model" => Ok(AppCommand::OpenModelPicker),
@@ -828,6 +835,7 @@ impl App {
             AppCommand::AnswerGate { text } => self.reply_to_survey_gate(&text),
             AppCommand::NewSession => self.new_session(),
             AppCommand::Compact => self.force_compact(),
+            AppCommand::RefreshPrompt => self.refresh_prompt(),
             AppCommand::RunResearch { topic, gated } => {
                 if !gated {
                     self.start_research_with_gate(&topic, false);

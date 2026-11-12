@@ -249,7 +249,7 @@ by default. Set `parallel_tool_calls = true` to allow parallel calls, or `tier =
 head-and-tail capped to one eighth of the context window (2,000–8,000
 characters; 4,000 if unknown); stored results and hosted requests are unchanged.
 
-Nexus warns once per prompt-cache epoch if the system prompt plus tool
+Nexus warns once per frozen prompt prefix if the system prompt plus tool
 definitions alone use more than half the known context window. The estimate is
 advisory and never blocks a request.
 
@@ -632,8 +632,9 @@ Type `/` in the composer for autocomplete. Aliases in parentheses.
 | `/agents` (`subagents`) | this conversation's `task` sub-agents: status, model, steps, tokens and cost; Enter opens a run's transcript (prompt, reasoning, tool calls, answer, review diff), live while it runs (`t` tool bodies, `r` reasoning, ←→ other runs). Ctrl+↑ opens it while the chat has sub-agents. The reply's cost includes its sub-agents |
 | `/library` (`decks`, `lib`) | list the space's decks and docs: Enter opens in studio, `e` exports through the Save dialog, `d` deletes (to `.trash/`) |
 | `/skills` | manage skills (app + project/user/global Agent Skills) |
-| `/usage` (`analytics`, `costs`) | token/cache/cost analytics by backend & model (←/→ for 24h/7d/30d/all windows) |
+| `/usage` (`analytics`, `costs`) | token/cache/cost analytics by backend & model, with both the share served from cache and the share reused (of what the provider had already seen), plus why requests missed (←/→ for 24h/7d/30d/all windows) |
 | `/compact` (`summarize`) | summarize old messages into a digest |
+| `/refresh` | rebuild this chat's frozen prompt (memory, files, skills, tools) at the cost of one cache miss; a chat otherwise keeps its prompt prefix byte-identical for provider prompt caching, and `prompt frozen · …` says when something changed since |
 | `/memory` (`remember`) | edit this space's memory in `$EDITOR`; `/memory tidy` asks the chat model to review and clean the memory with its own tool, in the conversation |
 | `/config` (`settings`, `stats`) | settings, footer toggles, sampling params |
 | `/export` (`save-report`) | write the research report + sources to a file |

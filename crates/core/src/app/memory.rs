@@ -29,7 +29,7 @@ pub(super) fn note(role: &str, content: String) -> Message {
 }
 
 impl App {
-    /// Freeze memory for a new session or cache epoch.
+    /// Recompute the memory table of contents; it reaches the prompt only when a prefix is built.
     pub fn refresh_memory_snapshot(&mut self) {
         let conn = self.db.conn();
         let space = &self.active_space.id;
@@ -44,7 +44,6 @@ impl App {
                 facts.iter().filter(|f| f.chapter_id == c.id).count() > memory::TIDY_HINT_FACTS
             })
             .count();
-        self.bump_cache_epoch();
     }
 
     #[must_use]
@@ -57,21 +56,18 @@ impl App {
         self.memory_tidy_due
     }
 
+    /// Declare a rebuild point: the active session's frozen prompt prefix is
+    /// rebuilt on its next request, under a new provider-cache lane.
     pub(crate) fn bump_cache_epoch(&mut self) {
         self.cache_epoch = self.cache_epoch.wrapping_add(1);
+        if let Some(id) = self.session.as_ref().map(|s| s.id.clone()) {
+            self.invalidate_prefix(&id);
+        }
         self.meter.warned = false;
-        self.prompt_datetime = chrono::Utc::now()
-            .format("%Y-%m-%d %H:%M UTC, %A")
-            .to_string();
         // Exact usage from a different prompt/model lane cannot measure this epoch.
         self.meter.total = None;
         self.meter.last_cache_rate = None;
         self.meter.turn_cache = super::CacheTally::default();
-    }
-
-    #[must_use]
-    pub(crate) fn prompt_cache_key_for(&self, session_id: &str) -> String {
-        format!("{session_id}:{}", self.cache_epoch)
     }
 
     pub(super) fn memory_hint(&self, text: &str) -> Option<recall::Recall> {

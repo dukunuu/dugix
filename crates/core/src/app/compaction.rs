@@ -209,6 +209,8 @@ impl App {
         let in_view = self.session.as_ref().is_some_and(|s| s.id == id);
         if in_view {
             self.bump_cache_epoch();
+        } else {
+            self.invalidate_prefix(&id);
         }
         let mut history_invalidated = false;
         if in_view {

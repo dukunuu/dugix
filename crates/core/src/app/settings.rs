@@ -33,7 +33,7 @@ impl App {
     }
 }
 
-const SETTING_KEYS: [&str; 18] = [
+const SETTING_KEYS: [&str; 20] = [
     "remote_images",
     "show_stats",
     "show_reasoning",
@@ -46,6 +46,8 @@ const SETTING_KEYS: [&str; 18] = [
     "searxng_url",
     "verbosity",
     "reply_style",
+    "cache_lifetime",
+    "cache_long_openai",
     "langsearch_key",
     "search_provider",
     "blocked_domains",
@@ -153,7 +155,8 @@ fn valid_popup_sizes(value: &str) -> bool {
 
 fn valid_setting_value(key: &str, value: &str) -> bool {
     match key {
-        "remote_images" => matches!(value, "on" | "off"),
+        "remote_images" | "cache_long_openai" => matches!(value, "on" | "off"),
+        "cache_lifetime" => matches!(value, "default" | "extended"),
         "show_stats" | "show_reasoning" | "hide_hints" => matches!(value, "0" | "1"),
         "temperature" => {
             value.is_empty()

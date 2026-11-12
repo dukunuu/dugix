@@ -42,10 +42,29 @@ table model_prices
   model_id: TEXT not_null=false default=None pk=1
   prompt_price: REAL not_null=true default=None pk=0
   updated_at: TEXT not_null=true default=None pk=0
+table request_cache
+  cache_key: TEXT not_null=true default=None pk=0
+  gap_secs: INTEGER not_null=true default=None pk=0
+  prefix_generation: INTEGER not_null=true default=None pk=0
+  reusable_tokens: INTEGER not_null=true default=None pk=0
+  session_id: TEXT not_null=true default=None pk=0
+  system_hash: TEXT not_null=true default=None pk=0
+  tools_hash: TEXT not_null=true default=None pk=0
+  usage_id: INTEGER not_null=false default=None pk=1
+  verdict: TEXT not_null=true default=None pk=0
+  index request_cache_lane on request_cache(session_id, cache_key, usage_id) unique=false
 table session_masks
   mask_through: INTEGER not_null=true default=None pk=0
   session_id: TEXT not_null=false default=None pk=1
   updated_at: TEXT not_null=true default=None pk=0
+table session_prefixes
+  generation: INTEGER not_null=true default=None pk=0
+  identity_hash: TEXT not_null=true default=None pk=0
+  lead_images_json: TEXT not_null=false default=None pk=0
+  made_at: TEXT not_null=true default=None pk=0
+  session_id: TEXT not_null=false default=None pk=1
+  system: TEXT not_null=true default=None pk=0
+  tools_json: TEXT not_null=true default=None pk=0
 table session_workspaces
   mode: TEXT not_null=false default=None pk=0
   root: TEXT not_null=true default=None pk=0

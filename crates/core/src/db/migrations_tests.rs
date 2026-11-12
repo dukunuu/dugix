@@ -197,7 +197,7 @@ fn memory_sharing_migration_defaults_existing_chapters_and_only_adds_its_column(
 fn fresh_schemas_match_snapshots() {
     let db = Db::open_in_memory().unwrap();
     assert_eq!(version(db.conn(), "main").unwrap(), 7);
-    assert_eq!(version(db.conn(), "cache").unwrap(), 2);
+    assert_eq!(version(db.conn(), "cache").unwrap(), 3);
     assert_snapshot("durable.txt", &schema(db.conn(), "main"));
     assert_snapshot("cache.txt", &schema(db.conn(), "cache"));
 }
@@ -266,7 +266,7 @@ fn cache_fixture_preserves_embeddings_in_attached_and_standalone_schemas() {
         let actual = schema(conn, name);
         assert_eq!(actual, expected);
         assert_snapshot("cache.txt", &actual);
-        assert_eq!(version(conn, name).unwrap(), 2);
+        assert_eq!(version(conn, name).unwrap(), 3);
         let embedding: (String, Vec<u8>, String) = conn
             .query_row(
                 &format!("SELECT file_id, vec, text FROM {name}.chunk_embeddings"),
@@ -303,7 +303,7 @@ fn cache_baseline_adds_all_missing_columns() {
     ).unwrap();
     assert_eq!(
         run(&conn, CACHE, &mut context("main", "cache.db")).unwrap(),
-        2
+        3
     );
     assert_snapshot("cache.txt", &schema(&conn, "main"));
     let identity: String = conn
@@ -343,7 +343,7 @@ fn newer_cache_versions_have_exact_errors() {
     let conn = Connection::open(cache_path_for(&root.db_path())).unwrap();
     conn.pragma_update(None, "user_version", 99).unwrap();
     let expected =
-        "cache.db was written by a newer nexus (schema 99, this build knows up to 2); update nexus";
+        "cache.db was written by a newer nexus (schema 99, this build knows up to 3); update nexus";
     assert_eq!(
         migrate_cache(&conn, "main").unwrap_err().to_string(),
         expected

@@ -1207,6 +1207,8 @@ mod usage_render_tests {
                     cache_read_tokens: 481_650,
                     rated_prompt_tokens: 741_000,
                     rated_cache_read_tokens: 481_650,
+                    reusable_tokens: 700_000,
+                    reused_tokens: 679_000,
                     cost: 0.1108,
                 },
                 UsageByBackend {
@@ -1217,6 +1219,8 @@ mod usage_render_tests {
                     cache_read_tokens: 2_805_000,
                     rated_prompt_tokens: 5_100_000,
                     rated_cache_read_tokens: 2_805_000,
+                    reusable_tokens: 0,
+                    reused_tokens: 0,
                     cost: 6.0330,
                 },
             ],
@@ -1229,6 +1233,8 @@ mod usage_render_tests {
                     cache_read_tokens: 481_650,
                     rated_prompt_tokens: 741_000,
                     rated_cache_read_tokens: 481_650,
+                    reusable_tokens: 700_000,
+                    reused_tokens: 679_000,
                     cost: 0.1108,
                 },
                 UsageByModel {
@@ -1239,6 +1245,8 @@ mod usage_render_tests {
                     cache_read_tokens: 2_805_000,
                     rated_prompt_tokens: 5_100_000,
                     rated_cache_read_tokens: 2_805_000,
+                    reusable_tokens: 0,
+                    reused_tokens: 0,
                     cost: 6.0330,
                 },
             ],
@@ -1255,6 +1263,11 @@ mod usage_render_tests {
                     cost: Some(0.0095),
                 })
                 .collect(),
+            misses: vec![
+                ("first".into(), 3),
+                ("hit".into(), 40),
+                ("provider_miss".into(), 5),
+            ],
         });
         app
     }
@@ -1347,7 +1360,17 @@ mod usage_render_tests {
         assert_column(header, row, "prompt", "741.0k");
         assert_column(header, row, "out", "24.8k");
         assert_column(header, row, "cached", "65"); // "%" rides one past
+        assert_column(header, row, "reused", "97");
         assert_column(header, row, "cost", "$0.1108");
+    }
+
+    #[test]
+    fn miss_breakdown_names_each_verdict() {
+        let rows = render_rows(&populated_app());
+        let line = rows.iter().find(|r| r.contains("cache requests")).unwrap();
+        for part in ["first 3", "hit 40", "provider miss 5"] {
+            assert!(line.contains(part), "{part}: {line}");
+        }
     }
 
     #[test]
@@ -1369,6 +1392,7 @@ mod usage_render_tests {
         assert_column(header, short, "prompt", "741.0k");
         assert_column(header, short, "out", "24.8k");
         assert_column(header, short, "cached", "65");
+        assert_column(header, short, "reused", "97");
         assert_column(header, short, "cost", "$0.1108");
     }
 
@@ -1589,6 +1613,50 @@ fn status_bar_names_the_model_and_keeps_the_space_tag_beside_the_gauge() {
         crate::ui::status::render_status(f, &app, f.area());
     });
     assert!(screen.contains('…'), "{screen}");
+}
+
+#[test]
+fn status_bar_reports_reuse_not_raw_cache_share() {
+    let mut app = test_app();
+    app.core.models = vec![nexus_core::provider::Model {
+        id: "org/Big-Model-7B".into(),
+        name: "Big Model".into(),
+        reasoning_efforts: Vec::new(),
+        context_length: Some(128_000),
+        supports_images: false,
+        supports_image_generation: false,
+        supports_video_generation: false,
+        backend: nexus_core::provider::BackendTag::Local,
+        pricing: None,
+        aliases: Vec::new(),
+    }];
+    app.core.current_model = Some("local:org/Big-Model-7B".into());
+    let status = |app: &AppView| {
+        render_to_string(110, 1, |f| {
+            crate::ui::status::render_status(f, app, f.area())
+        })
+    };
+    // A first request has nothing reusable: the share of the whole prompt is
+    // not shown, because the provider could not have cached it.
+    app.core.meter.turn_cache.prompt_tokens = 1_000;
+    app.core.meter.turn_cache.cache_read_tokens = 0;
+    for stats in [true, false] {
+        app.settings.show_stats = stats;
+        let screen = status(&app);
+        assert!(
+            !screen.contains("cached") && !screen.contains("reused"),
+            "{screen}"
+        );
+    }
+    app.core.meter.turn_cache.observe_reuse(1_000, 990);
+    for stats in [true, false] {
+        app.settings.show_stats = stats;
+        let screen = status(&app);
+        assert!(screen.contains("99% reused"), "{screen}");
+        assert!(!screen.contains("cached"), "{screen}");
+    }
+    app.core.meter.turn_cache.unrated_requests = 1;
+    assert!(status(&app).contains("~99% reused"));
 }
 
 #[test]

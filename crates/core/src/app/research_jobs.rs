@@ -64,6 +64,9 @@ impl super::App {
         let restore_session = self.session.clone();
         let restore_memory_snapshot = self.memory_snapshot.clone();
         let restore_cache_epoch = self.cache_epoch;
+        let restore_datetime = self.prompt_datetime.clone();
+        let restore_docs = self.memory_docs.clone();
+        let restore_tidy_due = self.memory_tidy_due;
         let restore_messages = std::mem::take(&mut self.messages);
         let restore_work_mode = self.work_mode;
         let restore_workspace = self.workspace.clone();
@@ -74,6 +77,9 @@ impl super::App {
         self.session = restore_session;
         self.memory_snapshot = restore_memory_snapshot;
         self.cache_epoch = restore_cache_epoch;
+        self.prompt_datetime = restore_datetime;
+        self.memory_docs = restore_docs;
+        self.memory_tidy_due = restore_tidy_due;
         self.messages = restore_messages;
         self.work_mode = restore_work_mode;
         self.workspace = restore_workspace;

@@ -219,7 +219,10 @@ async fn run_searcher(
                 return format!("[search agent error on \"{display}\": {e}]");
             }
             StreamEvent::Done => break,
-            StreamEvent::Usage(_) | StreamEvent::Reasoning(_) | StreamEvent::Subagent(_) => {}
+            StreamEvent::Usage(_)
+            | StreamEvent::Reasoning(_)
+            | StreamEvent::Notice(_)
+            | StreamEvent::Subagent(_) => {}
         }
     }
     let text = buf.trim();
@@ -281,7 +284,10 @@ async fn verify_with_quote_check(
                 break;
             }
             StreamEvent::Done => break,
-            StreamEvent::Usage(_) | StreamEvent::Reasoning(_) | StreamEvent::Subagent(_) => {}
+            StreamEvent::Usage(_)
+            | StreamEvent::Reasoning(_)
+            | StreamEvent::Notice(_)
+            | StreamEvent::Subagent(_) => {}
         }
     }
     if !failed {

@@ -96,12 +96,16 @@ fn a_panel_shown_without_its_broken_piece_is_replayed_as_partly_rendered() {
 }
 
 #[test]
-fn chat_params_pass_the_cache_ttl_experiment() {
+fn chat_params_pass_the_cache_lifetime_settings() {
     let mut app = super::super::tests::app_with_key();
-    for enabled in [false, true] {
-        app.experiments.cache_ttl_1h = enabled;
+    assert_eq!(app.settings.cache_lifetime, "extended");
+    assert!(!app.settings.cache_long_openai);
+    for (lifetime, enabled) in [("default", false), ("extended", true)] {
+        app.settings.cache_lifetime = lifetime.into();
+        app.settings.cache_long_openai = enabled;
         let params = app.chat_params(None, crate::provider::BackendTag::OpenRouter);
         assert_eq!(params.cache_ttl_1h, enabled);
+        assert_eq!(params.cache_long_openai, enabled);
     }
 }
 

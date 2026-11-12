@@ -79,6 +79,7 @@ impl App {
         };
 
         let session_id = self.ensure_session(&text, model)?;
+        self.ensure_prompt_prefix();
 
         if let Some(name) = self.forced_skill.take()
             && let Some(skill) = self.skills.iter().find(|s| s.name == name)
@@ -106,6 +107,7 @@ impl App {
         if let Some(hint) = self.memory_hint(&text) {
             self.push_note(&session_id, "recall", hint.to_row())?;
         }
+        let text = self.dated_user_message(text, Utc::now());
         if !self.incognito {
             self.db.add_user_message(&session_id, &text)?;
         }
@@ -281,11 +283,15 @@ impl App {
             None => (None, None),
         };
         self.push_status(reasoning_warning.unwrap_or_default());
+        self.warn_stale_prefix();
+        self.note_turn_lane();
         let profile = self.model_profile();
         let mut params = self.chat_params(reasoning_effort, provider.backend_tag());
         params.parallel_tool_calls = (!profile.parallel_calls).then_some(false);
         params.tool_result_cap = profile.result_cap;
-        let tools = self.chat_tool_defs();
+        let tools = self
+            .active_prefix()
+            .map_or_else(|| self.chat_tool_defs(), |prefix| prefix.tools.clone());
         if provider.backend_tag() == crate::provider::BackendTag::Local
             && !self.meter.warned
             && let Some(limit) = self.context_limit()
@@ -391,7 +397,8 @@ impl App {
                 .session
                 .as_ref()
                 .map(|session| self.prompt_cache_key_for(&session.id)),
-            cache_ttl_1h: self.experiments.cache_ttl_1h,
+            cache_ttl_1h: self.settings.cache_lifetime == "extended",
+            cache_long_openai: self.settings.cache_long_openai,
             temperature: self.settings.temperature,
             top_p: self.settings.top_p,
             max_tokens: self.settings.max_tokens,
@@ -487,6 +494,21 @@ impl App {
                 let Some(task) = self.chat_tasks.get_mut(&task_id) else {
                     return Ok(());
                 };
+                let accounted = has_tokens
+                    .then(|| {
+                        (
+                            task.session_id.clone(),
+                            task.backend,
+                            task.model_id.clone(),
+                            task.incognito,
+                        )
+                    })
+                    .and_then(|(session_id, backend, model_id, incognito)| {
+                        self.account_request(&session_id, backend, &model_id, incognito, &u)
+                    });
+                let Some(task) = self.chat_tasks.get_mut(&task_id) else {
+                    return Ok(());
+                };
                 let merged = if has_tokens {
                     // A new API request must not inherit the previous request's provider cost.
                     u
@@ -561,6 +583,9 @@ impl App {
                         {
                             let _ = self.db.set_usage_kind(id, "chat");
                             task.usage_row_id = Some(id);
+                            if let Some(request) = &accounted {
+                                self.store_accounted_request(id, request);
+                            }
                         }
                     } else if let Some(row_id) = row_id {
                         let _ = self.db.update_usage(
@@ -580,6 +605,7 @@ impl App {
                     task.tool_status = Some(s);
                 }
             }
+            StreamEvent::Notice(message) => self.push_status(message),
             StreamEvent::Subagent(update) => {
                 let Some(task) = self.chat_tasks.get(&task_id) else {
                     return Ok(());

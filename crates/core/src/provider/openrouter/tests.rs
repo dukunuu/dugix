@@ -1790,7 +1790,12 @@ fn cache_ttl_does_not_add_markers_to_non_anthropic_requests() {
                 ..ChatParams::default()
             };
             let body = provider.chat_completions_body(model, &messages, &params, &[], false);
-            assert_eq!(body, baseline);
+            // The only extension is OpenAI's own free retention switch.
+            let mut expected = baseline;
+            if provider.backend_tag() == BackendTag::OpenAi && model.ends_with("gpt-5") {
+                expected["prompt_cache_retention"] = serde_json::json!("24h");
+            }
+            assert_eq!(body, expected);
             let wire = serde_json::to_string(&body).unwrap();
             assert!(!wire.contains("\"cache_control\""));
             assert!(!wire.contains("\"ttl\""));
@@ -2394,5 +2399,157 @@ async fn scheduled_tool_calls_report_and_reply_in_call_order() {
             .into_iter()
             .map(|(id, _, result)| (id, result))
             .collect::<Vec<_>>()
+    );
+}
+
+fn lifetime_fields_in(body: &serde_json::Value) -> Vec<(&'static str, serde_json::Value)> {
+    ["prompt_cache_retention", "prompt_cache_options"]
+        .into_iter()
+        .filter_map(|field| body.get(field).map(|value| (field, value.clone())))
+        .collect()
+}
+
+#[test]
+fn cache_lifetime_fields_follow_backend_and_model_family() {
+    let messages = [ChatMessage::text("user", "hi")];
+    let params = |extended, long| ChatParams {
+        cache_ttl_1h: extended,
+        cache_long_openai: long,
+        ..ChatParams::default()
+    };
+    let chat = |provider: &OpenRouter, model: &str, params: &ChatParams| {
+        lifetime_fields_in(&provider.chat_completions_body(model, &messages, params, &[], false))
+    };
+    let responses = |provider: &OpenRouter, model: &str, params: &ChatParams| {
+        lifetime_fields_in(&provider.codex_stream_body(model, &messages, params, &[], false))
+    };
+    let retention = vec![("prompt_cache_retention", serde_json::json!("24h"))];
+    let long = vec![("prompt_cache_options", serde_json::json!({ "ttl": "12h" }))];
+
+    let openai = OpenRouter::openai("k".into());
+    assert_eq!(chat(&openai, "gpt-5.5", &params(true, false)), retention);
+    assert!(chat(&openai, "gpt-5.5", &params(false, false)).is_empty());
+    // GPT-5.6 and later keep the 30 minute default, even with the paid option:
+    // chat completions has no such field.
+    for model in ["gpt-5.6", "gpt-6.1-sol"] {
+        assert!(
+            chat(&openai, model, &params(true, true)).is_empty(),
+            "{model}"
+        );
+    }
+    assert!(chat(&openai, "mystery-model", &params(true, true)).is_empty());
+
+    let codex = OpenRouter::openai_codex("k".into());
+    assert_eq!(
+        responses(&codex, "gpt-5.5", &params(true, false)),
+        retention
+    );
+    assert!(responses(&codex, "gpt-5.5", &params(false, true)).is_empty());
+    assert!(responses(&codex, "gpt-5.6", &params(true, false)).is_empty());
+    assert_eq!(responses(&codex, "gpt-5.6", &params(false, true)), long);
+    assert_eq!(responses(&codex, "gpt-6.1-sol", &params(true, true)), long);
+    assert!(responses(&codex, "mystery-model", &params(true, true)).is_empty());
+
+    for provider in [
+        OpenRouter::with_key(BackendTag::Mistral, "k".into()),
+        OpenRouter::opencode_go("k".into()),
+        OpenRouter::openrouter_flavor("k".into()),
+        OpenRouter::local("http://127.0.0.1:1/v1").unwrap(),
+    ] {
+        assert!(chat(&provider, "gpt-5.5", &params(true, true)).is_empty());
+    }
+}
+
+#[tokio::test]
+async fn a_400_naming_a_lifetime_field_is_retried_once_without_it_for_good() {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+    let ok = fake_chat_frames(&[serde_json::json!({"choices": [{"delta": {"content": "hi"}}]})]);
+    let server = tokio::spawn(async move {
+        let mut requests = Vec::new();
+        for index in 0..3 {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(stream);
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                assert!(stream.read_line(&mut line).await.unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some((name, value)) = line.split_once(':')
+                    && name.eq_ignore_ascii_case("content-length")
+                {
+                    length = value.trim().parse::<usize>().unwrap();
+                }
+            }
+            let mut body = vec![0; length];
+            stream.read_exact(&mut body).await.unwrap();
+            requests.push(serde_json::from_slice::<serde_json::Value>(&body).unwrap());
+            let (status, mime, payload) = if index == 0 {
+                (
+                    "400 Bad Request",
+                    "application/json",
+                    br#"{"error":{"message":"Unknown parameter: 'prompt_cache_retention'."}}"#
+                        .to_vec(),
+                )
+            } else {
+                ("200 OK", "text/event-stream", ok.clone())
+            };
+            let headers = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                payload.len()
+            );
+            stream
+                .get_mut()
+                .write_all(headers.as_bytes())
+                .await
+                .unwrap();
+            stream.get_mut().write_all(&payload).await.unwrap();
+            stream.get_mut().shutdown().await.unwrap();
+        }
+        requests
+    });
+    let mut provider = OpenRouter::openai("k".into());
+    provider.endpoint = Some(endpoint);
+    let params = ChatParams {
+        cache_ttl_1h: true,
+        ..ChatParams::default()
+    };
+    let model = "gpt-5.4-retry-drop-test";
+    let mut notices = Vec::new();
+    for _ in 0..2 {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let finish = provider
+            .run_stream(
+                model,
+                &[ChatMessage::text("user", "Hi")],
+                &params,
+                &[],
+                false,
+                &tx,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(finish, Finish::Done(ref output) if output.content == "hi"));
+        drop(tx);
+        while let Some(event) = rx.recv().await {
+            if let StreamEvent::Notice(text) = event {
+                notices.push(text);
+            }
+        }
+    }
+    let requests = server.await.unwrap();
+    assert_eq!(requests[0]["prompt_cache_retention"], "24h");
+    assert!(requests[1].get("prompt_cache_retention").is_none());
+    assert!(requests[2].get("prompt_cache_retention").is_none());
+    assert_eq!(
+        notices,
+        ["OpenAI rejected prompt_cache_retention; continuing without it"],
+        "announced once"
     );
 }

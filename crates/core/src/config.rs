@@ -104,7 +104,9 @@ pub struct Experiments {
     pub compaction_tail_turns: u32,
     pub compaction_itemized: bool,
     pub compaction_budget_tokens: u64,
-    pub cache_ttl_1h: bool,
+    /// Retired by the `cache_lifetime` setting; still parsed so old config files load.
+    #[serde(rename = "cache_ttl_1h", skip_serializing)]
+    retired_cache_ttl_1h: Option<bool>,
 }
 
 impl Default for Experiments {
@@ -116,7 +118,7 @@ impl Default for Experiments {
             compaction_tail_turns: 0,
             compaction_itemized: false,
             compaction_budget_tokens: 0,
-            cache_ttl_1h: false,
+            retired_cache_ttl_1h: None,
         }
     }
 }
@@ -127,7 +129,7 @@ impl Experiments {
     /// # Errors
     /// Rejects unknown keys and values that do not parse as the field's type.
     pub fn set(&mut self, key: &str, value: &str) -> Result<()> {
-        const KEYS: &str = "mask_tool_results, mask_keep_rounds, mask_trigger_tokens, compaction_tail_turns, compaction_itemized, compaction_budget_tokens, cache_ttl_1h";
+        const KEYS: &str = "mask_tool_results, mask_keep_rounds, mask_trigger_tokens, compaction_tail_turns, compaction_itemized, compaction_budget_tokens";
         let invalid = || anyhow::anyhow!("invalid experiment {key}={value}; valid keys: {KEYS}");
         match key {
             "mask_tool_results" => self.mask_tool_results = value.parse().map_err(|_| invalid())?,
@@ -144,7 +146,6 @@ impl Experiments {
             "compaction_budget_tokens" => {
                 self.compaction_budget_tokens = value.parse().map_err(|_| invalid())?;
             }
-            "cache_ttl_1h" => self.cache_ttl_1h = value.parse().map_err(|_| invalid())?,
             _ => return Err(invalid()),
         }
         Ok(())
@@ -997,7 +998,6 @@ mod tests {
             ("compaction_tail_turns", "3"),
             ("compaction_itemized", "true"),
             ("compaction_budget_tokens", "40000"),
-            ("cache_ttl_1h", "true"),
         ] {
             experiments.set(key, value).unwrap();
             let error = experiments.set(key, "invalid").unwrap_err().to_string();
@@ -1013,7 +1013,7 @@ mod tests {
                 compaction_tail_turns: 3,
                 compaction_itemized: true,
                 compaction_budget_tokens: 40000,
-                cache_ttl_1h: true,
+                retired_cache_ttl_1h: None,
             }
         );
         let section = format!("[experiments]\n{}", toml::to_string(&experiments).unwrap());
@@ -1032,7 +1032,7 @@ mod tests {
             ("unknown", "true"),
             ("mask_keep_rounds", "-1"),
             ("mask_trigger_tokens", "-1"),
-            ("cache_ttl_1h", "1"),
+            ("cache_ttl_1h", "true"),
         ] {
             assert!(experiments.set(key, value).is_err());
         }

@@ -220,6 +220,10 @@ pub struct UsageByBackend {
     pub rated_prompt_tokens: u64,
     /// Cache reads from those same rows.
     pub rated_cache_read_tokens: u64,
+    /// Tokens the provider had already seen on each request's cache lane.
+    pub reusable_tokens: u64,
+    /// Those tokens it served from cache.
+    pub reused_tokens: u64,
     pub cost: f64,
 }
 
@@ -235,6 +239,10 @@ pub struct UsageByModel {
     pub rated_prompt_tokens: u64,
     /// Cache reads from those same rows.
     pub rated_cache_read_tokens: u64,
+    /// Tokens the provider had already seen on each request's cache lane.
+    pub reusable_tokens: u64,
+    /// Those tokens it served from cache.
+    pub reused_tokens: u64,
     pub cost: f64,
 }
 
@@ -692,8 +700,12 @@ impl Db {
                                       THEN prompt_tokens ELSE 0 END), 0),
                     COALESCE(SUM(CASE WHEN prompt_convention IN ('inclusive','normalized_from_exclusive')
                                       THEN cache_read_tokens ELSE 0 END), 0),
-                    COALESCE(SUM(cost), 0)
-             FROM usage_log",
+                    COALESCE(SUM(cost), 0),
+                    COALESCE(SUM(CASE WHEN prompt_convention IN ('inclusive','normalized_from_exclusive')
+                                      THEN rc.reusable_tokens ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN prompt_convention IN ('inclusive','normalized_from_exclusive')
+                                      THEN MIN(cache_read_tokens, rc.reusable_tokens) ELSE 0 END), 0)
+             FROM usage_log LEFT JOIN cache.request_cache rc ON rc.usage_id = usage_log.id",
         );
         if since.is_some() {
             sql.push_str(" WHERE created_at >= ?1");
@@ -709,6 +721,8 @@ impl Db {
                 rated_prompt_tokens: r.get::<_, i64>(5)? as u64,
                 rated_cache_read_tokens: r.get::<_, i64>(6)? as u64,
                 cost: r.get::<_, f64>(7)?,
+                reusable_tokens: r.get::<_, i64>(8)? as u64,
+                reused_tokens: r.get::<_, i64>(9)? as u64,
             })
         };
         let mut stmt = self.conn.prepare(&sql)?;
@@ -730,8 +744,12 @@ impl Db {
                                       THEN prompt_tokens ELSE 0 END), 0),
                     COALESCE(SUM(CASE WHEN prompt_convention IN ('inclusive','normalized_from_exclusive')
                                       THEN cache_read_tokens ELSE 0 END), 0),
-                    COALESCE(SUM(cost), 0)
-             FROM usage_log",
+                    COALESCE(SUM(cost), 0),
+                    COALESCE(SUM(CASE WHEN prompt_convention IN ('inclusive','normalized_from_exclusive')
+                                      THEN rc.reusable_tokens ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN prompt_convention IN ('inclusive','normalized_from_exclusive')
+                                      THEN MIN(cache_read_tokens, rc.reusable_tokens) ELSE 0 END), 0)
+             FROM usage_log LEFT JOIN cache.request_cache rc ON rc.usage_id = usage_log.id",
         );
         if since.is_some() {
             sql.push_str(" WHERE created_at >= ?1");
@@ -749,6 +767,8 @@ impl Db {
                 rated_prompt_tokens: r.get::<_, i64>(5)? as u64,
                 rated_cache_read_tokens: r.get::<_, i64>(6)? as u64,
                 cost: r.get::<_, f64>(7)?,
+                reusable_tokens: r.get::<_, i64>(8)? as u64,
+                reused_tokens: r.get::<_, i64>(9)? as u64,
             })
         };
         let mut stmt = self.conn.prepare(&sql)?;

@@ -94,6 +94,8 @@ pub struct UsageData {
     pub by_backend: Vec<UsageByBackend>,
     pub by_model: Vec<UsageByModel>,
     pub recent: Vec<UsageRow>,
+    /// Requests per cache verdict (`first`, `hit`, `expired`, `prefix_changed`, `provider_miss`).
+    pub misses: Vec<(String, u64)>,
 }
 
 impl App {
@@ -140,6 +142,10 @@ impl App {
             recent: self
                 .db
                 .usage_recent(200, since.as_deref())
+                .unwrap_or_default(),
+            misses: self
+                .db
+                .cache_verdict_counts(since.as_deref())
                 .unwrap_or_default(),
         }
     }

@@ -2762,7 +2762,8 @@ fn memory_snapshot_stays_stable_until_refresh() {
 
     a.refresh_memory_snapshot();
     assert!(a.system_prompt().contains("newer fact"));
-    assert!(a.cache_epoch > first_epoch);
+    // The snapshot reaches a conversation only when its frozen prefix is rebuilt.
+    assert_eq!(a.cache_epoch, first_epoch);
 }
 
 #[test]

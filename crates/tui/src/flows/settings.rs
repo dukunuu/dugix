@@ -127,6 +127,22 @@ impl AppView {
                         .core
                         .set_setting("image_viewer", modes[(i + 1) % modes.len()]);
                 }
+                SettingsField::CacheLifetime => {
+                    let value = if self.core.settings.cache_lifetime == "extended" {
+                        "default"
+                    } else {
+                        "extended"
+                    };
+                    let _ = self.core.set_setting("cache_lifetime", value);
+                }
+                SettingsField::CacheLongOpenai => {
+                    let value = if self.core.settings.cache_long_openai {
+                        "off"
+                    } else {
+                        "on"
+                    };
+                    let _ = self.core.set_setting("cache_long_openai", value);
+                }
                 SettingsField::Verbosity => {
                     let i = VERBOSITY_LEVELS
                         .iter()

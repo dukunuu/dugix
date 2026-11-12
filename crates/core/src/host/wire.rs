@@ -315,7 +315,7 @@ impl From<StreamEvent> for WireStreamEvent {
             StreamEvent::Token(t) => Self::Token(t),
             StreamEvent::Reasoning(r) => Self::Reasoning(r),
             StreamEvent::Usage(u) => Self::Usage(u.into()),
-            StreamEvent::Status(s) => Self::Status(s),
+            StreamEvent::Status(s) | StreamEvent::Notice(s) => Self::Status(s),
             StreamEvent::ToolCall {
                 name,
                 arguments,

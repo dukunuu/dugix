@@ -735,6 +735,8 @@ impl AppView {
             | SettingsField::SearchProvider
             | SettingsField::ReplyStyle
             | SettingsField::ImageViewer
+            | SettingsField::CacheLifetime
+            | SettingsField::CacheLongOpenai
             | SettingsField::ColumnWidth => None,
             SettingsField::Temperature => Some(0),
             SettingsField::TopP => Some(1),

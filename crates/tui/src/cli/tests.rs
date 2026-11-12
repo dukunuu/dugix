@@ -75,9 +75,9 @@ fn eval_overrides_validate_at_parse_time_and_compare_requires_them() {
     for setting in [
         "local.x=1",
         "experiments.unknown=true",
-        "experiments.cache_ttl_1h=no",
+        "experiments.compaction_itemized=no",
         "experiments.mask_keep_rounds=-1",
-        "experiments.cache_ttl_1h",
+        "experiments.compaction_itemized",
     ] {
         assert!(
             Cli::try_parse_from(["nexus", "eval", "--set", setting]).is_err(),
@@ -89,7 +89,7 @@ fn eval_overrides_validate_at_parse_time_and_compare_requires_them() {
         "eval",
         "--compare",
         "--set",
-        "experiments.cache_ttl_1h=true",
+        "experiments.compaction_itemized=true",
         "--set",
         "experiments.mask_keep_rounds=7",
     ])
@@ -100,12 +100,12 @@ fn eval_overrides_validate_at_parse_time_and_compare_requires_them() {
     assert!(compare);
     let mut experiments = config::Experiments::default();
     apply_eval_settings(&mut experiments, &set).unwrap();
-    assert!(experiments.cache_ttl_1h);
+    assert!(experiments.compaction_itemized);
     assert_eq!(experiments.mask_keep_rounds, 7);
     assert!(!experiments.mask_tool_results);
     let header = experiments_header(&experiments);
     assert!(header.starts_with("experiments: "));
-    assert!(header.contains("cache_ttl_1h=true"));
+    assert!(header.contains("compaction_itemized=true"));
     assert!(header.contains("mask_keep_rounds=7"));
 }
 
@@ -181,7 +181,7 @@ fn compare_model_requires_two_models_and_excludes_experiment_comparison() {
             "typesafe/jev-router",
             "--compare",
             "--set",
-            "experiments.cache_ttl_1h=true",
+            "experiments.compaction_itemized=true",
         ],
     ] {
         assert!(Cli::try_parse_from(args).is_err());
@@ -193,7 +193,7 @@ fn compare_model_requires_two_models_and_excludes_experiment_comparison() {
         "a/one",
         "typesafe/jev-router",
         "--set",
-        "experiments.cache_ttl_1h=true",
+        "experiments.compaction_itemized=true",
         "--json",
     ])
     .unwrap();

@@ -600,6 +600,15 @@ impl Db {
         self.conn
             .execute("DELETE FROM sessions WHERE id = ?1", [id])?;
         self.tombstone("sessions", id)?;
+        // The frozen prompt and its cache accounting die with the chat.
+        self.conn.execute(
+            "DELETE FROM cache.session_prefixes WHERE session_id = ?1",
+            [id],
+        )?;
+        self.conn.execute(
+            "DELETE FROM cache.request_cache WHERE session_id = ?1",
+            [id],
+        )?;
         Ok(())
     }
 

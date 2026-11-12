@@ -7,7 +7,6 @@ impl App {
             crate::skills::load_skills_from_dirs(&crate::skills::app_skill_roots(&self.space.root));
         if skills != self.skills {
             self.skills = skills;
-            self.bump_cache_epoch();
         }
     }
 

@@ -58,6 +58,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
         take(1),                                // gap
         take(1),                                // models header
         take(1 + data.by_model.len() as u16),   // models rows
+        take(1),                                // cache misses
         take(1),                                // gap
         take(1),                                // recent header
         take(u16::MAX),                         // recent rows (scrolls)
@@ -82,10 +83,12 @@ pub fn render(f: &mut Frame, app: &AppView) {
         Span::styled(format!("{:<14}", "backend"), dim),
         Span::styled(format!("{:>6} {:>9} {:>8} ", "req", "prompt", "out"), dim),
         Span::styled(format!("{:<6}  ", "cached"), dim),
+        Span::styled(format!("{:<6}  ", "reused"), dim),
         Span::styled(format!("{:>9}", "cost"), dim),
     ])];
     for b in &data.by_backend {
         let cached = rate(b.rated_cache_read_tokens, b.rated_prompt_tokens);
+        let reused = rate(b.reused_tokens, b.reusable_tokens);
         let name = chrome::truncate(&b.backend, 14);
         let mut row = vec![
             Span::styled("● ", Style::default().fg(backend_color(theme, &b.backend))),
@@ -99,7 +102,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
             b.requests,
             b.prompt_tokens,
             b.completion_tokens,
-            cached,
+            (cached, reused),
             b.cost,
         ));
         backend_lines.push(Line::from(row));
@@ -123,10 +126,12 @@ pub fn render(f: &mut Frame, app: &AppView) {
         Span::styled(format!("{:<30}", "model"), dim),
         Span::styled(format!("{:>6} {:>9} {:>8} ", "req", "prompt", "out"), dim),
         Span::styled(format!("{:<6}  ", "cached"), dim),
+        Span::styled(format!("{:<6}  ", "reused"), dim),
         Span::styled(format!("{:>9}", "cost"), dim),
     ])];
     for (i, m) in data.by_model.iter().enumerate() {
         let cached = rate(m.rated_cache_read_tokens, m.rated_prompt_tokens);
+        let reused = rate(m.reused_tokens, m.reusable_tokens);
         let rank_style = if i == 0 {
             Style::default()
                 .fg(theme.warning)
@@ -144,7 +149,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
             m.requests,
             m.prompt_tokens,
             m.completion_tokens,
-            cached,
+            (cached, reused),
             m.cost,
         ));
         model_lines.push(Line::from(row));
@@ -154,6 +159,25 @@ pub fn render(f: &mut Frame, app: &AppView) {
         rows[5],
     );
 
+    // --- why requests missed the cache ---
+    if !data.misses.is_empty() {
+        let parts: Vec<String> = data
+            .misses
+            .iter()
+            .map(|(verdict, count)| format!("{} {count}", verdict.replace('_', " ")))
+            .collect();
+        f.render_widget(
+            Paragraph::new(chrome::fit_lines(
+                vec![Line::from(Span::styled(
+                    format!("  cache requests · {}", parts.join(" · ")),
+                    dim,
+                ))],
+                width,
+            )),
+            rows[6],
+        );
+    }
+
     // --- recent requests (scrollable) ---
     f.render_widget(
         Paragraph::new(crate::ui::style::section(
@@ -161,9 +185,9 @@ pub fn render(f: &mut Frame, app: &AppView) {
             "recent requests",
             width as usize,
         )),
-        rows[7],
+        rows[8],
     );
-    let recent_area = rows[8];
+    let recent_area = rows[9];
     let visible = recent_area.height as usize;
     let top = app
         .usage_scroll
@@ -284,14 +308,14 @@ fn render_summary(f: &mut Frame, app: &AppView, area: Rect) {
     f.render_widget(Paragraph::new(chrome::fit_lines(lines, area.width)), area);
 }
 
-/// The shared `req prompt out cached% cost` cells for a backend/model row, at
+/// The shared `req prompt out cached% reused% cost` cells for a backend/model row, at
 /// the same widths as the inline header.
 fn numeric_cells(
     theme: &Theme,
     requests: u64,
     prompt: u64,
     completion: u64,
-    cached: Option<f64>,
+    (cached, reused): (Option<f64>, Option<f64>),
     cost: f64,
 ) -> Vec<Span<'static>> {
     let dim = Style::default().fg(theme.fg_dim);
@@ -308,6 +332,10 @@ fn numeric_cells(
         Span::styled(
             format!("{:>7} ", fmt_rate(cached)),
             Style::default().fg(cache_color(theme, cached)),
+        ),
+        Span::styled(
+            format!("{:>7} ", fmt_rate(reused)),
+            Style::default().fg(cache_color(theme, reused)),
         ),
         Span::styled(
             format!("{:>9}", fmt_cost_agg(cost)),

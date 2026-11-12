@@ -167,14 +167,14 @@ pub(super) fn render_status(f: &mut Frame, app: &AppView, area: Rect) {
         right.extend(context_meter(app, limit, 10));
         right.push(Span::raw(" "));
         right.push(Span::styled(context_numbers(app, limit), dim));
-    } else if let Some(rate) = app.meter.turn_cache.rate() {
+    } else if let Some(rate) = app.meter.turn_cache.reuse_rate() {
         let partial = if app.meter.turn_cache.is_partial() {
             "~"
         } else {
             ""
         };
         right.push(Span::styled(
-            format!("{partial}{:.0}% cached", rate * 100.0),
+            format!("{partial}{:.0}% reused", rate * 100.0),
             dim,
         ));
     }
@@ -241,9 +241,10 @@ fn context_meter(app: &AppView, limit: u64, cells: usize) -> Vec<Span<'static>> 
         .collect()
 }
 
-/// `34% 44k/128k · 82% cached`. The rate covers the whole turn, not its last
-/// request, which would sit on the longest cached prefix and flatter the number;
-/// `~` marks a turn some provider did not fully account for.
+/// `34% 44k/128k · 99% reused`. The rate is the share of the tokens the provider
+/// had already seen that it served from cache, over the whole turn rather than
+/// its last request; omitted while nothing was reusable yet. `~` marks a turn
+/// some provider did not fully account for.
 fn context_numbers(app: &AppView, limit: u64) -> String {
     let used = app.context_used();
     let pct = if limit > 0 {
@@ -252,7 +253,7 @@ fn context_numbers(app: &AppView, limit: u64) -> String {
         0.0
     };
     let mut label = format!("{pct:.0}% {}/{}", humanize(used), humanize(limit));
-    if let Some(rate) = app.meter.turn_cache.rate() {
+    if let Some(rate) = app.meter.turn_cache.reuse_rate() {
         let partial = if app.meter.turn_cache.is_partial() {
             "~"
         } else {
@@ -260,7 +261,7 @@ fn context_numbers(app: &AppView, limit: u64) -> String {
         };
         let _ = std::fmt::Write::write_fmt(
             &mut label,
-            format_args!(" · {partial}{:.0}% cached", rate * 100.0),
+            format_args!(" · {partial}{:.0}% reused", rate * 100.0),
         );
     }
     label

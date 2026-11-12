@@ -454,7 +454,7 @@ impl super::App {
             tx,
             session_id: session.id,
             prompt_cache_key,
-            cache_ttl_1h: self.experiments.cache_ttl_1h,
+            cache_ttl_1h: self.settings.cache_lifetime == "extended",
             space_id,
             space_name,
         }));

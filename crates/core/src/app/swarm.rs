@@ -100,7 +100,7 @@ impl App {
             toolbox: self.toolbox.clone(),
             user_message,
             prompt_cache_key: format!("swarm:{}", self.prompt_cache_key_for(&session.id)),
-            cache_ttl_1h: self.experiments.cache_ttl_1h,
+            cache_ttl_1h: self.settings.cache_lifetime == "extended",
             session_id: session.id,
             tx,
         }));

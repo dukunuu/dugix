@@ -98,8 +98,8 @@ fn cache_step_two_drops_the_watch_mapping_attached_or_standalone() {
             "INSERT INTO {schema}.watch_jobs VALUES ('watch', 'job')"
         ))
         .unwrap();
-        assert_eq!(run(&conn, CACHE, &mut ctx).unwrap(), 1);
-        assert_eq!(version(&conn, schema).unwrap(), 2);
+        assert_eq!(run(&conn, CACHE, &mut ctx).unwrap(), 2);
+        assert_eq!(version(&conn, schema).unwrap(), 3);
         assert!(!has_table(&conn, schema, "watch_jobs"));
         assert_eq!(run(&conn, CACHE, &mut ctx).unwrap(), 0);
     }
