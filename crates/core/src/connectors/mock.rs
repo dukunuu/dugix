@@ -87,6 +87,8 @@ pub struct Mock {
     pub bearer: Option<String>,
     pub list_status: Option<u16>,
     pub rpc_error_message: String,
+    /// Override the discovery reply, including errors returned by strict legacy servers or bridges.
+    pub discover_error: Option<(i64, String)>,
     /// Answer these methods as SSE streams.
     pub sse_methods: Mutex<HashSet<String>>,
     /// Expire the legacy session after this many post-initialize requests.
@@ -109,6 +111,7 @@ impl Mock {
             bearer: None,
             list_status: None,
             rpc_error_message: "backend exploded".into(),
+            discover_error: None,
             sse_methods: Mutex::default(),
             expire_session_after: None,
             seen: Mutex::default(),
@@ -162,6 +165,10 @@ impl Mock {
         let params = message.get("params").cloned().unwrap_or(Value::Null);
         let modern = matches!(self.flavor, Flavor::Modern);
         let response = match method {
+            "server/discover" if self.discover_error.is_some() => {
+                let (code, message) = self.discover_error.as_ref().unwrap();
+                Self::rpc_error(id, *code, message)
+            }
             "server/discover" if modern => Self::ok(
                 id,
                 json!({"supportedVersions": ["2026-07-28"], "serverInfo": {"name": "mock", "version": "1"}, "capabilities": {"tools": {}}}),
@@ -499,7 +506,8 @@ fn route(mock: &Mock, method: &str, headers: &HashMap<String, String>, json: &Va
 }
 
 /// The stdio door, run by the test executable when re-launched with `NEXUS_MCP_STDIO_MOCK`.
-/// Mode words, comma separated: `modern` | `legacy` | `legacy-rpc`; `crash_after=N`; `ttl=MS`; `cancel_log`.
+/// Mode words, comma separated: `modern` | `legacy` | `legacy-rpc` | `legacy-strict` | `legacy-bridge`;
+/// `crash_after=N`; `ttl=MS`; `cancel_log`.
 pub fn run_stdio(mode: &str) {
     use std::io::{BufRead as _, Write as _};
     let words: Vec<&str> = mode.split(',').collect();
@@ -521,6 +529,17 @@ pub fn run_stdio(mode: &str) {
             .and_then(|v| v.parse::<u64>().ok())
     };
     let mut mock = Mock::new(flavor);
+    if words.contains(&"legacy-strict") {
+        mock.discover_error = Some((
+            -32600,
+            "Request must be an initialize request if no session ID is provided.".into(),
+        ));
+    } else if words.contains(&"legacy-bridge") {
+        mock.discover_error = Some((
+            -32001,
+            r#"mcp-remote: Error POSTing to endpoint: {"jsonrpc":"2.0","error":{"code":-32600,"message":"Request must be an initialize request if no session ID is provided."}}"#.into(),
+        ));
+    }
     mock.ttl_ms = option("ttl");
     if let Ok(token) = std::env::var("FOO") {
         mock.rpc_error_message = format!("backend echoed {token}");

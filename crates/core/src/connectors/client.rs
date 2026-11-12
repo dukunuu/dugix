@@ -8,8 +8,8 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use super::protocol::{
-    ACCEPT_LEGACY, CallResult, METHOD_NOT_FOUND, OFFER_LEGACY, PROTOCOL_2026, ResultType, ToolInfo,
-    ToolsPage, client_info, notification, request, with_meta,
+    ACCEPT_LEGACY, CallResult, OFFER_LEGACY, PROTOCOL_2026, ResultType, ToolInfo, ToolsPage,
+    client_info, notification, request, with_meta,
 };
 use super::transport::{McpError, Signals, Transport};
 
@@ -149,7 +149,10 @@ impl Session {
                 }
                 self.initialize().await
             }
-            Err(McpError::Rpc(error)) if error.code == METHOD_NOT_FOUND => self.initialize().await,
+            // Strict legacy servers reject any request before initialize, not just unknown
+            // methods. Stdio bridges may wrap that rejection in their own RPC error code.
+            // Discovery is only a probe: try initialize once, preserving any error it returns.
+            Err(McpError::Rpc(_)) => self.initialize().await,
             Err(McpError::Http { status, .. }) if (400..500).contains(&status) => {
                 self.initialize().await
             }

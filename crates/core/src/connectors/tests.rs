@@ -305,6 +305,59 @@ async fn a_2025_server_gets_initialize_a_session_and_the_initialized_notificatio
 }
 
 #[tokio::test]
+async fn a_legacy_server_rejecting_discovery_before_initialize_still_connects() {
+    for code in [-32600, -32001] {
+        let mut mock = Mock::new(Flavor::LegacyRpcError {
+            version: "2025-11-25",
+        });
+        mock.discover_error = Some((code, "Request must be an initialize request".into()));
+        let server = HttpMock::start(mock).await;
+        let rig = rig();
+        rig.add_http("jira", &server.url()).await;
+        assert!(
+            matches!(rig.status("jira"), Status::Connected { tools: 13 }),
+            "discovery error {code}: {:?}",
+            rig.status("jira")
+        );
+        assert_eq!(
+            &server.mock.methods()[..3],
+            ["server/discover", "initialize", "notifications/initialized"]
+        );
+        assert_eq!(server.mock.count("initialize"), 1);
+        assert_eq!(
+            rig.registry.infos()[0].protocol.as_deref(),
+            Some("2025-11-25")
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_stdio_bridge_wrapping_the_initialize_required_error_still_connects() {
+    for mode in ["legacy-bridge", "legacy-strict"] {
+        let rig = rig();
+        rig.registry.add("jira", stdio_config(mode, &[])).unwrap();
+        rig.registry.wait_ready(Duration::from_secs(3)).await;
+        assert!(
+            matches!(rig.status("jira"), Status::Connected { tools: 13 }),
+            "{mode}: {:?}",
+            rig.status("jira")
+        );
+        assert_eq!(
+            rig.registry.infos()[0].protocol.as_deref(),
+            Some("2025-11-25")
+        );
+        let result = rig
+            .registry
+            .call(&rig.target("jira__echo"), json!({"text": "connected"}))
+            .await
+            .unwrap();
+        assert!(
+            matches!(&result.content[0], super::protocol::Content::Text(t) if t.contains("connected"))
+        );
+    }
+}
+
+#[tokio::test]
 async fn the_oldest_accepted_version_gets_no_protocol_header_and_unknown_versions_are_refused() {
     let old = HttpMock::start(Mock::new(Flavor::Legacy {
         version: "2025-03-26",

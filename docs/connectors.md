@@ -28,8 +28,9 @@ nexus implements its own small client (no SDK dependency; the protocol is
 JSON-RPC over two transports) that speaks both:
 
 1. Call `server/discover`. If the server answers, use 2026-07-28 rules.
-2. If the method is unknown (or the transport answers 4xx for it), fall
-   back to `initialize` offering 2025-11-25 and accept the version the
+2. If discovery returns a JSON-RPC error (including an initialize-required
+   error wrapped by a stdio bridge), or the transport answers 4xx except
+   401, fall back to `initialize` offering 2025-11-25 and accept the version the
    server picks among 2025-11-25, 2025-06-18 and 2025-03-26; send
    `notifications/initialized`; keep the `Mcp-Session-Id` it returns.
 3. Treat a missing `resultType` as `complete`.
@@ -166,8 +167,8 @@ OAuth 2.1 as the MCP authorization spec requires:
 
 Notes where the implementation settled a detail the design left open:
 
-- **Negotiation.** `server/discover` first; JSON-RPC method-not-found or any
-  HTTP 4xx except 401 falls back to `initialize` (2025-11-25 offered; 2025-11-25,
+- **Negotiation.** `server/discover` first; any JSON-RPC error or any HTTP
+  4xx except 401 falls back to `initialize` (2025-11-25 offered; 2025-11-25,
   2025-06-18 and 2025-03-26 accepted). A `server/discover` answer whose
   `supportedVersions` lacks 2026-07-28 also falls back.
 - **Broken streams.** A response stream that breaks is re-asked once for
