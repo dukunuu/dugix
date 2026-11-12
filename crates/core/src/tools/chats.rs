@@ -13,7 +13,6 @@ pub(super) async fn search(ctx: &FilesCtx, current: &str, value: &Value) -> Resu
     let query = value["query"].as_str().unwrap_or_default();
     let conn = crate::db::open_attached(&ctx.db_path)?;
     // A newly synced message need not wait for a vector to become searchable.
-    // This is the same bounded backfill step the background job uses.
     chats::index_pending(&conn)?;
     let vector = match &ctx.embedder {
         Some(embedder) => embedder.query(query).await.ok(),
@@ -68,18 +67,15 @@ const LINE_CHARS: usize = 2_000;
 /// Messages shown ahead of the one a `#message` fragment points at.
 const CONTEXT_BEFORE: usize = 2;
 
-/// A past conversation of the active space as numbered-line text for
-/// `fetch_url`, and the 1-based line to start at: just ahead of the
-/// `#message` fragment when there is one, else the top. Tool calls and
-/// results collapse to one line each.
+/// A past conversation as numbered-line text for `fetch_url`, and the 1-based
+/// line to start at.
 pub(super) fn transcript(ctx: &FilesCtx, url: &str) -> Result<(String, usize)> {
     let rest = url.strip_prefix("chat:").unwrap_or(url);
     let (session, message) = rest
         .split_once('#')
         .map_or((rest, None), |(s, m)| (s, Some(m)));
     let conn = crate::db::open_attached(&ctx.db_path)?;
-    // Only this space's chats: another space's history stays out of reach
-    // even when its session id is known.
+    // Only this space's chats, even when another space's session id is known.
     let title: Option<String> = conn
         .query_row(
             "SELECT title FROM sessions WHERE id = ?1 AND space_id = ?2",

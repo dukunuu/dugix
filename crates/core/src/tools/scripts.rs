@@ -8,7 +8,6 @@ use super::{ToolBox, confined_join, valid_relative_path};
 use crate::skills::{resolve_skill_dir, resolve_skill_file};
 
 impl ToolBox {
-    /// The script tools: Python scripts and packages in the space.
     #[allow(clippy::too_many_lines)]
     pub(super) async fn run_scripts(&self, name: &str, args: &str) -> (String, String) {
         match name {
@@ -250,7 +249,7 @@ impl ToolBox {
                         }
                     },
                     Ok(()) => {
-                        // No target: the space scripts dir venv (shared with run_python).
+                        // No target: the space scripts dir venv.
                         let dir = self.space_scripts_dir.clone();
                         let run = async {
                             std::fs::create_dir_all(&dir)
@@ -501,8 +500,7 @@ impl ToolBox {
     }
 }
 
-/// Run a command with a timeout, kill-on-drop, and no shell. Returns the
-/// raw output; spawn failures name the missing program.
+/// Run a command with a timeout, kill-on-drop and no shell.
 pub(super) async fn run_cmd(
     program: &std::ffi::OsStr,
     args: &[&std::ffi::OsStr],
@@ -512,7 +510,6 @@ pub(super) async fn run_cmd(
     run_cmd_env(program, args, dir, secs, &[]).await
 }
 
-/// Like `run_cmd` but with extra environment variables.
 pub(super) async fn run_cmd_env(
     program: &std::ffi::OsStr,
     args: &[&std::ffi::OsStr],
@@ -537,8 +534,8 @@ pub(super) async fn run_cmd_env(
     }
 }
 
-/// Command output as tool-result text: stdout, then stderr, then a non-zero
-/// exit code — truncated so a chatty script can't flood the context.
+/// Command output as tool-result text, truncated so a chatty script cannot flood
+/// the context.
 pub(super) fn format_output(out: &std::process::Output) -> String {
     let mut s = String::from(String::from_utf8_lossy(&out.stdout).trim_end());
     let err = String::from_utf8_lossy(&out.stderr);
@@ -575,9 +572,8 @@ pub(super) fn format_output(out: &std::process::Output) -> String {
     s
 }
 
-/// The python interpreter of a skill's own `.venv`, creating the venv (and
-/// installing `requirements.txt` if the skill ships one) on first use.
-/// Everything stays inside the skill's directory — nothing global.
+/// A skill's own `.venv` python, created on first use inside the skill's
+/// directory.
 async fn ensure_venv(skill_dir: &std::path::Path) -> Result<PathBuf, String> {
     let python = skill_dir.join(".venv/bin/python");
     if python.exists() {
@@ -624,8 +620,8 @@ async fn ensure_venv(skill_dir: &std::path::Path) -> Result<PathBuf, String> {
     Ok(python)
 }
 
-/// Package names an installer may see: no flags, no whitespace — they land
-/// in cmd directly, so a leading `-` would become an option injection.
+/// Package names an installer may see: no flags, no whitespace, so a leading `-`
+/// cannot become an option injection.
 fn validate_packages(pkgs: &[String]) -> Result<(), String> {
     if pkgs.is_empty() {
         return Err("no packages given".to_string());

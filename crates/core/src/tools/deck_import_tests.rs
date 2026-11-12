@@ -51,7 +51,6 @@ async fn create_from_a_space_file_imports_it_and_shows_the_slides() {
         read.contains("Hello import") && read.contains("Second"),
         "{read}"
     );
-    // Notes came across, and the deck can be edited like any other.
     let deck =
         Deck::check(&std::fs::read_to_string(f.file("decks/imported-talk.deck.json")).unwrap())
             .unwrap();

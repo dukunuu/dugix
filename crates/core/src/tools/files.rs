@@ -6,7 +6,6 @@ use super::hashline::number_lines;
 use super::{FilesCtx, ToolBox};
 
 impl ToolBox {
-    /// The imported-file tools: list, search, read and PDF pages.
     #[allow(clippy::too_many_lines)]
     pub(super) async fn run_files(&self, name: &str, args: &str) -> (String, String) {
         match name {
@@ -183,10 +182,8 @@ fn list_files_impl(ctx: &FilesCtx) -> String {
     }
 }
 
-/// Search imported files: embed the query and rank chunks by cosine when an
-/// embedder is configured; otherwise (or when embedding fails / no vectors
-/// are stored yet) fall back to FTS keywords, tagged so the model knows the
-/// weaker path answered.
+/// Search imported files by embedding when one is configured, else by FTS
+/// keywords, tagged so the model knows the weaker path answered.
 pub(super) async fn search_files_impl(ctx: &FilesCtx, query: &str) -> String {
     let conn = match crate::db::open_attached(&ctx.db_path) {
         Ok(c) => c,
@@ -241,8 +238,8 @@ pub(super) async fn search_files_impl(ctx: &FilesCtx, query: &str) -> String {
     }
 }
 
-/// Top cosine-ranked chunks formatted as `name (location): text` (truncated),
-/// or None when the space has no usable vectors.
+/// Top cosine-ranked chunks as `name (location): text`; `None` without usable
+/// vectors.
 #[cfg(test)]
 pub(super) fn semantic_snippets(
     conn: &rusqlite::Connection,
@@ -283,8 +280,7 @@ pub(super) fn format_semantic_hits(hits: &[(String, String, String, f32)]) -> St
         .join("\n")
 }
 
-/// Why `files read` has no text for `name`: unknown, still being processed,
-/// or imported but without readable text (with the status that says why).
+/// Why `files read` has no text for `name`.
 fn unreadable_file_message(db_path: &Path, space_id: &str, name: &str) -> String {
     let status = crate::db::open_attached(db_path)
         .and_then(|conn| crate::db::file_status(&conn, space_id, name))

@@ -308,7 +308,6 @@ async fn oauth_failures_fall_back_without_echoing_secrets() {
 
 fn thread_fixture(comment_text: &str) -> String {
     let mut xml = ATOM.replace("</feed>", "");
-    // The second search entry stands in for a top-level comment.
     xml.push_str(r#"<entry><title>nested</title><link href="https://reddit.com/r/rust/comments/abc/comparison/nested/"/><author><name>nested</name></author><content><![CDATA[<p>Reply, not top-level</p><a href="https://reddit.com/r/rust/comments/abc/comparison/parent/">[parent]</a>]]></content></entry>"#);
     for index in 0..18 {
         let _ = write!(

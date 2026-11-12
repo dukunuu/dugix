@@ -8,7 +8,6 @@ use serde::Deserialize;
 use super::{ToolBox, cap_tool_result, chats, number_lines};
 
 impl ToolBox {
-    /// The web tools: search, fetch, image/academic/discussion search.
     #[allow(clippy::too_many_lines)]
     pub(super) async fn run_web(&self, name: &str, args: &str) -> (String, String) {
         match name {
@@ -74,7 +73,7 @@ impl ToolBox {
                     .unwrap_or(false);
                 let status = format!("Fetching {url}…");
                 // `chat:<session>#<message>` reads a past conversation of this
-                // space, starting near the message unless an offset is given.
+                // space, starting near the message.
                 let fetched = if url.starts_with("chat:") {
                     match &self.files {
                         Some(ctx) if !self.research_only => chats::transcript(ctx, &url),
@@ -156,9 +155,8 @@ impl ToolBox {
                         .ok()
                         .and_then(|conn| crate::db::cache_get(&conn, &cache_key).ok().flatten())
                         .and_then(|(_, text, fetched_at)| {
-                            // Do not preserve the old empty-result sentinel:
-                            // it may have been produced by a blocked backend,
-                            // and a later fallback can now recover results.
+                            // An empty-result sentinel may have come from a blocked
+                            // backend, so a later fallback can still recover results.
                             if crate::db::is_fresh(&fetched_at, chrono::Utc::now())
                                 && text != "no results"
                             {
@@ -223,9 +221,8 @@ pub(super) struct SearxngResult {
     pub(super) content: String,
 }
 
-/// Shared by backends that send a request and expect a JSON body back: send,
-/// raise on a non-2xx status, then deserialize. `DuckDuckGo` scrapes HTML
-/// instead of parsing JSON, so it doesn't use this helper.
+/// Send a request and deserialize its JSON body; `DuckDuckGo` scrapes HTML
+/// instead.
 pub(super) async fn send_and_parse<T: serde::de::DeserializeOwned>(
     req: reqwest::RequestBuilder,
 ) -> anyhow::Result<T> {
@@ -237,10 +234,8 @@ pub(super) async fn send_and_parse<T: serde::de::DeserializeOwned>(
         .map_err(Into::into)
 }
 
-/// `SearXNG`'s JSON API needs `search: formats: [html, json]` enabled in the
-/// instance's `settings.yml` — off by default. A misconfigured instance
-/// surfaces as an HTML/error response here, which `error_for_status`/`json`
-/// turns into a readable error for the model rather than a silent empty result.
+/// `SearXNG`'s JSON API is off by default (`search: formats: [html, json]` in the
+/// instance's `settings.yml`).
 pub(super) async fn searxng_search(
     client: &reqwest::Client,
     base_url: &str,
@@ -292,9 +287,7 @@ pub(super) struct LangsearchResult {
     snippet: String,
 }
 
-/// `LangSearch` (<https://langsearch.com)>: free-tier hosted search API, no card
-/// required. More reliable than scraping `DuckDuckGo` when the service is
-/// reachable; auto mode falls back when its endpoint is unavailable.
+/// `LangSearch`: free-tier hosted search API, no card required.
 pub(super) async fn langsearch_search(
     client: &reqwest::Client,
     endpoint: &str,
@@ -330,9 +323,8 @@ pub(super) async fn langsearch_search(
         .collect())
 }
 
-/// Last-resort HTML scraper; bot challenges are backend failures.
-/// `DuckDuckGo`'s HTML endpoint; tests point it at a dead local port so the
-/// `auto` fallback never reaches the network from a test.
+/// Last-resort HTML scraper; bot challenges are backend failures. Tests point it
+/// at a dead local port.
 #[cfg(not(test))]
 pub(super) const DUCKDUCKGO_HTML: &str = "https://html.duckduckgo.com/html/";
 #[cfg(test)]
@@ -386,16 +378,14 @@ pub(super) async fn brave_search(
     Ok(hits.into_iter().take(8).collect())
 }
 
-/// Extract readable text from a fetched body. The type comes from the bytes
-/// (PDF, HTML, office, plain text, …), the `Content-Type` is only a hint, and
-/// binary content becomes a one-line note instead of mojibake.
+/// Extract readable text from a fetched body; the bytes decide the type and the
+/// `Content-Type` is only a hint.
 pub(super) fn extract_pdf_or_html(bytes: &[u8], content_type: &str) -> String {
     crate::extract::from_fetched(bytes, content_type)
 }
 
-/// GET `url` and return its readable text. Capped at 2MB of raw body and a
-/// 30s timeout — a research searcher agent shouldn't be able to wedge on a
-/// pathological page.
+/// GET `url` and return its readable text, capped at 2MB and 30s so a
+/// pathological page cannot wedge a searcher.
 pub(super) async fn fetch_url_text(client: &reqwest::Client, url: &str) -> anyhow::Result<String> {
     if let Some(feed_url) = reddit_thread_feed_url(url) {
         return fetch_reddit_thread(client, feed_url.as_str()).await;
@@ -418,7 +408,7 @@ pub(super) async fn fetch_url_text(client: &reqwest::Client, url: &str) -> anyho
     Ok(extract_pdf_or_html(capped, &content_type))
 }
 
-/// Whether `url` points at a `YouTube` watch page (long or short form).
+/// Whether `url` is a `YouTube` watch page (long or short form).
 pub(super) fn is_youtube_url(url: &str) -> bool {
     let Ok(u) = reqwest::Url::parse(url) else {
         return false;
@@ -426,10 +416,8 @@ pub(super) fn is_youtube_url(url: &str) -> bool {
     matches!(u.host_str(), Some(h) if h == "youtube.com" || h.ends_with(".youtube.com") || h == "youtu.be")
 }
 
-/// Pull the first caption track's `baseUrl` out of a `YouTube` watch page's
-/// embedded JSON (`ytInitialData`/`ytInitialPlayerResponse`). The value is
-/// JSON-string-escaped (`\/` and `\uXXXX`); unescape just enough to get a
-/// usable URL — a full JSON parse isn't needed for one field.
+/// The first caption track's `baseUrl` from a `YouTube` watch page's embedded
+/// JSON, unescaped just enough to use.
 pub(super) fn parse_caption_track_url(watch_page_html: &str) -> Option<String> {
     let marker = "\"baseUrl\":\"";
     let idx = watch_page_html.find(marker)? + marker.len();
@@ -438,9 +426,7 @@ pub(super) fn parse_caption_track_url(watch_page_html: &str) -> Option<String> {
     Some(raw.replace("\\/", "/").replace("\\u0026", "&"))
 }
 
-/// Join a `YouTube` timedtext XML transcript's `<text>` cue contents with
-/// spaces into one plain-text string (no timing/markup kept — this is fed
-/// to a research searcher, not rendered as captions).
+/// A `YouTube` timedtext transcript's cue text joined into one plain string.
 pub(super) fn strip_timedtext_xml(xml: &str) -> String {
     split_tag_blocks(xml, "text")
         .iter()
@@ -449,9 +435,8 @@ pub(super) fn strip_timedtext_xml(xml: &str) -> String {
         .join(" ")
 }
 
-/// Minimal HTML entity unescaping for cue text (`&amp;` last, so it doesn't
-/// double-unescape compound entities — same ordering as `src/extract.rs`'s
-/// `xml_unescape`).
+/// Minimal HTML entity unescaping for cue text; `&amp;` last so compound entities
+/// are not double-unescaped.
 pub(super) fn html_unescape_entities(s: &str) -> String {
     s.replace("&lt;", "<")
         .replace("&gt;", ">")
@@ -460,10 +445,8 @@ pub(super) fn html_unescape_entities(s: &str) -> String {
         .replace("&amp;", "&")
 }
 
-/// Fetch a `YouTube` video's transcript via the keyless timedtext endpoint:
-/// scrape the watch page for a caption track URL, fetch it, and join the
-/// cue text. Falls back to the normal page scrape when no caption track is
-/// found (private/no-captions videos still return something searchable).
+/// A `YouTube` video's transcript via the keyless timedtext endpoint, falling back
+/// to the page scrape when there is no caption track.
 pub(super) async fn fetch_youtube_transcript(
     client: &reqwest::Client,
     url: &str,
@@ -491,9 +474,7 @@ pub(super) async fn fetch_youtube_transcript(
     Ok(strip_timedtext_xml(&xml))
 }
 
-/// Pull `(title, url, snippet)` hits out of a `DuckDuckGo` HTML results page.
-/// Each result is `<a class="result__a" href="...uddg=<url>...">title</a>`
-/// followed by `<a class="result__snippet" ...>snippet</a>`.
+/// `(title, url, snippet)` hits from a `DuckDuckGo` HTML results page.
 pub(super) fn parse_ddg_html(html: &str) -> Vec<SearchHit> {
     let mut hits = Vec::new();
     let mut pos = 0;
@@ -530,9 +511,8 @@ pub(super) fn parse_ddg_html(html: &str) -> Vec<SearchHit> {
     hits
 }
 
-/// Pull result cards from Brave's server-rendered HTML. This intentionally
-/// relies only on stable semantic class names and returns ordinary links, so
-/// callers can use the same formatter/citation path as API-backed results.
+/// Result cards from Brave's server-rendered HTML, relying only on stable
+/// semantic class names.
 pub(super) fn parse_brave_html(html: &str) -> Vec<SearchHit> {
     const TITLE_MARKER: &str = "<div class=\"title search-snippet-title";
     let mut hits = Vec::new();
@@ -667,8 +647,7 @@ pub(super) fn html_unescape(s: &str) -> String {
         .replace("&#39;", "'")
 }
 
-/// Every top-level `<tag>...</tag>` block's inner HTML, in order. Does not
-/// recurse into nested same-named tags.
+/// Every top-level `<tag>...</tag>` block's inner HTML, in order.
 pub(super) fn split_tag_blocks(html: &str, tag: &str) -> Vec<String> {
     let open = format!("<{tag}");
     let close = format!("</{tag}>");
@@ -689,9 +668,7 @@ pub(super) fn split_tag_blocks(html: &str, tag: &str) -> Vec<String> {
     out
 }
 
-/// HTML page body → readable Markdown (headings, lists, tables kept; scripts,
-/// styles and inline data dropped). One converter for web fetches and files:
-/// see `extract::html`.
+/// HTML page body to readable Markdown, one converter for web fetches and files.
 pub(super) fn strip_html_to_text(html: &str) -> String {
     crate::extract::html::to_markdown(html)
 }
@@ -732,9 +709,7 @@ pub(super) struct SemanticScholarAuthor {
     pub(super) name: String,
 }
 
-/// Semantic Scholar Graph API (api.semanticscholar.org): free, keyless.
-/// A 429 (rate limited) surfaces as an error the caller turns into
-/// tool-result text — the model falls back to search(mode=web).
+/// Semantic Scholar Graph API: free and keyless; a 429 surfaces as an error.
 pub(super) async fn academic_search(
     client: &reqwest::Client,
     query: &str,
@@ -766,8 +741,7 @@ pub(super) async fn academic_search(
         .collect())
 }
 
-/// Numbered scholarly-paper results the model cites the same way as
-/// `format_results`' web hits: `[n]` inline, matched against this list.
+/// Numbered scholarly-paper results the model cites inline as `[n]`.
 pub(super) fn format_papers(papers: &[Paper]) -> String {
     papers
         .iter()
@@ -1038,8 +1012,8 @@ pub(super) struct RedditEntry {
     reply: bool,
 }
 
-/// The feed uses only a small Atom subset. Skip comments/CDATA while scanning
-/// tags, and respect quoted attributes so embedded markup cannot become entries.
+/// Elements of a small Atom subset: comments and CDATA are skipped and quoted
+/// attributes respected, so embedded markup cannot become entries.
 pub(super) fn atom_elements<'a>(xml: &'a str, name: &str) -> Vec<(&'a str, &'a str)> {
     let mut elements = Vec::new();
     let mut pos = 0;
@@ -1172,8 +1146,7 @@ pub(super) fn first_html_image(html: &str) -> Option<String> {
 }
 
 /// A provider-supplied thumbnail worth showing: an `https` URL with no
-/// credentials, templates or whitespace. Anything else is dropped here so the
-/// card never shows a "couldn't load" box for an address it would never fetch.
+/// credentials, templates or whitespace.
 pub(super) fn thumbnail_url(candidate: Option<&str>) -> Option<String> {
     let url = candidate?.trim();
     (url.len() <= 2_000
@@ -1608,11 +1581,8 @@ pub(super) fn format_image_results(query: &str, hits: &[ImageHit]) -> String {
         .join("\n\n")
 }
 
-/// Normalize a source URL for dedup: lowercase the host only (path/query
-/// case is preserved — some servers are case-sensitive there), strip
-/// `utm_*`/`fbclid` query params, and drop a trailing `/` and any fragment.
-/// Unparseable input (not actually a URL) is returned unchanged so it still
-/// participates in a plain string-equality dedup.
+/// Normalize a URL for dedup: lowercase the host only, strip `utm_*`/`fbclid`,
+/// and drop a trailing `/` and any fragment.
 pub fn normalize_url(url: &str) -> String {
     let Ok(mut u) = reqwest::Url::parse(url) else {
         return url.to_string();
@@ -1647,12 +1617,8 @@ pub fn normalize_url(url: &str) -> String {
     s
 }
 
-/// Collapse duplicate cited sources across a set of Searcher findings.
-/// Each finding may end with a `Sources:` block of `N. url` lines (see
-/// `SEARCHER_PROMPT` in research.rs); a source line whose normalized URL
-/// already appeared in an earlier finding is dropped from later ones so
-/// the Synthesizer doesn't see the same source cited from every angle.
-/// Non-source lines are untouched.
+/// Drop `Sources:` lines whose normalized URL already appeared in an earlier
+/// finding; other lines are untouched.
 pub fn dedup_source_lines(findings: &[String]) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     findings
@@ -1679,8 +1645,7 @@ pub fn dedup_source_lines(findings: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// Every normalized URL cited in a set of findings' `Sources:` blocks —
-/// what gets linked into a research session's source bundle.
+/// Every normalized URL cited in a set of findings' `Sources:` blocks.
 pub fn cited_url_norms(findings: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for f in findings {
@@ -1701,10 +1666,8 @@ pub fn cited_url_norms(findings: &[String]) -> Vec<String> {
     out
 }
 
-/// Rewrite `query` with `site:`/`-site:` terms — backend-agnostic (every
-/// engine this app talks to honors Google-style site filters), so
-/// `include_domains`/`exclude_domains`/`blocked_domains` need no per-backend
-/// plumbing beyond this string rewrite.
+/// Rewrite `query` with `site:`/`-site:` terms, which every backend honours, so
+/// domain filters need no per-backend plumbing.
 pub fn rewrite_query_with_domains(query: &str, include: &[String], exclude: &[String]) -> String {
     let mut q = query.to_string();
     for d in include {

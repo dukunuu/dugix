@@ -347,8 +347,6 @@ async fn auto_allowlisted_shell_runs_confined_but_user_approved_shell_is_unconfi
     let outside_dir = outside_parent.join(format!("nexus-auto-outside-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&outside_dir).unwrap();
     let outside = outside_dir.join("outside");
-    // The allow rule covers one plain command; the script it runs tries
-    // to write both inside and outside the workspace.
     std::fs::write(
         root.join("check.sh"),
         format!("printf confined > inside\ntouch '{}'\n", outside.display()),
@@ -455,7 +453,6 @@ async fn large_writes_carry_their_whole_diff_for_the_popup_only() {
     let detail = request.detail.expect("a large write has a detail");
     assert!(detail.starts_with("write big.txt (+300 −0)\n"));
     assert!(detail.contains("+line 299"));
-    // A small edit needs none.
     let small = json!({"path":"small.txt","content":"one\n"}).to_string();
     assert!(
         toolbox
@@ -1506,8 +1503,7 @@ async fn fs_read_shows_converted_text_for_documents_never_raw_bytes() {
     let (toolbox, dir) = fs_toolbox();
     let workspace = toolbox.workspace.as_ref().unwrap();
     let root = workspace.root().to_path_buf();
-    // A PDF, even without a .pdf name, is read as text (this used to be
-    // "binary file · not shown", or bytes if it was decoded lossily).
+    // A PDF is read as text even without a .pdf name.
     std::fs::write(
         root.join("report"),
         crate::extract::pdf_with_pages(&["WORKSPACE PDF TEXT"]),
@@ -1522,20 +1518,17 @@ async fn fs_read_shows_converted_text_for_documents_never_raw_bytes() {
         result.contains("WORKSPACE PDF TEXT") && !result.contains("%PDF"),
         "{result}"
     );
-    // UTF-16 text with a BOM reads as text.
     let mut utf16 = vec![0xFF, 0xFE];
     utf16.extend("wide text".encode_utf16().flat_map(u16::to_le_bytes));
     std::fs::write(root.join("wide.txt"), utf16).unwrap();
     let (result, _) = toolbox.run("fs_read", r#"{"path":"wide.txt"}"#).await;
     assert!(result.contains("wide text"), "{result}");
-    // A known binary is named; an unknown one is unchanged.
     std::fs::write(root.join("pic"), b"\x89PNG\r\n\x1a\n\0\0\0\0").unwrap();
     let (result, _) = toolbox.run("fs_read", r#"{"path":"pic"}"#).await;
     assert_eq!(
         result,
         "png image (12 bytes) · not text · import it into the space files to view or search it"
     );
-    // Converted files cannot be edited through the anchors.
     let (result, _) = toolbox
         .run(
             "fs_edit",
@@ -2133,8 +2126,6 @@ async fn fetch_url_serves_from_cache_when_fresh() {
         None,
         None,
     );
-    // A cache hit must not attempt the network — the result is the cached
-    // text, not a "fetch failed" error.
     let (result, _) = tb
         .run("fetch_url", r#"{"url":"https://example.com/a"}"#)
         .await;
@@ -2169,7 +2160,6 @@ fn dedup_source_lines_keeps_first_occurrence_of_each_normalized_url() {
     let out = dedup_source_lines(&[a.to_string(), b.to_string()]);
     assert!(out[0].contains("https://example.com/a"));
     assert!(out[0].contains("https://example.com/b"));
-    // b's first line (a dup of a's [1]) is dropped; its second (new) survives.
     assert!(!out[1].contains("example.com/a"));
     assert!(out[1].contains("other.com/c"));
 }
@@ -2271,8 +2261,6 @@ async fn discussion_search_serves_from_cache_when_fresh() {
         None,
         None,
     );
-    // A cache hit must not attempt the network — the result is the cached
-    // text, not a "no results" or "search failed" error.
     let (result, _) = tb
         .run(
             "search",
@@ -2479,8 +2467,6 @@ async fn explicit_choice_errors_clearly_when_unconfigured_instead_of_swapping() 
 
 #[tokio::test]
 async fn auto_reaches_searxng_when_configured_instead_of_bailing() {
-    // "auto" with only a SearXNG URL set must attempt it (proven by a
-    // connection-level error, not the langsearch-key or no-backend message).
     let tb = ToolBox::new(
         PathBuf::new(),
         Some("http://127.0.0.1:1".to_string()),
@@ -2491,8 +2477,6 @@ async fn auto_reaches_searxng_when_configured_instead_of_bailing() {
         None,
         None,
     );
-    // SearXNG is attempted first; if it is unavailable, auto mode may
-    // still succeed through the zero-setup DuckDuckGo fallback.
     if let Err(err) = tb.search("test", None, &[], &[]).await {
         let msg = err.to_string();
         assert!(!msg.contains("no search backend configured"));
@@ -2624,9 +2608,8 @@ fn parses_brave_html_result_card() {
 }
 
 fn files_toolbox() -> (ToolBox, crate::db::Db, String) {
-    // A real temp-file db (the toolbox opens its own connection by path).
-    // Own directory: the attached sibling cache.db must not collide with
-    // other tests' dbs, all of which live flat in the temp dir.
+    // Own directory: the attached sibling cache.db must not collide with other
+    // tests' dbs, all of which live flat in the temp dir.
     let dir = std::env::temp_dir().join(format!("nexus-tools-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("nexus.db");
@@ -3170,7 +3153,6 @@ fn new_wires_searxng_url_and_langsearch_key() {
     );
     assert_eq!(tb.searxng_url.as_deref(), Some("http://localhost:8080"));
     assert_eq!(tb.langsearch_key.as_deref(), Some("key-1"));
-    // The seam exposes the same wiring contract the App relies on.
     assert!(!tb.supports_images());
 }
 
@@ -3290,13 +3272,12 @@ fn unchanged_result_note_labels_the_call_and_marks_it() {
     );
     assert!(note.contains("read_file report.pdf"), "{note}");
     assert!(note.contains("unchanged"), "{note}");
-    // Unknown tools fall back to the bare name.
     let note = super::tool_result_unchanged_note("mystery_tool", "{}");
     assert!(note.contains("mystery_tool"), "{note}");
 }
 
 #[test]
-// One row per tool — the classification table is the point.
+// One row per tool.
 #[allow(clippy::too_many_lines)]
 fn read_only_tool_classification() {
     for (tool, args) in [
@@ -3609,7 +3590,6 @@ async fn search_files_returns_ranked_snippets() {
     assert!(status.contains("Searching files"));
     assert!(result.contains("report.md"));
     assert!(result.contains("lines 41-80"));
-    // No embedder configured → keyword search IS the primary, no fallback tag.
     assert!(!result.contains("keyword fallback"), "{result}");
 }
 
@@ -3634,7 +3614,6 @@ async fn public_files_actions_preserve_search_and_paging() {
 fn semantic_snippets_rank_truncate_and_report_none_without_vectors() {
     let (_, db, space) = files_toolbox();
     let conn = db.raw();
-    // No vectors stored yet.
     assert!(semantic_snippets(conn, &space, &[1.0, 0.0]).is_none());
 
     let id = db.upsert_file(&space, "notes.md", "h2", 1, "ok").unwrap();
@@ -3654,7 +3633,6 @@ fn semantic_snippets_rank_truncate_and_report_none_without_vectors() {
     let first = out.lines().next().unwrap();
     assert!(first.contains("notes.md (p2)"), "{first}");
     assert!(first.contains("short target"), "{first}");
-    // The long chunk is truncated, not dumped whole.
     assert!(out.lines().nth(1).unwrap().len() < long.len(), "{out}");
 }
 
@@ -3672,8 +3650,7 @@ fn files_semantic_page_hit_shows_the_matching_page_image() {
     );
 }
 
-/// A real file db with a text file and an image embedded through a mock
-/// Ollama, so ranking and formatting run the production search path.
+/// A real file db with a text file and an image embedded through a mock Ollama.
 async fn embedded_space(
     embedder: &crate::provider::embedding::Embedder,
 ) -> (FilesCtx, crate::db::Db) {
@@ -3717,7 +3694,6 @@ async fn embedded_space(
         &[(0, image[0].clone())],
     )
     .unwrap();
-    // A vector from another identity must never be ranked.
     let stale = db.upsert_file(&space, "stale.md", "h3", 1, "ok").unwrap();
     db.set_file_embeddings(
         &stale,
@@ -3761,7 +3737,6 @@ async fn semantic_search_ranks_images_and_text_together_with_kind_labels() {
         "{out}"
     );
     assert!(out.contains("image · beach.jpg · 0.1"), "{out}");
-    // The query carried the search prefix exactly once.
     let state = mock.state.lock().unwrap();
     let queries: Vec<String> = state
         .requests
@@ -3908,7 +3883,6 @@ fn defs_include_app_tools_only_with_apps_ctx() {
         let t = "app";
         assert!(names.contains(&t.to_string()), "missing {t}");
     }
-    // The app tool's action surface includes init/build.
     let defs = tb.defs();
     let app_def = defs.iter().find(|d| d.name == "app").unwrap();
     let actions = app_def
@@ -3966,7 +3940,6 @@ async fn init_scaffolds_astro_and_vite_templates() {
     assert!(dir.join("spa/src/App.tsx").is_file());
     assert!(dir.join("spa/vite.config.js").is_file());
 
-    // Unknown framework rejected; existing apps are never clobbered.
     let (result, _) = tb
         .run("init_app", r#"{"app":"x","framework":"svelte"}"#)
         .await;
@@ -3981,11 +3954,9 @@ async fn init_scaffolds_astro_and_vite_templates() {
 #[tokio::test]
 async fn build_app_guides_instead_of_failing_obscurely() {
     let (tb, dir) = apps_toolbox();
-    // No package.json → point the model at init.
     let (result, _) = tb.run("build_app", r#"{"app":"bare"}"#).await;
     assert!(result.contains("no package.json"), "{result}");
 
-    // Plain package.json without a bundler → served as-is.
     std::fs::create_dir_all(dir.join("plain")).unwrap();
     std::fs::write(
         dir.join("plain/package.json"),
@@ -3997,7 +3968,7 @@ async fn build_app_guides_instead_of_failing_obscurely() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The build tool shells out to `npx`; false on machines without node.
+/// Whether `npx` is installed.
 async fn npx_available() -> bool {
     tokio::process::Command::new("npx")
         .arg("--version")
@@ -4041,13 +4012,11 @@ async fn build_runs_the_declared_tool_and_marks_dist_served() {
     );
     assert!(app.join("dist/index.html").is_file());
 
-    // The build ran with the app's absolute base so asset links resolve.
     let ctx = tb.apps.as_ref().unwrap();
     let uuid = ctx.registry.resolve("default", "built").unwrap();
     let args = std::fs::read_to_string(app.join("build-args.txt")).unwrap();
     assert!(args.contains(&format!("--base /{uuid}/")), "{args}");
 
-    // The registry now serves the app from dist/.
     assert_eq!(
         ctx.registry.lookup(&uuid).unwrap().served_from.as_deref(),
         Some("dist")
@@ -4070,8 +4039,7 @@ async fn build_without_dist_output_never_marks_dist_served() {
         r#"{"name":"misbuilt","dependencies":{"astro":"^5.0.0"}}"#,
     )
     .unwrap();
-    // A fake `astro` bin that exits 0 but never writes dist/ (as if the
-    // framework's outDir were configured elsewhere).
+    // A fake `astro` bin that exits 0 but never writes dist/.
     std::fs::write(
         app.join("node_modules/.bin/astro"),
         "#!/bin/sh\necho 'build ok'\n",
@@ -4085,7 +4053,6 @@ async fn build_without_dist_output_never_marks_dist_served() {
 
     let (result, _) = tb.run("build_app", r#"{"app":"misbuilt"}"#).await;
     assert!(result.contains("produced no dist/"), "{result}");
-    // The app is not marked served-from-dist, so nothing 404s.
     let ctx = tb.apps.as_ref().unwrap();
     let uuid = ctx.registry.resolve("default", "misbuilt").unwrap();
     assert_eq!(ctx.registry.lookup(&uuid).unwrap().served_from, None);
@@ -4111,7 +4078,6 @@ async fn write_edit_read_round_trip_with_live_url() {
         "<h1>Hello</h1>"
     );
 
-    // nested path creates parent dirs
     let (result, _) = tb
         .run(
             "write_file",
@@ -4241,7 +4207,6 @@ async fn edit_file_rejects_stale_and_duplicate_hashes() {
         )
         .await;
 
-    // A hash for content that isn't in the file at all.
     let (result, _) = tb
         .run(
             "edit_file",
@@ -4250,7 +4215,6 @@ async fn edit_file_rejects_stale_and_duplicate_hashes() {
         .await;
     assert!(result.contains("not found"), "{result}");
 
-    // Two edits resolving to the same line in one call.
     let h = line_hash("x y x");
     let args = format!(
         r#"{{"app":"a","path":"f.txt","edits":[{{"hash":"{h}","new":"a"}},{{"hash":"{h}","new":"b"}}]}}"#
@@ -4269,7 +4233,6 @@ async fn edit_file_can_delete_and_insert_via_multiline_replacement() {
         )
         .await;
     let h = line_hash("two");
-    // Delete "two" and insert an extra line after "one" in the same call.
     let args = format!(
         r#"{{"app":"a","path":"f.txt","edits":[{{"hash":"{}","new":"one\ninserted"}},{{"hash":"{h}"}}]}}"#,
         line_hash("one"),
@@ -4326,9 +4289,8 @@ async fn cache_only_toolbox_returns_not_cached_marker_on_miss_without_network() 
     let dir = std::env::temp_dir().join(format!("nexus-cacheonly-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let db_path = dir.join("db.sqlite3");
-    // Any valid sqlite file works — fetch_cached only needs cache_get/cache_put's
-    // table, migrated on open elsewhere in real use; here confirm the miss path
-    // never reaches the network.
+    // Only cache_get/cache_put's table is needed here; the miss path must never
+    // reach the network.
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     conn.execute_batch(
         "CREATE TABLE web_cache (url_norm TEXT PRIMARY KEY, url TEXT NOT NULL, title TEXT, text TEXT NOT NULL, fetched_at TEXT NOT NULL);",
@@ -4393,7 +4355,7 @@ async fn propose_command_is_offered_only_to_the_terminal_ui() {
     let args = r#"{"cmd":"sudo make install","reason":"installs to /usr/local"}"#;
     assert!(!tool_names(&toolbox).contains(&"propose_command".to_string()));
     assert_eq!(toolbox.run("propose_command", args).await.1, "blocked");
-    // Chat mode (no workspace): `!` lines are agent-only, so no proposals.
+    // Chat mode (no workspace): `!` lines are agent-only.
     toolbox.interactive_ui = true;
     assert!(!tool_names(&toolbox).contains(&"propose_command".to_string()));
     assert_eq!(toolbox.run("propose_command", args).await.1, "blocked");
@@ -4594,8 +4556,8 @@ fn toolbox_effects_declare_resolved_workspace_paths() {
     );
 }
 
-/// Records when each call starts and ends; a path ending in `slow`
-/// takes longer, so finishing order differs from call order.
+/// Records when each call starts and ends; a path ending in `slow` takes longer,
+/// so finishing order differs from call order.
 #[derive(Default)]
 struct WaveExecutor {
     log: std::sync::Mutex<Vec<String>>,
@@ -4707,7 +4669,6 @@ async fn scheduler_returns_results_in_call_order_whatever_finishes_first() {
     let log = exec.log.lock().unwrap().clone();
     let at = |entry: &str| log.iter().position(|e| e == entry).unwrap();
     assert!(at("end read /w/b") < at("end write /w/slow"), "{log:?}");
-    // The read of the written path waits for the write.
     assert!(
         at("end write /w/slow") < at("start read /w/slow"),
         "{log:?}"

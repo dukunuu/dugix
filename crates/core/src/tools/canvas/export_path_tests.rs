@@ -19,7 +19,6 @@ async fn a_deck_exports_to_a_path_the_user_gave() {
     std::fs::create_dir_all(target.parent().unwrap()).unwrap();
     let path = target.to_string_lossy().into_owned();
 
-    // Nothing in the conversation names it: refused, nothing written.
     user_said(&f, "export the deck");
     let refused = call(
         &f,
@@ -48,7 +47,6 @@ async fn a_deck_exports_to_a_path_the_user_gave() {
         "the default folder was not used"
     );
 
-    // The CLI's rule: an existing file is never overwritten.
     let again = call(
         &f,
         "export",
@@ -58,7 +56,6 @@ async fn a_deck_exports_to_a_path_the_user_gave() {
     assert!(again.contains("talk (2).pptx"), "{again}");
     assert!(target.with_file_name("talk (2).pptx").is_file());
 
-    // The extension picks the format, including a deck's own JSON.
     let json_path = f.root.join("Desktop/talk.deck.json");
     user_said(&f, &format!("save a copy as {}", json_path.display()));
     let saved = call(
@@ -70,7 +67,6 @@ async fn a_deck_exports_to_a_path_the_user_gave() {
     assert!(saved.starts_with("exported"), "{saved}");
     assert!(json_path.is_file());
 
-    // Relative words still mean exports/.
     let plain = call(
         &f,
         "export",

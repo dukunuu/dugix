@@ -97,11 +97,8 @@ impl ToolBox {
             {
                 continue;
             }
-            // Bound each attempt independently: a timeout must still allow
-            // later backends to run and appear in an all-failed diagnostic.
-            // Provider search runs a model, and Exa may first queue for a
-            // permit behind a research run's other searches (its request
-            // has its own 15 s limit), so both get longer.
+            // Bound each attempt independently, so a timeout still lets later
+            // backends run. Provider search and Exa may queue behind a research run.
             let limit = match backend {
                 "provider" | "exa" => 60,
                 _ => 15,

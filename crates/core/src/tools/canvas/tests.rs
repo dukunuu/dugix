@@ -1,4 +1,4 @@
-//! Hermetic public canvas workflows, independent of the legacy deck callers.
+//! Hermetic public canvas workflows.
 use super::tests::Fixture;
 use super::*;
 use crate::doc::{self, Doc, Kind as BlockKind};
@@ -392,7 +392,6 @@ async fn doc_creates_and_edits_tell_the_terminal_which_block_to_show() {
         changed[0].1, paragraph,
         "an edit opens on the first changed block"
     );
-    // A change that touches no block (the title) still opens the doc, on its first block.
     call(
         &f,
         "edit",
@@ -402,7 +401,6 @@ async fn doc_creates_and_edits_tell_the_terminal_which_block_to_show() {
     let changed = std::mem::take(&mut f.tools.deck_link.lock().unwrap().changed);
     assert_eq!(changed.len(), 1);
     assert_eq!(changed[0].1, base.blocks[0].id);
-    // A refused edit tells nobody.
     call(
         &f,
         "edit",

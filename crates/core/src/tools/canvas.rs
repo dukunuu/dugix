@@ -1,6 +1,5 @@
-//! The `canvas` tool: confined, atomic deck and doc actions. Studio and the model share
-//! the same `*.deck.json` and `*.deck.json.comments.json` files, so every
-//! write here shows up in an open studio window within half a second.
+//! The `canvas` tool: confined, atomic deck and doc actions. Studio shares the same
+//! files, so every write shows up in an open window within half a second.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -48,18 +47,15 @@ mod template_tests;
 
 /// Slides shown as individual images; more become one contact sheet.
 const MAX_SEPARATE_IMAGES: usize = 4;
-/// Slides on one contact sheet.
 const MAX_SHEET_SLIDES: usize = 12;
 const MAX_COMMENT_CHARS: usize = 500;
 const MAX_THREADS: usize = 200;
 /// How much of a block's text `read` returns.
 const READ_TEXT_CHARS: usize = 400;
 const SHORT_REVISION: usize = 12;
-/// Located errors listed in one failed call.
 const MAX_ERRORS_SHOWN: usize = 12;
 /// Operation lines listed before the edit result switches to counts.
 const MAX_OP_LINES: usize = 10;
-/// Versions listed by `history`.
 const HISTORY_LINES: usize = 20;
 /// Remote images fetched in one call; the rest are reported.
 const MAX_FETCHES: usize = 12;
@@ -82,9 +78,8 @@ fn slug(title: &str) -> String {
     }
 }
 
-/// Resolve `input` (relative to the space files folder) to a deck file under
-/// `<files>/decks/`, rejecting escapes, odd characters and symlinks. Also used
-/// by the terminal when it opens a linked canvas.
+/// Resolve `input` to a deck file under `<files>/decks/`, rejecting escapes, odd
+/// characters and symlinks.
 pub(crate) fn confined(files: &Path, input: &str) -> Result<PathBuf> {
     let relative = Path::new(input);
     ensure!(
@@ -154,8 +149,7 @@ fn save(path: &Path, deck: &Deck) -> Result<()> {
     crate::deck::write_atomic(path, &serde_json::to_vec_pretty(deck)?)
 }
 
-/// Located errors, one per line, each with a one-line fix when the mistake
-/// is a known one.
+/// Located errors, one per line, each with a one-line fix when known.
 fn format_errors(errors: &[CheckError]) -> String {
     let mut out = String::new();
     for e in errors.iter().take(MAX_ERRORS_SHOWN) {
@@ -170,10 +164,7 @@ fn format_errors(errors: &[CheckError]) -> String {
     out
 }
 
-/// Fill hashes and insertion ids, check every operation against `deck`, and
-/// return the prepared suggestion; no write happens here. Used for comments:
-/// a suggestion is reviewed by the author before it applies, so it is held to
-/// the suggestion rules (at most 40 operations, no new images).
+/// Prepare a suggestion for review; no write happens here.
 fn prepare(deck: &Deck, ops: &Value, lenient: &mut Lenient) -> Result<Suggestion> {
     let mut ops = ops.as_array().context("ops must be an array")?.clone();
     ensure!(!ops.is_empty(), "ops must contain at least one operation");
@@ -208,7 +199,7 @@ fn write_deck(path: &Path, deck: &Deck, who: Who) -> Result<()> {
     save(path, deck)
 }
 
-/// Slides whose content differs, in deck order. A theme change touches all.
+/// Slides whose content differs, in deck order; a theme change touches all.
 fn changed_slides(before: &Deck, after: &Deck) -> Vec<String> {
     after
         .slides
@@ -237,7 +228,6 @@ fn slide_number(deck: &Deck, id: &str) -> Result<usize> {
         })
 }
 
-/// `1 slide`, `3 slides`.
 fn slides(count: usize) -> String {
     format!("{count} slide{}", if count == 1 { "" } else { "s" })
 }
@@ -514,8 +504,7 @@ fn write_tree(
     }
 }
 
-/// The compact field reference, sent with the first `read` or `create` of a
-/// session so the tool description can stay short.
+/// The compact field reference, sent once per session.
 const SCHEMA: &str = "\nschema (sent once per session)\n\
 - container (slide, frame): layout{mode:none|row|column, wrap, gap, gap_cross, padding:[t,r,b,l], main:start|center|end|space_between, cross:start|center|end|stretch}. mode none = children are absolute. Slides also have fill (color) and notes.\n\
 - node: id name? sizing{w,h: px|\"hug\"|\"fill\", min_w,max_w,min_h,max_h} position:\"auto\"|{x,y} (absolute = ignore auto-layout; every child of a mode:none parent is absolute) opacity rotation hidden locked. hug = fit content, fill = share the leftover main-axis space (or stretch across).\n\
@@ -537,8 +526,7 @@ const SCHEMA: &str = "\nschema (sent once per session)\n\
 - import: create from:\"file.pptx\" places content absolutely, copies pictures with baked crops, and keeps text/tables/notes/transitions. Radial shapes become stacked ellipses, charts placeholders, SmartArt shapes or lists. Approximations are reported; rebuild with the original's text/images only.\n\
 - set_layout converts children like Figma (none to row/column makes them auto; back makes them absolute where they are). wrap{ids,layout} puts siblings in a new frame; unwrap{id} dissolves it. update_node merges: {\"font\":{\"size\":64}} keeps other font fields, null removes one. set_text_style{name,font} changes every node using the style.\n";
 
-/// How a deck should look, sent once per session with the first design list
-/// or deck create: the habits that separate a designed deck from a generic one.
+/// How a deck should look, sent once per session.
 const ART: &str = "\nart direction (sent once per session)\n\
 - Choose the look before create: pass design (a brand template beats a preset; presets suit their topic as listed by design op=list). Or set_theme your own: one dominant ground, one deep panel color (accent2), one sharp accent used sparingly, and a display face (heading) over a plain body face; any Google Fonts family is fetched automatically.\n\
 - Headlines carry the point: \"Churn fell 18% after onboarding changed\", not \"Churn\". Use the named styles (title, heading, kicker, body, caption, display), not px sizes: title is 120 px or more; body never under 32 px except captions.\n\
@@ -592,7 +580,6 @@ fn builds_line(slide: &Slide) -> Option<String> {
     Some(builds.join(" · "))
 }
 
-/// `push left 400ms ease_out`: a transition on one line.
 fn transition_line(transition: &Transition) -> String {
     let snake = |value: &Value| value.as_str().unwrap_or_default().to_string();
     let mut parts = vec![snake(&json!(transition.kind))];
@@ -604,7 +591,7 @@ fn transition_line(transition: &Transition) -> String {
     parts.join(" ")
 }
 
-/// The `fonts` action: the deck's own families, then installed ones.
+/// The deck's own font families, then installed ones.
 fn fonts_text(deck: &Deck, query: Option<&str>) -> String {
     let mut out = String::new();
     let roles = deck
@@ -665,8 +652,7 @@ fn fonts_text(deck: &Deck, query: Option<&str>) -> String {
     out
 }
 
-/// A new deck: the title slide only, or the given slides, with any text
-/// styles the call defines.
+/// A new deck: the title slide only, or the given slides.
 fn new_deck(
     title: &str,
     slides: Option<&Value>,
@@ -747,7 +733,6 @@ impl Shown {
         Ok(out)
     }
 
-    /// `slide 3` for one slide, `4 slides` otherwise.
     fn label(&self, deck: &Deck) -> Result<String> {
         Ok(match self.ids.as_slice() {
             [id] if !self.sheet => format!("slide {}", slide_number(deck, id)?),
@@ -773,8 +758,7 @@ impl ToolBox {
         }
     }
 
-    /// Run one canvas action (legacy `deck_*` routes cover both kinds). Repairs made to
-    /// the input are reported at the top of the result as `normalized:` lines.
+    /// Run one canvas action; repairs are reported as `normalized:` lines.
     pub(super) async fn canvas_action(&self, action: &str, v: &Value) -> Result<String> {
         if action == "canvas_design" {
             return self.canvas_design(v);
@@ -840,8 +824,7 @@ impl ToolBox {
         }
     }
 
-    /// The once-per-session field reference, unless this result has no room
-    /// for it (it then goes with a later, shorter result).
+    /// The once-per-session field reference, if this result has room for it.
     fn schema_if_fits(&self, used: usize) -> &'static str {
         let mut context = self.deck_link.lock().expect("deck link");
         if context.schema_shown || used + SCHEMA.chars().count() > read::RESULT_BUDGET {
@@ -851,7 +834,6 @@ impl ToolBox {
         SCHEMA
     }
 
-    /// The once-per-session art direction.
     fn art_once(&self) -> &'static str {
         let mut context = self.deck_link.lock().expect("deck link");
         if context.art_shown {
@@ -880,9 +862,8 @@ impl ToolBox {
         })
     }
 
-    /// Download the Google Fonts `deck` uses that this device lacks into the
-    /// deck folder's assets and list them in its theme, so the renders that
-    /// follow already draw them. Problems become notes; the edit goes on.
+    /// Download the deck's missing Google Fonts so later renders already draw
+    /// them; problems become notes and the edit goes on.
     async fn provide_fonts(&self, path: &Path, deck: &mut Deck, notes: &mut Vec<String>) {
         let Some(assets) = path.parent().map(|dir| dir.join("assets")) else {
             return;
@@ -916,10 +897,8 @@ impl ToolBox {
         Fetcher::new(assets)
     }
 
-    /// Download the https images of the given slides (all when empty) that are
-    /// not on this device yet, through the vetted fetcher, so renders and
-    /// studio show them. Returns a line per problem and whether any image
-    /// arrived.
+    /// Download the given slides' (all when empty) https images so renders and
+    /// studio show them; returns a line per problem and whether any arrived.
     async fn fetch_images(&self, path: &Path, deck: &Deck, ids: &[String]) -> (Vec<String>, bool) {
         let mut wanted: Vec<(String, String)> = Vec::new();
         for slide in deck
@@ -1180,10 +1159,8 @@ impl ToolBox {
         Ok(out)
     }
 
-    /// Check a caller's `revision` against the deck. A match is fine. A stale
-    /// one is compared with the kept version it names: edits that touch
-    /// nothing that changed since are applied anyway (the returned note says
-    /// so); otherwise the edit is refused with what changed.
+    /// Check a caller's `revision`; a stale one is compared with the kept version
+    /// it names, so an edit that touches nothing changed since still applies.
     fn check_revision(
         path: &Path,
         deck: &Deck,
@@ -1321,7 +1298,7 @@ impl ToolBox {
         Ok(out)
     }
 
-    /// `history`: the kept versions, or restore one as a new write.
+    /// The kept versions, or a restore of one as a new write.
     async fn deck_history(&self, relative: &str, path: &Path, v: &Value) -> Result<String> {
         let deck = load(path)?;
         if let Some(revision) = v["revision"].as_str().filter(|r| !r.trim().is_empty()) {
@@ -1554,10 +1531,8 @@ fn deck_comment(relative: &str, path: &Path, v: &Value, notes: &mut Vec<String>)
 }
 
 impl ToolBox {
-    /// The export's format word and, when the user named one in their latest
-    /// message, an absolute destination (CLI `--out`). A path rides in the
-    /// existing `format` argument and its extension picks the format, so the
-    /// tool definition gains nothing; a path the user did not write is refused.
+    /// The export's format word and, when the user named one, an absolute
+    /// destination; a path the user did not write is refused.
     pub(super) fn export_request(&self, v: &Value) -> Result<(String, Option<PathBuf>)> {
         let raw = v["format"]
             .as_str()
@@ -1594,8 +1569,8 @@ impl ToolBox {
         Ok((format, Some(destination)))
     }
 
-    /// Write the deck as a file under `<space files>/exports/` (or where the
-    /// user named), never overwriting, and list what had to be approximated.
+    /// Write the deck under `<space files>/exports/` (or where the user named),
+    /// never overwriting, and list what had to be approximated.
     fn deck_export(&self, relative: &str, path: &Path, v: &Value) -> Result<String> {
         use crate::deck::export::{self, Format};
         let (format, destination) = self.export_request(v).map_err(|e| {
@@ -1732,7 +1707,6 @@ mod tests {
                 && read.contains("comment threads: 0"),
             "{read}"
         );
-        // The field reference comes once per session: with the create result.
         assert!(
             created.contains("schema (sent once per session)"),
             "{created}"
@@ -1969,7 +1943,6 @@ mod tests {
         f.run("create", json!({"title": "Tree", "slides": slides}))
             .await;
         let read = f.run("read", json!({"path": "decks/tree.deck.json"})).await;
-        // Resolved rects, with children nested one level deeper.
         assert!(read.contains("\n  t text [100,100 1720x"), "{read}");
         assert!(read.contains("\n  row frame [100,"), "{read}");
         assert!(
@@ -2115,7 +2088,6 @@ mod tests {
             .await;
         assert!(none.contains("0 of 0 shown"), "{none}");
         assert_eq!(none.lines().filter(|l| l.starts_with("- ")).count(), 0);
-        // Fonts never write.
         assert!(!all.contains("deck failed"));
     }
 

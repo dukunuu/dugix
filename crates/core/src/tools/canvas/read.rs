@@ -1,7 +1,5 @@
-//! What the `canvas` tool tells the model about a deck: `read` (always within
-//! the tool-result cap, falling back to an outline), edit summaries with the
-//! rectangles of changed nodes, and the comparison behind stale-revision
-//! handling.
+//! What the `canvas` tool tells the model about a deck: `read`, edit summaries and
+//! the comparison behind stale-revision handling.
 
 use super::{
     BTreeMap, Deck, Kind, Mode, Node, Path, Result, Slide, Thread, Value, author, builds_line,
@@ -13,8 +11,7 @@ use std::fmt::Write as _;
 
 /// Characters of header and slides in one `read`; a bigger deck is outlined.
 pub(super) const READ_BUDGET: usize = 7000;
-/// Everything a result may hold before the generic tool-result cap (8000)
-/// would cut it.
+/// Everything a result may hold before the generic 8000-character cap would cut it.
 pub(super) const RESULT_BUDGET: usize = 7800;
 /// Most slide ids named in a "more slides" line.
 const MORE_IDS: usize = 8;
@@ -25,8 +22,7 @@ fn chars(text: &str) -> usize {
     text.chars().count()
 }
 
-/// Slide ids or 1-based numbers (as numbers or numeric strings) to indexes.
-/// `None` when the call names no slides.
+/// Slide ids or 1-based numbers to indexes; `None` when no slides are named.
 pub(super) fn selection(deck: &Deck, value: &Value, dedup: bool) -> Result<Option<Vec<usize>>> {
     let Some(list) = value.get("slides").filter(|v| !v.is_null()) else {
         return Ok(None);
@@ -296,9 +292,7 @@ fn thread_block(deck: &Deck, threads: &[Thread], budget: usize) -> String {
     out
 }
 
-/// The `read` result. `selected` limits it to those slide indexes. A deck whose
-/// full text would pass [`READ_BUDGET`] comes back as an outline with an
-/// explicit "more slides" line, so the generic cap never decides what is cut.
+/// The `read` result; a deck that would not fit comes back as an outline.
 pub(super) fn read_text(
     relative: &str,
     path: &Path,
@@ -377,8 +371,7 @@ fn shell(slide: &Slide) -> Slide {
     copy
 }
 
-/// The nodes that are new or different after an edit, one line each with their
-/// rectangles, grouped by slide, so the next edit needs no `read`.
+/// The nodes new or different after an edit, so the next edit needs no `read`.
 pub(super) fn changed_summary(before: &Deck, after: &Deck, assets: &Path, budget: usize) -> String {
     let mut out = String::new();
     let mut hidden = 0;
@@ -450,9 +443,7 @@ pub(super) fn changed_summary(before: &Deck, after: &Deck, assets: &Path, budget
     out
 }
 
-/// What differs between the deck a caller last saw (`old`) and now
-/// (`current`): node or slide id to a description of its present state, and
-/// whether the theme changed.
+/// What differs between the deck a caller last saw and now.
 pub(super) fn differences(
     old: &Deck,
     current: &Deck,

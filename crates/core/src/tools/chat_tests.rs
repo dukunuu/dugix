@@ -120,7 +120,6 @@ fn transcript_starts_near_the_hit_and_collapses_tool_noise() {
     .unwrap();
     let (text, start) = transcript(&ctx, &format!("chat:{session}#{center}")).unwrap();
     let lines: Vec<&str> = text.lines().collect();
-    // Two messages of context ahead of the hit.
     assert!(
         lines[start - 1].ends_with("] user"),
         "{:?}",
@@ -173,8 +172,6 @@ async fn long_chats_page_by_line_and_a_huge_line_is_split() {
     let next = tb
         .run(
             "fetch_url",
-            // A header, the text and a blank line per message: 300 short
-            // messages run past line 900.
             &json!({"url": format!("chat:{session}"), "offset": 801}).to_string(),
         )
         .await

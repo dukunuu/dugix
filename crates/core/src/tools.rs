@@ -1,7 +1,5 @@
-//! Tools the model can call mid-response, advertised as nine consolidated
-//! names (`batch`, `skills`, `scripts`, `search`, `fetch_url`,
-//! `research_lookup`, `files`, `app`, `media`) that dispatch onto a larger
-//! set of specialized implementations below, behind the `ToolExecutor` seam.
+//! Tools the model can call mid-response: nine consolidated names that dispatch
+//! onto specialized implementations, behind the `ToolExecutor` seam.
 
 mod apps;
 mod canvas;
@@ -37,7 +35,6 @@ use web::{
     is_youtube_url, langsearch_search, searxng_search,
 };
 
-// Test modules reach moved helpers through `use super::*`.
 #[cfg(test)]
 use files::*;
 #[cfg(test)]
@@ -72,14 +69,10 @@ use crate::skills::{load_skills_from_dirs, resolve_skill_file, skill_body};
 use crate::workspace::{Access, Workspace};
 
 const MAX_TOOL_RESULT_CHARS: usize = 8_000;
-/// Maximum sub-operations in one `batch` call — bounds execution time and
-/// the size of the combined result.
+/// Bounds a `batch` call's execution time and result size.
 const MAX_BATCH_CALLS: usize = 8;
-/// Calls run concurrently within one wave of `run_scheduled`.
 const MAX_PARALLEL_CALLS: usize = 8;
-/// Combined-result cap for a `batch` call. Each sub-result is already capped
-/// at `MAX_TOOL_RESULT_CHARS`; this lets a few of them through together
-/// while still bounding what a runaway batch pushes into the conversation.
+/// Lets several capped sub-results through while bounding a runaway batch.
 const MAX_BATCH_RESULT_CHARS: usize = MAX_TOOL_RESULT_CHARS * 4;
 
 const TOOL_ERROR_PREFIXES: &[(&str, &str)] = &[
@@ -149,36 +142,31 @@ pub fn classify_tool_result(result: &str, status: &str) -> Option<&'static str> 
     .then_some("upstream")
 }
 
-/// A workspace action waiting for the user's permission.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApprovalRequest {
     pub tool: String,
     pub action: String,
     pub summary: String,
-    /// Human-readable policy class for workspace actions.
+    /// Human-readable policy class.
     pub class: Option<String>,
-    /// The full preview shown to the person approving (a large write's
-    /// whole diff). `summary` stays short because deciders, the decision
-    /// log and parked jobs read it; `detail` only ever reaches the popup.
+    /// The full preview for the person approving; `summary` stays short for
+    /// deciders and logs.
     pub detail: Option<String>,
-    /// Whether this action may reuse or create a session-wide grant.
     pub allow_session: bool,
 }
 
-/// Permission for one action, its kind for this session, or neither.
+/// The answer to one approval request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Decision {
     Allow,
     AllowForSession,
-    /// Allow now and from here on (a connector tool: policy `allow` in
-    /// config, with its definition pinned). Only connector requests offer it.
+    /// Allow now and from here on; only connector requests offer it.
     AllowAlways,
     Deny,
-    /// Fall back to individual prompts for a combined request.
     ReviewEach,
 }
 
-/// Permission for every call in a response, or a return to individual prompts.
+/// Permission for every call in a response.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WaveDecision {
     AllowAll,
@@ -194,7 +182,7 @@ pub enum Gate {
     Approved,
     Denied,
     AskEach,
-    /// A per-call policy ticket, consumed by this toolbox at execution.
+    /// A per-call policy ticket, consumed at execution.
     Policy(u64),
 }
 
@@ -229,7 +217,6 @@ pub struct ToolBox {
     pub confine_shell_writes: Option<PathBuf>,
     /// Present only in agent-auto mode, with rules first.
     pub auto_decider: Option<Arc<Chain>>,
-    /// Whether unattended shell commands can be write-confined on this device.
     pub sandbox_available: bool,
     /// Session id and last user message for the current turn.
     pub decision_context: Arc<Mutex<(String, String)>>,
@@ -243,7 +230,6 @@ pub struct ToolBox {
     subagent_workspace: Option<bool>,
     pub(crate) subagent_environment: String,
     decision_parent: Option<Arc<Self>>,
-    /// Require permission before mutating workspace calls.
     pub require_approval: bool,
     /// Interactive permission provider; absent on headless paths.
     pub approver: Option<Arc<dyn Approver>>,
@@ -256,30 +242,23 @@ pub struct ToolBox {
     /// Skill roots in precedence order. These include the app-managed root and
     /// read-only project/user Agent Skills roots discovered at startup.
     skill_dirs: Vec<PathBuf>,
-    /// Base URL of a `SearXNG` instance (e.g. `http://localhost:8080`), no
-    /// trailing slash. Free and self-hosted — no API key needed.
+    /// Base URL of a `SearXNG` instance, without a trailing slash.
     pub searxng_url: Option<String>,
-    /// `LangSearch` API key (free tier, no card): <https://langsearch.com/dashboard>
+    /// `LangSearch` API key: <https://langsearch.com/dashboard>
     pub langsearch_key: Option<String>,
-    /// Preferred web search backend; auto tries configured services, Exa,
-    /// the session provider, then HTML scrapers.
+    /// Preferred web search backend; `auto` tries each in turn.
     pub search_provider: String,
     web_search: Arc<web_search::WebSearch>,
     /// Auto helper resolved on the session's backend, never another provider.
     pub(crate) search_backend: Option<(OpenRouter, String)>,
     pub(crate) search_space_id: String,
-    /// When true, `defs()`/`run()` restrict to `search`/`fetch_url` only —
-    /// used for deep-research searcher agents, which must never reach
-    /// `scripts`/`app`/`media` tools even if hallucinated.
+    /// Restrict `defs()`/`run()` to `search`/`fetch_url`, for research searchers.
     research_only: bool,
     /// Domains a per-space setting always excludes from `search(mode=web)` results
     /// (appended to any `exclude_domains` the model passes).
     pub blocked_domains: Vec<String>,
-    /// Main db path for tool connections. Connections open the db with its
-    /// sibling `cache.db` attached (`open_attached`), so both durable tables
-    /// (`session_sources`, `citations`, `files`) and device-local ones
-    /// (`web_cache`, `file_chunks`, `model_prices`) resolve on one
-    /// connection. `None` disables the cache-backed tools (some tests).
+    /// Main db path; connections attach the sibling `cache.db`. `None` disables
+    /// the cache-backed tools.
     db_path: Option<PathBuf>,
     /// Opt in to device-local tool outcome recording. Disabled in incognito.
     pub record_events: bool,
@@ -291,59 +270,49 @@ pub struct ToolBox {
     image_search: ImageSearch,
     /// Remote-image preference shared with image-consuming tools.
     pub remote_images: Option<Arc<crate::remote_image::Fetcher>>,
-    /// Test seam: the downloader the `canvas` tool uses for https images. Normally
-    /// absent, and each deck gets one rooted at its own `assets/` folder.
+    /// Test seam: the downloader `canvas` uses for https images.
     #[cfg(test)]
     pub(crate) deck_images: Option<Arc<crate::remote_image::Fetcher>>,
-    /// Test seam: where the `canvas` tool gets Google Fonts. Tests without one
-    /// never reach the network.
+    /// Test seam: where `canvas` gets Google Fonts.
     #[cfg(test)]
     pub(crate) deck_fonts: Option<Arc<dyn crate::deck::google_fonts::Source>>,
     files: Option<FilesCtx>,
     apps: Option<AppsCtx>,
-    /// Whether the current model supports image inputs. When false, tool
-    /// image results are returned as text references instead of being
-    /// injected as vision content (which would cause a 400).
+    /// Whether the model accepts images; otherwise results carry text references
+    /// (vision content would 400).
     pub supports_images: bool,
-    /// When true, `fetch_cached` never hits the network on a cache miss —
-    /// used for the Verifier stage's quote-checking pass, which must only
-    /// ever see pages the searchers actually gathered, never fresh fetches.
+    /// Never fetch on a cache miss, for the Verifier's quote check.
     cache_only: bool,
-    /// Provider + model for AI image generation. `None` = tool disabled.
+    /// `None` disables image generation.
     pub image_gen_backend: Option<(OpenRouter, String)>,
-    /// Directory to save generated images into / search for reference images.
+    /// Where generated images are saved and reference images searched.
     pub space_files_dir: PathBuf,
-    /// The space's memory book; `None` hides the `memory` tool (incognito,
-    /// evals).
+    /// The space's memory book; `None` hides the `memory` tool.
     pub memory: Option<MemoryCtx>,
     pub space_apps_dir: PathBuf,
-    /// Directory holding space-local scripts (created by the model via the
-    /// `scripts` tool).
+    /// Space-local scripts, created by the model via the `scripts` tool.
     pub space_scripts_dir: PathBuf,
-    /// Current session id — for attaching generated images to a message.
+    /// For attaching generated images to a message.
     pub session_id: String,
-    /// Provider + model for video generation. `None` = tools hidden.
+    /// `None` hides the video tools.
     pub video_gen_backend: Option<(OpenRouter, String)>,
     /// Connected MCP connectors; their tools follow the built-in ones.
     pub connectors: Option<crate::connectors::Registry>,
 }
 
-/// Where the file tools read from: the shared db plus the space to scope to.
 pub use memory_tool::MemoryCtx;
 
-/// The toolbox opens its own short-lived connection per call — the app's
-/// `Db` handle stays on the UI task and is never shared with the stream task.
+/// The toolbox opens its own short-lived connection per call; the app's `Db`
+/// stays on the UI task.
 #[derive(Clone)]
 pub struct FilesCtx {
     pub db_path: std::path::PathBuf,
     pub space_id: String,
-    /// Identity-aware embedding backend for semantic search; None = keyword only.
+    /// Identity-aware embedding backend; `None` means keyword search only.
     pub embedder: Option<crate::provider::embedding::Embedder>,
 }
 
-/// Where the app tools write: the active space's apps dir, plus the
-/// registry, server port and space metadata. Only present while the server
-/// runs.
+/// Where the app tools write; present only while the server runs.
 #[derive(Clone)]
 pub struct AppsCtx {
     pub dir: PathBuf,
@@ -393,16 +362,15 @@ const APP_ACTIONS: &[&str] = &[
     "build",
 ];
 
-/// All public names and actions, including tools hidden by runtime capabilities.
+/// All public names and actions, including ones hidden by runtime capabilities.
 pub(crate) fn current_tools() -> Vec<(&'static str, Vec<&'static str>)> {
     spec::current_tools()
         .chain([("app", APP_ACTIONS.to_vec()), ("batch", Vec::new())])
         .collect()
 }
 
-/// Map a retired call to its public name, selector, and rewritten arguments.
-/// Action selection shares dispatch routing; required fields are not checked,
-/// so recorded definitions can be migrated using only their selector values.
+/// Map a retired call to its public name, selector and rewritten arguments.
+/// Required fields are not checked, so recorded definitions can be migrated.
 pub(crate) fn migrate_tool_call(
     name: &str,
     mut args: serde_json::Value,
@@ -424,9 +392,7 @@ pub(crate) fn migrate_tool_call(
     None
 }
 
-/// Normalize advertised consolidated calls onto the specialized implementations below.
-/// The retired names (`skill_admin`, `app_inspect`, `run_python`, …) are intentionally
-/// still accepted by `run()` for persisted/replayed calls, but never returned by `defs()`.
+/// Normalize advertised consolidated calls onto the specialized implementations.
 fn public_call(name: &str, args: &str) -> Result<(String, String), String> {
     public_call_impl(name, args, true)
 }
@@ -645,29 +611,18 @@ fn public_call_impl(name: &str, args: &str, validate: bool) -> Result<(String, S
     Ok((mapped.to_string(), args.to_string()))
 }
 
-/// The tool-calling seam: everything an agent loop needs from the tool
-/// layer — definitions for the request, read-only classification for
-/// parallelizing independent calls, and execution. `ToolBox` is the local
-/// implementation; a remote implementation (nexus host) speaks the
-/// same methods over the wire, and the loops don't know the difference.
-/// `supports_images`/`space_files_dir` are required because the tool loop
-/// injects image references from tool results as vision content (the host
-/// that runs the tools is the only one who knows the model's vision
-/// support and where the space's files live).
+/// The tool-calling seam: definitions, read-only classification and execution.
 pub trait ToolExecutor: Send + Sync + 'static {
-    /// Tool definitions to attach to the request (see `ToolBox::defs`).
+    /// Tool definitions to attach to the request.
     fn defs(&self) -> Vec<ToolDef>;
     /// Compact tool definitions for small models; custom executors may keep full definitions.
     fn defs_compact(&self) -> Vec<ToolDef> {
         self.defs()
     }
-    /// Whether a call is read-only (see `is_read_only_tool`); the default
-    /// `effect` builds on it.
+    /// Whether a call is read-only; the default `effect` builds on it.
     fn is_read_only(&self, name: &str, args: &str) -> bool;
-    /// What a call touches, declared before it runs — `run_scheduled` lets
-    /// calls whose effects don't conflict run together. Without path
-    /// knowledge, a read-only call touches nothing and any other call is a
-    /// barrier.
+    /// What a call touches, declared before it runs; without path knowledge a
+    /// read-only call touches nothing and any other call is a barrier.
     fn effect(&self, name: &str, args: &str) -> Effect {
         if self.is_read_only(name, args) {
             Effect::read_only()
@@ -675,9 +630,8 @@ pub trait ToolExecutor: Send + Sync + 'static {
             Effect::barrier()
         }
     }
-    /// Run one tool call, returning `(result, status-label)`. Boxed future
-    /// so the trait stays dyn-compatible (the loops hold `Arc<dyn
-    /// ToolExecutor>`).
+    /// Run one tool call, returning `(result, status label)`; boxed to stay
+    /// dyn-compatible.
     fn run<'a>(
         &'a self,
         name: &'a str,
@@ -708,8 +662,7 @@ pub trait ToolExecutor: Send + Sync + 'static {
     }
     /// Whether the current model accepts image inputs.
     fn supports_images(&self) -> bool;
-    /// The active space's files dir, for resolving image references in tool
-    /// results.
+    /// The active space's files dir, for resolving image references.
     fn space_files_dir(&self) -> Option<std::path::PathBuf>;
 }
 
@@ -741,10 +694,8 @@ impl ToolExecutor for ToolBox {
         is_read_only_tool(name, args)
     }
 
-    /// Workspace calls declare the paths they resolve to; `shell run` is a
-    /// barrier, as are the user bridges, which must stay in call order. A
-    /// path that fails to resolve declares nothing: that call fails without
-    /// touching anything.
+    /// Workspace calls declare the paths they resolve to; `shell run` and the user
+    /// bridges are barriers because they must stay in call order.
     fn effect(&self, name: &str, args: &str) -> Effect {
         if matches!(name, "propose_command" | "request_workspace") {
             return Effect::barrier();
@@ -919,10 +870,7 @@ impl ToolExecutor for ToolBox {
     }
 }
 
-/// Run calls in waves of non-conflicting effects (see `plan_waves`): the
-/// calls in a wave run concurrently, at most `MAX_PARALLEL_CALLS` at a time,
-/// and each wave waits for the one before. Results come back in call order,
-/// whatever order the calls finish in.
+/// Run calls in waves of non-conflicting effects; results come back in call order.
 pub(crate) async fn run_scheduled(
     exec: &dyn ToolExecutor,
     calls: &[(String, String)],
@@ -958,9 +906,7 @@ pub(crate) async fn run_scheduled(
 }
 
 impl ToolBox {
-    /// All config knobs; kept flat because ~17 test call sites construct
-    /// this with inline `None`/default args — a config struct would churn
-    /// every one of them for no readability gain.
+    /// Kept flat because many test call sites pass inline defaults.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         skills_dir: PathBuf,
@@ -1128,16 +1074,14 @@ impl ToolBox {
         toolbox
     }
 
-    /// Replace the skill roots used for reads while retaining `skills_dir` as
-    /// the app-managed install/create destination.
+    /// Skill roots for reads; `skills_dir` stays the install destination.
     #[must_use]
     pub fn with_skill_dirs(mut self, skill_dirs: Vec<PathBuf>) -> Self {
         self.skill_dirs = skill_dirs;
         self
     }
 
-    /// A toolbox restricted to `search`/`fetch_url` — for deep-research
-    /// searcher agents, which get no filesystem/app/script access.
+    /// A toolbox restricted to `search`/`fetch_url`, for research searchers.
     pub fn research(
         searxng_url: Option<String>,
         langsearch_key: Option<String>,
@@ -1160,10 +1104,7 @@ impl ToolBox {
     }
 
     /// Attach a research session id, enabling `research_lookup` for follow-up
-    /// turns in that session's chat. Also merges any domains the user has
-    /// discarded in this session into `blocked_domains`, so a later
-    /// `search`/`fetch_url` call excludes them the same way the global
-    /// setting does.
+    /// turns; also folds the session's discarded domains into `blocked_domains`.
     #[must_use]
     pub fn with_research_session(mut self, session_id: String) -> Self {
         if let Some(db_path) = &self.db_path
@@ -1176,9 +1117,7 @@ impl ToolBox {
         self
     }
 
-    /// Restrict `fetch_url` to serving from `web_cache` only — a cache miss
-    /// returns `[not cached]` instead of fetching. Used for the Verifier's
-    /// quote-checking pass.
+    /// Restrict `fetch_url` to `web_cache`; a miss returns `[not cached]`.
     #[must_use]
     pub const fn cache_only(mut self) -> Self {
         self.cache_only = true;
@@ -1210,10 +1149,8 @@ impl ToolBox {
             .unsigned_abs()
     }
 
-    /// Fetch through the cache: serve a fresh (<24h) cached copy unless
-    /// `force_fresh`, else live-fetch and write through. Cache read/write
-    /// failures degrade to a live fetch — a broken db must never block a
-    /// tool call.
+    /// Serve a fresh (<24h) cached copy unless `force_fresh`, else live-fetch and
+    /// write through; a broken db degrades to a live fetch.
     async fn fetch_cached(&self, url: &str, force_fresh: bool) -> anyhow::Result<String> {
         let url_norm = normalize_url(url);
         if !force_fresh
@@ -1241,10 +1178,7 @@ impl ToolBox {
         Ok(text)
     }
 
-    /// Tool definitions to attach to the request, or empty to send a plain
-    /// request (keeps models that don't support tools working). `search` always works —
-    /// it prefers configured API backends, then Exa and session-provider search
-    /// when those are unavailable, so it needs no setup.
+    /// Tool definitions to attach to the request, or empty to send a plain request.
     pub fn defs(&self) -> Vec<ToolDef> {
         self.tool_definitions(false)
     }
@@ -1427,9 +1361,8 @@ impl ToolBox {
                 }
             }
         }
-        // Connector tools come last, in a stable order, so adding or
-        // removing one never reorders (and so never re-caches) the built-ins.
-        // With no connectors this adds nothing: the list is byte-identical.
+        // Connector tools come last, in a stable order, so the built-ins keep
+        // their prompt cache when a connector is added or removed.
         if let Some(connectors) = &self.connectors
             && !self.research_only
         {
@@ -1438,8 +1371,7 @@ impl ToolBox {
         defs
     }
 
-    /// Run a tool by name. Returns `(result text sent back to the model,
-    /// status label shown in the UI while it runs)`.
+    /// Run a tool by name, returning `(result text, status label)`.
     pub async fn run(&self, name: &str, args: &str) -> (String, String) {
         self.run_with_gate(name, args, Gate::NotNeeded).await
     }
@@ -1940,9 +1872,7 @@ impl ToolBox {
                         "blocked".to_string(),
                     );
                 };
-                // Only an explicit allow runs the call; anything else
-                // (deny, or a review answer meant for a combined prompt) is
-                // a denial.
+                // Anything but an explicit allow is a denial.
                 if !matches!(
                     approver.request(request).await,
                     Decision::Allow | Decision::AllowForSession | Decision::AllowAlways
@@ -2374,11 +2304,8 @@ impl ToolBox {
                     );
                 }
                 let status = format!("Running {} batched operations…", calls.len());
-                // Serialize each sub-call once. Sub-calls run in waves of
-                // non-conflicting effects (`run_scheduled`): reads and writes
-                // to different files overlap, while writes to the same file
-                // or a program run keep their order. Results are zipped back
-                // into call order.
+                // Sub-calls run in waves of non-conflicting effects; results zip
+                // back into call order.
                 let items: Vec<(String, String)> = calls
                     .iter()
                     .map(|(tool, arguments)| {
@@ -2463,13 +2390,8 @@ impl ToolBox {
     }
 }
 
-/// Tools safe to run concurrently in one round-trip: they read state or hit
-/// the network but never mutate files/db in ways that could race. Used to
-/// parallelize both model-issued parallel tool calls and `batch` sub-calls.
-/// Consolidated names (`search`, `files`, `skills`, `scripts`, `app`, `media`,
-/// `research_lookup`) count as read-only only for their read-only actions —
-/// the `action` argument decides. Legacy names (`skill`, `web_search`, …)
-/// are still classified; mutating consolidations (`batch`) are never read-only.
+/// Whether a call may run concurrently with others: it reads state or hits the
+/// network but never mutates files or the db.
 pub fn is_read_only_tool(name: &str, args: &str) -> bool {
     if let Some(read_only) = spec::read_only(name, args) {
         return read_only;
@@ -2489,8 +2411,7 @@ pub fn is_read_only_tool(name: &str, args: &str) -> bool {
     }
 }
 
-/// Compact label for one `batch` sub-call, shown above its result so the
-/// model can tell which output belongs to which operation.
+/// Compact label for one `batch` sub-call, shown above its result.
 pub(crate) fn batch_call_label(name: &str, v: &serde_json::Value) -> String {
     let s = |k: &str| {
         v.get(k)
@@ -2569,19 +2490,12 @@ pub(crate) fn batch_call_label(name: &str, v: &serde_json::Value) -> String {
     }
 }
 
-/// Marker prefix of `tool_result_unchanged_note` — a tool result omitted
-/// because it is byte-identical to an earlier call with the same tool and
-/// arguments. Both the live tool loop and `build_history` emit this exact
-/// text for duplicates, which lets the loop recognize replayed notes when
-/// seeding its dedup map. A real tool result beginning with this string
-/// would at worst miss one dedup (and cause a single prompt-cache break),
-/// never corrupt model-visible content.
+/// Marker prefix of `tool_result_unchanged_note`. Both the live loop and
+/// `build_history` emit this exact text, so a replayed note is recognizable.
 pub const TOOL_RESULT_OMITTED_PREFIX: &str = "[result omitted: ";
 
-/// One-line replacement for a tool result that duplicates an earlier call
-/// with the same tool and arguments. The first full copy stays in the
-/// conversation, so nothing is lost; the note keeps the duplicate from
-/// re-entering the context on every subsequent request.
+/// One-line replacement for a result that duplicates an earlier call; the first
+/// full copy stays in the conversation.
 pub fn tool_result_unchanged_note(name: &str, args: &str) -> String {
     let label = serde_json::from_str::<serde_json::Value>(args)
         .ok()
@@ -2592,17 +2506,13 @@ pub fn tool_result_unchanged_note(name: &str, args: &str) -> String {
     )
 }
 
-/// Marker for an old tool result cleared by the observation-masking experiment.
 pub const TOOL_RESULT_MASKED_PREFIX: &str = "[result cleared to save context — call ";
 
-/// One-line replacement for an old result; its call and arguments stay in history.
 pub fn tool_result_masked_note(name: &str, _args: &str) -> String {
     format!("{TOOL_RESULT_MASKED_PREFIX}{name} again if you need it]")
 }
 
-/// Bound every tool result before it is sent back to the model and persisted.
-/// This is especially important for fetched web pages, which can otherwise
-/// consume the conversation context one tool call at a time.
+/// Bound every tool result before it is sent back and persisted.
 pub(crate) fn cap_tool_result(result: String) -> String {
     cap_result(result, MAX_TOOL_RESULT_CHARS)
 }
@@ -2618,8 +2528,7 @@ fn cap_result(result: String, max_chars: usize) -> String {
     capped
 }
 
-/// Cap context-visible text while retaining roughly 70% head and 30% tail.
-/// Counts Unicode characters, including the omission marker, not UTF-8 bytes.
+/// Cap text at `max_chars` Unicode characters, keeping ~70% head and 30% tail.
 #[must_use]
 pub fn cap_head_tail(text: &str, max_chars: usize) -> String {
     let count = text.chars().count();

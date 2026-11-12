@@ -23,8 +23,7 @@ impl ToolBox {
         DOC_SCHEMA
     }
 
-    /// Tell the terminal which block studio should jump to. A doc with no blocks
-    /// still opens, so the first block is an empty id then.
+    /// Tell the terminal which block studio should jump to.
     fn doc_changed(&self, path: &Path, block: Option<String>) {
         self.deck_changed(path, Some(block.unwrap_or_default()));
     }
@@ -564,9 +563,8 @@ fn doc_revision(
     )))
 }
 
-/// Field names models commonly reach for, read as the documented ones:
-/// `block` for `id`, and `old`/`new` for `replace_text`'s `find`/`replace`.
-/// Only renames into a field the op lacks; returns what was renamed.
+/// Read common field aliases (`block` for `id`, `old`/`new` for `find`/`replace`)
+/// as the documented names; returns what was renamed.
 fn doc_op_aliases(ops: &mut [Value]) -> Vec<String> {
     let mut renamed = BTreeSet::new();
     for op in ops.iter_mut() {

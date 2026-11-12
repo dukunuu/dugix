@@ -4,8 +4,7 @@ use std::fmt::Write as _;
 
 use sha2::{Digest, Sha256};
 
-/// `cat -n`-style numbering for ranged reads, matching what agent harnesses
-/// feed models so line references and edits anchor reliably.
+/// `cat -n`-style numbering for ranged reads.
 pub(super) fn number_lines(slice: &[&str], start: usize) -> String {
     slice
         .iter()
@@ -15,10 +14,7 @@ pub(super) fn number_lines(slice: &[&str], start: usize) -> String {
         .join("\n")
 }
 
-/// sha256(content) truncated to 8 hex chars. Unlike a line-number hash,
-/// this remains valid when an earlier edit inserts or removes lines. Repeated
-/// identical lines are rejected as ambiguous unless the optional line hint is
-/// supplied with the edit.
+/// sha256(content) truncated to 8 hex chars, so an edit elsewhere keeps it valid.
 pub(super) fn line_hash(content: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content);
@@ -32,8 +28,7 @@ pub(super) fn line_hash(content: &str) -> String {
         })
 }
 
-/// Hash format used by older reads. Keep accepting it for a running session
-/// after the stable content-hash format is deployed.
+/// Hash format used by older reads; still accepted for a running session.
 fn legacy_line_hash(line_no: usize, content: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(format!("{line_no}:{content}"));
@@ -47,8 +42,8 @@ fn legacy_line_hash(line_no: usize, content: &str) -> String {
         })
 }
 
-/// `read_app_file`'s line prefix: `N:HASH<tab>content`, one hash per line so
-/// `edit_file` can target it without substring matching.
+/// `N:HASH<tab>content` per line, so `edit_file` can target it without substring
+/// matching.
 pub(crate) fn number_lines_with_hash(slice: &[&str], start: usize) -> String {
     slice
         .iter()
@@ -61,14 +56,8 @@ pub(crate) fn number_lines_with_hash(slice: &[&str], start: usize) -> String {
         .join("\n")
 }
 
-/// Apply hashline edits to `text`: each `(hash, line_hint, new)` targets the
-/// matching line content (see `line_hash`). `new: None` deletes that line;
-/// `Some(t)` replaces it with `t`'s lines (0, 1, or many — this is also how
-/// you insert: include the original line's content in `t`). The optional
-/// line hint disambiguates repeated identical lines. Hashes are resolved
-/// against the current file and never silently land on a different line.
-/// Returns the new file content plus a git-diff-style summary of what changed,
-/// in the order edits were given.
+/// Apply hashline edits to `text`, returning the new content and a
+/// git-diff-style summary of what changed.
 pub(crate) fn apply_hashline_edits(
     text: &str,
     edits: &[(String, Option<usize>, Option<String>)],
@@ -143,9 +132,8 @@ pub(crate) fn apply_hashline_edits(
     Ok((new_text, diff))
 }
 
-/// Compare two complete file contents using git's unified-diff renderer. The
-/// app files are not Git worktrees, so `--no-index` gives the same useful diff
-/// without creating repository metadata or changing either file.
+/// Compare two file contents with git's unified-diff renderer; `--no-index` keeps
+/// the app files out of any repository.
 pub(super) fn unified_diff(app: &str, path: &str, current: &str, candidate: &str) -> String {
     if current == candidate {
         return "no changes".to_string();

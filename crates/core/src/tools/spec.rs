@@ -8,7 +8,7 @@ use crate::provider::ToolDef;
 
 pub(super) enum Kind {
     Str,
-    // Script writes require a string, but deliberately allow empty content.
+    // Script writes require a string but allow empty content.
     StrOrEmpty,
     Int,
     Num,
@@ -82,7 +82,7 @@ impl Param {
         match self.kind {
             Kind::Str | Kind::Enum(_) => value.as_str().is_some_and(|s| !s.trim().is_empty()),
             Kind::StrOrEmpty => value.is_string(),
-            // Preserve files.pdf_page's as_u64 check, including acceptance of zero.
+            // As `u64`, so `files.pdf_page` accepts zero.
             Kind::Int => value.as_u64().is_some(),
             Kind::Num => value.is_number(),
             Kind::Bool => value.is_boolean(),
@@ -1604,14 +1604,11 @@ const TOOLS: &[&ToolSpec] = &[
     &MEDIA,
 ];
 
-/// Tools that hand a step to the user instead of acting. The frontend (a
-/// terminal UI, an approver) decides whether they are offered; they route
-/// through the same validation and read-only classes as `TOOLS`.
+/// Tools that hand a step to the user instead of acting; the frontend decides
+/// whether they are offered.
 const USER_BRIDGES: &[&ToolSpec] = &[&PROPOSE_COMMAND, &REQUEST_WORKSPACE];
 
-/// Tools only a terminal UI offers, beyond the shared table: they reach state
-/// the person owns (pinned panels) and share the table's validation and
-/// read-only classes.
+/// Tools only a terminal UI offers, reaching state the person owns.
 const TERMINAL_TOOLS: &[&ToolSpec] = &[&PANEL_APP];
 
 fn all_tools() -> impl Iterator<Item = &'static ToolSpec> {
@@ -1682,7 +1679,6 @@ mod tests {
         );
     }
 
-    // Explicit legacy routing expectations, with each action's required arguments.
     const ROUTES: &[(&str, &str, &str)] = &[
         (
             "canvas",
@@ -2162,7 +2158,6 @@ mod tests {
             );
         }
         assert!(public_call("files", r#"{"action":"pdf_page","name":"x","page":0}"#).is_ok());
-        // Validation has always checked only array presence, not item types.
         assert!(public_call("scripts", r#"{"action":"install","packages":[null]}"#).is_ok());
     }
 

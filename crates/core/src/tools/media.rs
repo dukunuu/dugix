@@ -8,7 +8,6 @@ use super::{ToolBox, valid_relative_path};
 use crate::provider::openrouter::normalize_video_params;
 
 impl ToolBox {
-    /// The media tools: image and video generation and editing, saved references.
     #[allow(clippy::too_many_lines)]
     pub(super) async fn run_media(&self, name: &str, args: &str) -> (String, String) {
         match name {
@@ -35,7 +34,6 @@ impl ToolBox {
                             "prompt must not be empty".to_string()
                         } else {
                             let image_data = image_id.and_then(|id| {
-                                // Try id as a full filename first, then as a stem + .png.
                                 resolve_image(&self.space_files_dir, id).or_else(|| {
                                     let stem = std::path::Path::new(id)
                                         .file_stem()
@@ -341,20 +339,17 @@ impl ToolBox {
 
                         let mut filter_parts: Vec<String> = Vec::new();
 
-                        // Camera move (crop animation)
                         if let Some(mv) = camera_move {
                             let m = intensity * 0.2;
                             let cf = build_camera_filter(mv, m);
                             filter_parts.push(cf);
                         }
 
-                        // Lighting preset
                         if let Some(lt) = lighting {
                             let lf = build_lighting_filter(lt, intensity);
                             filter_parts.push(lf);
                         }
 
-                        // Speed change
                         if let Some(sp) = speed {
                             filter_parts.push(format!("setpts={}*PTS", 1.0 / sp));
                             let atempo = format!("atempo={}", (1.0 / sp).clamp(0.5, 2.0));
@@ -669,8 +664,7 @@ impl ToolBox {
 
 // ── Video generation helpers ──────────────────────────────────────────────────
 
-/// Try to read an image file from the files directory. Accepts the id as-is or
-/// with a `.png` extension appended.
+/// Read an image file from the files directory by id or `id.png`.
 pub(super) fn resolve_image(files_dir: &std::path::Path, id: &str) -> Option<Vec<u8>> {
     if !valid_relative_path(id) {
         return None;
@@ -683,9 +677,7 @@ pub(super) fn resolve_image(files_dir: &std::path::Path, id: &str) -> Option<Vec
         .filter(|bytes| crate::extract::vision_mime(bytes).is_some())
 }
 
-/// Extract a single frame from a video via ffmpeg subprocess. When `use_eof`
-/// is true, extracts the last frame (-sseof). Returns whether ffmpeg ran
-/// successfully.
+/// Extract one frame from a video via ffmpeg; `use_eof` takes the last frame.
 pub(super) fn extract_ffmpeg_frame(
     video_path: &std::path::Path,
     output_path: &std::path::Path,
@@ -711,8 +703,7 @@ pub(super) fn extract_ffmpeg_frame(
         .is_ok_and(|s| s.success())
 }
 
-/// Read the `_video_refs.json` reference registry from the files directory.
-/// Returns an empty JSON object `{}` if the file doesn't exist.
+/// The `_video_refs.json` registry, or `{}` when absent.
 pub(super) fn read_video_refs(files_dir: &std::path::Path) -> serde_json::Value {
     let path = files_dir.join("_video_refs.json");
     std::fs::read_to_string(&path)
@@ -721,7 +712,7 @@ pub(super) fn read_video_refs(files_dir: &std::path::Path) -> serde_json::Value 
         .unwrap_or_else(|| serde_json::json!({}))
 }
 
-/// Write the reference registry to `_video_refs.json` in the files directory.
+/// Write the `_video_refs.json` registry.
 pub(super) fn write_video_refs(
     files_dir: &std::path::Path,
     refs: &serde_json::Value,
@@ -732,7 +723,6 @@ pub(super) fn write_video_refs(
     Ok(())
 }
 
-/// Check whether ffmpeg is available on $PATH.
 pub(super) fn ffmpeg_available() -> bool {
     std::process::Command::new("ffmpeg")
         .arg("-version")
@@ -742,8 +732,8 @@ pub(super) fn ffmpeg_available() -> bool {
         .is_ok_and(|s| s.success())
 }
 
-/// Resolve named character and location references to image data from the
-/// `_video_refs.json` registry.
+/// Resolve named character and location references from `_video_refs.json` to
+/// image data.
 pub(super) fn resolve_named_references(
     files_dir: &std::path::Path,
     character_refs: &[String],
@@ -762,9 +752,8 @@ pub(super) fn resolve_named_references(
     images
 }
 
-/// Build an ffmpeg `crop` + `scale` filter string for a camera move preset.
-/// `margin` (0–1) controls how much of the frame edge is revealed (pan) or
-/// how much the frame zooms in (dolly). 0.15 = 15% movement/zoom.
+/// An ffmpeg `crop` + `scale` filter for a camera-move preset; `margin` (0–1)
+/// sets how much the frame moves or zooms.
 pub(super) fn build_camera_filter(move_type: &str, margin: f64) -> String {
     // t = time in sec, du = input duration in sec, iw/ih = input width/height
     match move_type {
@@ -806,8 +795,7 @@ pub(super) fn build_camera_filter(move_type: &str, margin: f64) -> String {
     }
 }
 
-/// Build an ffmpeg filter string for a lighting/color preset, scaled by
-/// intensity (0–1).
+/// An ffmpeg filter for a lighting preset, scaled by `intensity` (0–1).
 pub(super) fn build_lighting_filter(preset: &str, intensity: f64) -> String {
     let i = intensity.clamp(0.0, 1.0);
     match preset {

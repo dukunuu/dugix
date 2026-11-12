@@ -1,6 +1,5 @@
-//! The `memory` tool: read, add, update and delete facts in the space's
-//! memory book (`crate::memory`). Each call opens its own connection, like
-//! the other db-backed tools.
+//! The `memory` tool: read, add, update and delete facts in the space's memory
+//! book (`crate::memory`).
 
 use anyhow::{Result, bail};
 use serde_json::Value;
@@ -14,8 +13,7 @@ pub struct MemoryCtx {
     pub space_id: String,
 }
 
-/// Run one memory action (`memory_read`, `memory_add`, …); errors come back
-/// as text for the model.
+/// Run one memory action; errors come back as text for the model.
 pub(super) fn run(ctx: &MemoryCtx, internal: &str, args: &str) -> String {
     call(ctx, internal, args).unwrap_or_else(|error| format!("memory: {error}"))
 }

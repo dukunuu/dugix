@@ -8,9 +8,8 @@ use super::scripts::{format_output, run_cmd};
 use super::{AppsCtx, ToolBox, valid_relative_path};
 
 impl ToolBox {
-    /// Resolve an app name or UUID to `(uuid, app_dir)`. If a name is given and
-    /// not yet registered, a new UUID is assigned. Returns Err if the app name
-    /// is invalid (not allowed by `resolve_confined` constraints).
+    /// Resolve an app name or UUID to `(uuid, app_dir)`, assigning a new UUID to
+    /// an unregistered name.
     pub(super) fn resolve_app(&self, name_or_uuid: &str) -> Result<(String, PathBuf), String> {
         let ctx = self.apps.as_ref().ok_or("apps are not available")?;
         let (uuid, app_name) = if looks_like_uuid(name_or_uuid) {
@@ -36,8 +35,8 @@ impl ToolBox {
         Ok((uuid, app_dir))
     }
 
-    /// The space's apps as `{name, uuid, url}`, sorted by name. Apps the
-    /// registry has never assigned a UUID have neither field.
+    /// The space's apps as `{name, uuid, url}`, sorted by name; an app with no
+    /// assigned UUID has neither field.
     pub(super) fn list_apps(&self, ctx: &AppsCtx) -> Vec<serde_json::Value> {
         let mut names: Vec<String> = std::fs::read_dir(&ctx.dir)
             .into_iter()
@@ -71,8 +70,7 @@ impl ToolBox {
         }
     }
 
-    /// The build tool a package.json declares (dependencies or
-    /// devDependencies), if any: "astro" or "vite".
+    /// The build tool a package.json declares: "astro" or "vite".
     #[must_use]
     pub(super) fn declared_build_tool(pkg: &serde_json::Value) -> Option<&'static str> {
         let mut deps: Vec<String> = Vec::new();
@@ -90,7 +88,6 @@ impl ToolBox {
         }
     }
 
-    /// The app tools: locally served web apps and the images they use.
     #[allow(clippy::too_many_lines)]
     pub(super) async fn run_apps(&self, name: &str, args: &str) -> (String, String) {
         match name {
@@ -158,7 +155,6 @@ impl ToolBox {
                             Err(e) => return (format!("db error: {e}"), status),
                             Ok(c) => c,
                         };
-                        // Scan messages for markdown image references
                         let mut images: Vec<serde_json::Value> = Vec::new();
                         let mut stmt = match conn.prepare(
                             "SELECT content FROM messages WHERE session_id = ?1 ORDER BY created_at ASC"
@@ -189,7 +185,6 @@ impl ToolBox {
                                 }
                             }
                         }
-                        // Include space-file images
                         if let Ok(mut fstmt) = conn.prepare(
                             "SELECT f.name, f.status FROM files f
                              WHERE f.space_id = ?1
@@ -323,8 +318,8 @@ impl ToolBox {
                                 status,
                             );
                         };
-                        // Deps declared but not installed: `npm install` from
-                        // package.json first, so init → build just works.
+                        // Deps declared but not installed: install from package.json
+                        // first, so init → build just works.
                         let mut npm_err: Option<String> = None;
                         let bin = app_dir.join("node_modules").join(".bin").join(tool);
                         if !bin.exists() {
@@ -347,9 +342,8 @@ impl ToolBox {
                                 status,
                             );
                         }
-                        // Absolute base: the app is served at /<uuid>/ — pass it
-                        // on the CLI so asset links resolve regardless of the
-                        // framework's config (relative bases are unreliable).
+                        // Absolute base: the app is served at /<uuid>/, and relative
+                        // bases are unreliable across frameworks.
                         let base_arg = format!("/{uuid}/");
                         let build_args =
                             ["--no-install", tool, "build", "--base", base_arg.as_str()];
@@ -357,11 +351,8 @@ impl ToolBox {
                             build_args.iter().map(std::ffi::OsStr::new).collect();
                         match run_cmd("npx".as_ref(), &refs, &app_dir, 600).await {
                             Ok(out) if out.status.success() => {
-                                // Only flip the served dir when the build
-                                // really produced dist/ — a framework whose
-                                // outDir is configured elsewhere exits 0
-                                // without it, and serving dist/ then would
-                                // 404 the whole app.
+                                // Only serve dist/ when the build really produced
+                                // it: a configured outDir exits 0 without it.
                                 if !app_dir.join("dist").is_dir() {
                                     return (
                                         "build reported success but produced no dist/ — the \
@@ -652,14 +643,11 @@ must land in dist/ for the app server to serve it"
     }
 }
 
-/// Quick check: does a string look like a UUID (36 chars, 4 dashes)?
 fn looks_like_uuid(s: &str) -> bool {
     s.len() == 36 && s.chars().filter(|c| *c == '-').count() == 4
 }
 
-/// Apply the app root's `.gitignore` to reads and searches. Covers the common
-/// Git ignore forms without adding a dependency: comments, negation, directory
-/// rules, anchored paths, and `*`/`?` globs.
+/// Apply the app root's `.gitignore` to reads and searches, without a dependency.
 fn app_path_ignored(root: &std::path::Path, path: &std::path::Path) -> bool {
     if path.file_name().and_then(|n| n.to_str()) == Some(".gitignore") {
         return true;
@@ -733,8 +721,7 @@ fn wildcard_match(pattern: &str, text: &str) -> bool {
     }
 }
 
-/// Recursively collect `(relpath, line)` matches for a lowercase substring
-/// pattern, skipping dependency/venv dirs and unreadable (binary) files.
+/// Collect `(relpath, line)` matches for a lowercase substring pattern.
 fn grep_dir(
     root: &std::path::Path,
     dir: &std::path::Path,
@@ -753,8 +740,7 @@ fn grep_dir(
         }
         let name = entry.file_name();
         if path.is_dir() {
-            // node_modules/.venv/.git are dependencies; dist/ is derived
-            // build output (framework apps) — never search inside any of them.
+            // Dependencies and derived build output are never searched.
             if name != "node_modules" && name != ".venv" && name != ".git" && name != "dist" {
                 grep_dir(root, &path, pattern, out);
             }

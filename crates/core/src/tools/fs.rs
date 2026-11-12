@@ -10,7 +10,6 @@ use super::{ToolBox, apply_hashline_edits, number_lines_with_hash};
 use crate::workspace::{Access, PathError, Workspace};
 
 impl ToolBox {
-    /// The workspace `fs` tool.
     pub(super) async fn run_fs(&self, name: &str, args: &str) -> (String, String) {
         match name {
             "fs_list" | "fs_glob" | "fs_grep" | "fs_read" | "fs_edit" | "fs_write" | "fs_move"
@@ -465,10 +464,8 @@ fn fs_list_dir(
     Ok(())
 }
 
-/// A file that is not UTF-8 text: PDFs, office documents, UTF-16 text and
-/// the like are read through the same converter the file index uses (so the
-/// model sees the text, never bytes); anything else is reported by type.
-/// Converted lines carry no edit anchors: such files cannot be edited.
+/// A file that is not UTF-8 text, read through the file index's converter so the
+/// model sees text, never bytes. Converted lines carry no edit anchors.
 fn fs_read_converted(
     workspace: &Workspace,
     path: &Path,

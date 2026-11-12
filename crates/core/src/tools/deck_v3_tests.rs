@@ -62,7 +62,6 @@ async fn a_direct_edit_takes_a_hundred_operations_and_a_new_image() {
         edited.contains("100 operations: 100 insert_node"),
         "{edited}"
     );
-    // Many operations still make a result that fits the tool-result cap.
     assert!(chars(&edited) < 8000, "{}", chars(&edited));
     assert!(edited.contains("more changed nodes"), "{edited}");
 }
@@ -152,7 +151,6 @@ async fn read_of_a_big_deck_is_an_outline_with_complete_ids_and_a_more_slides_li
         "{read}"
     );
     assert!(!read.contains("tool result truncated"), "{read}");
-    // Node lines are `id kind x,y wxh "text"` and ids are never cut.
     assert!(read.contains("  node_0_0 text 40,40 "), "{read}");
     for line in read.lines().filter(|l| l.trim_start().starts_with("node_")) {
         let id = line.split_whitespace().next().unwrap();
@@ -171,7 +169,6 @@ async fn read_of_a_big_deck_is_an_outline_with_complete_ids_and_a_more_slides_li
         more.contains("more slides") && more.contains("read with slides:["),
         "{more}"
     );
-    // The slides it lists are really missing from the outline, the rest are there.
     let listed = more.split("slides:[").nth(1).unwrap();
     let first_missing = listed.trim_start_matches('"').split('"').next().unwrap();
     assert!(!read.contains(&format!("(id {first_missing})")), "{read}");
@@ -204,7 +201,6 @@ async fn read_with_slides_returns_just_those_in_full_by_id_or_number() {
         !read.contains("(id slide_3)") && !read.contains("(id slide_0)"),
         "{read}"
     );
-    // Full detail: font overrides and sizing, not just the outline.
     assert!(read.contains("size=24"), "{read}");
     let bad = f
         .run(
@@ -233,7 +229,6 @@ async fn a_small_deck_still_reads_in_full_and_the_field_reference_waits_for_room
         json!({"title": "Big", "slides": big_deck(12, 14)}),
     )
     .await;
-    // The create result had room for the reference; take it back to test the read path.
     f.tools.deck_link.lock().unwrap().schema_shown = false;
     let big = f.run("read", json!({"path": "decks/big.deck.json"})).await;
     assert!(
@@ -261,7 +256,6 @@ async fn a_stale_revision_that_touches_nothing_changed_is_rebased() {
     two_nodes(&f).await;
     let read = f.run("read", json!({"path": PATH})).await;
     let seen = revision_of(&read);
-    // Someone else (studio, or an earlier call) changes node a.
     f.run("edit", json!({"path": PATH, "ops": [{"op": "update_node", "id": "a", "fields": {"text": "Alpha 2"}}]})).await;
     let rebased = f
         .run(
@@ -308,7 +302,6 @@ async fn a_stale_revision_that_overlaps_is_refused_with_the_changed_nodes() {
         "{refused}"
     );
     assert_eq!(std::fs::read(f.file(PATH)).unwrap(), before);
-    // Deleting what changed is an overlap too, and the unchanged revision still passes.
     let current_full = Deck::check(&String::from_utf8(before).unwrap())
         .unwrap()
         .revision();
@@ -360,7 +353,6 @@ async fn create_repairs_the_usual_mistakes_and_says_so() {
     };
     assert_eq!(font.family.as_deref(), Some("Avenir"));
     assert_eq!(style, "body");
-    // Every short path form lands on the same file.
     for form in ["talk.deck.json", "decks/talk"] {
         let read = f.run("read", json!({"path": form})).await;
         assert!(read.contains("decks/talk.deck.json"), "{form}: {read}");
@@ -458,7 +450,6 @@ async fn invalid_input_reports_every_located_error_with_a_fix_hint() {
     );
     assert_eq!(std::fs::read(f.file(PATH)).unwrap(), before);
 
-    // Whole-deck problems are located by deck path and carry hints too.
     let located = f
         .run(
             "edit",
@@ -507,7 +498,6 @@ async fn history_lists_versions_and_restoring_is_a_new_write() {
     assert!(restored.contains("new write"), "{restored}");
     let now = Deck::check(&std::fs::read_to_string(f.file(PATH)).unwrap()).unwrap();
     assert_eq!(now, original);
-    // The version the restore replaced is kept, so the restore can be undone.
     let after = f.run("history", json!({"path": PATH})).await;
     assert!(after.contains("3 earlier version(s)"), "{after}");
     let again = f
@@ -588,7 +578,6 @@ async fn https_images_are_fetched_through_the_injected_fetcher_and_failures_are_
     let mut f = Fixture::new();
     let assets = f.file("decks/assets");
     let fetcher = Fetcher::for_test(&assets);
-    // Seeded: pretends the download finished, nothing touches the network.
     fetcher
         .seed("https://images.example/ok.png", &png())
         .unwrap();
@@ -607,7 +596,6 @@ async fn https_images_are_fetched_through_the_injected_fetcher_and_failures_are_
     assert!(created.starts_with("created deck"), "{created}");
     assert!(created.contains("image b3: image unavailable"), "{created}");
     assert!(!created.contains("image good:"), "{created}");
-    // Placeholders are listed with the reason, whether the fetch failed or the file is missing.
     assert!(
         created.contains("placeholder: image b3 on slide 1"),
         "{created}"
@@ -676,7 +664,6 @@ async fn a_designed_create_brings_its_fonts_the_art_brief_once_and_taste_hints()
         listed.contains("art direction (sent once per session)"),
         "{listed}"
     );
-    // A generic first draft: one size, only text, bullets.
     let bullets = "- one\n- two\n- three\n- four\n- five\n- six";
     let created = f
         .run(
