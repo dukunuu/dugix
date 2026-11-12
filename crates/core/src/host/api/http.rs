@@ -15,8 +15,8 @@ pub(super) struct RequestHead {
     pub(super) target: String,
     pub(super) headers: HashMap<String, String>,
     pub(super) content_length: usize,
-    /// Body bytes read together with the headers. Keeping this prefix avoids
-    /// losing pipelined data when authentication rejects the request.
+    /// Body bytes read with the headers, so pipelined data is not lost when auth
+    /// rejects.
     pub(super) prefix: Vec<u8>,
 }
 
@@ -123,10 +123,8 @@ pub(super) async fn read_request_head(stream: &mut TcpStream) -> Result<RequestH
     })
 }
 
-/// Read `content_length` body bytes, `prefix` already having arrived with the
-/// headers. The buffer grows with the bytes that actually turn up rather than
-/// reserving the declared length up front. Callers authenticate before
-/// invoking this for protected routes.
+/// Read `content_length` body bytes, `prefix` having arrived with the headers;
+/// authenticate before calling for protected routes.
 pub(super) async fn read_body(
     stream: &mut TcpStream,
     prefix: &[u8],
@@ -278,8 +276,7 @@ pub(super) fn reason(status: u16) -> &'static str {
     }
 }
 
-/// Constant-time equality for the host token. The length difference is folded
-/// into the accumulator instead of returning early.
+/// Constant-time equality for the host token; the length difference is folded in.
 pub(super) fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     let mut difference = left.len() ^ right.len();
     let length = left.len().max(right.len());
@@ -291,11 +288,8 @@ pub(super) fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     difference == 0
 }
 
-/// Headers that must not be relayed to an upstream. `accept-encoding` is in
-/// the list because both proxies forward the upstream body verbatim while
-/// only relaying `Content-Type` — a compressed upstream response would
-/// otherwise reach the client without its `Content-Encoding` (and defeat the
-/// gateway's usage parsing).
+/// Headers not relayed upstream; `accept-encoding` is excluded because proxies
+/// forward the body verbatim while only relaying `Content-Type`.
 pub(super) fn is_hop_by_hop(name: &str) -> bool {
     matches!(
         name,

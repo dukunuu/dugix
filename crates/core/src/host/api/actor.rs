@@ -85,9 +85,8 @@ pub(super) async fn app_actor(
             event = app.next_event() => {
                 admin.observe(&event);
                 let wire = redact_wire_event(WireEvent::from(event.clone()), &app, host_token.as_str());
-                // The handler may clear a one-shot receiver itself; this
-                // backstop also prevents a closed source from returning
-                // `None` forever when a remote client is the only consumer.
+                // The handler may clear a one-shot receiver itself; this backstop
+                // prevents a closed source from returning `None` forever.
                 clear_closed_source(&mut app, &event);
                 apply_domain_event(&mut app, event);
                 let _ = events.send(wire);
@@ -403,8 +402,8 @@ fn handle_actor_request(
                 crate::sync::put_blob(&app.db, &app.space, &space_id, &name, &hash, &bytes)
                     .map_err(|error| error.to_string());
             if result.is_ok() {
-                // Invalidate the stat shortcut too: a replacement upload can
-                // have the same size and land in the same mtime second.
+                // Invalidate the stat shortcut too: a replacement upload can have
+                // the same size and land in the same mtime second.
                 if let Some(file) = app
                     .db
                     .list_files(&space_id)
@@ -414,9 +413,8 @@ fn handle_actor_request(
                     let _ = app.db.set_file_mtime(&file.id, 0);
                 }
                 if space_id == app.active_space.id {
-                    // The blob route is also an upload path for the long-lived
-                    // host actor; without a rescan it would exist on disk but
-                    // never receive extracted chunks or background embeddings.
+                    // The blob route is also an upload path; without a rescan the
+                    // file would exist on disk but never receive chunks or embeddings.
                     app.rescan_files();
                 }
             }

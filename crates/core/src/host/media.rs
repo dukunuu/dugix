@@ -1,8 +1,5 @@
-//! Space-scoped media and script operations for thin host clients.
-//!
-//! The HTTP router owns authentication and parsing.  This module owns the
-//! filesystem policy: every name is one safe path component, every mutation
-//! resolves an explicit space id, and symlinks are rejected.
+//! Space-scoped media and script operations for thin host clients; every name is
+//! one safe path component and symlinks are rejected.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -479,9 +476,8 @@ pub fn write_script(
     std::fs::write(path, content).context("writing script")
 }
 
-/// Validate and prepare a selected script for execution outside the app actor.
-/// The host must enforce its own timeout and output cap while running this
-/// job; this helper deliberately never starts a child process.
+/// Validate and prepare a script to run outside the app actor; never starts a
+/// child process.
 pub fn prepare_script(app: &App, space_id: &str, name: &str, args: &[String]) -> Result<ScriptJob> {
     if args.len() > 64 || args.iter().any(|arg| arg.len() > 4096) {
         bail!("too many or oversized script arguments");

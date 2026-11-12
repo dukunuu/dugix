@@ -4,7 +4,7 @@ use crate::deck::CheckError;
 use crate::design::Resolver;
 use serde_json::Value;
 
-/// A validated transaction; writing is deliberately a caller responsibility.
+/// A validated transaction; writing is the caller's responsibility.
 pub struct Prepared {
     pub ops: Vec<Op>,
     pub next: Doc,

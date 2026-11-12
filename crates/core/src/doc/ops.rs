@@ -1,6 +1,5 @@
-//! Ordered atomic operations. A missing `after` appends. List items use
-//! one-based dotted paths. `occurrence` is one-based; absent replaces all exact
-//! matches in the addressed source string, not its rendered plain text.
+//! Ordered atomic operations; a missing `after` appends and list items use
+//! one-based dotted paths.
 use super::model::{Block, Doc, Kind, ListItem};
 use crate::design::{Resolver, resolve};
 use anyhow::{Result, anyhow, bail, ensure};

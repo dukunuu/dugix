@@ -8,7 +8,7 @@ const DEV: &str = include_str!("../../tests/fixtures/db/durable-dev.sql");
 const RELEASED: &str = include_str!("../../tests/fixtures/db/durable-0.1.42.sql");
 const CACHE_DEV: &str = include_str!("../../tests/fixtures/db/cache-dev.sql");
 
-// Fresh 0.1.42 databases marked these NOT NULL; older upgraded databases left them nullable.
+// Fresh databases mark these NOT NULL; upgraded ones left them nullable.
 const FIXTURE_NULLABILITY_VARIANTS: &[(&str, &str)] = &[
     ("files", "updated_at"),
     ("citations", "sync_id"),

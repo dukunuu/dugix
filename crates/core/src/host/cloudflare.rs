@@ -1,9 +1,5 @@
-//! Minimal Cloudflare v4 control-plane calls for `nexus host --setup`.
-//!
-//! The workspace already carries an async `reqwest` client, so setup uses the
-//! documented REST endpoints directly instead of adding a second Cloudflare
-//! SDK and HTTP stack. The API token is read from `CF_API_TOKEN` and is never
-//! included in returned errors or written to disk.
+//! Minimal Cloudflare v4 control-plane calls for `nexus host --setup`; the API
+//! token comes from `CF_API_TOKEN` and never appears in errors or on disk.
 
 use std::path::PathBuf;
 use std::time::Duration;

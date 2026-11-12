@@ -8,13 +8,8 @@ use uuid::Uuid;
 use super::{Db, FileRow};
 
 impl Db {
-    // --- space filesets ---
-
-    /// Insert or replace a file row (unique per space+name). Returns the row id;
-    /// an existing row keeps its id, so its chunks can be replaced by `file_id`.
-    /// The durable `files` row keeps only identity + content stats; `status`
-    /// is this device's derived index state and lives in `cache.file_index_state`
-    /// (a cold cache shows "not indexed" until the next rescan re-derives it).
+    /// Insert or replace a file row (unique per space+name), returning its id; an
+    /// existing row keeps its id so its chunks can be replaced.
     pub fn upsert_file(
         &self,
         space_id: &str,
@@ -81,10 +76,8 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// Whether a file has a `file_index_state` row — i.e. this device has
-    /// derived index state for it. A missing row means a cold cache (fresh
-    /// restore, deleted cache.db): the rescan must re-extract rather than
-    /// trust the stat skip.
+    /// Whether this device has derived index state for the file; a missing row
+    /// means a cold cache that must re-extract.
     pub fn file_indexed(&self, file_id: &str) -> Result<bool> {
         Ok(self.conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM cache.file_index_state WHERE file_id = ?1)",
@@ -93,9 +86,8 @@ impl Db {
         )?)
     }
 
-    /// Whether a file has extracted/indexable chunks on this device.  This is
-    /// separate from `file_indexed`: older cache versions could have a status
-    /// row without ever writing chunks.
+    /// Whether the file has extracted chunks; separate from `file_indexed`, since
+    /// a cache can have a status row without chunks.
     pub fn file_has_chunks(&self, file_id: &str) -> Result<bool> {
         Ok(self.conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM cache.file_chunks WHERE file_id = ?1)",
@@ -123,9 +115,7 @@ impl Db {
         Ok(())
     }
 
-    /// Record the disk mtime a file was indexed at (see `FileRow::mtime`),
-    /// in `cache.file_index_state`. A missing row (cold cache) is created
-    /// with the current status.
+    /// Record the disk mtime a file was indexed at.
     pub fn set_file_mtime(&self, file_id: &str, mtime: i64) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         self.conn.execute(
@@ -138,7 +128,7 @@ impl Db {
         Ok(())
     }
 
-    /// Record which extractor version indexed a file (see `FileRow::extractor`).
+    /// Record which extractor version indexed a file.
     pub fn set_file_extractor(&self, file_id: &str, version: i64) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         self.conn.execute(
@@ -151,9 +141,7 @@ impl Db {
         Ok(())
     }
 
-    /// Update a file's derived status (e.g. "ok", "ocr…", or an error
-    /// message) in `cache.file_index_state`. A missing row (cold cache) is
-    /// created with the current mtime.
+    /// Update a file's derived status.
     pub fn set_file_status(&self, file_id: &str, status: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         self.conn.execute(
@@ -174,9 +162,8 @@ impl Db {
         Ok(())
     }
 
-    /// Replace all occurrences of `old_name` with `new_name` in message content
-    /// within the given space. Used when OCR renames a pasted image to a
-    /// descriptive filename — updates `![alt](old_name)` → `![alt](new_name)`.
+    /// Replace a file name in message content within a space, e.g. after OCR
+    /// renames an image.
     pub fn replace_file_ref_in_messages(
         &self,
         space_id: &str,
@@ -191,11 +178,8 @@ impl Db {
         Ok(())
     }
 
-    /// Replace a file's indexed chunks. `chunks` are `(location, text)` in
-    /// order. Any stored embeddings are dropped too — they described the old
-    /// chunk texts, and the embedder backfills the new ones. Identical chunks
-    /// are left alone, so re-reading an unchanged file costs no re-embedding.
-    /// All of this is device-local derived state in `cache.db`.
+    /// Replace a file's indexed chunks; identical chunks are left alone and stale
+    /// embeddings are dropped.
     pub fn set_file_chunks(&self, file_id: &str, chunks: &[(String, String)]) -> Result<()> {
         let current: Vec<(String, String)> = {
             let mut stmt = self.conn.prepare(
@@ -240,9 +224,8 @@ impl Db {
         files_missing_embeddings(&self.conn, space_id)
     }
 
-    /// Record a research report's cited sources for the citation index.
-    /// Each row gets a UUID `sync_id` — the AUTOINCREMENT `id` is only a
-    /// device-local cursor.
+    /// Record a research report's cited sources; each row gets a UUID `sync_id`
+    /// for sync.
     pub fn add_citations(
         &self,
         space_id: &str,
@@ -265,10 +248,7 @@ impl Db {
         Ok(())
     }
 
-    /// See the free function of the same name. Most production code reads
-    /// citations through the toolbox's own connection (the free function),
-    /// but this handle is also used directly by the watch diff-section
-    /// lookup (`previous_citations_for_watch_session`), plus tests.
+    /// See the free function of the same name.
     pub fn search_citations(
         &self,
         space_id: &str,
@@ -314,9 +294,8 @@ impl Db {
             .collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Store a complete file's vectors with their identity and source locators.
-    /// Embedding chunks are independent of reading/keyword chunks, so model
-    /// chunking changes never alter readable text or line numbering.
+    /// Store a complete file's vectors with their identity and source locators;
+    /// embedding chunks are independent of readable chunks.
     pub fn set_file_embeddings(
         &self,
         file_id: &str,
@@ -344,9 +323,7 @@ impl Db {
         Ok(())
     }
 
-    /// Drop all device-local vectors.  Embeddings are model-specific; this is
-    /// used when the configured embedding model changes so semantic search does
-    /// not silently rank chunks with vectors from the old model.
+    /// Drop all device-local vectors, e.g. when the embedding model changes.
     pub fn clear_chunk_embeddings(&self) -> Result<()> {
         self.conn
             .execute("DELETE FROM cache.chunk_embeddings", [])?;
@@ -368,10 +345,8 @@ pub fn blob_to_vec(b: &[u8]) -> Vec<f32> {
         .collect()
 }
 
-/// Citations in `space_id` whose `url/title/report_file` contains `query`
-/// (case-insensitive substring), or every row when `query` is None — as
-/// `(report_file, url, title)`, newest first. Free function so the toolbox
-/// can call it over its own short-lived connection.
+/// Citations in a space matching `query` by substring, as
+/// `(report_file, url, title)`, newest first.
 pub fn search_citations(
     conn: &Connection,
     space_id: &str,
@@ -399,8 +374,8 @@ pub fn stage_content(label: &str, detail: &str) -> String {
     }
 }
 
-/// See `Db::add_session_sources`; free so the research pipeline task can
-/// call it over its own short-lived connection.
+/// See `Db::add_session_sources`; free so the research pipeline can use its own
+/// connection.
 pub fn add_session_sources(
     conn: &Connection,
     session_id: &str,
@@ -417,10 +392,8 @@ pub fn add_session_sources(
     Ok(())
 }
 
-/// Keyword-search (plain substring, case-insensitive) a session's cached
-/// source bundle: `(url, text)` for every cached page whose text contains
-/// `query`. Ponytail: substring, not FTS — a bundle is a handful of pages,
-/// not a corpus.
+/// Substring-search a session's cached source bundle for `(url, text)` pairs; a
+/// bundle is a handful of pages, not a corpus.
 pub fn search_session_sources(
     conn: &Connection,
     session_id: &str,
@@ -442,8 +415,7 @@ pub fn search_session_sources(
         .collect())
 }
 
-/// URLs pinned in a session's source bundle — the Synthesizer/Writer
-/// prompts list these as "prioritize these sources".
+/// URLs pinned in a session's source bundle.
 pub fn pinned_urls(conn: &Connection, session_id: &str) -> Result<Vec<String>> {
     let mut stmt = conn.prepare(
         "SELECT url_norm FROM session_sources WHERE session_id = ?1 AND flag = 'pinned'",
@@ -452,8 +424,7 @@ pub fn pinned_urls(conn: &Connection, session_id: &str) -> Result<Vec<String>> {
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-/// Distinct hostnames discarded in a session — excluded from later searcher
-/// rounds the same way the global `blocked_domains` setting is.
+/// Distinct hostnames discarded in a session, excluded from later searcher rounds.
 pub fn discarded_domains(conn: &Connection, session_id: &str) -> Result<Vec<String>> {
     let mut stmt = conn.prepare(
         "SELECT url_norm FROM session_sources WHERE session_id = ?1 AND flag = 'discarded'",
@@ -474,20 +445,14 @@ pub fn discarded_domains(conn: &Connection, session_id: &str) -> Result<Vec<Stri
     Ok(hosts)
 }
 
-/// Whether a cached fetch (`fetched_at`, rfc3339) is still usable — under
-/// 24h old. An unparseable timestamp is treated as stale, not an error:
-/// the caller just re-fetches live.
+/// Whether a cached fetch is under 24h old; unparseable timestamps count as stale.
 pub fn is_fresh(fetched_at: &str, now: chrono::DateTime<Utc>) -> bool {
     chrono::DateTime::parse_from_rfc3339(fetched_at)
         .is_ok_and(|dt| now.signed_duration_since(dt) < chrono::Duration::hours(24))
 }
 
-/// A cached fetched page: (title, text, `fetched_at` rfc3339), or None on a
-/// cache miss. Free function — the toolbox opens its own short-lived
-/// connection by path, same as the file-search queries. The `web_cache`
-/// name is deliberately unqualified: it resolves to the attached `cache`
-/// schema on a main-db connection, or to `main` on a standalone cache-only
-/// connection.
+/// A cached page as `(title, text, fetched_at)`, or `None` on a miss; `web_cache`
+/// is unqualified so it resolves on either connection.
 pub fn cache_get(conn: &Connection, url_norm: &str) -> Result<Option<(String, String, String)>> {
     let row = conn.query_row(
         "SELECT COALESCE(title, ''), text, fetched_at FROM web_cache WHERE url_norm = ?1",
@@ -518,12 +483,8 @@ pub fn cache_put(
     Ok(())
 }
 
-/// Ids of files (in one space) that have no vector for at least one indexed
-/// chunk.  A file with no chunks is included too; the background embedder adds
-/// a filename metadata chunk for it.  OCR-in-progress files remain in this
-/// database-level queue; the app-level worker skips them until OCR supplies
-/// their real text (or a terminal OCR result supplies metadata). Cross-db:
-/// `files` is durable, the chunk tables are device-local.
+/// Ids of files missing a vector for at least one chunk, including files with no
+/// chunks.
 pub fn files_missing_embeddings(conn: &Connection, space_id: &str) -> Result<Vec<String>> {
     let mut stmt = conn.prepare(
         "SELECT files.id
@@ -550,10 +511,8 @@ pub fn files_missing_embeddings(conn: &Connection, space_id: &str) -> Result<Vec
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-/// Cosine-ranked chunk search within one space: `(file name, location, text,
-/// score)`, best first. Vectors whose dimension doesn't match the query (a
-/// changed embedding model) are skipped. Brute force — thousands of chunks
-/// scan in milliseconds, no ANN index needed.
+/// Cosine-ranked chunk search within one space, best first; mismatched dimensions
+/// are skipped.
 pub fn semantic_chunks(
     conn: &Connection,
     space_id: &str,
@@ -593,8 +552,8 @@ pub fn semantic_chunks(
     Ok(hits)
 }
 
-/// Rank text and image locators together, accepting only the query's identity.
-/// Legacy vectors with no identity can never enter this search.
+/// Rank text and image locators together, accepting only vectors with the query's
+/// identity.
 pub fn semantic_chunks_for_identity(
     conn: &Connection,
     space_id: &str,
@@ -641,9 +600,7 @@ pub(super) fn cosine(a: &[f32], b: &[f32]) -> f32 {
     if denom == 0.0 { 0.0 } else { dot / denom }
 }
 
-/// Quote a query for FTS5 MATCH: each whitespace token becomes a quoted
-/// phrase (inner quotes doubled), so model-supplied text can't be an FTS
-/// syntax error. Tokens are implicitly `ANDed` by FTS5.
+/// Quote a query for FTS5 MATCH so model-supplied text cannot be a syntax error.
 pub fn fts_quote(query: &str) -> String {
     query
         .split_whitespace()
@@ -690,8 +647,7 @@ pub fn file_text(conn: &Connection, space_id: &str, name: &str) -> Result<Option
     Ok((!parts.is_empty()).then(|| parts.join("\n")))
 }
 
-/// The indexing status of a named file ("ok · html → text", "binary: zip, …"),
-/// or `None` when the space has no such file.
+/// The indexing status of a named file, or `None` when the space has no such file.
 pub fn file_status(conn: &Connection, space_id: &str, name: &str) -> Result<Option<String>> {
     let mut stmt = conn.prepare(
         "SELECT COALESCE(cache.file_index_state.status, 'not indexed')

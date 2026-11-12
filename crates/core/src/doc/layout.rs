@@ -118,8 +118,8 @@ impl Composer<'_, '_> {
         self.ts.theme.resolve_font(name, &Font::default())
     }
     #[allow(clippy::too_many_lines)]
-    /// Lines of `source` in `style`. `code` makes it literal text colored by
-    /// that language's syntax (an unknown language stays plain).
+    /// Lines of `source` in `style`; `code` colors literal text by language
+    /// syntax.
     fn text(
         &mut self,
         source: &str,
@@ -815,8 +815,8 @@ pub fn heading_pages(pages: &[Page]) -> BTreeMap<String, usize> {
 #[cfg(test)]
 mod tests;
 
-/// `text` (which starts at byte `start` of the highlighted source) split at
-/// syntax span edges, each piece with its role.
+/// `text` (starting at byte `start` of the highlighted source) split at syntax
+/// span edges, each piece with its role.
 fn colored<'t>(
     text: &'t str,
     start: usize,

@@ -95,9 +95,8 @@ pub(super) fn delete(app: &App, id: Option<&str>, name: &str) -> Result<serde_js
     Ok(serde_json::json!({ "deleted": true, "name": name }))
 }
 
-/// Register an existing on-disk app as a public capability. The app server's
-/// startup scanner normally does this automatically; this action handles an
-/// orphan app created while the server was already running.
+/// Register an existing on-disk app as a public capability, for an orphan created
+/// while the server was already running.
 pub(super) fn register(app: &App, id: Option<&str>, name: &str) -> Result<serde_json::Value> {
     let space = space_name(app, id)?;
     let root = app.space.apps_dir(&space).join(name);

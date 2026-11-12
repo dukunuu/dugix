@@ -271,7 +271,6 @@ fn usage_log_round_trips_and_aggregates() {
         db.model_price("anthropic/claude-3.5-sonnet"),
         Some(price(3.0, 15.0))
     );
-    // Re-upsert refreshes every rate rather than duplicating.
     db.upsert_model_prices(&[(
         "anthropic/claude-3.5-sonnet".to_string(),
         "OpenRouter".to_string(),
@@ -284,7 +283,6 @@ fn usage_log_round_trips_and_aggregates() {
     );
     assert_eq!(db.model_price("unknown/model"), None);
 
-    // 100 prompt @ $4/1M + 10 completion @ $16/1M = $0.0004 + $0.00016.
     db.log_usage(
         "OpenRouter",
         "anthropic/claude-3.5-sonnet",
@@ -324,7 +322,7 @@ fn usage_log_round_trips_and_aggregates() {
 
     let by_backend = db.usage_by_backend(None).unwrap();
     assert_eq!(by_backend.len(), 2);
-    assert_eq!(by_backend[0].backend, "OpenRouter"); // most-used first
+    assert_eq!(by_backend[0].backend, "OpenRouter");
     assert_eq!(by_backend[0].requests, 1);
 
     let by_model = db.usage_by_model(5, None).unwrap();
@@ -333,7 +331,7 @@ fn usage_log_round_trips_and_aggregates() {
 
     let recent = db.usage_recent(10, None).unwrap();
     assert_eq!(recent.len(), 2);
-    assert_eq!(recent[0].model, "gpt-5.1-codex"); // newest first
+    assert_eq!(recent[0].model, "gpt-5.1-codex");
     assert_eq!(recent[0].cost, None);
     assert_eq!(recent[1].cache_read_tokens, 70);
 }
@@ -341,7 +339,7 @@ fn usage_log_round_trips_and_aggregates() {
 #[test]
 fn usage_queries_filter_by_since_window() {
     let db = Db::open_in_memory().unwrap();
-    // Rows with explicit timestamps (raw insert: log_usage stamps now).
+    // Raw insert: log_usage stamps the current time.
     let insert = |created: &str| {
         db.raw().execute(
             "INSERT INTO usage_log (sync_id, created_at, session_id, backend, model,
@@ -365,7 +363,6 @@ fn usage_queries_filter_by_since_window() {
     let recent = db.usage_recent(10, since).unwrap();
     assert_eq!(recent.len(), 2);
     assert_eq!(recent[0].created_at, "2026-01-03T00:00:00+00:00");
-    // Boundary is inclusive: the exact-cutoff row is included.
     assert!(
         recent
             .iter()
@@ -396,8 +393,6 @@ fn backfill_usage_costs_recomputes_history_from_catalog() {
         cache_price(3.0, 15.0, 0.3, 3.75),
     )])
     .unwrap();
-    // Rows logged before pricing existed: one priced model (NULL cost),
-    // one model with no catalog entry.
     db.log_usage(
         "OpenRouter",
         "anthropic/claude-3.5-sonnet",
@@ -429,15 +424,12 @@ fn backfill_usage_costs_recomputes_history_from_catalog() {
 
     let visited = db.backfill_usage_costs().unwrap();
     assert_eq!(visited, 2);
-    // 10 ordinary @ $3/M + 70 reads @ $0.30/M + 20 writes @ $3.75/M,
-    // plus 10 completion @ $15/M = $0.000276.
     let totals = db.usage_totals(None).unwrap();
     assert!((totals.cost - 0.000_276).abs() < 1e-12);
     let recent = db.usage_recent(10, None).unwrap();
-    assert!((recent[1].cost.unwrap() - 0.000_276).abs() < 1e-12); // priced row filled in
-    assert_eq!(recent[0].cost, None); // unknown price stays unknown
+    assert!((recent[1].cost.unwrap() - 0.000_276).abs() < 1e-12);
+    assert_eq!(recent[0].cost, None);
 
-    // Idempotent: a second pass leaves the values untouched.
     db.backfill_usage_costs().unwrap();
     assert!((db.usage_totals(None).unwrap().cost - 0.000_276).abs() < 1e-12);
 }
@@ -473,9 +465,7 @@ fn backfill_preserves_provider_reported_cost() {
 
 #[test]
 fn backfill_usage_costs_heals_per_token_catalog() {
-    // A legacy catalog holding the endpoint's raw per-token values
-    // (deepseek-v4-flash at $0.08/M stores 8e-08) must be scaled to the
-    // per-1M convention before costs are computed against it.
+    // A legacy catalog holds raw per-token values, which must be scaled to per-1M.
     let mut db = Db::open_in_memory().unwrap();
     db.upsert_model_prices(&[(
         "deepseek/deepseek-v4-flash-0731".to_string(),
@@ -504,7 +494,6 @@ fn backfill_usage_costs_heals_per_token_catalog() {
         db.model_price("deepseek/deepseek-v4-flash-0731"),
         Some(price(0.08, 0.18))
     );
-    // 122221/1e6 × 0.08 + 672/1e6 × 0.18 ≈ $0.00989.
     let recent = db.usage_recent(10, None).unwrap();
     let cost = recent[0].cost.unwrap();
     assert!((cost - 0.009_898_6).abs() < 1e-6, "cost was {cost}");
@@ -543,8 +532,6 @@ fn model_price_cross_references_openrouter_catalog_twins() {
         ),
     ])
     .unwrap();
-    // Exact ids hit directly; other backends' prefixed/bare ids resolve
-    // through the vendor/name twin.
     assert_eq!(
         db.model_price("deepseek/deepseek-v4-flash"),
         Some(cache_price(0.08, 0.18, 0.016, 0.08))
@@ -565,9 +552,7 @@ fn model_price_cross_references_openrouter_catalog_twins() {
         db.model_price("codex:gpt-5"),
         Some(cache_price(1.25, 10.0, 0.125, 1.25))
     );
-    // No twin anywhere: unknown.
     assert_eq!(db.model_price("no-such-model-anywhere"), None);
-    // The price flows into per-request costs for the other backend.
     let cost = db
         .request_cost("go:deepseek-v4-flash", 100, 10, 70, 0)
         .unwrap();
@@ -596,8 +581,7 @@ fn backfill_prices_non_openrouter_models_via_catalog_twins() {
         cache_price(0.08, 0.18, 0.016, 0.08),
     )])
     .unwrap();
-    // OpenCode Go rows logged with no cost — the flat-fee backend has
-    // no pricing of its own, so the twin's list price is the estimate.
+    // OpenCode Go has no pricing of its own, so the twin's list price is the estimate.
     db.log_usage(
         "OpenCode Go",
         "go:deepseek-v4-flash",
@@ -638,7 +622,6 @@ fn web_cache_roundtrips_and_updates_on_rewrite() {
     assert_eq!(text, "body text");
     assert!(!fetched_at.is_empty());
 
-    // Re-fetching overwrites the row, not duplicates it.
     cache_put(
         db.raw(),
         "example.com/a",
@@ -688,7 +671,6 @@ fn swarm_personas_roundtrip_and_replace_all_on_save() {
     assert_eq!(loaded[0].name, "Skeptic");
     assert_eq!(loaded[1].name, "Advocate");
 
-    // A second save fully replaces the roster, not appends.
     db.save_swarm_personas(&s.id, &roster[..1]).unwrap();
     assert_eq!(db.list_swarm_personas(&s.id).unwrap().len(), 1);
 }
@@ -706,7 +688,6 @@ fn persona_message_tags_role_assistant_with_persona_and_model() {
     assert_eq!(msgs[0].persona.as_deref(), Some("Skeptic"));
     assert_eq!(msgs[0].model.as_deref(), Some("a/one"));
 
-    // An ordinary assistant message has no persona tag.
     db.add_assistant_message(&s.id, "final answer", None, None, None, None, None, None)
         .unwrap();
     let msgs = db.load_messages(&s.id).unwrap();
@@ -963,8 +944,7 @@ fn latest_session_returns_the_newest_session_across_spaces() {
         .create_session("newer", "b/two", &other.id, "chat")
         .unwrap();
 
-    // Use explicit timestamps so the assertion is independent of clock
-    // resolution on the test runner.
+    // Explicit timestamps keep the assertion independent of clock resolution.
     db.raw()
         .execute(
             "UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
@@ -1005,8 +985,8 @@ fn markdown_images_in_content_roundtrip() {
 #[test]
 fn model_prefs_toggle_and_used() {
     let db = Db::open_in_memory().unwrap();
-    assert!(db.toggle_favorite("a/one").unwrap()); // now favorite
-    assert!(!db.toggle_favorite("a/one").unwrap()); // toggled off
+    assert!(db.toggle_favorite("a/one").unwrap());
+    assert!(!db.toggle_favorite("a/one").unwrap());
     db.mark_model_used("a/one").unwrap();
     db.set_reasoning("a/one", Some("high")).unwrap();
 
@@ -1032,7 +1012,7 @@ fn setting_returns_a_single_value() {
 fn settings_roundtrip() {
     let db = Db::open_in_memory().unwrap();
     db.set_setting("temperature", "0.7").unwrap();
-    db.set_setting("temperature", "0.9").unwrap(); // upsert
+    db.set_setting("temperature", "0.9").unwrap();
     let s = db.load_settings().unwrap();
     assert_eq!(s, vec![("temperature".to_string(), "0.9".to_string())]);
 }
@@ -1084,10 +1064,10 @@ fn spaces_crud_and_session_reassignment_on_delete() {
     );
 
     db.delete_space(&work.id).unwrap();
-    assert_eq!(db.list_spaces().unwrap().len(), 1); // work is gone
+    assert_eq!(db.list_spaces().unwrap().len(), 1);
     let default_id = db.default_space_id().unwrap();
     let moved = db.list_sessions(&default_id).unwrap();
-    assert!(moved.iter().any(|c| c.id == s.id)); // session survived, moved to default
+    assert!(moved.iter().any(|c| c.id == s.id));
 }
 
 #[test]
@@ -1104,11 +1084,9 @@ fn chunk_embeddings_store_rank_and_invalidate() {
     )
     .unwrap();
 
-    // Blob codec roundtrip.
     let v = vec![0.25f32, -1.0, 3.5];
     assert_eq!(blob_to_vec(&vec_to_blob(&v)), v);
 
-    // No vectors yet → file needs embedding.
     assert_eq!(
         files_missing_embeddings(&db.conn, &space).unwrap(),
         vec![id.clone()]
@@ -1122,17 +1100,14 @@ fn chunk_embeddings_store_rank_and_invalidate() {
             .is_empty()
     );
 
-    // Query near the second chunk's vector ranks it first.
     let hits = semantic_chunks(&db.conn, &space, &[0.1, 0.9], 5).unwrap();
     assert_eq!(hits[0].1, "page 2");
     assert!(hits[0].2.contains("quantum"));
     assert!(hits[0].3 > hits[1].3, "scores must be descending");
 
-    // Dimension-mismatched vectors are skipped, not an error.
     let hits = semantic_chunks(&db.conn, &space, &[1.0, 0.0, 0.0], 5).unwrap();
     assert!(hits.is_empty());
 
-    // Rewriting chunks invalidates stale vectors.
     db.set_file_chunks(&id, &[("page 1".into(), "new text".into())])
         .unwrap();
     assert_eq!(
@@ -1140,7 +1115,6 @@ fn chunk_embeddings_store_rank_and_invalidate() {
         vec![id.clone()]
     );
 
-    // A vector for the wrong sequence must not make the file look complete.
     db.set_chunk_embeddings(&id, &[(99, vec![1.0, 0.0])])
         .unwrap();
     assert_eq!(
@@ -1181,8 +1155,7 @@ fn files_without_chunks_are_embedding_queue_entries() {
         vec![id]
     );
 
-    // OCR rows stay in the queue until they report a terminal result;
-    // the app-level worker skips them while they are active.
+    // OCR rows stay queued until a terminal result; the app worker skips active ones.
     let ocr = db.upsert_file(&space, "scan.pdf", "p", 0, "ocr…").unwrap();
     assert!(
         files_missing_embeddings(&db.conn, &space)
@@ -1205,7 +1178,6 @@ fn files_upsert_list_delete_roundtrip() {
     assert_eq!(files[0].hash, "h1");
     assert_eq!(files[0].status, "ok");
 
-    // Re-import with a new hash keeps one row (same id or replaced) and replaces chunks.
     let id2 = db.upsert_file(&space, "notes.md", "h2", 12, "ok").unwrap();
     db.set_file_chunks(&id2, &[("lines 1-40".into(), "goodbye".into())])
         .unwrap();
@@ -1230,12 +1202,11 @@ fn chunk_search_ranks_and_scopes_by_space() {
         .unwrap();
 
     let hits = search_chunks(&db.conn, &space, "rust", 8).unwrap();
-    assert_eq!(hits.len(), 1); // other space's chunk is excluded
+    assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].0, "a.md");
     assert_eq!(hits[0].1, "lines 1-40");
     assert!(hits[0].2.contains("rust"));
 
-    // Special characters must not be an FTS syntax error.
     assert!(search_chunks(&db.conn, &space, "c++ \"quoted\" -dash", 8).is_ok());
 }
 
@@ -1323,17 +1294,14 @@ fn create_list_touch_delete_watch_roundtrip() {
 }
 
 #[test]
-// space_a_watches / space_b_watches differ only by the space label.
 #[allow(clippy::similar_names)]
 fn list_all_watches_returns_watches_from_all_spaces() {
     let db = Db::open_in_memory().unwrap();
 
-    // Create watches in different spaces
     let id1 = db.create_watch("space-a", "topic-1", 24, "sess-1").unwrap();
     let id2 = db.create_watch("space-b", "topic-2", 48, "sess-2").unwrap();
     let id3 = db.create_watch("space-a", "topic-3", 12, "sess-3").unwrap();
 
-    // list_all_watches should return watches from all spaces
     let all_watches = db.list_all_watches().unwrap();
     assert_eq!(all_watches.len(), 3);
     assert!(
@@ -1352,8 +1320,6 @@ fn list_all_watches_returns_watches_from_all_spaces() {
             .any(|w| w.id == id3 && w.space_id == "space-a")
     );
 
-    // list_watches for one space should only return that space's watches,
-    // confirming list_all_watches is not space-scoped
     let space_a_watches = db.list_watches("space-a").unwrap();
     assert_eq!(space_a_watches.len(), 2);
     assert!(space_a_watches.iter().all(|w| w.space_id == "space-a"));
@@ -1374,11 +1340,8 @@ fn fresh_db_creates_sibling_cache_db_with_split_tables() {
     db.set_file_chunks(&id, &[("l".into(), "needle text".into())])
         .unwrap();
 
-    // The durable db holds no cache tables and no legacy file columns...
     assert!(!has_column(db.raw(), "web_cache", "url_norm").unwrap());
     assert!(!has_column(db.raw(), "files", "mtime").unwrap());
-    // ...they live in the sibling cache.db: reachable through the
-    // attached connection, and a standalone cache-only connection works.
     let cache_path = cache_path_for(&db_path);
     assert!(cache_path.is_file());
     let conn = rusqlite::Connection::open(&cache_path).unwrap();
@@ -1391,11 +1354,8 @@ fn fresh_db_creates_sibling_cache_db_with_split_tables() {
     assert_eq!(db.list_files(&space).unwrap()[0].status, "ok");
 }
 
-/// Every mutable table bumps its version (`updated_at`, RFC3339 so
-/// lexical order = time order) on every mutation path — the LWW input
-/// for the sync merge engine. Reads happen 2ms after each write so
-/// equal-microsecond timestamps can't pass a `>` check by accident.
-// Long by design (one assertion per mutation path).
+/// Every mutable table bumps its version (`updated_at`) on every mutation path,
+/// the LWW input for sync.
 #[allow(clippy::too_many_lines)]
 #[test]
 fn every_mutable_table_bumps_updated_at_on_mutation() {
@@ -1415,7 +1375,6 @@ fn every_mutable_table_bumps_updated_at_on_mutation() {
             .unwrap()
     };
 
-    // sessions: every mutation path bumps.
     let mutators: [Mutator<'_>; 5] = [
         &|db: &Db| db.set_compaction(&sid, "sum", 3),
         &|db: &Db| db.set_session_swarm_mode(&sid, true),
@@ -1428,7 +1387,7 @@ fn every_mutable_table_bumps_updated_at_on_mutation() {
         mutate(&db).unwrap();
         assert!(read("sessions", &sid) > before);
     }
-    // The swarm roster has no per-row LWW — saving versions the session.
+    // The swarm roster has no per-row LWW, so saving versions the session.
     let before = read("sessions", &sid);
     db.save_swarm_personas(
         &sid,
@@ -1441,7 +1400,6 @@ fn every_mutable_table_bumps_updated_at_on_mutation() {
     .unwrap();
     assert!(read("sessions", &sid) > before);
 
-    // model_prefs.
     assert!(db.toggle_favorite("a/model").unwrap());
     let before = read("model_prefs", "a/model");
     db.set_reasoning("a/model", Some("high")).unwrap();
@@ -1450,7 +1408,6 @@ fn every_mutable_table_bumps_updated_at_on_mutation() {
     db.mark_model_used("a/model").unwrap();
     assert!(read("model_prefs", "a/model") > before);
 
-    // app_settings.
     let read_key = |key: &str| -> String {
         std::thread::sleep(std::time::Duration::from_millis(2));
         db.raw()
@@ -1466,19 +1423,16 @@ fn every_mutable_table_bumps_updated_at_on_mutation() {
     db.set_setting("temperature", "0.9").unwrap();
     assert!(read_key("temperature") > before);
 
-    // spaces.
     let sp = db.create_space("other").unwrap();
     let before = read("spaces", &sp.id);
     db.rename_space(&sp.id, "other2").unwrap();
     assert!(read("spaces", &sp.id) > before);
 
-    // files.
     let fid = db.upsert_file(&space, "f.txt", "h", 1, "ok").unwrap();
     let before = read("files", &fid);
     db.rename_file(&fid, "g.txt").unwrap();
     assert!(read("files", &fid) > before);
 
-    // watches.
     let wid = db.create_watch(&space, "topic", 24, &sid).unwrap();
     let before = read("watches", &wid);
     db.touch_watch(&wid, "2026-01-01T00:00:00Z").unwrap();
@@ -1487,7 +1441,6 @@ fn every_mutable_table_bumps_updated_at_on_mutation() {
     db.set_watch_session(&wid, "other-session").unwrap();
     assert!(read("watches", &wid) > before);
 
-    // session_sources: insert and flag changes both version the row.
     let url = "https://x.test/";
     add_session_sources(db.raw(), &sid, &[url.to_string()]).unwrap();
     let read_src = || -> String {
@@ -1505,7 +1458,6 @@ fn every_mutable_table_bumps_updated_at_on_mutation() {
     db.set_source_flag(&sid, url, Some("pinned")).unwrap();
     assert!(read_src() > before);
 
-    // usage_log: in-place updates bump; the backfill does too.
     let row = db
         .log_usage(
             "OpenRouter",
@@ -1560,12 +1512,10 @@ fn delete_paths_write_tombstones_for_sync() {
         rows.collect::<rusqlite::Result<Vec<_>>>().unwrap()
     };
 
-    // Message delete.
     let mid = db.add_user_message(&sid, "hi").unwrap();
     db.delete_message(&mid).unwrap();
     assert_eq!(tombstones("messages"), vec![mid.clone()]);
 
-    // Session delete tombstones the session and each of its messages.
     let sid2 = db.create_session("t2", "a/b", &space, "chat").unwrap().id;
     let m1 = db.add_user_message(&sid2, "one").unwrap();
     let m2 = db.add_user_message(&sid2, "two").unwrap();
@@ -1585,22 +1535,18 @@ fn delete_paths_write_tombstones_for_sync() {
     assert_eq!(tombstones("sessions"), vec![sid2.clone()]);
     assert_eq!(tombstones("swarm_personas"), vec![format!("{sid2}:0")]);
 
-    // File delete.
     let fid = db.upsert_file(&space, "f.txt", "h", 1, "ok").unwrap();
     db.delete_file(&fid).unwrap();
     assert_eq!(tombstones("files"), vec![fid]);
 
-    // Watch delete.
     let wid = db.create_watch(&space, "topic", 24, &sid).unwrap();
     db.delete_watch(&wid).unwrap();
     assert_eq!(tombstones("watches"), vec![wid]);
 
-    // Space delete (its sessions are reassigned, not deleted).
     let sp = db.create_space("doomed").unwrap();
     db.delete_space(&sp.id).unwrap();
     assert_eq!(tombstones("spaces"), vec![sp.id]);
 
-    // Roster replace: removed slots are tombstoned as `session:ord`.
     let persona = |name: &str| Persona {
         name: name.into(),
         model: "m".into(),
@@ -1623,7 +1569,6 @@ fn device_id_is_stable_and_sync_state_roundtrips() {
     assert_eq!(a, b);
     assert!(!a.is_empty());
 
-    // Cursors round-trip per (peer, table); None leaves values alone.
     db.set_sync_state(
         "peer-1",
         "sessions",
@@ -1647,7 +1592,6 @@ fn device_id_is_stable_and_sync_state_roundtrips() {
 
 #[test]
 fn settings_scope_registry_classifies_keys_and_stores_scope() {
-    // Device-local keys are classified local; user prefs default to sync.
     for local in [
         "searxng_url",
         "langsearch_key",

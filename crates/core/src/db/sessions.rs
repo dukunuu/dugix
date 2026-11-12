@@ -13,8 +13,8 @@ use super::{
 use super::{add_session_sources, search_session_sources};
 
 impl Db {
-    /// Summarize tool calls at or after a UTC RFC3339 cutoff, with at most
-    /// 50 failure modes ranked by count, then most recent occurrence.
+    /// Summarize tool calls since a UTC RFC3339 cutoff, with at most 50 failure
+    /// modes.
     pub fn harness_summary(&self, since: &str) -> Result<HarnessSummary> {
         let (calls, failures) = self.conn.query_row(
             "SELECT COUNT(*), COALESCE(SUM(ok = 0), 0)
@@ -22,8 +22,8 @@ impl Db {
             [since],
             |row| Ok((row.get::<_, i64>(0)? as u64, row.get::<_, i64>(1)? as u64)),
         )?;
-        // SQLite's single MAX aggregate takes bare columns from the row
-        // supplying that maximum, so session_id belongs to the latest event.
+        // SQLite's MAX aggregate takes bare columns from the row supplying the
+        // maximum, so session_id belongs to the latest event.
         let mut stmt = self.conn.prepare(
             "SELECT tool, action, error_kind, COUNT(*), MAX(at) AS last_at, session_id
              FROM cache.tool_events WHERE at >= ?1 AND ok = 0
@@ -77,7 +77,7 @@ impl Db {
         Ok(())
     }
 
-    /// Missing mode values are legacy plain-agent bindings.
+    /// Missing mode values mean a plain-agent binding.
     pub fn session_workspace_mode(&self, id: &str) -> Option<String> {
         self.conn
             .query_row(
@@ -178,7 +178,7 @@ impl Db {
         })
     }
 
-    /// Spaces oldest-first (`default` was inserted first, so it naturally leads).
+    /// Spaces oldest-first; `default` is inserted first.
     pub fn list_spaces(&self) -> Result<Vec<Space>> {
         let mut stmt = self
             .conn
@@ -201,10 +201,8 @@ impl Db {
         Ok(())
     }
 
-    /// Delete a space, reassigning its sessions to `default` rather than
-    /// deleting them — only the space's own memory/instructions are lost.
-    /// The reassignment bumps every moved session's version (a mutation,
-    /// sync-wise); the space itself is tombstoned.
+    /// Delete a space, reassigning its sessions to `default`; the space is
+    /// tombstoned.
     pub fn delete_space(&self, id: &str) -> Result<()> {
         let default_id = self.default_space_id()?;
         self.conn.execute(
@@ -228,9 +226,7 @@ impl Db {
         Ok(n as u64)
     }
 
-    /// The most recent user/assistant message of a session — the session
-    /// picker's preview strip, so you can see what a session is about before
-    /// opening it.
+    /// The most recent user/assistant message of a session, for the picker preview.
     pub fn last_message_preview(&self, session_id: &str) -> Option<String> {
         let mut stmt = self
             .conn
@@ -245,21 +241,13 @@ impl Db {
         rows.next().and_then(Result::ok)
     }
 
-    // --- key/value app settings ---
-
-    /// Whether an `app_settings` key is device-local rather than syncable.
-    /// Local keys describe this device's capabilities or per-device state
-    /// (search endpoints, secrets, ui state); everything else
-    /// is a user preference that should follow the user. New keys must be
-    /// classified here — the default is sync, so a forgotten local key would
-    /// silently sync to other devices.
+    /// Whether an `app_settings` key is device-local; new keys default to sync,
+    /// so a forgotten local key would sync silently.
     pub fn setting_is_local(key: &str) -> bool {
         key.starts_with("training:")
             || matches!(
                 key,
-                // Device capabilities / local services: a phone has no
-                // localhost SearXNG, no ollama, and its API keys
-                // are its own.
+                // Device capabilities and local services.
                 "searxng_url"
                 | "langsearch_key"
                 | "search_provider"
@@ -268,12 +256,10 @@ impl Db {
                 | "ui_background"
                 | "column_width"
                 | "popup_sizes"
-                // Whether a terminal draws graphics is a property of this device.
                 | "image_viewer"
                 | "last_update_check"
                 | "jobs_seen"
-                // Which remote device the ssh transport last synced with —
-                // per-peer export cursors are device-local bookkeeping.
+                // Per-peer sync bookkeeping.
                 | "sync_ssh_peer"
             )
     }
@@ -311,10 +297,7 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// Daily throttle for the startup update check: returns `true` (and
-    /// records today as the check date) when no check has run today yet,
-    /// `false` when one already has. The check is a courtesy, not a
-    /// service — one tiny index fetch per day is plenty.
+    /// Daily throttle for the startup update check.
     pub fn update_check_due(&self) -> bool {
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
         let last = self
@@ -412,8 +395,7 @@ impl Db {
         })
     }
 
-    /// A single session by id, or `None` if it doesn't exist (e.g. deleted
-    /// out from under a watch).
+    /// A single session by id, or `None` if it no longer exists.
     pub fn get_session(&self, id: &str) -> Result<Option<Session>> {
         self.conn
             .query_row(
@@ -464,8 +446,7 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// Return the most recently updated session across all spaces, together
-    /// with its owning space id. Used by the `nexus --continue` launcher.
+    /// The most recently updated session across all spaces, with its space id.
     pub fn latest_session(&self) -> Result<Option<(String, Session)>> {
         self.conn
             .query_row(
@@ -497,8 +478,8 @@ impl Db {
             .map_err(Into::into)
     }
 
-    /// Store an auto-compaction result: the digest plus how many raw messages
-    /// it now covers.
+    /// Store an auto-compaction result: the digest plus how many raw messages it
+    /// now covers.
     pub fn set_compaction(&self, session_id: &str, summary: &str, through: i64) -> Result<()> {
         self.conn.execute(
             "UPDATE sessions SET compact_summary = ?2, compact_through = ?3, updated_at = ?4
@@ -533,10 +514,8 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// Replace a session's whole `/swarm` roster with `personas`, in order.
-    /// The roster has no per-row LWW — saving is DELETE-all + INSERT — so
-    /// the collection is versioned by bumping the owning session, and each
-    /// removed slot is tombstoned for the merge engine.
+    /// Replace a session's whole `/swarm` roster; the collection is versioned by
+    /// bumping the session.
     pub fn save_swarm_personas(&self, session_id: &str, personas: &[Persona]) -> Result<()> {
         let old: Vec<i64> = {
             let mut stmt = self
@@ -562,9 +541,7 @@ impl Db {
         self.touch("sessions", session_id)
     }
 
-    /// Set a session's `research_parent_id` after creation (e.g. when
-    /// a regular chat is promoted to research and the original session is
-    /// created first).
+    /// Set a session's `research_parent_id` after creation.
     pub fn set_research_parent(&self, id: &str, parent_id: &str) -> Result<()> {
         self.conn.execute(
             "UPDATE sessions SET research_parent_id = ?2, updated_at = ?3 WHERE id = ?1",
@@ -583,9 +560,7 @@ impl Db {
         Ok(())
     }
 
-    /// Delete a single message row by id — used to roll back a persisted
-    /// `gate_reply` whose channel delivery failed, so a retry can't
-    /// duplicate it in the transcript. Tombstoned for sync.
+    /// Delete a single message row by id; tombstoned for sync.
     pub fn delete_message(&self, id: &str) -> Result<()> {
         self.conn
             .execute("DELETE FROM messages WHERE id = ?1", [id])?;
@@ -593,9 +568,8 @@ impl Db {
         Ok(())
     }
 
-    /// Delete a session and all its messages and swarm personas. Every
-    /// removed row is tombstoned — append-only children and roster slots
-    /// must not survive as orphaned durable state on this device.
+    /// Delete a session and all its messages and swarm personas, tombstoning
+    /// every removed row.
     pub fn delete_session(&self, id: &str) -> Result<()> {
         let ids: Vec<String> = {
             let mut stmt = self
@@ -682,18 +656,15 @@ impl Db {
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// Insert a user message (no model/reasoning/stats). Returns its id.
+    /// Insert a user message; returns its id.
     pub fn add_user_message(&self, session_id: &str, content: &str) -> Result<String> {
         self.insert_message(
             session_id, "user", content, None, None, None, None, None, None,
         )
     }
 
-    /// A user's reply to a survey/approval gate: rendered in the transcript
-    /// like a user message but never replayed to the model (`gate_reply`
-    /// role) — the survey/plan rows it answers are excluded from model
-    /// history too, so bare answers ("the second option", "drop Q2") must
-    /// not reach the model without their context.
+    /// Insert a user's reply to a survey/approval gate; shown but never replayed
+    /// to the model.
     pub fn add_gate_reply_message(&self, session_id: &str, content: &str) -> Result<String> {
         self.insert_message(
             session_id,
@@ -708,11 +679,8 @@ impl Db {
         )
     }
 
-    /// Insert a tool-call transcript block: `content` is JSON containing the
-    /// provider call id, optional reasoning/content, name, arguments, and
-    /// result. It
-    /// is never sent back to the model verbatim; `App::build_history` rebuilds
-    /// the assistant/tool wire messages.
+    /// Insert a tool-call transcript block; never replayed verbatim, since history
+    /// is rebuilt from it.
     pub fn add_tool_call_message(&self, session_id: &str, content: &str) -> Result<String> {
         self.insert_message(
             session_id,
@@ -727,24 +695,21 @@ impl Db {
         )
     }
 
-    /// Insert a failed-response line. It remains visible in the transcript
-    /// after the status bar changes, but is never replayed to the model.
+    /// Insert a failed-response line, visible but never replayed to the model.
     pub fn add_error_message(&self, session_id: &str, content: &str) -> Result<String> {
         self.insert_message(
             session_id, "error", content, None, None, None, None, None, None,
         )
     }
 
-    /// Insert a skill invocation, replayed to the model as a user-role
-    /// instruction at its position in the transcript. Returns its id.
+    /// Insert a skill invocation, replayed as a user-role instruction.
     pub fn add_skill_message(&self, session_id: &str, content: &str) -> Result<String> {
         self.insert_message(
             session_id, "skill", content, None, None, None, None, None, None,
         )
     }
 
-    /// Insert a command the user ran with `!` (JSON: cmd, cwd, exit, output,
-    /// interactive), replayed to the model as a user message. Returns its id.
+    /// Insert a `!` command, replayed to the model as a user message.
     pub fn add_user_command_message(&self, session_id: &str, content: &str) -> Result<String> {
         self.insert_message(
             session_id,
@@ -759,10 +724,8 @@ impl Db {
         )
     }
 
-    /// Insert a background-research stage/progress line: plain text, shown in
-    /// the transcript but never sent back to the model (unlike `tool_call`
-    /// rows, never replayed into `build_history` either — this is the job's
-    /// own scratch work, not something the chat model did).
+    /// Insert a research stage/progress line, shown but never replayed to the
+    /// model.
     pub fn add_research_stage_message(&self, session_id: &str, content: &str) -> Result<String> {
         self.insert_message(
             session_id,
@@ -777,8 +740,7 @@ impl Db {
         )
     }
 
-    /// A research pipeline's plan-approval prompt: rendered like a stage row
-    /// but actionable, and (like `research_stage`) never replayed to the model.
+    /// A research plan-approval prompt, actionable and never replayed to the model.
     pub fn add_research_plan_message(&self, session_id: &str, content: &str) -> Result<String> {
         self.insert_message(
             session_id,
@@ -793,19 +755,16 @@ impl Db {
         )
     }
 
-    /// A research pipeline's clarifying-survey section: the scoping agent's
-    /// questions awaiting a chat answer. Rendered like a stage row but
-    /// actionable, and never replayed to the model.
+    /// A research clarifying-survey section, actionable and never replayed to the
+    /// model.
     pub fn add_survey_message(&self, session_id: &str, content: &str) -> Result<String> {
         self.insert_message(
             session_id, "survey", content, None, None, None, None, None, None,
         )
     }
 
-    /// Update the most recent `research_stage` row for `session_id` whose
-    /// content starts with `label`, or insert one on the stage's first
-    /// occurrence — keeps one transcript row per named stage instead of
-    /// appending on every progress tick (e.g. every searcher finishing).
+    /// Update the latest `research_stage` row starting with `label`, or insert
+    /// one, keeping one row per named stage.
     pub fn upsert_research_stage_message(
         &self,
         session_id: &str,
@@ -838,9 +797,7 @@ impl Db {
         Ok(())
     }
 
-    /// See the free function of the same name. Production code (the
-    /// research pipeline task) writes through its own connection; this
-    /// handle exists for tests.
+    /// See the free function of the same name.
     #[cfg(test)]
     pub fn add_session_sources(&self, session_id: &str, url_norms: &[String]) -> Result<()> {
         add_session_sources(&self.conn, session_id, url_norms)
@@ -856,11 +813,8 @@ impl Db {
         search_session_sources(&self.conn, session_id, query)
     }
 
-    /// Pin (`Some("pinned")`), discard (`Some("discarded")`), or clear
-    /// (`None`) a session source's flag. `url_norm` must already exist in
-    /// `session_sources` for this session (a no-op UPDATE otherwise — the
-    /// row is created by `add_session_sources` when a source is first
-    /// cited, not here). Bumps the row's version — flag changes sync.
+    /// Pin, discard, or clear a session source's flag; the row must already
+    /// exist.
     pub fn set_source_flag(
         &self,
         session_id: &str,
@@ -876,10 +830,6 @@ impl Db {
     }
 
     /// Insert an assistant reply with its model, reasoning trace, and stats.
-    /// `cost` is the provider-reported USD total or a cache-aware catalog
-    /// estimate (`None` when neither is available).
-    /// Args mirror the messages table columns; ~25 call sites pass inline
-    /// `None`s for unused fields, so a struct would churn all of them.
     #[allow(clippy::too_many_arguments)]
     pub fn add_assistant_message(
         &self,
@@ -905,8 +855,7 @@ impl Db {
         )
     }
 
-    /// Replace a repaired reply only while it is still the session's latest
-    /// user/assistant message. Bookkeeping and errors are not another turn.
+    /// Replace a repaired reply only while it is still the session's latest turn.
     pub(crate) fn update_ui_reply(
         &self,
         session_id: &str,
@@ -924,8 +873,7 @@ impl Db {
         )? == 1)
     }
 
-    /// Insert a `/swarm` persona's round reply: an assistant message tagged
-    /// with which persona (and its own model) produced it.
+    /// Insert a `/swarm` persona's round reply, tagged with its persona and model.
     pub fn add_persona_message(
         &self,
         session_id: &str,
@@ -951,8 +899,7 @@ impl Db {
         Ok(id)
     }
 
-    /// Shared message-row insert; kept flat for the same reason as
-    /// `add_assistant_message` — column-shaped params, many inline callers.
+    /// Shared message-row insert with column-shaped params.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn insert_message(
         &self,
@@ -983,10 +930,7 @@ impl Db {
         Ok(id)
     }
 
-    /// `created_at` of the message at `index` (0-based, transcript order) —
-    /// used to anchor a compaction row at the boundary without loading the
-    /// whole session (e.g. when the job finishes after the user switched
-    /// sessions). `None` when the session has fewer than `index + 1` messages.
+    /// `created_at` of the message at `index` in transcript order.
     pub fn message_created_at(&self, session_id: &str, index: usize) -> Result<Option<String>> {
         let mut stmt = self.conn.prepare(
             "SELECT created_at FROM messages WHERE session_id = ?1
@@ -997,12 +941,8 @@ impl Db {
             .optional()?)
     }
 
-    /// Insert a compaction-digest row at the exact `created_at` position —
-    /// the timestamp of the last message the digest covers, so reloads keep
-    /// the digest at the compaction boundary (right after the raw messages
-    /// it summarizes) instead of at the end of the transcript. Unlike
-    /// `insert_message`, this does not bump the session's `updated_at`:
-    /// compacting is bookkeeping, not new activity.
+    /// Insert a compaction digest at the boundary timestamp, without bumping the
+    /// session.
     pub fn add_compaction_message(
         &self,
         session_id: &str,
@@ -1019,10 +959,7 @@ impl Db {
         Ok(id)
     }
 
-    /// Replace the session's compaction row's content in place — a later
-    /// compaction folds new messages into the same digest, so there is
-    /// exactly one row per session. Returns the number of rows updated
-    /// (0 = the session has no compaction row yet).
+    /// Replace the session's compaction row's content in place.
     pub fn update_compaction_message(&self, session_id: &str, content: &str) -> Result<usize> {
         Ok(self.conn.execute(
             "UPDATE messages SET content = ?2

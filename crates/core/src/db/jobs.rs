@@ -25,8 +25,8 @@ impl Db {
         Ok(id)
     }
 
-    /// Keep the legacy watch sync surface unchanged. Reusing the watch UUID
-    /// makes migration idempotent even after cache loss or a sync import.
+    /// Reuse the watch UUID so migration stays idempotent after cache loss or a
+    /// sync import.
     pub fn migrate_watch_jobs(&self) -> Result<()> {
         let device = self.device_id()?;
         self.conn.execute(
@@ -189,8 +189,7 @@ impl Db {
         Ok(())
     }
 
-    /// Every watch across all spaces — used by the startup due-check, which
-    /// runs before any space is necessarily "active".
+    /// Every watch across all spaces, for the startup due-check.
     pub fn list_all_watches(&self) -> Result<Vec<Watch>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, space_id, topic, interval_hours, session_id, last_run_at FROM watches",
@@ -233,9 +232,8 @@ impl Db {
         Ok(())
     }
 
-    /// Repoint a watch at the session its most recent re-run actually used,
-    /// so the next due-check's diff-section lookup
-    /// (`previous_citations_for_watch_session`) can match against it.
+    /// Repoint a watch at the session its latest re-run used, so the next
+    /// diff-section lookup matches.
     pub fn set_watch_session(&self, id: &str, session_id: &str) -> Result<()> {
         self.conn.execute(
             "UPDATE watches SET session_id = ?2, updated_at = ?3 WHERE id = ?1",

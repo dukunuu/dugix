@@ -104,10 +104,9 @@ fn read_file(source: &Path, assets: &Path, files: Option<&Path>) -> Result<Impor
         _ => bail!("expected .docx, .dotx or .md"),
     }
 }
-/// A doc from generated Markdown, such as a research report: the first
-/// level-one heading becomes the title (else `fallback_title`), the space's
-/// default design applies, and an image that is not a usable HTTPS address
-/// stays as a link, since a generated report has no assets of its own.
+/// A doc from generated Markdown: the first level-one heading becomes the title
+/// (else `fallback_title`), and an image that is not a usable HTTPS address stays
+/// as a link.
 pub fn from_markdown(files: &Path, markdown: &str, fallback_title: &str) -> Result<Doc> {
     let mut parsed = super::markdown::parse_document(markdown, false);
     let title = super::markdown::take_title(&mut parsed.blocks)

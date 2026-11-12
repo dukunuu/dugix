@@ -1,6 +1,5 @@
-//! Host-side child-process management: `cloudflared` quick tunnels and
-//! platform sleep inhibitors. These helpers are never started by unit tests;
-//! the CLI opts into them only for `nexus host --tunnel` or normal hosting.
+//! Host-side child-process management: `cloudflared` quick tunnels and platform
+//! sleep inhibitors, started only when hosting opts in.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -50,18 +49,15 @@ impl ChildGuard {
     }
 }
 
-/// A quick `trycloudflare.com` tunnel process. Named-tunnel configuration is
-/// deliberately supplied by the CLI/setup layer; this type only owns the
-/// sidecar lifecycle and URL discovery.
+/// A quick `trycloudflare.com` tunnel process; named-tunnel config comes from
+/// setup.
 pub struct Tunnel {
     child: Option<Child>,
     public_url: Option<String>,
 }
 
 impl Tunnel {
-    /// Start a quick tunnel to a loopback host port. URL discovery is bounded;
-    /// a running process with no parsed URL is still returned so callers can
-    /// report "started, URL unknown" instead of hanging forever.
+    /// Start a quick tunnel to a loopback port; URL discovery is bounded.
     pub async fn quick(port: u16) -> Result<Self> {
         let mut child = Command::new("cloudflared")
             .args([
@@ -151,9 +147,7 @@ impl Tunnel {
     }
 }
 
-/// Start the platform's sleep inhibitor. Unsupported platforms return
-/// `Ok(None)`; a missing Linux `systemd-inhibit` is an actionable error for
-/// the caller, which may choose to continue with a warning.
+/// Start the platform's sleep inhibitor; unsupported platforms return `Ok(None)`.
 pub fn sleep_guard() -> Result<Option<ChildGuard>> {
     #[cfg(target_os = "macos")]
     {
@@ -189,11 +183,7 @@ pub fn sleep_guard() -> Result<Option<ChildGuard>> {
     Ok(None)
 }
 
-/// Install the host service for the current user and return its file path.
-///
-/// This writes only the service definition; it does not start a service or
-/// invoke a platform service manager. That keeps installation reversible and
-/// safe in headless environments. The CLI prints the activation command.
+/// Write the host service definition for the current user, without starting it.
 pub fn install_service(port: u16, tunnel: bool) -> Result<PathBuf> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -205,8 +195,7 @@ pub fn install_service(port: u16, tunnel: bool) -> Result<PathBuf> {
     write_service(&path, manager, &binary, port, tunnel)
 }
 
-/// Write a service definition below `home`. This split-out form keeps service
-/// rendering tests hermetic and avoids touching XDG directories in tests.
+/// Write a service definition below `home`, keeping rendering tests hermetic.
 pub fn install_service_at(home: &Path, binary: &Path, port: u16, tunnel: bool) -> Result<PathBuf> {
     let manager =
         service_manager().context("host service installation is unsupported on this platform")?;
@@ -250,10 +239,8 @@ pub fn uninstall_service() -> Result<bool> {
     }
 }
 
-/// Where a service definition lives. `config_home` is the systemd user-unit
-/// root (`$XDG_CONFIG_HOME`), `home` the launchd agent root — kept as separate
-/// arguments so callers with a synthetic layout (tests) never depend on the
-/// ambient environment.
+/// Where a service definition lives; `config_home` is the systemd root and
+/// `home` the launchd root.
 fn service_path(config_home: &Path, home: &Path, manager: ServiceManager) -> PathBuf {
     match manager {
         ServiceManager::Systemd => config_home.join("systemd/user").join("nexus-host.service"),
@@ -263,8 +250,8 @@ fn service_path(config_home: &Path, home: &Path, manager: ServiceManager) -> Pat
     }
 }
 
-/// `$XDG_CONFIG_HOME` when set to an absolute path, else `<home>/.config`.
-/// A relative value is ignored, as the XDG base-directory spec requires.
+/// `$XDG_CONFIG_HOME` when absolute, else `<home>/.config`; relative values are
+/// ignored.
 fn config_home_from(configured: Option<&std::ffi::OsStr>, home: &Path) -> PathBuf {
     configured
         .map(PathBuf::from)
@@ -276,9 +263,8 @@ fn config_home(home: &Path) -> PathBuf {
     config_home_from(std::env::var_os("XDG_CONFIG_HOME").as_deref(), home)
 }
 
-/// Quote a path for a systemd `ExecStart=` command line: backslashes and
-/// quotes are escaped, and a literal `%` is doubled so systemd does not read
-/// it as the start of a specifier (`%h`, `%i`, …).
+/// Quote a path for a systemd `ExecStart=` line, doubling `%` so it is not read
+/// as a specifier.
 fn systemd_quote(path: &Path) -> String {
     let escaped = path
         .display()
@@ -343,8 +329,8 @@ fn parse_trycloudflare_url(line: &str) -> Option<String> {
         .then(|| url.trim_end_matches('/').to_string())
 }
 
-/// Probe the public host. A `401` from `/v1/snapshot` is healthy: it proves
-/// the tunnel reached the daemon and only host authentication stopped it.
+/// Probe the public host; a `401` from `/v1/snapshot` means the tunnel reached
+/// the daemon.
 pub async fn health_check(base: &str) -> bool {
     let url = format!("{}/v1/snapshot", base.trim_end_matches('/'));
     reqwest::Client::new()

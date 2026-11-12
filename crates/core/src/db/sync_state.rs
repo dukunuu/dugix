@@ -7,12 +7,8 @@ use uuid::Uuid;
 
 use super::Db;
 
-// --- sync bookkeeping ---
-
-/// One peer's sync cursor for one table. Cursors are opaque strings; for
-/// append-only tables they are `(created_at, id)` tuples (so equal
-/// timestamps don't collide), never naked timestamps.
-/// The merge engine in `sync.rs` reads and writes these.
+/// One peer's sync cursor for one table; cursors are opaque strings,
+/// `(created_at, id)` for append-only tables.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncState {
     pub peer_id: String,
@@ -22,11 +18,8 @@ pub struct SyncState {
     pub last_synced_at: Option<String>,
 }
 
-/// Sync identity + cursor bookkeeping for the merge engine in `sync.rs`.
 impl Db {
-    /// This device's stable id, created on first use. Sync identity for
-    /// everything this device writes (tombstones, LWW tie-breaks on
-    /// `updated_at + device_id`).
+    /// This device's stable sync id, created on first use.
     pub fn device_id(&self) -> Result<String> {
         if let Some(id) = self
             .conn
@@ -46,8 +39,8 @@ impl Db {
         Ok(id)
     }
 
-    /// Store (or update) a peer's cursors for one table, stamping
-    /// `last_synced_at`. `None` leaves an existing cursor untouched.
+    /// Store a peer's cursors for one table; `None` leaves an existing cursor
+    /// untouched.
     pub fn set_sync_state(
         &self,
         peer_id: &str,

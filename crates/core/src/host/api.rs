@@ -1,9 +1,5 @@
-//! The raw `tokio` HTTP/SSE server for `nexus host`.
-//!
-//! This deliberately stays framework-free. The daemon is local-first, the
-//! route set is small, and using one parser makes the authentication and body
-//! limits easy to audit. The app itself lives in [`AppActor`]; connections
-//! never hold a lock across `App::next_event().await`.
+//! The raw `tokio` HTTP/SSE server for `nexus host`, deliberately framework-free
+//! so authentication and body limits are easy to audit.
 
 use std::io;
 use std::net::SocketAddr;
@@ -23,7 +19,6 @@ use crate::appserver::AppRegistry;
 use crate::db::UsageRange;
 use crate::sync::Changeset;
 
-// Code moved into `api/` reaches the sibling host modules through `super::`.
 use super::wire::WireEvent;
 
 mod actor;
@@ -40,7 +35,6 @@ use http::{
 };
 use tool_rpc::{ToolRpcError, ToolRpcResponse, ToolRunResult, parse_tool_rpc_request};
 
-// Test modules reach moved helpers through `use super::*`.
 #[cfg(test)]
 use super::wire::WireModel;
 #[cfg(test)]
@@ -74,23 +68,18 @@ const UPSTREAM_HEADERS_TIMEOUT: Duration = Duration::from_secs(20);
 const UPSTREAM_CHUNK_TIMEOUT: Duration = Duration::from_mins(2);
 const MAX_APP_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_CONNECTIONS: usize = 128;
-/// CORS block shared by every response, including the `OPTIONS` preflight.
-/// `Access-Control-Allow-Methods` is required: without it a browser rejects
-/// the preflight for `POST /v1/command` and `POST /v1/chat/completions`
-/// (JSON bodies are never "simple" requests).
+/// CORS block shared by every response; `Access-Control-Allow-Methods` is
+/// required for browser preflights.
 const CORS_HEADERS: &str = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS\r\nAccess-Control-Allow-Headers: Authorization, Content-Type, X-Nexus-Backend, X-Nexus-Blob-Hash, X-Content-SHA256\r\nAccess-Control-Max-Age: 600\r\n";
 
 /// Configuration for a local host listener.
 #[derive(Debug, Clone)]
 pub struct HostConfig {
-    /// TCP port on loopback. `0` asks the OS for an ephemeral port (useful in
-    /// tests); the CLI defaults this to `8643`.
+    /// TCP port on loopback; `0` asks the OS for an ephemeral port.
     pub port: u16,
-    /// Bearer token required by `/v1/*`; registered public app UUID routes do
-    /// not embed or issue this token.
+    /// Bearer token required by `/v1/*`; public app UUID routes do not use it.
     pub token: String,
-    /// Optional upstream override used by hermetic gateway tests. Production
-    /// callers leave this `None`, selecting the provider's canonical base.
+    /// Optional upstream override for hermetic gateway tests.
     gateway_base: Option<String>,
     web_dir: Option<std::path::PathBuf>,
 }
@@ -113,8 +102,7 @@ impl HostConfig {
         self
     }
 
-    /// Route all gateway flavors to a local mock upstream. Intended for
-    /// network-free integration tests, not normal hosting.
+    /// Route all gateway flavors to a local mock upstream, for network-free tests.
     #[must_use]
     pub fn with_gateway_base(mut self, base: impl Into<String>) -> Self {
         self.gateway_base = Some(base.into());
@@ -122,9 +110,8 @@ impl HostConfig {
     }
 }
 
-/// A running host server. It owns the listener and app actor; dropping it
-/// aborts both background tasks, while [`Self::shutdown`] gives them a clean
-/// cancellation opportunity first.
+/// A running host server; dropping it aborts its tasks, while [`Self::shutdown`]
+/// cancels them cleanly.
 pub struct HostServer {
     state: Arc<HostState>,
     shutdown: Arc<Notify>,
@@ -210,9 +197,8 @@ impl HostServer {
         self.addr
     }
 
-    /// Subscribe to the global app event stream. Each subscriber receives
-    /// events emitted after it subscribes; slow subscribers may be told they
-    /// lagged and should refresh from `/v1/snapshot`.
+    /// Subscribe to the global app event stream; slow subscribers may lag and
+    /// should refresh.
     pub fn subscribe(&self) -> broadcast::Receiver<WireEvent> {
         self.state.events.subscribe()
     }
@@ -337,9 +323,8 @@ async fn handle_connection(mut stream: TcpStream, state: Arc<HostState>) -> io::
         return handle_gateway(&mut stream, &request, &state).await;
     }
     if is_apps {
-        // Public app URLs are capabilities in their own right: the registry
-        // UUID is high entropy, while the host bearer token never appears in
-        // the URL, cookie jar, referrer, or proxy logs.
+        // Public app URLs are capabilities: the registry UUID is high entropy and
+        // the host bearer token never appears in the URL or logs.
         return proxy_app(&mut stream, &request, &path, &query, &state).await;
     }
     if !is_v1 && path != "/.well-known/nexus" {
@@ -1034,9 +1019,8 @@ async fn proxy_app(
         stream,
         status,
         &content_type,
-        // Generated applications are untrusted documents on the host origin.
-        // An opaque sandbox origin prevents access to the web client's tokens
-        // in browser storage, including when an app is opened in a new tab.
+        // Generated applications are untrusted documents; an opaque sandbox
+        // origin keeps them from the web client's tokens in browser storage.
         "Content-Security-Policy: sandbox allow-scripts allow-forms allow-downloads allow-popups\r\nX-Content-Type-Options: nosniff\r\n",
         &body,
         request.method == "HEAD",

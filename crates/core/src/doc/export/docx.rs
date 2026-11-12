@@ -101,8 +101,8 @@ impl Package {
         }
         out
     }
-    /// Runs for `text`. `literal` gives code as pieces with an optional
-    /// syntax color (hex without `#`) instead of parsing inline Markdown.
+    /// Runs for `text`; `literal` gives code pieces with an optional syntax color
+    /// (hex without `#`) instead of parsing inline Markdown.
     fn rich(
         &mut self,
         text: &str,

@@ -111,10 +111,8 @@ fn wire_event_redacts_provider_and_host_credentials() {
 
 #[test]
 fn fresh_codex_login_never_reaches_host_redaction_with_credentials() {
-    // The event is converted before the actor applies it to `App`, so the
-    // newly-issued credentials are not present in `app.saved` yet. The
-    // wire conversion must therefore remove them structurally rather than
-    // relying on the later string-redaction backstop.
+    // The event is converted before the actor applies it, so newly issued
+    // credentials are not in `app.saved`; remove them structurally.
     let app = test_app();
     let event = AppEvent::Login(Some(crate::app::LoginMsg::Done(Ok(
         crate::config::CodexCredentials {
@@ -175,8 +173,7 @@ fn codex_routes_through_the_gateway_like_every_other_backend() {
     );
     app.models = vec![test_model("gpt-5-codex", BackendTag::Codex)];
 
-    // Resolvable by raw id, by composite id, and by the public
-    // `codex:`-prefixed id `/v1/models` advertises.
+    // Resolvable by raw id, composite id, and the public `codex:`-prefixed id.
     for model in ["gpt-5-codex", "codex:gpt-5-codex"] {
         let route = gateway_route(&app, model, None).expect("codex model routes");
         assert_eq!(route.tag, BackendTag::Codex);
@@ -284,9 +281,7 @@ async fn host_http_auth_models_command_and_snapshot_are_hermetic() {
     let unauthorized = raw_request(addr, request("GET", "/v1/snapshot", None, &[])).await;
     assert!(String::from_utf8_lossy(&unauthorized).starts_with("HTTP/1.1 401"));
 
-    // Authentication must happen before waiting for or allocating a
-    // declared large body. An attacker that does not know the token gets
-    // 401 immediately instead of tying up the request-read timeout.
+    // Authenticate before waiting for or allocating a declared large body.
     let oversized_unauthorized = raw_request(
         addr,
         format!(
@@ -667,8 +662,8 @@ data: [DONE]
 #[tokio::test]
 async fn host_sse_and_http_blob_transfer_are_hermetic() {
     let mut app = test_app();
-    // The upload path rescans and starts semantic backfill; keep this
-    // transport-only test independent of the fake provider key.
+    // The upload path rescans and starts semantic backfill; keep this test
+    // independent of the fake provider key.
     app.index.embedding_model.clear();
     let space_id = app.active_space.id.clone();
     let name = "remote.txt";

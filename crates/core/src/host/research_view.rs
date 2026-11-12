@@ -1,9 +1,5 @@
-//! Reconnectable, session-scoped research projections for thin clients.
-//!
-//! The HTTP router owns authentication and command dispatch.  This module
-//! keeps the read projection in one place so a reconnecting browser can
-//! reconstruct the live stages and report without relying on missed SSE
-//! frames.
+//! Reconnectable, session-scoped research projections for thin clients, so a
+//! reconnecting browser can rebuild live stages without missed SSE frames.
 
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
@@ -36,8 +32,8 @@ pub struct ResearchView {
     pub running: bool,
 }
 
-/// Build the durable view for exactly `session_id`.  In particular, a job in
-/// another tab/session cannot leak its gate, report, or stage rows here.
+/// Build the durable view for exactly `session_id`; another session's rows never
+/// leak in.
 pub fn view(app: &App, session_id: &str) -> Result<ResearchView> {
     ensure_session(app, session_id)?;
     let messages = if app
@@ -138,10 +134,8 @@ pub fn view(app: &App, session_id: &str) -> Result<ResearchView> {
     })
 }
 
-/// Extract the numbered questions from the durable survey/plan transcript.
-/// The prompt also contains a heading, plan briefs, and reply instructions;
-/// exposing those lines as questions makes a reconnecting web client render a
-/// different gate from the live event.
+/// Extract the numbered questions from the durable survey/plan transcript,
+/// ignoring headings and instructions.
 fn gate_questions(prompt: &str) -> Vec<String> {
     let numbered = prompt
         .lines()
@@ -158,9 +152,8 @@ fn gate_questions(prompt: &str) -> Vec<String> {
     if !numbered.is_empty() {
         return numbered;
     }
-    // Keep legacy/unusual prompts visible when they do not use the normal
-    // numbered format; an empty questions array would hide the actionable
-    // text behind an otherwise usable gate.
+    // Keep unusual prompts visible when they do not use the normal numbered
+    // format; an empty questions array would hide the actionable text.
     prompt
         .lines()
         .map(str::trim)
@@ -182,8 +175,7 @@ fn ensure_session(app: &App, session_id: &str) -> Result<()> {
     }
 }
 
-/// Read-only host route helper.  The router should pass `/v1/research/{id}`
-/// or `/v1/research/{id}/citations` after authentication.
+/// Read-only host route helper for `/v1/research/{id}` and its citations.
 // The explicit route table keeps method and session checks together.
 #[allow(clippy::too_many_lines)]
 pub fn dispatch(

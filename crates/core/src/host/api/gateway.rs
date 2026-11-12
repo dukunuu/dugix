@@ -22,9 +22,8 @@ use super::{
 };
 use crate::host::wire::{WireBackendTag, WireModel, public_model_id};
 
-/// A backend route selected for one gateway request. The API handler keeps
-/// this object private so an upstream key can never be serialized or returned
-/// in an error response.
+/// A backend route for one gateway request; kept private so its upstream key
+/// cannot leak.
 #[derive(Clone)]
 pub(super) struct GatewayRoute {
     pub(super) tag: BackendTag,
@@ -33,19 +32,13 @@ pub(super) struct GatewayRoute {
     pub(super) account_id: Option<String>,
 }
 
-/// Usage observed while forwarding one provider response.
-///
-/// This owns only the gateway's own problem — reassembling `SSE` frames from
-/// arbitrary socket chunks — and hands the JSON to the same parser the
-/// in-process client uses, so a gateway request and a direct request account
-/// for the identical response identically.
+/// Usage observed while forwarding one provider response, reassembling `SSE`
+/// frames from socket chunks.
 #[derive(Debug, Default)]
 pub(super) struct GatewayUsage {
     usage: Option<Usage>,
-    /// Bytes not yet forming a complete `SSE` line (or the whole body of a
-    /// non-streaming response). Chunk boundaries fall wherever the socket
-    /// puts them, so parsing each chunk in isolation would drop the usage
-    /// frame whenever it straddles two of them.
+    /// Bytes not yet forming a complete `SSE` line, or the whole non-streaming
+    /// body.
     buffer: Vec<u8>,
 }
 
@@ -178,11 +171,9 @@ pub(super) struct BackendInfo {
     pub(super) tag: WireBackendTag,
     pub(super) name: &'static str,
     pub(super) configured: bool,
-    /// Whether `/v1/chat/completions` can route this backend. Always true;
-    /// kept in the wire shape so existing clients keep parsing `/v1/backends`.
+    /// Whether `/v1/chat/completions` can route this backend; always true.
     pub(super) gateway_supported: bool,
-    /// Stable explanation when a backend cannot be routed. Always `None`
-    /// today — retained alongside `gateway_supported` for the same reason.
+    /// Stable explanation when a backend cannot be routed; always `None` today.
     pub(super) gateway_error: Option<&'static str>,
     pub(super) default_model: String,
     pub(super) model_count: usize,

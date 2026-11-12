@@ -7,9 +7,7 @@ use uuid::Uuid;
 use super::Db;
 use crate::provider::ModelPricing;
 
-// --- usage analytics ---
-
-/// Time window for the `/usage` dashboard: which logged requests count.
+/// Time window for the `/usage` dashboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum UsageRange {
     Day,
@@ -20,10 +18,10 @@ pub enum UsageRange {
 }
 
 impl UsageRange {
-    /// Cycle order for the popup's range key (`←/→`).
+    /// Cycle order for the popup's range key.
     pub const CYCLE: [Self; 4] = [Self::Day, Self::Week, Self::Month, Self::All];
 
-    /// Short badge label, e.g. the `24h` in the popup title.
+    /// Short badge label.
     pub const fn label(self) -> &'static str {
         match self {
             Self::Day => "24h",
@@ -53,8 +51,8 @@ impl UsageRange {
         }
     }
 
-    /// Parse a persisted `app_settings` value; unknown keys fall back to
-    /// the default (all time).
+    /// Parse a persisted `app_settings` value; unknown keys fall back to the
+    /// default.
     pub fn from_key(key: &str) -> Self {
         Self::CYCLE
             .iter()
@@ -107,10 +105,7 @@ impl UsageRange {
     }
 }
 
-/// The bare model name used by the ``OpenRouter`` catalog's `vendor/name` ids:
-/// backend prefixes (`go:`, `openai:`, `codex:`, `opencode:`) and any
-/// `vendor/` part are stripped (`go:deepseek-v4-flash` → `deepseek-v4-flash`,
-/// `openai:gpt-5` → `gpt-5`). Empty when the id has no name left.
+/// The bare model name from a `vendor/name` id, with backend prefixes stripped.
 pub fn price_name(model: &str) -> &str {
     let stripped = ["go:", "openai:", "codex:", "opencode:"]
         .iter()
@@ -119,10 +114,8 @@ pub fn price_name(model: &str) -> &str {
     stripped.rsplit('/').next().unwrap_or(stripped)
 }
 
-/// Catalog price for a usage row's model: exact `model_prices` key first,
-/// then the ``OpenRouter`` `vendor/name` entry matching the bare name (same
-/// cross-backend fallback as `Db::model_price`, but against an in-memory
-/// snapshot so a 28k-row backfill needs no per-row SQL).
+/// Catalog price for a model: exact key first, then the shortest `vendor/name`
+/// match, against an in-memory snapshot so a backfill needs no per-row SQL.
 fn catalog_price<'a>(
     prices: &'a std::collections::HashMap<String, ModelPricing>,
     model: &str,
@@ -144,13 +137,8 @@ fn catalog_price<'a>(
         .map(|(_, price)| price)
 }
 
-/// Price a token breakdown. `prompt_tokens` is the normalized total (see
-/// `provider::PromptConvention`), so each cached bucket replaces — rather than
-/// adds to — the ordinary prompt rate.
-///
-/// The buckets are subsets of the total by construction. `saturating_sub`
-/// here is for rows logged before that was enforced, not a live correction:
-/// the assertion is what a mis-normalized provider shape should trip.
+/// Price a token breakdown; cache buckets are subsets of the normalized prompt
+/// total.
 fn catalog_request_cost(
     price: ModelPricing,
     prompt_tokens: u64,
@@ -184,7 +172,7 @@ struct CostBackfillRow {
     cache_read_tokens: u64,
     cache_creation_tokens: u64,
     old_cost: Option<f64>,
-    /// `None` identifies rows written before cost provenance was tracked.
+    /// `None` means provenance predates this field.
     cost_is_provider: Option<bool>,
 }
 
@@ -196,13 +184,9 @@ pub struct UsageTotals {
     pub completion_tokens: u64,
     pub cache_read_tokens: u64,
     pub cache_creation_tokens: u64,
-    /// Prompt tokens from rows whose cache accounting is trustworthy — the
-    /// only honest denominator for a cache hit rate. Rows logged before the
-    /// prompt-token convention was normalized are excluded, so a window that
-    /// straddles the change reports a rate over the part it can vouch for
-    /// instead of blending two conventions.
+    /// Prompt tokens from rows whose cache accounting is trustworthy.
     pub rated_prompt_tokens: u64,
-    /// Cache reads from those same rows — the matching numerator.
+    /// Cache reads from those same rows.
     pub rated_cache_read_tokens: u64,
     /// Total USD (0 when no model had a known price).
     pub cost: f64,
@@ -217,13 +201,9 @@ pub struct UsageDay {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub cache_read_tokens: u64,
-    /// Prompt tokens from rows whose cache accounting is trustworthy — the
-    /// only honest denominator for a cache hit rate. Rows logged before the
-    /// prompt-token convention was normalized are excluded, so a window that
-    /// straddles the change reports a rate over the part it can vouch for
-    /// instead of blending two conventions.
+    /// Prompt tokens from rows whose cache accounting is trustworthy.
     pub rated_prompt_tokens: u64,
-    /// Cache reads from those same rows — the matching numerator.
+    /// Cache reads from those same rows.
     pub rated_cache_read_tokens: u64,
     pub cost: f64,
 }
@@ -236,13 +216,9 @@ pub struct UsageByBackend {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub cache_read_tokens: u64,
-    /// Prompt tokens from rows whose cache accounting is trustworthy — the
-    /// only honest denominator for a cache hit rate. Rows logged before the
-    /// prompt-token convention was normalized are excluded, so a window that
-    /// straddles the change reports a rate over the part it can vouch for
-    /// instead of blending two conventions.
+    /// Prompt tokens from rows whose cache accounting is trustworthy.
     pub rated_prompt_tokens: u64,
-    /// Cache reads from those same rows — the matching numerator.
+    /// Cache reads from those same rows.
     pub rated_cache_read_tokens: u64,
     pub cost: f64,
 }
@@ -255,13 +231,9 @@ pub struct UsageByModel {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub cache_read_tokens: u64,
-    /// Prompt tokens from rows whose cache accounting is trustworthy — the
-    /// only honest denominator for a cache hit rate. Rows logged before the
-    /// prompt-token convention was normalized are excluded, so a window that
-    /// straddles the change reports a rate over the part it can vouch for
-    /// instead of blending two conventions.
+    /// Prompt tokens from rows whose cache accounting is trustworthy.
     pub rated_prompt_tokens: u64,
-    /// Cache reads from those same rows — the matching numerator.
+    /// Cache reads from those same rows.
     pub rated_cache_read_tokens: u64,
     pub cost: f64,
 }
@@ -276,9 +248,7 @@ pub struct UsageRow {
     pub completion_tokens: u64,
     pub cache_read_tokens: u64,
     pub cache_creation_tokens: u64,
-    /// How this row's prompt count was reported. `Unknown` covers both
-    /// providers that report no cache accounting and rows logged before the
-    /// convention was normalized — either way, no rate is claimed for it.
+    /// How this row's prompt count was reported; `Unknown` claims no cache rate.
     pub prompt_convention: crate::provider::PromptConvention,
     pub cost: Option<f64>,
 }
@@ -395,8 +365,8 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// Record one completed API request's usage. Content-free — only
-    /// backend/model/tokens — so it never leaks conversation text.
+    /// Record one completed request's usage; content-free, so it never leaks
+    /// conversation text.
     #[allow(clippy::too_many_arguments)]
     pub fn log_usage(
         &self,
@@ -437,10 +407,8 @@ impl Db {
         Ok(self.conn.last_insert_rowid())
     }
 
-    /// Update a usage row written earlier in the same request's lifecycle.
-    /// `OpenCode` Zen splits accounting across two streamed events (real
-    /// usage, then the provider-reported cost); the second event updates the
-    /// row the first created instead of inserting a duplicate.
+    /// Update a usage row written earlier in the same request; `OpenCode` Zen
+    /// splits usage and cost across two streamed events.
     #[allow(clippy::too_many_arguments)]
     pub fn update_usage(
         &self,
@@ -471,10 +439,8 @@ impl Db {
         Ok(())
     }
 
-    /// Estimated cost of one completed request in USD at current catalog
-    /// prices (`None` when no price is known). Cache reads and writes use the
-    /// catalog's separate rates when present. Non-`OpenRouter` models fall
-    /// back to the matching `OpenRouter` catalog entry (see `model_price`).
+    /// Estimated cost of one completed request in USD, or `None` when no price is
+    /// known.
     pub fn request_cost(
         &self,
         model: &str,
@@ -494,21 +460,11 @@ impl Db {
         })
     }
 
-    /// Reconcile estimated request costs with the current `model_prices`
-    /// catalog. Rows logged before pricing existed are filled, and stale
-    /// estimates (legacy unit bug, price changes, or ignored cache discounts)
-    /// are recomputed. Provider-reported costs are exact and never overwritten.
-    /// Non-`OpenRouter` models are priced through their `OpenRouter`
-    /// `vendor/name` twin, like `model_price`. Existing costs for models with
-    /// no current catalog entry are left untouched.
-    ///
-    /// Idempotent — unchanged rows are not rewritten — so it can run after
-    /// every catalog refresh and whenever the `/usage` popup opens. Returns
-    /// how many rows were visited.
+    /// Reconcile estimated request costs with the current catalog; provider-
+    /// reported costs are never overwritten. Returns how many rows were visited.
     pub fn backfill_usage_costs(&mut self) -> Result<usize> {
-        // The catalog endpoint reports USD per token while every cost formula
-        // here uses USD per 1M. Heal a legacy per-token-shaped catalog before
-        // computing costs. NULL cache rates remain NULL under multiplication.
+        // The catalog endpoint reports USD per token while cost formulas here use
+        // USD per 1M; heal a per-token-shaped catalog first.
         let max_price: f64 = self.conn.query_row(
             "SELECT COALESCE(MAX(prompt_price), 0) FROM cache.model_prices",
             [],
@@ -524,8 +480,7 @@ impl Db {
                 [],
             )?;
         }
-        // Snapshot the catalog, then rewrite every usage row in one
-        // transaction. 28k rows is a few ms even on a file DB.
+        // Snapshot the catalog, then rewrite every usage row in one transaction.
         let mut prices: std::collections::HashMap<String, ModelPricing> =
             std::collections::HashMap::default();
         {
@@ -578,9 +533,8 @@ impl Db {
                 "UPDATE usage_log SET cost = ?2, cost_is_provider = 0, updated_at = ?3 WHERE id = ?1",
             )?;
             for row in &rows {
-                // Before provenance was added, OpenCode was the only backend
-                // whose costs came from the provider. Preserve those legacy
-                // exact values; all new rows carry an explicit true/false bit.
+                // Rows without a provenance bit may carry exact provider costs;
+                // preserve them.
                 let legacy_opencode_cost = row.cost_is_provider.is_none()
                     && row.backend == "OpenCode Go"
                     && row.old_cost.is_some();
@@ -596,8 +550,8 @@ impl Db {
                         row.cache_creation_tokens,
                     )
                 });
-                // Fill missing rows and heal stale estimates. Never erase an
-                // existing cost when a model drops out of the catalog.
+                // Fill missing rows and heal stale estimates; never erase a cost
+                // when a model leaves the catalog.
                 let write = match (recomputed, row.old_cost) {
                     (Some(cost), None) => Some(cost),
                     (Some(cost), Some(old)) if (cost - old).abs() > 1e-12 => Some(cost),
@@ -612,10 +566,8 @@ impl Db {
         Ok(rows.len())
     }
 
-    /// Batch save/refresh catalog prices in one transaction. The `OpenRouter`
-    /// catalog is hundreds of models; per-row autocommits (each an fsync on
-    /// the UI task) made the post-load pause noticeable. The `WHERE` clause
-    /// also skips rows whose price didn't move, so re-fetches write nothing.
+    /// Batch save catalog prices in one transaction, skipping rows whose price
+    /// didn't move.
     pub fn upsert_model_prices(&mut self, prices: &[(String, String, ModelPricing)]) -> Result<()> {
         if prices.is_empty() {
             return Ok(());
@@ -654,12 +606,8 @@ impl Db {
         Ok(())
     }
 
-    /// Catalog prices for a model in USD per 1M tokens. Tries the exact
-    /// `model_prices` row first (`OpenRouter` ids match directly); if there is
-    /// none, falls back to the `OpenRouter` catalog entry for the same model —
-    /// backend prefixes and the catalog's `vendor/` part are stripped. Other
-    /// backends expose no pricing, so the matching `OpenRouter` list price is
-    /// the best available estimate.
+    /// Catalog prices for a model in USD per 1M tokens, falling back to its
+    /// `OpenRouter` twin.
     pub fn model_price(&self, model: &str) -> Option<ModelPricing> {
         let read_price = |r: &rusqlite::Row| {
             Ok(ModelPricing {
@@ -696,10 +644,7 @@ impl Db {
             .ok()
     }
 
-    /// Totals across logged requests, optionally limited to requests logged
-    /// at or after `since` (RFC3339; `None` = all time). `created_at` is
-    /// stored as fixed-width UTC RFC3339, so lexicographic comparison is a
-    /// correct time filter.
+    /// Totals across logged requests, optionally since an RFC3339 cutoff.
     pub fn usage_totals(&self, since: Option<&str>) -> Result<UsageTotals> {
         let mut sql = String::from(
             "SELECT COUNT(*),
@@ -736,8 +681,7 @@ impl Db {
         Ok(totals)
     }
 
-    /// Per-backend aggregates, most-used first. `since` filters the window
-    /// (RFC3339 cutoff; `None` = all time).
+    /// Per-backend aggregates, most-used first.
     pub fn usage_by_backend(&self, since: Option<&str>) -> Result<Vec<UsageByBackend>> {
         let mut sql = String::from(
             "SELECT backend, COUNT(*),
@@ -775,8 +719,7 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// Per-model aggregates, most-used first. `since` filters the window
-    /// (RFC3339 cutoff; `None` = all time).
+    /// Per-model aggregates, most-used first.
     pub fn usage_by_model(&self, limit: u64, since: Option<&str>) -> Result<Vec<UsageByModel>> {
         let mut sql = String::from(
             "SELECT model, COUNT(*),
@@ -816,8 +759,7 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// The most recent logged requests, newest first. `since` filters the
-    /// window (RFC3339 cutoff; `None` = all time).
+    /// The most recent logged requests, newest first.
     pub fn usage_recent(&self, limit: u64, since: Option<&str>) -> Result<Vec<UsageRow>> {
         let mut sql = String::from(
             "SELECT created_at, backend, model, prompt_tokens, completion_tokens,
@@ -839,8 +781,7 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// Per-day aggregates (`created_at` is RFC 3339, so its first 10 chars
-    /// are the date), newest day first — the CLI's `usage --by-day`.
+    /// Per-day aggregates, newest day first.
     pub fn usage_by_day(&self, limit: u64, since: Option<&str>) -> Result<Vec<UsageDay>> {
         let mut sql = String::from(
             "SELECT substr(created_at, 1, 10) AS day, COUNT(*),

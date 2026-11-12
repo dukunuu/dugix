@@ -1,6 +1,5 @@
-//! GFM input via the workspace's existing pulldown-cmark parser. Inline
-//! Markdown is canonicalized, never interpreted as HTML. Non-GFM structural
-//! blocks use a lossless `nexus-block` fenced JSON extension on Markdown out.
+//! GFM input via pulldown-cmark; inline Markdown is canonicalized, never HTML.
+//! Non-GFM structural blocks use a lossless `nexus-block` fenced JSON extension.
 use super::model::{Block, Doc, ImageWidth, Kind, ListItem, Tone};
 use crate::deck::Align;
 use pulldown_cmark::{
@@ -153,8 +152,7 @@ fn list_items(nodes: &[Tree<'_>]) -> Vec<ListItem> {
         .collect()
 }
 
-/// Parsed blocks plus footnote definitions, which live on the document rather
-/// than masquerading as visible blocks. `first_h1_is_title` is opt-in.
+/// Parsed blocks plus footnote definitions; `first_h1_is_title` is opt-in.
 #[derive(Clone, Debug, Default)]
 pub struct Parsed {
     pub blocks: Vec<Block>,
@@ -327,8 +325,8 @@ fn extension(block: &Block) -> String {
     format!("{fence}nexus-block\n{source}\n{fence}")
 }
 
-/// GFM for one complete block. Structural blocks without a Markdown equivalent
-/// and explicit style/width overrides are losslessly encoded as fenced JSON.
+/// GFM for one block; structural blocks without a Markdown equivalent use fenced
+/// JSON.
 #[must_use]
 pub fn render_block(block: &Block) -> String {
     if block.style.is_some() {
@@ -431,13 +429,8 @@ pub fn render(doc: &Doc) -> String {
     out
 }
 
-/// `doc` with its blocks and footnotes replaced by `source`, Markdown in the
-/// lossless [`render`] form (a source editor's text). Blocks keep their ids
-/// when unchanged, or when they are the same kind of block in the same place
-/// (an edited paragraph), so comments stay anchored; the first title also
-/// renames the doc.
-/// # Errors
-/// The result fails document validation (the message lists each problem).
+/// Replace `doc`'s blocks and footnotes from lossless Markdown, keeping block ids
+/// where they continue so comments stay anchored.
 pub fn apply_source(doc: &Doc, source: &str) -> anyhow::Result<Doc> {
     let parsed = parse_document(source, true);
     let mut blocks = parsed.blocks;
@@ -459,8 +452,8 @@ pub fn apply_source(doc: &Doc, source: &str) -> anyhow::Result<Doc> {
     })
 }
 
-/// Give each new block the id of an old block it continues: the next equal
-/// block, else the next old block when it is the same kind.
+/// Give each new block the id of an old block it continues: the next equal block,
+/// else the next old block of the same kind.
 fn keep_ids(old: &[Block], new: &mut [Block]) {
     let same_kind =
         |a: &Block, b: &Block| std::mem::discriminant(&a.kind) == std::mem::discriminant(&b.kind);
@@ -480,8 +473,8 @@ fn keep_ids(old: &[Block], new: &mut [Block]) {
     }
 }
 
-/// Clean GitHub Markdown for sharing, deliberately dropping presentation-only
-/// overrides rather than emitting the lossless internal JSON extension.
+/// Clean GitHub Markdown for sharing, dropping presentation-only overrides
+/// rather than emitting the lossless JSON extension.
 #[must_use]
 pub fn export(doc: &Doc) -> String {
     let mut headings = Vec::new();

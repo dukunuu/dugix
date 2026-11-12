@@ -16,8 +16,8 @@ pub(crate) struct Run {
 }
 
 pub(crate) fn runs(source: &str) -> Vec<Run> {
-    // Definitions live on Doc, outside the block. Register reference labels
-    // with the parser, then omit those synthetic definitions from the output.
+    // Definitions live on Doc, outside the block; register reference labels with
+    // the parser, then omit the synthetic definitions from the output.
     let mut input = source.to_string();
     let mut labels = std::collections::BTreeSet::new();
     for tail in source.split("[^").skip(1) {
@@ -105,9 +105,8 @@ fn mix(under: &str, over: &str, amount: f64) -> Option<String> {
     Some(format!("#{:02x}{:02x}{:02x}", blend(0), blend(1), blend(2)))
 }
 
-/// The document's theme as a deck theme. The built-in design names only
-/// bg/fg/accent/muted, so the `surface` and `border` roles that blocks use
-/// are derived from them when a design does not define them.
+/// The document's theme as a deck theme, deriving `surface` and `border` roles
+/// when a design omits them.
 pub(crate) fn theme(doc: &super::Doc) -> crate::deck::Theme {
     let mut colors = doc.theme.colors.clone();
     let (bg, fg) = (

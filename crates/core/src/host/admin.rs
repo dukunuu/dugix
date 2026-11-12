@@ -179,8 +179,7 @@ fn attach_image(app: &mut App, query: &str, body: &[u8]) -> Result<Value> {
     Ok(json!({ "markdown": markdown }))
 }
 
-/// The memory book as an editable Markdown document: saving applies the
-/// edit as a diff against the database.
+/// The memory book as editable Markdown; saving applies the edit as a diff.
 fn memory_document(app: &mut App, method: &str, body: &[u8]) -> Result<Value> {
     #[derive(Deserialize)]
     struct Edit {

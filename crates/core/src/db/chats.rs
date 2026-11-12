@@ -11,8 +11,8 @@ pub(crate) const INDEX_BATCH: usize = 16;
 pub(crate) const EMBED_BATCH: usize = 32;
 pub(crate) const CHUNK_TITLE: &str = "chat";
 
-// TEMP triggers belong to the connection, not the durable schema. They also
-// cover sync's direct SQL deletes and edits made through tool connections.
+// TEMP triggers belong to the connection, not the durable schema; they also
+// cover sync's direct SQL deletes and edits through tool connections.
 pub(super) fn install_cleanup(conn: &Connection) -> Result<()> {
     if !super::has_column(conn, "messages", "id")? {
         return Ok(());
@@ -68,7 +68,7 @@ pub(crate) fn index_pending(conn: &Connection) -> Result<usize> {
     Ok(messages.len())
 }
 
-/// One bounded embedding batch. Sequence numbers remain local to each message.
+/// One bounded embedding batch; sequence numbers are local to each message.
 pub(crate) fn missing_vectors(
     conn: &Connection,
     identity: &str,
@@ -91,7 +91,8 @@ pub(crate) fn missing_vectors(
         .collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-/// Store only chunks that still exist with the same text (a delete/edit can race a job).
+/// Store only chunks that still exist with the same text, since a delete or edit
+/// can race a job.
 pub(crate) fn store_vectors(
     conn: &Connection,
     identity: &str,

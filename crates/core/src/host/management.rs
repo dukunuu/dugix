@@ -1,8 +1,5 @@
-//! Synchronous management operations used by the web host.
-//!
-//! The HTTP actor owns an [`App`] and calls these functions while it is the
-//! only mutable owner.  Keeping the validation here makes the web surface
-//! obey the same space and session boundaries as the TUI.
+//! Synchronous management operations used by the web host, enforcing the same
+//! space and session boundaries as the TUI.
 
 use std::fs;
 
@@ -142,8 +139,7 @@ pub fn save_swarm_roster(
     swarm_state(app, session_id)
 }
 
-/// Toggle swarm mode for a session.  The running state is intentionally left
-/// to the app's existing start/stop lifecycle.
+/// Toggle swarm mode; the running state follows the app's start/stop lifecycle.
 pub fn set_swarm_mode(
     app: &mut App,
     space_id: &str,
@@ -163,8 +159,7 @@ pub fn set_swarm_mode(
     swarm_state(app, session_id)
 }
 
-/// Start a turn for the active session. Swarm streaming is owned by App and
-/// is therefore deliberately not duplicated in the HTTP layer.
+/// Start a turn for the active session; streaming stays in App.
 pub fn start_swarm(app: &mut App, space_id: &str, session_id: &str) -> Result<SwarmState> {
     session_in_space(app, session_id, space_id)?;
     if app
@@ -341,15 +336,8 @@ pub fn run_watch(app: &mut App, space_id: &str, id: &str) -> Result<bool> {
     Ok(app.run_one_watch(&watch))
 }
 
-/// Dispatch the management surface used by the host actor.
-///
-/// Contract: `GET /v1/swarm?session_id=...`, `PUT /v1/swarm/roster`,
-/// `POST /v1/swarm/mode|start|stop`; `GET /v1/skills`,
-/// `GET /v1/skills/:name?detail=1`, `POST /v1/skills/arm|install`,
-/// `DELETE /v1/skills/:name`; `GET /v1/watches`, `POST /v1/watches`,
-/// `DELETE /v1/watches/:id`, and `POST /v1/watches/:id/run`.
-/// Bodies are JSON and responses are JSON values.  Session and watch
-/// mutations are always checked against the active space.
+/// Dispatch the management surface used by the host actor; session and watch
+/// mutations are checked against the active space.
 pub fn dispatch(
     app: &mut App,
     method: &str,
