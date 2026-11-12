@@ -1646,6 +1646,9 @@ impl OpenRouter {
                         .map(|call| (call.name.clone(), call.arguments.clone()))
                         .collect();
                     let results = crate::tools::run_scheduled(&*toolbox, &pending).await;
+                    // Image messages wait until every tool result is in: providers
+                    // reject a user message between results of the same step.
+                    let mut image_messages = Vec::new();
                     for (index, (call, (result, status))) in calls.iter().zip(results).enumerate() {
                         let _ = tx.send(StreamEvent::Status("Running tool…".to_string()));
                         let _ = tx.send(StreamEvent::Status(status));
@@ -1693,13 +1696,11 @@ impl OpenRouter {
                             tool_call_id: Some(call.id.clone()),
                             ..Default::default()
                         });
-                        // Inject image references from the tool result so the
-                        // vision model can see them on the next request.
                         if toolbox.supports_images()
                             && let Some(files_dir) = toolbox.space_files_dir()
                             && let Some(imgs) = extract_tool_images(&result, &files_dir)
                         {
-                            messages.push(ChatMessage {
+                            image_messages.push(ChatMessage {
                                 role: "user".to_string(),
                                 content: imgs.description,
                                 images: imgs.urls,
@@ -1707,6 +1708,7 @@ impl OpenRouter {
                             });
                         }
                     }
+                    messages.extend(image_messages);
                     (output, calls, tool_results)
                 }
             };

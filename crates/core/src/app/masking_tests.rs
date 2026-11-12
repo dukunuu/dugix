@@ -393,6 +393,42 @@ fn masked_tool_images_are_not_resent() {
 }
 
 #[test]
+fn tool_images_follow_every_result_of_their_step() {
+    let mut app = fixture(0, 0);
+    app.models[0].supports_images = true;
+    app.refresh_toolbox();
+    let files = app.space.files_dir(&app.active_space.name);
+    std::fs::create_dir_all(&files).unwrap();
+    image::RgbaImage::new(1, 1)
+        .save(files.join("image.png"))
+        .unwrap();
+    app.messages = vec![
+        tool(
+            "shot",
+            "browser__browser_take_screenshot",
+            "![page](image.png)",
+        ),
+        tool("read", "fs", "text"),
+    ];
+    let roles: Vec<_> = app
+        .build_history()
+        .into_iter()
+        .filter(|m| m.role != "system")
+        .map(|m| (m.role, m.images.len()))
+        .collect();
+    assert_eq!(
+        roles,
+        [
+            ("assistant".to_string(), 0),
+            ("tool".to_string(), 0),
+            ("tool".to_string(), 0),
+            ("user".to_string(), 1),
+        ]
+    );
+    discard(app);
+}
+
+#[test]
 fn mask_boundary_persists_in_cache_across_switches_and_restarts() {
     let root = std::env::temp_dir().join(format!("nexus-mask-db-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();

@@ -335,6 +335,8 @@ fn append_tool_call_history(
         images: Vec::new(),
         cache_breakpoint: false,
     });
+    // Image messages follow the last tool result; providers reject a user message between results.
+    let mut image_messages = Vec::new();
     for (row, masked) in rows {
         let call = row.call;
         let images = tool_images_dir
@@ -368,7 +370,7 @@ fn append_tool_call_history(
             cache_breakpoint: false,
         });
         if let Some(images) = images {
-            history.push(ChatMessage {
+            image_messages.push(ChatMessage {
                 role: "user".to_string(),
                 content: images.description,
                 reasoning_content: None,
@@ -379,6 +381,7 @@ fn append_tool_call_history(
             });
         }
     }
+    history.extend(image_messages);
 }
 
 struct StoredToolCall {
