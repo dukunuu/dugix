@@ -33,10 +33,11 @@ impl App {
     pub fn refresh_memory_snapshot(&mut self) {
         let conn = self.db.conn();
         let space = &self.active_space.id;
-        let chapters = memory::chapters(conn, space).unwrap_or_default();
-        let facts = memory::facts(conn, space).unwrap_or_default();
+        let chapters = memory::visible_chapters(conn, space).unwrap_or_default();
+        let facts = memory::visible_facts(conn, space).unwrap_or_default();
+        let labels = memory::share_labels(conn, space, &chapters).unwrap_or_default();
         self.memory_docs = book::docs(&self.space.files_dir(&self.active_space.name));
-        self.memory_snapshot = book::toc(&chapters, &facts, &self.memory_docs);
+        self.memory_snapshot = book::toc_with_labels(&chapters, &facts, &self.memory_docs, &labels);
         self.memory_tidy_due = chapters
             .iter()
             .filter(|c| {
@@ -88,8 +89,8 @@ impl App {
         let space = &self.active_space.id;
         recall::hint(
             text,
-            &memory::chapters(conn, space).ok()?,
-            &memory::facts(conn, space).ok()?,
+            &memory::visible_chapters(conn, space).ok()?,
+            &memory::visible_facts(conn, space).ok()?,
             &self.memory_docs,
             &already,
         )
@@ -169,6 +170,39 @@ impl App {
         self.refresh_memory_snapshot();
         self.refresh_toolbox();
         Ok(summary)
+    }
+
+    pub(super) fn memory_share(
+        &mut self,
+        title: &str,
+        target: Option<&memory::ShareTarget>,
+    ) -> Result<()> {
+        let conn = self.db.conn();
+        let space = &self.active_space.id;
+        let Some(target) = target else {
+            let listing = memory::sharing_list(conn, space)?;
+            self.push_status(listing);
+            return Ok(());
+        };
+        let chapter = memory::find_chapter(conn, space, title)?
+            .with_context(|| format!("no chapter titled {title:?} in this space"))?;
+        let chapter = memory::share_chapter(conn, &chapter.id, target.resolve(conn)?)?;
+        let status = if chapter.shared_with == memory::Share::Private {
+            format!("{:?} is private", chapter.title)
+        } else {
+            let labels = memory::share_labels(conn, space, std::slice::from_ref(&chapter))?;
+            format!(
+                "{:?} {}",
+                chapter.title,
+                labels[&chapter.id]
+                    .trim()
+                    .trim_start_matches('(')
+                    .trim_end_matches(')')
+            )
+        };
+        self.refresh_memory_snapshot();
+        self.push_status(status);
+        Ok(())
     }
 
     pub fn memory_tidy(&mut self) -> Result<()> {

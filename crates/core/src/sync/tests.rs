@@ -1240,6 +1240,49 @@ fn push_cursor_advances_only_on_ack() {
 }
 
 #[test]
+fn memory_sharing_changes_converge_between_peers() {
+    use crate::memory::{self, Share};
+    let pair = Pair::new();
+    let home = pair.a.create_space("learning").unwrap();
+    let guest = pair.a.create_space("job-search").unwrap();
+    let added = memory::add(
+        pair.a.conn(),
+        &home.id,
+        "Career",
+        "Rust engineer",
+        None,
+        None,
+    )
+    .unwrap();
+    pair.exchange();
+    memory::share_chapter(
+        pair.a.conn(),
+        &added.chapter.id,
+        Share::Spaces(vec![guest.id.clone()]),
+    )
+    .unwrap();
+    pair.exchange_ab();
+    assert_eq!(
+        memory::visible_chapters(pair.b.conn(), &guest.id).unwrap()[0].id,
+        added.chapter.id
+    );
+    memory::share_chapter(pair.b.conn(), &added.chapter.id, Share::All).unwrap();
+    pair.exchange_ba();
+    assert_eq!(
+        memory::chapters(pair.a.conn(), &home.id).unwrap()[0].shared_with,
+        Share::All
+    );
+    assert_eq!(dump(&pair.a), dump(&pair.b));
+    memory::share_chapter(pair.a.conn(), &added.chapter.id, Share::Private).unwrap();
+    pair.exchange();
+    assert_eq!(
+        memory::visible_chapters(pair.b.conn(), &guest.id).unwrap(),
+        Vec::<memory::Chapter>::new()
+    );
+    assert_eq!(dump(&pair.a), dump(&pair.b));
+}
+
+#[test]
 fn different_or_missing_schema_is_refused_without_changes() {
     let ours = crate::db::migrations::durable_schema_version();
     for schema in [Some(ours - 1), Some(ours + 1), None] {

@@ -73,6 +73,26 @@ pub struct Cli {
     pub command: Option<Command>,
 }
 
+/// User-only memory sharing operations.
+#[derive(Subcommand)]
+pub enum MemoryCommand {
+    /// Share one of the home space's chapters.
+    Share {
+        chapter: String,
+        /// Space names that can read and write this chapter's facts.
+        #[arg(long, num_args = 1.., required_unless_present_any = ["all", "none"], conflicts_with_all = ["all", "none"])]
+        with: Vec<String>,
+        /// Share with every space, including future spaces.
+        #[arg(long, conflicts_with = "none")]
+        all: bool,
+        /// Make the chapter private again.
+        #[arg(long)]
+        none: bool,
+    },
+    /// List chapters shared out of or into this space.
+    Shares,
+}
+
 #[derive(Subcommand)]
 pub enum Command {
     /// One-shot question from the shell — the answer streams to stdout and
@@ -274,11 +294,13 @@ pub enum Command {
     /// Print (or edit) a space's memory: chapters of facts as Markdown.
     Memory {
         /// Which space (default: your default space).
-        #[arg(long)]
+        #[arg(long, global = true)]
         space: Option<String>,
         /// Open it in $EDITOR; the saved file is applied as a diff.
         #[arg(long)]
         edit: bool,
+        #[command(subcommand)]
+        command: Option<MemoryCommand>,
     },
     /// Print (or edit) a space's instructions file.
     Instructions {
@@ -643,7 +665,11 @@ pub async fn run(cmd: Command) -> Result<()> {
         } => export(&session, transcript, output.as_deref()),
         Command::Backup { output } => backup(output.as_deref()),
         Command::Restore { file, yes } => restore(&file, yes),
-        Command::Memory { space, edit } => memory(space.as_deref(), edit),
+        Command::Memory {
+            space,
+            edit,
+            command,
+        } => memory(space.as_deref(), edit, command),
         Command::Instructions { space, edit } => instructions(space.as_deref(), edit),
         Command::Files { space } => files(space.as_deref()),
         Command::Models { backend } => models(backend.as_deref()).await,

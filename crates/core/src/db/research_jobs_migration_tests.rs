@@ -37,7 +37,7 @@ fn step_six_moves_legacy_watches_once_without_resurrecting_existing_jobs() {
           'manual', 1440, 5, 1.0, 30, 'on_change', -1, 'new', 'research', 'old');",
     )
     .unwrap();
-    assert_eq!(run(&conn, DURABLE, &mut ctx).unwrap(), 1);
+    assert_eq!(run(&conn, &DURABLE[..3], &mut ctx).unwrap(), 1);
     assert_eq!(version(&conn, "main").unwrap(), 6);
     assert!(!has_table(&conn, "main", "watches"));
     let migrated: (String, String, String, i64, String, String, String, String) = conn
@@ -80,7 +80,7 @@ fn step_six_moves_legacy_watches_once_without_resurrecting_existing_jobs() {
         )
         .unwrap();
     assert_eq!(preserved, (-1, "new-session".into(), "manual".into()));
-    assert_eq!(run(&conn, DURABLE, &mut ctx).unwrap(), 0);
+    assert_eq!(run(&conn, &DURABLE[..3], &mut ctx).unwrap(), 0);
 }
 
 #[test]

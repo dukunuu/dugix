@@ -249,7 +249,11 @@ pub(super) fn prune_targets(
         .collect()
 }
 
-pub(super) fn memory(space_name: Option<&str>, edit: bool) -> Result<()> {
+pub(super) fn memory(
+    space_name: Option<&str>,
+    edit: bool,
+    command: Option<super::MemoryCommand>,
+) -> Result<()> {
     use nexus_core::memory::{self, book};
     let space = space::Space::open()?;
     let db = db::Db::open(&space.db_path())?;
@@ -261,6 +265,43 @@ pub(super) fn memory(space_name: Option<&str>, edit: bool) -> Result<()> {
         .map(|s| s.id)
         .with_context(|| format!("no space named {name:?}"))?;
     let conn = db::open_conn(&space.db_path())?;
+    if let Some(command) = command {
+        match command {
+            super::MemoryCommand::Shares => out(memory::sharing_list(&conn, &space_id)?),
+            super::MemoryCommand::Share {
+                chapter,
+                with,
+                all,
+                none: _,
+            } => {
+                let target = if all {
+                    memory::ShareTarget::All
+                } else if with.is_empty() {
+                    memory::ShareTarget::None
+                } else {
+                    memory::ShareTarget::Spaces(with)
+                };
+                let chapter = memory::find_chapter(&conn, &space_id, &chapter)?
+                    .with_context(|| format!("no chapter titled {chapter:?} in this space"))?;
+                let chapter = memory::share_chapter(&conn, &chapter.id, target.resolve(&conn)?)?;
+                if chapter.shared_with == memory::Share::Private {
+                    out(format!("{:?} is private", chapter.title));
+                } else {
+                    let labels =
+                        memory::share_labels(&conn, &space_id, std::slice::from_ref(&chapter))?;
+                    out(format!(
+                        "{:?} {}",
+                        chapter.title,
+                        labels[&chapter.id]
+                            .trim()
+                            .trim_start_matches('(')
+                            .trim_end_matches(')')
+                    ));
+                }
+            }
+        }
+        return Ok(());
+    }
     let text = book::render_edit(
         &memory::chapters(&conn, &space_id)?,
         &memory::facts(&conn, &space_id)?,

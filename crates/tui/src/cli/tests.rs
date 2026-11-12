@@ -1,6 +1,75 @@
 use super::*;
 
 #[test]
+fn memory_sharing_cli_parses_targets_and_space_on_either_side() {
+    let cli = Cli::try_parse_from([
+        "nexus",
+        "memory",
+        "share",
+        "Career profile",
+        "--with",
+        "learning",
+        "job-search",
+        "--space",
+        "home",
+    ])
+    .unwrap();
+    let Some(Command::Memory {
+        space,
+        command:
+            Some(MemoryCommand::Share {
+                chapter,
+                with,
+                all,
+                none,
+            }),
+        ..
+    }) = cli.command
+    else {
+        panic!("expected memory share");
+    };
+    assert_eq!(space.as_deref(), Some("home"));
+    assert_eq!(chapter, "Career profile");
+    assert_eq!(with, ["learning", "job-search"]);
+    assert!(!all);
+    assert!(!none);
+    for flag in ["--all", "--none"] {
+        let cli = Cli::try_parse_from([
+            "nexus", "memory", "--space", "home", "share", "Career", flag,
+        ])
+        .unwrap();
+        let Some(Command::Memory {
+            space,
+            command: Some(MemoryCommand::Share { all, none, .. }),
+            ..
+        }) = cli.command
+        else {
+            panic!("expected memory share");
+        };
+        assert_eq!(space.as_deref(), Some("home"));
+        assert_eq!(all, flag == "--all");
+        assert_eq!(none, flag == "--none");
+    }
+    let cli = Cli::try_parse_from(["nexus", "memory", "shares", "--space", "home"]).unwrap();
+    assert!(
+        matches!(cli.command, Some(Command::Memory { command: Some(MemoryCommand::Shares), space: Some(space), .. }) if space == "home")
+    );
+    for args in [
+        vec!["nexus", "memory", "share", "Career"],
+        vec!["nexus", "memory", "share", "Career", "--with"],
+        vec!["nexus", "memory", "share", "Career", "--all", "--none"],
+        vec![
+            "nexus", "memory", "share", "Career", "--with", "home", "--all",
+        ],
+        vec![
+            "nexus", "memory", "share", "Career", "--with", "home", "--none",
+        ],
+    ] {
+        assert!(Cli::try_parse_from(args).is_err());
+    }
+}
+
+#[test]
 fn eval_overrides_validate_at_parse_time_and_compare_requires_them() {
     assert!(Cli::try_parse_from(["nexus", "eval", "--compare"]).is_err());
     for setting in [

@@ -1,7 +1,7 @@
 //! The book's two text forms: the table of contents the model reads at the
 //! start of a session, and the Markdown the user edits in `$EDITOR`.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -62,6 +62,17 @@ pub fn docs(files_dir: &Path) -> Vec<DocEntry> {
 /// and description, then the docs; empty when there is nothing to list.
 #[must_use]
 pub fn toc(chapters: &[Chapter], facts: &[Fact], docs: &[DocEntry]) -> String {
+    toc_with_labels(chapters, facts, docs, &BTreeMap::new())
+}
+
+/// The table of contents with display-only sharing labels.
+#[must_use]
+pub fn toc_with_labels(
+    chapters: &[Chapter],
+    facts: &[Fact],
+    docs: &[DocEntry],
+    labels: &BTreeMap<String, String>,
+) -> String {
     if chapters.is_empty() && docs.is_empty() {
         return String::new();
     }
@@ -70,9 +81,13 @@ pub fn toc(chapters: &[Chapter], facts: &[Fact], docs: &[DocEntry]) -> String {
          chapter with `memory` (action=read, chapter=…) and a doc with `canvas` (action=read, \
          path=…) before relying on it.\n",
     );
+    if !labels.is_empty() {
+        out.pop();
+        out.push_str(" Chapters marked shared are seen in other spaces too: keep them to facts true in all of them.\n");
+    }
     let mut budget = MAX_PINNED_FACTS;
     for chapter in chapters.iter().filter(|c| c.pinned) {
-        let _ = write!(out, "\n### {}\n", chapter.title);
+        let _ = write!(out, "\n### {}{}\n", chapter.title, label(labels, chapter));
         let in_chapter: Vec<&Fact> = facts
             .iter()
             .filter(|f| f.chapter_id == chapter.id)
@@ -92,7 +107,12 @@ pub fn toc(chapters: &[Chapter], facts: &[Fact], docs: &[DocEntry]) -> String {
         out.push_str("\nChapters:\n");
         for chapter in others.iter().take(MAX_CHAPTERS) {
             let count = facts.iter().filter(|f| f.chapter_id == chapter.id).count();
-            let _ = write!(out, "- {} ({count})", chapter.title);
+            let _ = write!(
+                out,
+                "- {}{} ({count})",
+                chapter.title,
+                label(labels, chapter)
+            );
             if !chapter.description.is_empty() {
                 let _ = write!(out, " — {}", chapter.description);
             }
@@ -160,7 +180,22 @@ fn page(out: &mut String, lines: &[String], offset: usize, what: &str) {
 
 #[must_use]
 pub fn chapter_page(chapter: &Chapter, facts: &[Fact], offset: usize) -> String {
-    let mut out = format!("## {}", chapter.title);
+    chapter_page_with_labels(chapter, facts, offset, &BTreeMap::new())
+}
+
+fn label<'a>(labels: &'a BTreeMap<String, String>, chapter: &Chapter) -> &'a str {
+    labels.get(&chapter.id).map_or("", String::as_str)
+}
+
+/// A chapter page with its sharing label.
+#[must_use]
+pub fn chapter_page_with_labels(
+    chapter: &Chapter,
+    facts: &[Fact],
+    offset: usize,
+    labels: &BTreeMap<String, String>,
+) -> String {
+    let mut out = format!("## {}{}", chapter.title, label(labels, chapter));
     if chapter.pinned {
         out.push_str(" [pinned]");
     }
@@ -183,6 +218,17 @@ pub fn chapter_page(chapter: &Chapter, facts: &[Fact], offset: usize) -> String 
 
 #[must_use]
 pub fn chapter_list(chapters: &[Chapter], facts: &[Fact], offset: usize) -> String {
+    chapter_list_with_labels(chapters, facts, offset, &BTreeMap::new())
+}
+
+/// A chapter listing with sharing labels.
+#[must_use]
+pub fn chapter_list_with_labels(
+    chapters: &[Chapter],
+    facts: &[Fact],
+    offset: usize,
+    labels: &BTreeMap<String, String>,
+) -> String {
     if chapters.is_empty() {
         return "memory is empty — save a fact with action=add".to_string();
     }
@@ -190,7 +236,7 @@ pub fn chapter_list(chapters: &[Chapter], facts: &[Fact], offset: usize) -> Stri
         .iter()
         .map(|chapter| {
             let count = facts.iter().filter(|f| f.chapter_id == chapter.id).count();
-            let mut line = format!("- {} ({count})", chapter.title);
+            let mut line = format!("- {}{} ({count})", chapter.title, label(labels, chapter));
             if chapter.pinned {
                 line.push_str(" [pinned]");
             }

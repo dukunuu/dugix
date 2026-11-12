@@ -73,6 +73,7 @@ table memory_chapters
   description: TEXT not_null=true default=Some("''") pk=0
   id: TEXT not_null=false default=None pk=1
   pinned: INTEGER not_null=true default=Some("0") pk=0
+  shared_with: TEXT not_null=true default=Some("'[]'") pk=0
   space_id: TEXT not_null=true default=None pk=0
   title: TEXT not_null=true default=None pk=0
   updated_at: TEXT not_null=true default=None pk=0
