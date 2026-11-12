@@ -315,15 +315,6 @@ pub enum Popup {
     ImageViewer,
 }
 
-/// Login destination for keys that cannot be distinguished by their format.
-#[derive(PartialEq, Eq, Clone, Copy)]
-pub enum KeyTarget {
-    OpenRouter,
-    OpenAi,
-    OpencodeGo,
-    Mistral,
-}
-
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum SwarmPopupMode {
     Browse,
@@ -1411,23 +1402,24 @@ impl App {
     }
 
     pub(crate) fn saved_secrets(&self) -> Vec<String> {
-        [
-            self.saved.openrouter_key.as_deref(),
-            self.saved.openai_key.as_deref(),
-            self.saved.opencode_key.as_deref(),
-            self.saved.mistral_key.as_deref(),
-            self.saved.codex.as_ref().map(|creds| creds.access.as_str()),
-            self.saved
-                .codex
-                .as_ref()
-                .map(|creds| creds.refresh.as_str()),
-            self.saved.host_token.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|secret| !secret.is_empty())
-        .map(str::to_string)
-        .collect()
+        BackendTag::ALL
+            .into_iter()
+            .filter_map(|tag| self.saved.key(tag))
+            .chain(
+                [
+                    self.saved.codex.as_ref().map(|creds| creds.access.as_str()),
+                    self.saved
+                        .codex
+                        .as_ref()
+                        .map(|creds| creds.refresh.as_str()),
+                    self.saved.host_token.as_deref(),
+                ]
+                .into_iter()
+                .flatten(),
+            )
+            .filter(|secret| !secret.is_empty())
+            .map(str::to_string)
+            .collect()
     }
 
     fn open_trace_store(&mut self) -> Option<std::sync::Arc<crate::trace::TraceStore>> {
@@ -1550,8 +1542,7 @@ impl App {
             };
             let has_key = self
                 .saved
-                .openrouter_key
-                .as_ref()
+                .key(BackendTag::OpenRouter)
                 .is_some_and(|key| !key.trim().is_empty());
             let following: Vec<Arc<dyn Decider>> = match self.saved.agent.selected_decider(has_key)
             {
@@ -2436,7 +2427,8 @@ mod model_decider_tests {
         let (provider, handle) = server(200, body.to_string(), Duration::ZERO, 1).await;
         let space = Space { root: data };
         let mut app = App::new(Db::open(&space.db_path()).unwrap(), None, space);
-        app.saved.openrouter_key = Some("mock-decider-key".into());
+        app.saved
+            .set_key(BackendTag::OpenRouter, "mock-decider-key".into());
         app.backends.set(BackendTag::OpenRouter, provider);
         app.work_mode = WorkMode::AgentAuto;
         app.incognito = true;
@@ -2477,7 +2469,7 @@ mod model_decider_tests {
         let dir = app.space.root.clone();
         let root = dir.join("workspace");
         std::fs::create_dir_all(&root).unwrap();
-        app.saved.openrouter_key = None;
+        app.saved.keys.remove(&BackendTag::OpenRouter);
         app.backends = Backends::default();
         app.backends.set(BackendTag::Local, provider);
         app.models[0].id = "utility".into();

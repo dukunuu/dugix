@@ -17,7 +17,8 @@ impl Fixture {
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let mut app = App::new(Db::open_in_memory().unwrap(), None, Space { root });
         app.current_model = Some("local:fake".into());
-        app.backends.local = Some(
+        app.backends.set(
+            crate::provider::BackendTag::Local,
             OpenRouter::local(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap(),
         );
         Self {

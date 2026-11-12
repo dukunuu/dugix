@@ -23,10 +23,13 @@ pub(super) fn redact_wire_event(event: WireEvent, app: &App, host_token: &str) -
     let mut secrets = vec![
         host_token,
         app.saved.host_token.as_deref().unwrap_or_default(),
-        app.saved.openrouter_key.as_deref().unwrap_or_default(),
-        app.saved.openai_key.as_deref().unwrap_or_default(),
-        app.saved.opencode_key.as_deref().unwrap_or_default(),
-        app.saved.mistral_key.as_deref().unwrap_or_default(),
+    ];
+    secrets.extend(
+        BackendTag::ALL
+            .into_iter()
+            .filter_map(|tag| app.saved.key(tag)),
+    );
+    secrets.extend([
         app.saved
             .codex
             .as_ref()
@@ -37,7 +40,7 @@ pub(super) fn redact_wire_event(event: WireEvent, app: &App, host_token: &str) -
             .map_or("", |credentials| credentials.refresh.as_str()),
         app.search.langsearch_key.as_str(),
         app.search.searxng_url.as_str(),
-    ];
+    ]);
     secrets.retain(|secret| !secret.is_empty());
     let Ok(mut value) = serde_json::to_value(event.clone()) else {
         return event;
@@ -333,21 +336,13 @@ fn handle_actor_request(
             let _ = reply.send(Ok(usage));
         }
         HostRequest::Backends { reply } => {
-            let tags = [
-                BackendTag::OpenRouter,
-                BackendTag::OpenAi,
-                BackendTag::OpencodeGo,
-                BackendTag::Codex,
-                BackendTag::Mistral,
-                BackendTag::Local,
-            ];
-            let backends = tags
+            let backends = BackendTag::ALL
                 .into_iter()
                 .map(|tag| {
                     let provider = app.backends.get(tag);
                     BackendInfo {
-                        tag: tag.into(),
-                        name: tag.display_name(),
+                        tag,
+                        name: tag.name(),
                         configured: app.backends.configured(tag),
                         gateway_supported: true,
                         gateway_error: None,

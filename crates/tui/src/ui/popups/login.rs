@@ -1,6 +1,7 @@
 //! `/login`'s provider selector; a local runtime takes no key and opens `/local`.
 
 use crossterm::event::{KeyCode, KeyEvent};
+use nexus_core::provider::BackendTag;
 use ratatui::Frame;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -11,19 +12,14 @@ use crate::app_view::AppView;
 use super::chrome;
 use crate::ui::style::glyph;
 
-const ROWS: [(&str, &str); 6] = [
-    ("OpenRouter", "paste a key, or reads $OPENROUTER_API_KEY"),
-    ("OpenCode Go", "paste a key, or reads $OPENCODE_API_KEY"),
-    ("OpenAI", "paste a key, or reads $OPENAI_API_KEY"),
-    ("Codex", "ChatGPT subscription — device-code login"),
-    (
-        "Mistral Vibe",
-        "Vibe plan key (Code > Vibe CLI), or reads $MISTRAL_API_KEY",
-    ),
-    (
-        "Local runtime",
-        "Ollama / llama.cpp / MLX / LM Studio / edge0 — no key",
-    ),
+// Preserve the login selector's historical order, which differs from routing order.
+pub(crate) const LOGIN_ORDER: [BackendTag; 6] = [
+    BackendTag::OpenRouter,
+    BackendTag::OpencodeGo,
+    BackendTag::OpenAi,
+    BackendTag::Codex,
+    BackendTag::Mistral,
+    BackendTag::Local,
 ];
 
 pub fn render(f: &mut Frame, app: &AppView) {
@@ -39,19 +35,29 @@ pub fn render(f: &mut Frame, app: &AppView) {
     );
 
     let dim = Style::default().fg(app.theme.fg_dim);
-    let items: Vec<ListItem> = ROWS
+    let items: Vec<ListItem> = LOGIN_ORDER
         .iter()
-        .enumerate()
-        .map(|(i, (name, hint))| {
-            // State chip: which backends already have a key configured.
-            let configured = match i {
-                0 => app.backends.openrouter.is_some(),
-                1 => app.backends.opencode.is_some(),
-                2 => app.backends.openai.is_some(),
-                3 => app.backends.codex.is_some(),
-                4 => app.backends.mistral.is_some(),
-                _ => app.backends.local.is_some(),
+        .map(|&tag| {
+            let (name, hint) = if let Some(key) = &tag.info().key {
+                let action = if tag == BackendTag::Mistral {
+                    "Vibe plan key (Code > Vibe CLI)"
+                } else {
+                    "paste a key"
+                };
+                (key.label, format!("{action}, or reads ${}", key.env_var))
+            } else if tag == BackendTag::Codex {
+                (
+                    tag.name(),
+                    "ChatGPT subscription — device-code login".to_string(),
+                )
+            } else {
+                (
+                    "Local runtime",
+                    "Ollama / llama.cpp / MLX / LM Studio / edge0 — no key".to_string(),
+                )
             };
+            // State chip: which backends already have a key configured.
+            let configured = app.backends.configured(tag);
             let chip = if configured {
                 Span::styled(
                     format!("{} configured", glyph::OK),
@@ -84,7 +90,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
     let list = chrome::standard_list(items, &app.theme);
     let mut state = ListState::default();
     state.select(Some(app.login_selected));
-    chrome::render_list(f, list, &mut state, inner, ROWS.len(), 3, app);
+    chrome::render_list(f, list, &mut state, inner, LOGIN_ORDER.len(), 3, app);
 }
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) {

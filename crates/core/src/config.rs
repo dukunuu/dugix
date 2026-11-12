@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -5,18 +6,14 @@ use base64::Engine;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
-pub const OPENROUTER_ENV_KEY: &str = "OPENROUTER_API_KEY";
-pub const OPENAI_ENV_KEY: &str = "OPENAI_API_KEY";
-pub const OPENCODE_ENV_KEY: &str = "OPENCODE_API_KEY";
-/// Mistral's own variable, shared with the Vibe CLI; a Vibe plan key bills against the plan's budget.
-pub const MISTRAL_ENV_KEY: &str = "MISTRAL_API_KEY";
+use crate::provider::BackendTag;
 
 /// Never passed to children that run model-authored code.
 pub const SECRET_ENV_VARS: &[&str] = &[
-    OPENROUTER_ENV_KEY,
-    OPENAI_ENV_KEY,
-    OPENCODE_ENV_KEY,
-    MISTRAL_ENV_KEY,
+    "OPENROUTER_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENCODE_API_KEY",
+    "MISTRAL_API_KEY",
     "CF_API_TOKEN",
     "REDDIT_CLIENT_ID",
     "REDDIT_CLIENT_SECRET",
@@ -170,6 +167,28 @@ struct Provider {
     openai_codex: Option<CodexCredentials>,
 }
 
+impl Provider {
+    fn key(&self, tag: BackendTag) -> Option<&str> {
+        match tag {
+            BackendTag::OpenRouter => Some(&self.openrouter_key),
+            BackendTag::OpenAi => Some(&self.openai_key),
+            BackendTag::OpencodeGo => Some(&self.opencode_key),
+            BackendTag::Mistral => Some(&self.mistral_key),
+            BackendTag::Codex | BackendTag::Local => None,
+        }
+    }
+
+    fn key_mut(&mut self, tag: BackendTag) -> Option<&mut String> {
+        match tag {
+            BackendTag::OpenRouter => Some(&mut self.openrouter_key),
+            BackendTag::OpenAi => Some(&mut self.openai_key),
+            BackendTag::OpencodeGo => Some(&mut self.opencode_key),
+            BackendTag::Mistral => Some(&mut self.mistral_key),
+            BackendTag::Codex | BackendTag::Local => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CodexCredentials {
     pub access: String,
@@ -200,32 +219,34 @@ pub struct SavedCreds {
     pub local: Option<crate::provider::local::LocalConfig>,
     pub experiments: Experiments,
     pub agent: AgentConfig,
-    pub openrouter_key: Option<String>,
-    pub openai_key: Option<String>,
-    pub opencode_key: Option<String>,
-    pub mistral_key: Option<String>,
+    pub keys: HashMap<BackendTag, String>,
     pub codex: Option<CodexCredentials>,
     /// Protects the local host API; never synced with space data.
     pub host_token: Option<String>,
 }
 
 impl SavedCreds {
+    /// The saved API key for a backend, excluding OAuth credentials.
+    #[must_use]
+    pub fn key(&self, tag: BackendTag) -> Option<&str> {
+        self.keys.get(&tag).map(String::as_str)
+    }
+
+    /// Store an API key for a key-login backend.
+    pub fn set_key(&mut self, tag: BackendTag, key: String) {
+        if tag.info().key.is_some() {
+            self.keys.insert(tag, key);
+        }
+    }
+
     /// Guess a single key's backend for tests and single-key bootstraps.
     pub fn from_key(key: Option<&str>) -> Self {
-        use crate::provider::BackendTag;
         use crate::provider::openrouter::OpenRouter;
 
         let mut saved = Self::default();
         if let Some(key) = key {
             let tag = OpenRouter::from_key_auto(key.to_string()).backend_tag();
-            let slot = match tag {
-                BackendTag::OpenRouter => &mut saved.openrouter_key,
-                BackendTag::OpenAi => &mut saved.openai_key,
-                BackendTag::OpencodeGo => &mut saved.opencode_key,
-                BackendTag::Mistral => &mut saved.mistral_key,
-                BackendTag::Codex | BackendTag::Local => return saved,
-            };
-            *slot = Some(key.to_string());
+            saved.set_key(tag, key.to_string());
         }
         saved
     }
@@ -325,22 +346,29 @@ pub fn load_system_prompt_overlay() -> String {
 pub fn load_creds_offline() -> SavedCreds {
     let stored = load_config_all().unwrap_or_default();
     let host_token = load_host_token().ok().flatten();
-    let resolve = |stored: String, env_key: &str| {
-        Some(stored).filter(|key| !key.is_empty()).or_else(|| {
-            std::env::var(env_key)
-                .ok()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-        })
+    let resolve = |stored: &str, env_key: &str| {
+        Some(stored.to_string())
+            .filter(|key| !key.is_empty())
+            .or_else(|| {
+                std::env::var(env_key)
+                    .ok()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+            })
     };
+    let keys = BackendTag::ALL
+        .into_iter()
+        .filter_map(|tag| {
+            let login = tag.info().key.as_ref()?;
+            let value = stored.key(tag)?;
+            resolve(value, login.env_var).map(|key| (tag, key))
+        })
+        .collect();
     SavedCreds {
         local: load_local_config().ok().flatten(),
         experiments: load_experiments().unwrap_or_default(),
         agent: load_agent_config().unwrap_or_default(),
-        openrouter_key: resolve(stored.openrouter_key, OPENROUTER_ENV_KEY),
-        openai_key: resolve(stored.openai_key, OPENAI_ENV_KEY),
-        opencode_key: resolve(stored.opencode_key, OPENCODE_ENV_KEY),
-        mistral_key: resolve(stored.mistral_key, MISTRAL_ENV_KEY),
+        keys,
         codex: stored.openai_codex,
         host_token,
     }
@@ -459,13 +487,14 @@ fn load_local_config() -> Result<Option<crate::provider::local::LocalConfig>> {
 }
 
 pub fn first_configured(saved: &SavedCreds) -> Option<(&'static str, String)> {
-    saved
-        .openrouter_key
-        .clone()
-        .map(|k| ("openrouter", k))
-        .or_else(|| saved.openai_key.clone().map(|k| ("openai", k)))
-        .or_else(|| saved.opencode_key.clone().map(|k| ("opencode", k)))
-        .or_else(|| saved.mistral_key.clone().map(|k| ("mistral", k)))
+    BackendTag::ALL
+        .into_iter()
+        .find_map(|tag| {
+            let login = tag.info().key.as_ref()?;
+            saved
+                .key(tag)
+                .map(|key| (login.config_name, key.to_string()))
+        })
         .or_else(|| saved.codex.as_ref().map(|c| ("codex", c.access.clone())))
 }
 
@@ -536,7 +565,8 @@ pub fn save_codex_credentials(creds: &CodexCredentials) -> Result<()> {
 }
 
 pub fn load_openrouter_key_only() -> Option<String> {
-    if let Ok(v) = std::env::var(OPENROUTER_ENV_KEY) {
+    let login = BackendTag::OpenRouter.info().key.as_ref()?;
+    if let Ok(v) = std::env::var(login.env_var) {
         let v = v.trim();
         if !v.is_empty() {
             return Some(v.to_string());
@@ -551,15 +581,19 @@ pub fn load_openrouter_key_only() -> Option<String> {
 /// The `/login` selector always knows the flavor of a pasted key, so nothing is shape-sniffed.
 pub fn save_provider_key(flavor: &str, key: &str) -> Result<()> {
     let mut stored = load_config_all().unwrap_or_default();
-    let slot = match flavor {
-        "openrouter" => &mut stored.openrouter_key,
-        "openai" => &mut stored.openai_key,
-        "opencode" => &mut stored.opencode_key,
-        "mistral" => &mut stored.mistral_key,
-        _ => return Ok(()),
-    };
-    key.clone_into(slot);
-    write_provider_config(&stored)
+    for tag in BackendTag::ALL {
+        if tag
+            .info()
+            .key
+            .as_ref()
+            .is_some_and(|login| login.config_name == flavor)
+            && let Some(slot) = stored.key_mut(tag)
+        {
+            key.clone_into(slot);
+            return write_provider_config(&stored);
+        }
+    }
+    Ok(())
 }
 
 fn load_config_all() -> Result<Provider> {
@@ -850,21 +884,22 @@ fn write_config_at(
         .or_insert_with(|| Value::Table(toml::Table::new()))
         .as_table_mut()
         .context("config provider is not a TOML table")?;
-    for (key, value) in [
-        ("openrouter_key", &stored.openrouter_key),
-        ("openai_key", &stored.openai_key),
-        ("opencode_key", &stored.opencode_key),
-    ] {
-        provider.insert(key.to_string(), Value::String(value.clone()));
-    }
-    // Removed rather than written empty, so configs that never used Mistral stay as they were.
-    if stored.mistral_key.is_empty() {
-        provider.remove("mistral_key");
-    } else {
-        provider.insert(
-            "mistral_key".to_string(),
-            Value::String(stored.mistral_key.clone()),
-        );
+    for tag in BackendTag::ALL {
+        let Some(login) = &tag.info().key else {
+            continue;
+        };
+        let Some(value) = stored.key(tag) else {
+            continue;
+        };
+        // Removed rather than written empty, so configs that never used Mistral stay as they were.
+        if tag == BackendTag::Mistral && value.is_empty() {
+            provider.remove(login.config_field);
+        } else {
+            provider.insert(
+                login.config_field.to_string(),
+                Value::String(value.to_string()),
+            );
+        }
     }
     match &stored.openai_codex {
         Some(c) => {
@@ -1002,6 +1037,15 @@ mod tests {
             assert!(experiments.set(key, value).is_err());
         }
         assert!(toml::from_str::<Config>("[experiments]\nunknown = true").is_err());
+    }
+
+    #[test]
+    fn secret_env_vars_include_every_backend_key() {
+        for tag in BackendTag::ALL {
+            if let Some(key) = &tag.info().key {
+                assert!(SECRET_ENV_VARS.contains(&key.env_var), "{}", key.env_var);
+            }
+        }
     }
 
     #[test]
@@ -1164,10 +1208,10 @@ mod tests {
     #[test]
     fn saved_creds_from_key_guesses_openrouter() {
         let saved = SavedCreds::from_key(Some("sk-or-test"));
-        assert_eq!(saved.openrouter_key.as_deref(), Some("sk-or-test"));
-        assert!(saved.openai_key.is_none());
-        assert!(saved.opencode_key.is_none());
-        assert!(saved.mistral_key.is_none());
+        assert_eq!(saved.key(BackendTag::OpenRouter), Some("sk-or-test"));
+        assert!(saved.key(BackendTag::OpenAi).is_none());
+        assert!(saved.key(BackendTag::OpencodeGo).is_none());
+        assert!(saved.key(BackendTag::Mistral).is_none());
         assert!(saved.codex.is_none());
         assert!(saved.local.is_none());
         assert!(saved.host_token.is_none());
@@ -1176,10 +1220,10 @@ mod tests {
     #[test]
     fn saved_creds_from_no_key_is_empty() {
         let saved = SavedCreds::from_key(None);
-        assert!(saved.openrouter_key.is_none());
-        assert!(saved.openai_key.is_none());
-        assert!(saved.opencode_key.is_none());
-        assert!(saved.mistral_key.is_none());
+        assert!(saved.key(BackendTag::OpenRouter).is_none());
+        assert!(saved.key(BackendTag::OpenAi).is_none());
+        assert!(saved.key(BackendTag::OpencodeGo).is_none());
+        assert!(saved.key(BackendTag::Mistral).is_none());
         assert!(saved.codex.is_none());
         assert!(saved.local.is_none());
         assert!(saved.host_token.is_none());
@@ -1214,9 +1258,11 @@ mod tests {
     #[test]
     fn first_configured_follows_fixed_priority() {
         let saved = SavedCreds {
-            openrouter_key: Some("sk-or-abc".into()),
-            openai_key: Some("sk-proj-abc".into()),
-            opencode_key: Some("oc-token".into()),
+            keys: HashMap::from([
+                (BackendTag::OpenRouter, "sk-or-abc".into()),
+                (BackendTag::OpenAi, "sk-proj-abc".into()),
+                (BackendTag::OpencodeGo, "oc-token".into()),
+            ]),
             codex: Some(codex_creds("codex-token")),
             ..Default::default()
         };
@@ -1229,9 +1275,7 @@ mod tests {
     #[test]
     fn first_configured_falls_through_to_whatever_is_set() {
         let saved = SavedCreds {
-            openrouter_key: None,
-            openai_key: None,
-            opencode_key: Some("oc-token".into()),
+            keys: HashMap::from([(BackendTag::OpencodeGo, "oc-token".into())]),
             codex: Some(codex_creds("codex-token")),
             ..Default::default()
         };

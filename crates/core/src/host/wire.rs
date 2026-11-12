@@ -222,7 +222,7 @@ pub struct WireModel {
     /// Whether the model generates video output.
     pub supports_video_generation: bool,
     /// Which backend this model came from — the gateway's routing key.
-    pub backend: WireBackendTag,
+    pub backend: BackendTag,
     /// `USD` per 1M tokens from the catalog; `None` = cost unknown.
     pub pricing: Option<WireModelPricing>,
 }
@@ -237,17 +237,6 @@ pub enum WireReasoningEffort {
     High,
     XHigh,
     Max,
-}
-
-/// Which backend a model routes through.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum WireBackendTag {
-    OpenRouter,
-    OpenAi,
-    OpencodeGo,
-    Codex,
-    Mistral,
-    Local,
 }
 
 /// `USD` per 1M tokens from the catalog.
@@ -505,7 +494,7 @@ impl From<Model> for WireModel {
             supports_images: m.supports_images,
             supports_image_generation: m.supports_image_generation,
             supports_video_generation: m.supports_video_generation,
-            backend: m.backend.into(),
+            backend: m.backend,
             pricing: m.pricing.map(WireModelPricing::from),
         }
     }
@@ -521,19 +510,6 @@ impl From<ReasoningEffort> for WireReasoningEffort {
             ReasoningEffort::High => Self::High,
             ReasoningEffort::XHigh => Self::XHigh,
             ReasoningEffort::Max => Self::Max,
-        }
-    }
-}
-
-impl From<BackendTag> for WireBackendTag {
-    fn from(t: BackendTag) -> Self {
-        match t {
-            BackendTag::OpenRouter => Self::OpenRouter,
-            BackendTag::OpenAi => Self::OpenAi,
-            BackendTag::OpencodeGo => Self::OpencodeGo,
-            BackendTag::Codex => Self::Codex,
-            BackendTag::Mistral => Self::Mistral,
-            BackendTag::Local => Self::Local,
         }
     }
 }
@@ -564,7 +540,7 @@ mod tests {
             supports_images: true,
             supports_image_generation: false,
             supports_video_generation: false,
-            backend: WireBackendTag::OpenRouter,
+            backend: BackendTag::OpenRouter,
             pricing: Some(WireModelPricing {
                 prompt: 3.0,
                 completion: 15.0,

@@ -9,9 +9,9 @@ use ratatui::layout::Rect;
 use tui_textarea::TextArea;
 
 use nexus_core::app::{
-    App, AppEvent, AppsMode, CopyOption, FilesMode, FilesTab, ImagesMode, KeyTarget, ModelPanel,
-    MouseTarget, PendingEditor, Popup, ScriptsMode, SessionMode, SettingsField, SkillsMode,
-    SpaceMode, SwarmPopupMode,
+    App, AppEvent, AppsMode, CopyOption, FilesMode, FilesTab, ImagesMode, ModelPanel, MouseTarget,
+    PendingEditor, Popup, ScriptsMode, SessionMode, SettingsField, SkillsMode, SpaceMode,
+    SwarmPopupMode,
 };
 use nexus_core::db::Space as SpaceRow;
 use nexus_core::provider::BackendTag;
@@ -271,7 +271,7 @@ pub struct AppView {
     pub procs_kill_confirm: Option<String>,
     pub help_scroll: u16,
     pub key_input: String,
-    pub key_target: KeyTarget,
+    pub key_target: BackendTag,
     pub login_selected: usize,
     pub local_selected: usize,
     pub local_from_login: bool,
@@ -499,7 +499,7 @@ impl AppView {
             procs_kill_confirm: None,
             help_scroll: 0,
             key_input: String::new(),
-            key_target: KeyTarget::OpenRouter,
+            key_target: BackendTag::OpenRouter,
             login_selected: 0,
             local_selected: 0,
             local_from_login: false,

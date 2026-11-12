@@ -50,16 +50,22 @@ impl Fixture {
     }
 
     fn jev(&mut self, provider: OpenRouter) {
-        self.app.saved.openrouter_key = Some("mock-decider-key".into());
+        self.app.saved.set_key(
+            crate::provider::BackendTag::OpenRouter,
+            "mock-decider-key".into(),
+        );
         self.app.saved.agent.decider = Some(ModelDecider::Jev);
-        self.app.backends.openrouter = Some(provider);
+        self.app
+            .backends
+            .set(crate::provider::BackendTag::OpenRouter, provider);
     }
 
     async fn chat(&mut self, answers: &[&str]) -> tokio::task::JoinHandle<()> {
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await
             .unwrap();
-        self.app.backends.local = Some(
+        self.app.backends.set(
+            crate::provider::BackendTag::Local,
             OpenRouter::local(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap(),
         );
         let answers: Vec<String> = answers.iter().map(ToString::to_string).collect();
@@ -209,7 +215,10 @@ async fn no_openrouter_key_uses_the_json_llm_fallback() {
     let mut fixture = Fixture::new();
     let body = json!({"choices":[{"message":{"content":"{\"choice\":\"ask_user\",\"confidence\":0.8,\"reason\":\"Which file?\"}"}}]}).to_string();
     let (provider, requests) = server(200, body, Duration::ZERO, 1).await;
-    fixture.app.backends.local = Some(provider);
+    fixture
+        .app
+        .backends
+        .set(crate::provider::BackendTag::Local, provider);
     fixture.app.saved.agent.decider = Some(ModelDecider::Jev);
     let judgement = judge(&mut fixture.app, &state()).await;
     assert_eq!(judgement.by, "llm");
@@ -408,8 +417,10 @@ async fn slash_watch_creates_research_job_and_direct_research_runner_reuses_it()
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .unwrap();
-    fixture.app.backends.local =
-        Some(OpenRouter::local(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap());
+    fixture.app.backends.set(
+        crate::provider::BackendTag::Local,
+        OpenRouter::local(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap(),
+    );
     fixture.app.repeat_research("topic");
     let job = fixture.app.db.list_jobs().unwrap().pop().unwrap();
     assert_eq!(job.spec.kind, "research");

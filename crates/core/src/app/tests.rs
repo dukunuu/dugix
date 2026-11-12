@@ -3,8 +3,10 @@ use super::*;
 #[test]
 fn with_creds_configures_all_backends_and_announces_loading_once() {
     let saved = config::SavedCreds {
-        openai_key: Some("sk-openai-test".into()),
-        mistral_key: Some("mistral-test".into()),
+        keys: std::collections::HashMap::from([
+            (BackendTag::OpenAi, "sk-openai-test".into()),
+            (BackendTag::Mistral, "mistral-test".into()),
+        ]),
         ..Default::default()
     };
     let mut app = App::with_creds(Db::open_in_memory().unwrap(), test_space(), saved);
@@ -13,8 +15,8 @@ fn with_creds_configures_all_backends_and_announces_loading_once() {
         app.backends.configured_tags(),
         [BackendTag::OpenAi, BackendTag::Mistral]
     );
-    assert_eq!(app.saved.openai_key.as_deref(), Some("sk-openai-test"));
-    assert_eq!(app.saved.mistral_key.as_deref(), Some("mistral-test"));
+    assert_eq!(app.saved.key(BackendTag::OpenAi), Some("sk-openai-test"));
+    assert_eq!(app.saved.key(BackendTag::Mistral), Some("mistral-test"));
     assert_eq!(app.index.embedding_model, "openai:text-embedding-3-small");
     let mut loading = 0;
     while let Some(event) = app.pop_pending_event() {

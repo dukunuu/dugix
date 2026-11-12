@@ -20,7 +20,7 @@ use super::{
     CORS_HEADERS, HostState, MAX_GATEWAY_BODY_BYTES, MAX_USAGE_BUFFER_BYTES,
     UPSTREAM_CHUNK_TIMEOUT, UPSTREAM_HEADERS_TIMEOUT,
 };
-use crate::host::wire::{WireBackendTag, WireModel, public_model_id};
+use crate::host::wire::{WireModel, public_model_id};
 
 /// A backend route for one gateway request; kept private so its upstream key
 /// cannot leak.
@@ -124,7 +124,7 @@ pub(super) struct OpenAiModel {
     object: &'static str,
     created: u64,
     pub(super) owned_by: String,
-    backend: WireBackendTag,
+    backend: BackendTag,
     name: String,
     reasoning_efforts: Vec<crate::host::wire::WireReasoningEffort>,
     context_length: Option<u64>,
@@ -136,14 +136,7 @@ pub(super) struct OpenAiModel {
 
 impl From<WireModel> for OpenAiModel {
     fn from(model: WireModel) -> Self {
-        let owned_by = match model.backend {
-            WireBackendTag::OpenRouter => "openrouter",
-            WireBackendTag::OpenAi => "openai",
-            WireBackendTag::OpencodeGo => "opencode-go",
-            WireBackendTag::Codex => "codex",
-            WireBackendTag::Mistral => "mistral",
-            WireBackendTag::Local => "local",
-        };
+        let owned_by = model.backend.info().owned_by;
         Self {
             id: model.id,
             object: "model",
@@ -168,7 +161,7 @@ pub(super) struct BackendsResponse {
 
 #[derive(Debug, Serialize)]
 pub(super) struct BackendInfo {
-    pub(super) tag: WireBackendTag,
+    pub(super) tag: BackendTag,
     pub(super) name: &'static str,
     pub(super) configured: bool,
     /// Whether `/v1/chat/completions` can route this backend; always true.
@@ -507,7 +500,7 @@ pub(super) fn gateway_route(
 ) -> Result<GatewayRoute, String> {
     let selected = if let Some(tag) = override_tag {
         if !app.backends.configured(tag) {
-            return Err(format!("backend {} is not configured", tag.display_name()));
+            return Err(format!("backend {} is not configured", tag.name()));
         }
         Some((tag, raw_model_for_backend(tag, model)))
     } else {
@@ -525,17 +518,14 @@ pub(super) fn gateway_route(
         BackendTag::Local => {
             return Err("local inference is not yet supported by the host gateway".into());
         }
-        BackendTag::OpenRouter => app.saved.openrouter_key.clone(),
-        BackendTag::OpenAi => app.saved.openai_key.clone(),
-        BackendTag::OpencodeGo => app.saved.opencode_key.clone(),
-        BackendTag::Mistral => app.saved.mistral_key.clone(),
         BackendTag::Codex => app
             .saved
             .codex
             .as_ref()
             .map(|credentials| credentials.access.clone()),
+        _ => app.saved.key(tag).map(str::to_string),
     }
-    .ok_or_else(|| format!("backend {} is not configured", tag.display_name()))?;
+    .ok_or_else(|| format!("backend {} is not configured", tag.name()))?;
     let account_id = app
         .saved
         .codex
@@ -550,13 +540,5 @@ pub(super) fn gateway_route(
 }
 
 pub(super) fn parse_backend_tag(value: &str) -> Result<BackendTag, String> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "openrouter" | "router" => Ok(BackendTag::OpenRouter),
-        "openai" => Ok(BackendTag::OpenAi),
-        "opencode" | "opencode-go" | "opencode_go" | "go" => Ok(BackendTag::OpencodeGo),
-        "codex" => Ok(BackendTag::Codex),
-        "mistral" | "vibe" => Ok(BackendTag::Mistral),
-        "local" => Ok(BackendTag::Local),
-        _ => Err(format!("unknown x-nexus-backend {value:?}")),
-    }
+    BackendTag::from_alias(value).ok_or_else(|| format!("unknown x-nexus-backend {value:?}"))
 }

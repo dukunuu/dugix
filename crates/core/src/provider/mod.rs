@@ -1,3 +1,6 @@
+mod backend;
+pub use backend::{BackendSpec, BackendTag, KeyLogin};
+
 pub mod embedding;
 pub mod harmony;
 pub mod local;
@@ -33,70 +36,6 @@ pub struct ToolCall {
     pub name: String,
     /// Raw JSON arguments string, as the model streamed it.
     pub arguments: String,
-}
-
-/// Which configured backend a `Model` came from, so a pick routes back to it.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub enum BackendTag {
-    OpenRouter,
-    OpenAi,
-    OpencodeGo,
-    Codex,
-    /// Mistral's API: a Vibe plan key draws on the plan's Vibe budget, a
-    /// console key bills per token. Both hit the same endpoint.
-    Mistral,
-    Local,
-}
-
-impl BackendTag {
-    /// Human-readable backend name, used in usage analytics.
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::OpenRouter => "OpenRouter",
-            Self::OpenAi => "OpenAI",
-            Self::OpencodeGo => "OpenCode Go",
-            Self::Codex => "Codex",
-            Self::Mistral => "Mistral",
-            Self::Local => "Local",
-        }
-    }
-
-    /// Prefix used to key per-backend model data; bare for `OpenRouter` because
-    /// raw ids can collide across backends.
-    pub const fn key_prefix(self) -> &'static str {
-        match self {
-            Self::OpenRouter => "",
-            Self::OpenAi => "openai:",
-            Self::OpencodeGo => "opencode:",
-            Self::Codex => "codex:",
-            Self::Mistral => "mistral:",
-            Self::Local => "local:",
-        }
-    }
-
-    /// Prefix used for model ids crossing an OpenAI-wire API boundary.
-    /// Unlike `key_prefix`, this qualifies `OpenRouter` too.
-    pub const fn wire_prefix(self) -> &'static str {
-        match self {
-            Self::OpenRouter => "openrouter:",
-            Self::OpenAi => "openai:",
-            Self::OpencodeGo => "opencode:",
-            Self::Codex => "codex:",
-            Self::Mistral => "mistral:",
-            Self::Local => "local:",
-        }
-    }
-
-    pub const fn display_name(self) -> &'static str {
-        match self {
-            Self::OpenRouter => "OpenRouter",
-            Self::OpenAi => "OpenAI",
-            Self::OpencodeGo => "OpenCode Go",
-            Self::Codex => "Codex",
-            Self::Mistral => "Mistral",
-            Self::Local => "Local",
-        }
-    }
 }
 
 /// A reasoning/thinking effort value a model accepts, in cycle order. `None`

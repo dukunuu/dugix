@@ -19,29 +19,22 @@ use tokio::sync::mpsc;
 
 use super::harmony::{self, Piece};
 use super::{
-    ChatMessage, ChatParams, Completion, Model, ModelPricing, PromptConvention, ReasoningEffort,
-    StreamEvent, ToolCall, ToolDef, Usage,
+    BackendTag, ChatMessage, ChatParams, Completion, Model, ModelPricing, PromptConvention,
+    ReasoningEffort, StreamEvent, ToolCall, ToolDef, Usage,
 };
 use crate::tools::ToolExecutor;
 use crate::trace::{TraceResponse, TraceStep, TraceToolResult};
 
-const OPENROUTER_BASE: &str = "https://openrouter.ai/api/v1";
-const OPENAI_BASE: &str = "https://api.openai.com/v1";
-const CODEX_BASE: &str = "https://chatgpt.com/backend-api";
 /// The Codex CLI release whose catalog shape `parse_codex_catalog` reads; a
 /// newer installed CLI's version wins (`codex_client_version`).
 const CODEX_CLIENT_VERSION: &str = "0.163.0";
-/// The general Zen catalog: free-tier and pay-per-token models, plus
-/// whatever a Go subscription adds. This is the default/fallback base.
-const OPENCODE_ZEN_BASE: &str = "https://opencode.ai/zen/v1";
+const OPENROUTER_BASE: &str = BackendTag::OpenRouter.info().base_url;
+const OPENCODE_ZEN_BASE: &str = BackendTag::OpencodeGo.info().base_url;
 /// The flat-fee Go-subscription bundle, a different endpoint from Zen's general
 /// catalog; sending a Go model to Zen bills it per-token instead.
 const OPENCODE_GO_BASE: &str = "https://opencode.ai/zen/go/v1";
 /// Prefix on a `Model` id marking a flat-fee Go model; stripped before sending.
 const OPENCODE_GO_PREFIX: &str = "go:";
-/// Mistral's API. A Vibe plan key (Code > Vibe CLI) and a console key both
-/// authenticate here; the plan budget meters the `mistral-vibe-cli-*` names.
-const MISTRAL_BASE: &str = "https://api.mistral.ai/v1";
 /// The names Mistral meters against a Vibe plan; `/v1/models` may omit them, so
 /// `parse_mistral_catalog` adds whichever is missing.
 const MISTRAL_VIBE_MODEL: &str = "mistral-vibe-cli-latest";
@@ -49,15 +42,7 @@ const MISTRAL_VIBE_FAST_MODEL: &str = "mistral-vibe-cli-fast";
 
 /// The OpenAI-wire base URL used by a backend gateway route.
 pub fn base_url(tag: crate::provider::BackendTag) -> &'static str {
-    match tag {
-        crate::provider::BackendTag::OpenRouter => OPENROUTER_BASE,
-        crate::provider::BackendTag::OpenAi => OPENAI_BASE,
-        crate::provider::BackendTag::OpencodeGo => OPENCODE_ZEN_BASE,
-        crate::provider::BackendTag::Codex => CODEX_BASE,
-        crate::provider::BackendTag::Mistral => MISTRAL_BASE,
-        // Local routing requires instance configuration; never fall back to a cloud URL.
-        crate::provider::BackendTag::Local => "http://localhost:11434/v1",
-    }
+    tag.info().base_url
 }
 
 /// Select the base URL and raw model id for a gateway request.
@@ -168,18 +153,6 @@ const OPENCODE_GO_CONTEXT: &[(&str, u64)] = &[
 /// Hard cap on tool round-trips per response, so a model cannot loop forever.
 pub const MAX_TOOL_ITERS: usize = 100;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ProviderFlavor {
-    OpenRouter,
-    OpenAi,
-    OpenAiCodex,
-    /// `OpenCode` Go: a low-cost subscription behind a fully OpenAI-compatible endpoint.
-    OpencodeGo,
-    /// Mistral: OpenAI-shaped chat completions, but strict about request fields
-    /// and tool-call ids (`mistral_body`), with its own model cards.
-    Mistral,
-}
-
 mod codex;
 mod mistral;
 mod search;
@@ -215,7 +188,7 @@ pub struct OpenRouter {
     #[cfg(test)]
     search_endpoint: Option<String>,
     key: String,
-    flavor: ProviderFlavor,
+    tag: BackendTag,
     endpoint: Option<String>,
     local_config: Option<super::local::LocalConfig>,
     usage_log: Option<Box<(crate::db::UsageLog, String)>>,
@@ -251,15 +224,9 @@ pub struct VideoRequest {
     pub provider_options: Option<serde_json::Value>,
 }
 
-impl ProviderFlavor {
+impl BackendTag {
     const fn base(self) -> &'static str {
-        match self {
-            Self::OpenRouter => OPENROUTER_BASE,
-            Self::OpenAi => OPENAI_BASE,
-            Self::OpenAiCodex => CODEX_BASE,
-            Self::OpencodeGo => OPENCODE_ZEN_BASE,
-            Self::Mistral => MISTRAL_BASE,
-        }
+        self.info().base_url
     }
 
     /// The reasoning effort values this model accepts, in cycle order; empty
@@ -289,7 +256,7 @@ impl ProviderFlavor {
                     E::STANDARD.to_vec()
                 }
             }
-            Self::OpenAi => {
+            Self::OpenAi | Self::Local => {
                 let id = m.id.as_str();
                 if id == "gpt-5-pro" || id.starts_with("gpt-5-pro-") {
                     E::HIGH_ONLY.to_vec()
@@ -321,7 +288,7 @@ impl ProviderFlavor {
             // Codex and the Go bundle are reasoning-capable chat catalogs.
             // Their catalog metadata wins above when present; this standard
             // set is only for entries that expose no per-model detail.
-            Self::OpenAiCodex | Self::OpencodeGo => E::STANDARD.to_vec(),
+            Self::Codex | Self::OpencodeGo => E::STANDARD.to_vec(),
             // Mistral cards go through `parse_mistral_catalog`, not here.
             Self::Mistral => Vec::new(),
         }
@@ -330,7 +297,7 @@ impl ProviderFlavor {
     fn supports_images(self, m: &ModelEntry) -> Option<bool> {
         match self {
             Self::OpenRouter | Self::OpencodeGo | Self::Mistral => None,
-            Self::OpenAi => {
+            Self::OpenAi | Self::Local => {
                 let id = m.id.as_str();
                 Some(
                     id.contains("gpt-4o")
@@ -340,7 +307,7 @@ impl ProviderFlavor {
                         || id.starts_with("o4"),
                 )
             }
-            Self::OpenAiCodex => Some(true),
+            Self::Codex => Some(true),
         }
     }
 
@@ -349,9 +316,9 @@ impl ProviderFlavor {
             // OpenRouter reports output_modalities in the catalog — use that.
             Self::OpenRouter => None,
             // Only dall-e models on OpenAI.
-            Self::OpenAi => Some(m.id.contains("dall-e")),
+            Self::OpenAi | Self::Local => Some(m.id.contains("dall-e")),
             // Codex, Go and Mistral's chat models don't generate images.
-            Self::OpenAiCodex | Self::OpencodeGo | Self::Mistral => Some(false),
+            Self::Codex | Self::OpencodeGo | Self::Mistral => Some(false),
         }
     }
 
@@ -363,7 +330,7 @@ impl ProviderFlavor {
             }
             // OpenAI (and OpenCode Go, which mirrors OpenAI's API shape)
             // put the equivalent switch under stream_options.
-            Self::OpenAi | Self::OpencodeGo => {
+            Self::OpenAi | Self::Local | Self::OpencodeGo => {
                 obj.insert(
                     "stream_options".into(),
                     serde_json::json!({ "include_usage": true }),
@@ -371,7 +338,7 @@ impl ProviderFlavor {
             }
             // Mistral sends usage in the final chunk unasked, and rejects
             // `stream_options` as an unknown field.
-            Self::OpenAiCodex | Self::Mistral => {}
+            Self::Codex | Self::Mistral => {}
         }
     }
 
@@ -382,7 +349,7 @@ impl ProviderFlavor {
             Self::OpenRouter => {
                 obj.insert("session_id".into(), serde_json::json!(key));
             }
-            Self::OpenAi | Self::OpencodeGo | Self::OpenAiCodex | Self::Mistral => {
+            Self::OpenAi | Self::Local | Self::OpencodeGo | Self::Codex | Self::Mistral => {
                 obj.insert("prompt_cache_key".into(), serde_json::json!(key));
             }
         }
@@ -410,10 +377,10 @@ impl ProviderFlavor {
             Self::OpenRouter => {
                 obj.insert("reasoning".into(), serde_json::json!({ "effort": effort }));
             }
-            Self::OpenAi | Self::OpencodeGo | Self::Mistral => {
+            Self::OpenAi | Self::Local | Self::OpencodeGo | Self::Mistral => {
                 obj.insert("reasoning_effort".into(), serde_json::json!(effort));
             }
-            Self::OpenAiCodex => {
+            Self::Codex => {
                 obj.insert(
                     "reasoning".into(),
                     serde_json::json!({ "effort": effort, "summary": "auto" }),
@@ -639,7 +606,10 @@ mod local_tests {
             .build()
             .expect("valid request");
         assert_eq!(request.headers()["authorization"], "Bearer test-key");
-        assert_eq!(provider.api_base(), super::OPENAI_BASE);
+        assert_eq!(
+            provider.api_base(),
+            super::BackendTag::OpenAi.info().base_url
+        );
     }
 }
 
@@ -722,30 +692,30 @@ impl OpenRouter {
         }
     }
 
-    pub fn openrouter_flavor(key: String) -> Self {
+    /// Build a cloud backend with an API key or Codex access token.
+    pub fn with_key(tag: BackendTag, key: String) -> Self {
         Self {
-            client: openrouter_client(),
+            client: if tag == BackendTag::OpenRouter {
+                openrouter_client()
+            } else {
+                reqwest::Client::new()
+            },
             #[cfg(test)]
             search_endpoint: None,
             key,
-            flavor: ProviderFlavor::OpenRouter,
+            tag,
             endpoint: None,
             local_config: None,
             usage_log: None,
         }
     }
 
+    pub fn openrouter_flavor(key: String) -> Self {
+        Self::with_key(BackendTag::OpenRouter, key)
+    }
+
     pub fn openai(key: String) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            key,
-            flavor: ProviderFlavor::OpenAi,
-            #[cfg(test)]
-            search_endpoint: None,
-            endpoint: None,
-            local_config: None,
-            usage_log: None,
-        }
+        Self::with_key(BackendTag::OpenAi, key)
     }
 
     /// Connect to an explicitly configured OpenAI-compatible inference server;
@@ -761,7 +731,7 @@ impl OpenRouter {
                 && url.fragment().is_none(),
             "local inference URL must be HTTP(S) without credentials, query or fragment"
         );
-        let mut provider = Self::openai(String::new());
+        let mut provider = Self::with_key(BackendTag::Local, String::new());
         provider.endpoint = Some(url.as_str().trim_end_matches('/').to_string());
         Ok(provider)
     }
@@ -780,9 +750,7 @@ impl OpenRouter {
     }
 
     fn api_base(&self) -> &str {
-        self.endpoint
-            .as_deref()
-            .unwrap_or_else(|| self.flavor.base())
+        self.endpoint.as_deref().unwrap_or_else(|| self.tag.base())
     }
 
     fn authenticate(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
@@ -794,43 +762,16 @@ impl OpenRouter {
     }
 
     pub fn opencode_go(key: String) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            key,
-            flavor: ProviderFlavor::OpencodeGo,
-            #[cfg(test)]
-            search_endpoint: None,
-            endpoint: None,
-            local_config: None,
-            usage_log: None,
-        }
+        Self::with_key(BackendTag::OpencodeGo, key)
     }
 
     /// Mistral's API with a Vibe plan key or a console key.
     pub fn mistral(key: String) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            key,
-            flavor: ProviderFlavor::Mistral,
-            #[cfg(test)]
-            search_endpoint: None,
-            endpoint: None,
-            local_config: None,
-            usage_log: None,
-        }
+        Self::with_key(BackendTag::Mistral, key)
     }
 
     pub fn openai_codex(key: String) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            key,
-            flavor: ProviderFlavor::OpenAiCodex,
-            #[cfg(test)]
-            search_endpoint: None,
-            endpoint: None,
-            local_config: None,
-            usage_log: None,
-        }
+        Self::with_key(BackendTag::Codex, key)
     }
 
     /// True when this client points at a user-configured local inference server;
@@ -839,17 +780,8 @@ impl OpenRouter {
         self.endpoint.is_some()
     }
 
-    pub const fn backend_tag(&self) -> crate::provider::BackendTag {
-        if self.is_local() {
-            return crate::provider::BackendTag::Local;
-        }
-        match self.flavor {
-            ProviderFlavor::OpenRouter => crate::provider::BackendTag::OpenRouter,
-            ProviderFlavor::OpenAi => crate::provider::BackendTag::OpenAi,
-            ProviderFlavor::OpenAiCodex => crate::provider::BackendTag::Codex,
-            ProviderFlavor::OpencodeGo => crate::provider::BackendTag::OpencodeGo,
-            ProviderFlavor::Mistral => crate::provider::BackendTag::Mistral,
-        }
+    pub const fn backend_tag(&self) -> BackendTag {
+        self.tag
     }
 
     /// Submit one non-streaming wave to the `OpenRouter` Decisions API.
@@ -880,7 +812,7 @@ impl OpenRouter {
 
     /// Video gen is OpenRouter-only (not OpenAI/Codex/OpenCode).
     pub fn is_openrouter(&self) -> bool {
-        self.flavor == ProviderFlavor::OpenRouter
+        self.tag == BackendTag::OpenRouter
     }
 
     /// Generate a video, polling every 10s (up to 6 min); returns `(mp4_bytes, cost)`.
@@ -1054,13 +986,7 @@ impl OpenRouter {
     /// `App::newest_listed` upgrades to the newest listed version.
     #[must_use]
     pub const fn default_helper_for(tag: crate::provider::BackendTag) -> &'static str {
-        use crate::provider::BackendTag;
-        match tag {
-            BackendTag::OpenRouter => "openai/gpt-6-luna",
-            BackendTag::OpenAi | BackendTag::Codex | BackendTag::OpencodeGo => "gpt-6-luna",
-            BackendTag::Mistral => MISTRAL_VIBE_FAST_MODEL,
-            BackendTag::Local => "",
-        }
+        tag.info().default_helper_model
     }
 
     pub const fn default_utility_model(&self) -> &'static str {
@@ -1068,40 +994,19 @@ impl OpenRouter {
     }
 
     pub const fn default_research_model(&self) -> &'static str {
-        match self.flavor {
-            ProviderFlavor::OpenRouter => "openai/gpt-6-sol",
-            ProviderFlavor::OpenAi | ProviderFlavor::OpenAiCodex => "gpt-6-sol",
-            ProviderFlavor::OpencodeGo => "glm-5.3",
-            ProviderFlavor::Mistral => MISTRAL_VIBE_MODEL,
-        }
+        self.tag.info().default_research_model
     }
 
     pub const fn default_embedding_model(&self) -> &'static str {
-        match self.flavor {
-            ProviderFlavor::OpenRouter => "google/gemini-embedding-2",
-            ProviderFlavor::OpenAi => "text-embedding-3-small",
-            // Codex, Go and a Vibe plan cover chat/coding models, no embeddings.
-            ProviderFlavor::OpenAiCodex | ProviderFlavor::OpencodeGo | ProviderFlavor::Mistral => {
-                ""
-            }
-        }
+        self.tag.info().default_embedding_model
     }
 
     pub const fn default_video_gen_model(&self) -> &'static str {
-        match self.flavor {
-            ProviderFlavor::OpenRouter => "google/veo-3.1",
-            _ => "",
-        }
+        self.tag.info().default_video_gen_model
     }
 
     pub const fn default_image_gen_model(&self) -> &'static str {
-        match self.flavor {
-            ProviderFlavor::OpenRouter => "openai/gpt-image-2",
-            ProviderFlavor::OpenAi => "dall-e-3",
-            ProviderFlavor::OpenAiCodex | ProviderFlavor::OpencodeGo | ProviderFlavor::Mistral => {
-                ""
-            }
-        }
+        self.tag.info().default_image_gen_model
     }
 
     /// Fetch the live model catalog. No hardcoded list except Codex, whose
@@ -1112,7 +1017,7 @@ impl OpenRouter {
         if let Some(config) = &self.local_config {
             return config.list_models().await;
         }
-        if self.flavor == ProviderFlavor::OpenAiCodex {
+        if self.tag == BackendTag::Codex {
             // The live catalog, like the Codex CLI's; the built-in list only
             // covers a failed fetch. Codex models stay unmerged with
             // OpenRouter's (Ctrl+P switches backends): a few hundred entries
@@ -1132,7 +1037,7 @@ impl OpenRouter {
                 },
             );
         }
-        if self.flavor == ProviderFlavor::OpencodeGo {
+        if self.tag == BackendTag::OpencodeGo {
             // Two distinct catalogs behind the same account key: Zen
             // general (free + pay-per-token) and the flat-fee Go bundle.
             // Fetch both and show them together — Go entries tagged so
@@ -1162,7 +1067,7 @@ impl OpenRouter {
             models.sort_by(|a, b| a.id.cmp(&b.id));
             return Ok(models);
         }
-        if self.flavor == ProviderFlavor::Mistral {
+        if self.tag == BackendTag::Mistral {
             let catalog = self
                 .authenticate(self.client.get(format!("{}/models", self.api_base())))
                 .send()
@@ -1176,7 +1081,7 @@ impl OpenRouter {
             return Ok(parse_mistral_catalog(catalog));
         }
         let mut models = self.fetch_models_from(self.api_base()).await?;
-        if self.flavor == ProviderFlavor::OpenRouter {
+        if self.tag == BackendTag::OpenRouter {
             // The general catalog is not authoritative for generation models.
             let (images, videos) =
                 tokio::join!(self.fetch_image_models(), self.fetch_video_models(),);
@@ -1275,17 +1180,17 @@ impl OpenRouter {
             .data
             .into_iter()
             .map(|m| {
-                let reasoning_efforts = self.flavor.reasoning_efforts(&m);
+                let reasoning_efforts = self.tag.reasoning_efforts(&m);
                 let supports_images = self
-                    .flavor
+                    .tag
                     .supports_images(&m)
                     .unwrap_or_else(|| entry_supports_images(&m));
                 let supports_image_generation = self
-                    .flavor
+                    .tag
                     .supports_image_generation(&m)
                     .unwrap_or_else(|| entry_supports_image_gen(&m));
                 let supports_video_generation =
-                    self.flavor == ProviderFlavor::OpenRouter && entry_supports_video_gen(&m);
+                    self.tag == BackendTag::OpenRouter && entry_supports_video_gen(&m);
                 Model {
                     name: m.name.unwrap_or_else(|| m.id.clone()),
                     reasoning_efforts,
@@ -1361,7 +1266,7 @@ impl OpenRouter {
         // are rejected or can return no usable output. Utility jobs (titles,
         // memory, compaction, research metadata) still need a one-shot string,
         // so collect the same proven SSE path used by interactive chat.
-        if self.flavor == ProviderFlavor::OpenAiCodex {
+        if self.tag == BackendTag::Codex {
             let (tx, mut rx) = mpsc::unbounded_channel();
             let finish = self
                 .run_codex_stream(model, &messages, params, &[], false, &tx)
@@ -1400,7 +1305,7 @@ impl OpenRouter {
         if let Some(key) = &params.prompt_cache_key
             && let Some(obj) = body.as_object_mut()
         {
-            self.flavor.add_prompt_cache_key(obj, key);
+            self.tag.add_prompt_cache_key(obj, key);
         }
         add_cache_ttl_1h(&mut body, model, params.cache_ttl_1h);
         self.post_completion_with_usage(body).await
@@ -1411,12 +1316,12 @@ impl OpenRouter {
         if let Some(delegate) = self.openrouter_delegate_for_body(&body) {
             return Box::pin(delegate.post_completion_with_usage(body)).await;
         }
-        if self.flavor == ProviderFlavor::OpenAiCodex {
+        if self.tag == BackendTag::Codex {
             let body = chat_body_to_codex_body(&body, false, &[]);
             let key = body.get("prompt_cache_key").and_then(|key| key.as_str());
             let v = self
                 .client
-                .post(format!("{}/codex/responses", self.flavor.base()))
+                .post(format!("{}/codex/responses", self.tag.base()))
                 .headers(codex_cache_headers(self.codex_headers(false)?, key, None))
                 .json(&body)
                 .send()
@@ -1433,7 +1338,7 @@ impl OpenRouter {
             });
         }
         let mut body = body;
-        if self.flavor == ProviderFlavor::Mistral {
+        if self.tag == BackendTag::Mistral {
             mistral_body(&mut body);
         }
         let base = if let Some(model) = body.get("model").and_then(|m| m.as_str()) {
@@ -1487,7 +1392,7 @@ impl OpenRouter {
         if let Some(delegate) = self.openrouter_delegate_for_model(model) {
             return Box::pin(delegate.generate_image(model, prompt, size, image_data)).await;
         }
-        if self.flavor == ProviderFlavor::OpenAiCodex {
+        if self.tag == BackendTag::Codex {
             anyhow::bail!("image generation not supported on Codex");
         }
         let (base, model) = self.opencode_route(model);
@@ -1497,7 +1402,7 @@ impl OpenRouter {
             "prompt": prompt,
             "n": 1,
         });
-        if self.flavor == ProviderFlavor::OpenAi {
+        if matches!(self.tag, BackendTag::OpenAi | BackendTag::Local) {
             // DALL-E uses OpenAI's legacy pixel-size parameter.
             body["size"] = serde_json::json!(size);
         } else {
@@ -1941,15 +1846,15 @@ impl OpenRouter {
             "stream": true,
         });
         let obj = body.as_object_mut().expect("body is a json object");
-        self.flavor.add_stream_usage(obj);
+        self.tag.add_stream_usage(obj);
         if let Some(key) = &params.prompt_cache_key {
-            self.flavor.add_prompt_cache_key(obj, key);
+            self.tag.add_prompt_cache_key(obj, key);
         }
         // mark_cache_breakpoints marks the system block and pre-tail; this
         // automatic marker makes 3 total, below Anthropic's limit of 4.
-        self.flavor.add_auto_cache_control(obj, model);
+        self.tag.add_auto_cache_control(obj, model);
         if let Some(effort) = &params.reasoning_effort {
-            self.flavor.add_reasoning_effort(obj, effort);
+            self.tag.add_reasoning_effort(obj, effort);
         }
         if let Some(t) = params.temperature {
             obj.insert("temperature".into(), serde_json::json!(t));
@@ -1979,7 +1884,7 @@ impl OpenRouter {
             }
         }
         add_cache_ttl_1h(&mut body, model, params.cache_ttl_1h);
-        if self.flavor == ProviderFlavor::Mistral {
+        if self.tag == BackendTag::Mistral {
             mistral_body(&mut body);
         }
         body
@@ -2031,7 +1936,7 @@ impl OpenRouter {
         disable_tool_choice: bool,
         tx: &mpsc::UnboundedSender<StreamEvent>,
     ) -> Result<Finish> {
-        if self.flavor == ProviderFlavor::OpenAiCodex {
+        if self.tag == BackendTag::Codex {
             return self
                 .run_codex_stream(model, messages, params, tools, disable_tool_choice, tx)
                 .await;
@@ -2182,7 +2087,7 @@ impl OpenRouter {
     /// For `OpenCode` Go, pick the base and strip the `go:` tag from flat-fee
     /// model ids; a no-op for every other flavor.
     fn opencode_route(&self, model: &str) -> (&str, String) {
-        if self.flavor == ProviderFlavor::OpencodeGo
+        if self.tag == BackendTag::OpencodeGo
             && let Some(stripped) = model.strip_prefix(OPENCODE_GO_PREFIX)
         {
             return (OPENCODE_GO_BASE, stripped.to_string());
@@ -2191,7 +2096,7 @@ impl OpenRouter {
     }
 
     fn openrouter_delegate_for_model(&self, model: &str) -> Option<Self> {
-        if self.flavor == ProviderFlavor::OpenAiCodex && model.contains('/') {
+        if self.tag == BackendTag::Codex && model.contains('/') {
             crate::config::load_openrouter_key_only().map(|key| {
                 let mut delegate = Self::openrouter_flavor(key);
                 delegate.usage_log.clone_from(&self.usage_log);
@@ -2214,7 +2119,7 @@ impl OpenRouter {
             .client
             .get(format!(
                 "{}/codex/models?client_version={client_version}",
-                self.flavor.base()
+                self.tag.base()
             ))
             .headers(self.codex_headers(false)?)
             .timeout(std::time::Duration::from_secs(15))
@@ -2289,7 +2194,7 @@ impl OpenRouter {
         // Content-Type that crate rejects, discarding the valid body.
         let response = self
             .client
-            .post(format!("{}/codex/responses", self.flavor.base()))
+            .post(format!("{}/codex/responses", self.tag.base()))
             .headers(codex_cache_headers(
                 self.codex_headers(true)?,
                 params.prompt_cache_key.as_deref(),

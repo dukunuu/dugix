@@ -1345,7 +1345,8 @@ mod tests {
         assert!(!a.core.is_research_session());
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         a.core.current_model = Some("local:fake".into());
-        a.core.backends.local = Some(
+        a.core.backends.set(
+            nexus_core::provider::BackendTag::Local,
             nexus_core::provider::openrouter::OpenRouter::local(&format!(
                 "http://{}/v1",
                 listener.local_addr().unwrap()

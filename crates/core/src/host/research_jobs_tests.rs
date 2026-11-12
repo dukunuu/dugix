@@ -15,8 +15,10 @@ async fn watches_api_keeps_its_json_shape_using_only_interval_research_jobs() {
         Space { root: root.clone() },
     );
     app.current_model = Some("local:fake".into());
-    app.backends.local =
-        Some(OpenRouter::local(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap());
+    app.backends.set(
+        crate::provider::BackendTag::Local,
+        OpenRouter::local(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap(),
+    );
     let space = app.active_space.id.clone();
     let created = dispatch(
         &mut app,

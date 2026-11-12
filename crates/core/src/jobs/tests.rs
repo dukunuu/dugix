@@ -81,13 +81,11 @@ impl Fixture {
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await
             .unwrap();
-        self.app.backends = Backends {
-            local: Some(
-                OpenRouter::local(&format!("http://{}/v1", listener.local_addr().unwrap()))
-                    .unwrap(),
-            ),
-            ..Backends::default()
-        };
+        self.app.backends = Backends::default();
+        self.app.backends.set(
+            crate::provider::BackendTag::Local,
+            OpenRouter::local(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap(),
+        );
         self.app.saved.agent.allow = vec!["fs write **".into()];
         self.app.saved.agent.decider = Some(crate::config::ModelDecider::Rules);
         tokio::spawn(async move {

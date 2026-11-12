@@ -4,6 +4,7 @@ use anyhow::{Context as _, Result, bail};
 
 use nexus_core::config;
 use nexus_core::db;
+use nexus_core::provider::BackendTag;
 use nexus_core::space;
 use nexus_core::train;
 
@@ -28,11 +29,11 @@ pub(super) fn status() -> Result<()> {
     let mark = |on: bool| if on { "✓" } else { "✗" };
     out(format!(
         "providers: openrouter {}  openai {}  opencode {}  codex {}  mistral {}",
-        mark(creds.openrouter_key.is_some()),
-        mark(creds.openai_key.is_some()),
-        mark(creds.opencode_key.is_some()),
+        mark(creds.key(BackendTag::OpenRouter).is_some()),
+        mark(creds.key(BackendTag::OpenAi).is_some()),
+        mark(creds.key(BackendTag::OpencodeGo).is_some()),
         mark(creds.codex.is_some()),
-        mark(creds.mistral_key.is_some()),
+        mark(creds.key(BackendTag::Mistral).is_some()),
     ));
     out(format!("spaces: {}   sessions: {sessions}", spaces.len()));
     Ok(())
@@ -127,13 +128,12 @@ pub(super) async fn doctor(network: bool) -> Result<()> {
 
     if network {
         let creds = config::load_creds_offline();
-        let providers = [
-            ("openrouter", creds.openrouter_key.as_deref()),
-            ("openai", creds.openai_key.as_deref()),
-            ("opencode", creds.opencode_key.as_deref()),
-            ("mistral", creds.mistral_key.as_deref()),
-        ];
-        for (name, key) in providers {
+        for tag in BackendTag::ALL {
+            let Some(login) = &tag.info().key else {
+                continue;
+            };
+            let name = login.config_name;
+            let key = creds.key(tag);
             if let Some(key) = key {
                 let client = client_for(name, key);
                 let ok = client.list_models().await.is_ok();
@@ -205,16 +205,11 @@ pub(super) fn train_export(cmd: TrainCmd) -> Result<()> {
         })
         .transpose()?;
     let saved = config::load_creds_offline();
-    let mut secrets: Vec<_> = [
-        saved.openrouter_key,
-        saved.openai_key,
-        saved.opencode_key,
-        saved.mistral_key,
-        saved.host_token,
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
+    let mut secrets: Vec<_> = BackendTag::ALL
+        .into_iter()
+        .filter_map(|tag| saved.key(tag).map(str::to_string))
+        .chain(saved.host_token.clone())
+        .collect();
     if let Some(codex) = saved.codex {
         secrets.extend([codex.access, codex.refresh]);
     }

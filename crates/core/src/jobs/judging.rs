@@ -51,8 +51,7 @@ fn criteria() -> Value {
 fn mode(app: &App) -> ModelDecider {
     let has_key = app
         .saved
-        .openrouter_key
-        .as_ref()
+        .key(crate::provider::BackendTag::OpenRouter)
         .is_some_and(|key| !key.trim().is_empty());
     match app.saved.agent.selected_decider(has_key) {
         ModelDecider::Jev if !has_key => ModelDecider::Llm,

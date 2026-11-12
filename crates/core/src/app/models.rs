@@ -31,9 +31,11 @@ impl App {
     pub fn rebuild_all_backends(&mut self) {
         self.experiments = self.saved.experiments.clone();
         self.backends = super::Backends::default();
-        if let Some(k) = self.saved.openrouter_key.clone() {
-            self.backends
-                .set(BackendTag::OpenRouter, OpenRouter::openrouter_flavor(k));
+        for tag in BackendTag::ALL {
+            if let Some(key) = self.saved.key(tag) {
+                self.backends
+                    .set(tag, OpenRouter::with_key(tag, key.to_string()));
+            }
         }
         if let Some(config) = self.saved.local.clone() {
             match OpenRouter::configured_local(config) {
@@ -41,20 +43,9 @@ impl App {
                 Err(error) => self.push_status(format!("local inference: {error}")),
             }
         }
-        if let Some(k) = self.saved.openai_key.clone() {
-            self.backends.set(BackendTag::OpenAi, OpenRouter::openai(k));
-        }
-        if let Some(k) = self.saved.opencode_key.clone() {
-            self.backends
-                .set(BackendTag::OpencodeGo, OpenRouter::opencode_go(k));
-        }
         if let Some(c) = self.saved.codex.clone() {
             self.backends
                 .set(BackendTag::Codex, OpenRouter::openai_codex(c.access));
-        }
-        if let Some(k) = self.saved.mistral_key.clone() {
-            self.backends
-                .set(BackendTag::Mistral, OpenRouter::mistral(k));
         }
         if self.backends.any() {
             self.push_status("loading models…  (/model to pick, /help for commands)".to_string());

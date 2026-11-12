@@ -240,10 +240,13 @@ impl App {
         opts: TurnOpts,
     ) -> Result<ResearchOutcome> {
         if !self.backends.any() {
-            bail!(
-                "no API key configured — set one with /login in the TUI, or export \
-                 $OPENROUTER_API_KEY / $OPENAI_API_KEY / $OPENCODE_API_KEY"
-            );
+            let env_vars = crate::provider::BackendTag::ALL
+                .iter()
+                .filter_map(|tag| tag.info().key.as_ref())
+                .map(|key| format!("${}", key.env_var))
+                .collect::<Vec<_>>()
+                .join(" / ");
+            bail!("no API key configured — set one with /login in the TUI, or export {env_vars}");
         }
         if self.current_model.is_none() {
             bail!("no model selected — pass --model, or pick one in the TUI first");

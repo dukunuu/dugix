@@ -95,8 +95,10 @@ fn usage_survives_a_chunk_boundary_inside_the_sse_frame() {
 #[test]
 fn wire_event_redacts_provider_and_host_credentials() {
     let mut app = test_app();
-    app.saved.openai_key = Some("provider-secret".into());
-    app.saved.mistral_key = Some("mistral-secret".into());
+    app.saved
+        .set_key(BackendTag::OpenAi, "provider-secret".into());
+    app.saved
+        .set_key(BackendTag::Mistral, "mistral-secret".into());
     let event = redact_wire_event(
         WireEvent::Status("provider-secret mistral-secret host-secret".into()),
         &app,
@@ -135,7 +137,8 @@ fn fresh_codex_login_never_reaches_host_redaction_with_credentials() {
 #[test]
 fn mistral_routes_through_the_gateway_with_its_own_key() {
     let mut app = test_app();
-    app.saved.mistral_key = Some("mock-mistral-key".into());
+    app.saved
+        .set_key(BackendTag::Mistral, "mock-mistral-key".into());
     app.backends.set(
         BackendTag::Mistral,
         openrouter::OpenRouter::mistral("mock-mistral-key".into()),
@@ -154,7 +157,7 @@ fn mistral_routes_through_the_gateway_with_its_own_key() {
         assert_eq!(route.model, "mistral-vibe-cli-latest");
         assert_eq!(route.key, "mock-mistral-key");
     }
-    app.saved.mistral_key = None;
+    app.saved.keys.remove(&BackendTag::Mistral);
     assert!(gateway_route(&app, "mistral-vibe-cli-latest", None).is_err());
 }
 

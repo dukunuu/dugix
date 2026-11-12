@@ -175,7 +175,7 @@ async fn background_calls_log_their_kind_and_captured_session_except_incognito()
             });
             let (provider, server) =
                 decider_mock::server(200, body.to_string(), Duration::ZERO, 1).await;
-            app.backends.openrouter = Some(provider);
+            app.backends.set(BackendTag::OpenRouter, provider);
             app.incognito = incognito;
             match kind {
                 "title" => {
@@ -477,7 +477,7 @@ async fn swarm_personas_roster_moderation_and_synthesis_each_log_a_request() {
             ("Final synthesis", false),
         ])
         .await;
-        app.backends.openrouter = Some(provider);
+        app.backends.set(BackendTag::OpenRouter, provider);
         app.incognito = incognito;
         app.start_swarm_turn();
         app.session = None;
@@ -784,7 +784,7 @@ async fn new_session_rebinds_tool_requests_before_the_first_turn() {
     app.session = None;
     app.messages.clear();
     let (provider, server) = decider_mock::server(200, String::new(), Duration::ZERO, 0).await;
-    app.backends.openrouter = Some(provider);
+    app.backends.set(BackendTag::OpenRouter, provider);
     app.send_message("a new question".into()).unwrap();
     app.stop_stream().unwrap();
     let session = app.session.as_ref().unwrap().id.clone();

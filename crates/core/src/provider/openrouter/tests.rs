@@ -816,7 +816,7 @@ fn reasoning_efforts_prefer_catalog_metadata_then_use_backend_fallbacks() {
     // and can expose sparse sets plus explicit disable/max tiers.
     let sparse = entry("google/gemini", &[], &["high", "minimal"]);
     assert_eq!(
-        or.flavor.reasoning_efforts(&sparse),
+        or.tag.reasoning_efforts(&sparse),
         vec![ReasoningEffort::Minimal, ReasoningEffort::High]
     );
     let full = entry(
@@ -825,7 +825,7 @@ fn reasoning_efforts_prefer_catalog_metadata_then_use_backend_fallbacks() {
         &["max", "xhigh", "high", "medium", "low", "none"],
     );
     assert_eq!(
-        or.flavor.reasoning_efforts(&full),
+        or.tag.reasoning_efforts(&full),
         ReasoningEffort::WITH_MAX_XHIGH_AND_NONE.to_vec()
     );
 
@@ -833,14 +833,14 @@ fn reasoning_efforts_prefer_catalog_metadata_then_use_backend_fallbacks() {
     // supported-parameter gate and the conservative family fallback.
     let claude = entry("anthropic/claude-sonnet-4.5", &["reasoning"], &[]);
     assert_eq!(
-        or.flavor.reasoning_efforts(&claude),
+        or.tag.reasoning_efforts(&claude),
         ReasoningEffort::WITH_MINIMAL.to_vec()
     );
     let claude_no_param = entry("anthropic/claude-sonnet-4.5", &[], &[]);
-    assert!(or.flavor.reasoning_efforts(&claude_no_param).is_empty());
+    assert!(or.tag.reasoning_efforts(&claude_no_param).is_empty());
     let generic = entry("deepseek/reasoner", &["reasoning"], &[]);
     assert_eq!(
-        or.flavor.reasoning_efforts(&generic),
+        or.tag.reasoning_efforts(&generic),
         ReasoningEffort::STANDARD.to_vec()
     );
 
@@ -848,34 +848,34 @@ fn reasoning_efforts_prefer_catalog_metadata_then_use_backend_fallbacks() {
     // concrete fallbacks rather than assigning every GPT-5 the same set.
     let oa = OpenRouter::openai("k".into());
     assert_eq!(
-        oa.flavor.reasoning_efforts(&entry("gpt-5", &[], &[])),
+        oa.tag.reasoning_efforts(&entry("gpt-5", &[], &[])),
         ReasoningEffort::WITH_MINIMAL.to_vec()
     );
     assert_eq!(
-        oa.flavor.reasoning_efforts(&entry("gpt-5-pro", &[], &[])),
+        oa.tag.reasoning_efforts(&entry("gpt-5-pro", &[], &[])),
         ReasoningEffort::HIGH_ONLY.to_vec()
     );
     assert_eq!(
-        oa.flavor.reasoning_efforts(&entry("gpt-5.4", &[], &[])),
+        oa.tag.reasoning_efforts(&entry("gpt-5.4", &[], &[])),
         ReasoningEffort::WITH_XHIGH_AND_NONE.to_vec()
     );
     let o3 = entry("o3", &[], &[]);
     assert_eq!(
-        oa.flavor.reasoning_efforts(&o3),
+        oa.tag.reasoning_efforts(&o3),
         ReasoningEffort::STANDARD.to_vec()
     );
     let gpt41 = entry("gpt-4.1", &[], &[]);
-    assert!(oa.flavor.reasoning_efforts(&gpt41).is_empty());
+    assert!(oa.tag.reasoning_efforts(&gpt41).is_empty());
 
     // Metadata also wins on OpenCode; absent metadata retains its broad
     // compatibility fallback because that catalog is not authoritative.
     let go = OpenRouter::opencode_go("k".into());
     assert_eq!(
-        go.flavor.reasoning_efforts(&sparse),
+        go.tag.reasoning_efforts(&sparse),
         vec![ReasoningEffort::Minimal, ReasoningEffort::High]
     );
     assert_eq!(
-        go.flavor.reasoning_efforts(&gpt41),
+        go.tag.reasoning_efforts(&gpt41),
         ReasoningEffort::STANDARD.to_vec()
     );
 }
@@ -883,8 +883,8 @@ fn reasoning_efforts_prefer_catalog_metadata_then_use_backend_fallbacks() {
 #[test]
 fn opencode_go_reports_its_own_backend_base_and_defaults() {
     let p = OpenRouter::opencode_go("k".into());
-    assert_eq!(p.backend_tag().display_name(), "OpenCode Go");
-    assert_eq!(p.flavor.base(), "https://opencode.ai/zen/v1");
+    assert_eq!(p.backend_tag().name(), "OpenCode Go");
+    assert_eq!(p.tag.base(), "https://opencode.ai/zen/v1");
     assert!(!p.default_utility_model().is_empty());
     assert!(!p.default_research_model().is_empty());
     // No embedding models on Go — feature stays disabled by default.
@@ -983,7 +983,7 @@ async fn mistral_helper_completion_keeps_answer_and_cached_usage() {
 fn mistral_reports_its_backend_and_vibe_defaults() {
     let p = OpenRouter::mistral("k".into());
     assert_eq!(p.backend_tag(), crate::provider::BackendTag::Mistral);
-    assert_eq!(p.flavor.base(), "https://api.mistral.ai/v1");
+    assert_eq!(p.tag.base(), "https://api.mistral.ai/v1");
     assert_eq!(p.default_utility_model(), "mistral-vibe-cli-fast");
     assert_eq!(p.default_research_model(), "mistral-vibe-cli-latest");
     assert_eq!(p.default_embedding_model(), "");
@@ -1476,9 +1476,9 @@ fn merged_usage_keeps_fields_from_one_response() {
 #[test]
 fn cache_key_goes_to_the_flavors_that_route_on_it() {
     for flavor in [
-        ProviderFlavor::OpencodeGo,
-        ProviderFlavor::OpenAi,
-        ProviderFlavor::Mistral,
+        BackendTag::OpencodeGo,
+        BackendTag::OpenAi,
+        BackendTag::Mistral,
     ] {
         let mut body = serde_json::Map::new();
         flavor.add_prompt_cache_key(&mut body, "session-1");
@@ -1489,7 +1489,7 @@ fn cache_key_goes_to_the_flavors_that_route_on_it() {
         );
     }
     let mut body = serde_json::Map::new();
-    ProviderFlavor::OpenRouter.add_prompt_cache_key(&mut body, "session-1");
+    BackendTag::OpenRouter.add_prompt_cache_key(&mut body, "session-1");
     assert!(!body.contains_key("prompt_cache_key"));
     assert_eq!(
         serde_json::Value::Object(body),
@@ -1497,7 +1497,7 @@ fn cache_key_goes_to_the_flavors_that_route_on_it() {
     );
     // Codex keeps it in the body and sends it as the session-id header.
     let mut body = serde_json::Map::new();
-    ProviderFlavor::OpenAiCodex.add_prompt_cache_key(&mut body, "session-1");
+    BackendTag::Codex.add_prompt_cache_key(&mut body, "session-1");
     assert_eq!(
         body.get("prompt_cache_key"),
         Some(&serde_json::json!("session-1"))
@@ -1718,7 +1718,7 @@ fn auto_cache_control_goes_only_to_openrouter_anthropic() {
         "anthropic/claude-3.7-sonnet:thinking",
     ] {
         let mut body = serde_json::Map::new();
-        ProviderFlavor::OpenRouter.add_auto_cache_control(&mut body, model);
+        BackendTag::OpenRouter.add_auto_cache_control(&mut body, model);
         assert_eq!(
             body.get("cache_control"),
             Some(&serde_json::json!({ "type": "ephemeral" })),
@@ -1726,12 +1726,12 @@ fn auto_cache_control_goes_only_to_openrouter_anthropic() {
         );
     }
     let mut body = serde_json::Map::new();
-    ProviderFlavor::OpenRouter.add_auto_cache_control(&mut body, "openai/gpt-5");
+    BackendTag::OpenRouter.add_auto_cache_control(&mut body, "openai/gpt-5");
     assert!(body.is_empty());
     for flavor in [
-        ProviderFlavor::OpenAi,
-        ProviderFlavor::OpencodeGo,
-        ProviderFlavor::OpenAiCodex,
+        BackendTag::OpenAi,
+        BackendTag::OpencodeGo,
+        BackendTag::Codex,
     ] {
         let mut body = serde_json::Map::new();
         flavor.add_auto_cache_control(&mut body, "claude-sonnet-4");

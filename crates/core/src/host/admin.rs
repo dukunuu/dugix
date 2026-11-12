@@ -83,24 +83,22 @@ impl State {
                 }));
             }
         } else {
-            if !matches!(
-                input.backend.as_str(),
-                "openai" | "openrouter" | "opencode" | "mistral"
-            ) {
-                bail!("unknown backend");
-            }
+            let tag = crate::provider::BackendTag::ALL
+                .into_iter()
+                .find(|tag| {
+                    tag.info()
+                        .key
+                        .as_ref()
+                        .is_some_and(|key| key.config_name == input.backend)
+                })
+                .ok_or_else(|| anyhow!("unknown backend"))?;
             let key = input.key.trim();
             if key.is_empty() || key.len() > 16_384 || key.chars().any(char::is_control) {
                 bail!("invalid API key");
             }
             crate::config::save_provider_key(&input.backend, key)
                 .map_err(|_| anyhow!("could not save provider key"))?;
-            match input.backend.as_str() {
-                "openai" => app.saved.openai_key = Some(key.into()),
-                "openrouter" => app.saved.openrouter_key = Some(key.into()),
-                "mistral" => app.saved.mistral_key = Some(key.into()),
-                _ => app.saved.opencode_key = Some(key.into()),
-            }
+            app.saved.set_key(tag, key.into());
             app.rebuild_all_backends();
             app.fetch_models();
             app.refresh_toolbox();

@@ -6,7 +6,7 @@
 )]
 use anyhow::Result;
 
-use nexus_core::app::{KeyTarget, ModelPanel, ModelPickTarget, Popup};
+use nexus_core::app::{ModelPanel, ModelPickTarget, Popup};
 use nexus_core::config;
 use nexus_core::provider::local::{LocalConfig, LocalRuntime};
 use nexus_core::provider::{BackendTag, Model, openrouter::OpenRouter};
@@ -16,7 +16,7 @@ use crate::app_view::AppView;
 impl AppView {
     pub fn model_backend_filter_label(&self) -> &'static str {
         self.model_backend_filter
-            .map_or("all backends", BackendTag::display_name)
+            .map_or("all backends", BackendTag::name)
     }
 
     pub fn cycle_model_backend_filter(&mut self) {
@@ -77,40 +77,22 @@ impl AppView {
     }
 
     pub fn move_login_selection(&mut self, delta: i32) {
-        self.login_selected = nexus_core::app::clamp_cursor(self.login_selected, 6, delta);
+        self.login_selected = nexus_core::app::clamp_cursor(
+            self.login_selected,
+            crate::ui::popups::login::LOGIN_ORDER.len(),
+            delta,
+        );
     }
 
     pub fn confirm_login_selection(&mut self) {
-        match self.login_selected {
-            0 => self.start_key_login(
-                KeyTarget::OpenRouter,
-                config::OPENROUTER_ENV_KEY,
-                "openrouter",
-                "OpenRouter",
-            ),
-            1 => self.start_key_login(
-                KeyTarget::OpencodeGo,
-                config::OPENCODE_ENV_KEY,
-                "opencode",
-                "OpenCode Go",
-            ),
-            2 => self.start_key_login(
-                KeyTarget::OpenAi,
-                config::OPENAI_ENV_KEY,
-                "openai",
-                "OpenAI",
-            ),
-            3 => self.core.start_codex_login(),
-            4 => self.start_key_login(
-                KeyTarget::Mistral,
-                config::MISTRAL_ENV_KEY,
-                "mistral",
-                "Mistral Vibe",
-            ),
-            _ => {
-                self.open_local_popup();
-                self.local_from_login = true;
-            }
+        let target = crate::ui::popups::login::LOGIN_ORDER[self.login_selected];
+        if target.info().key.is_some() {
+            self.start_key_login(target);
+        } else if target == BackendTag::Codex {
+            self.core.start_codex_login();
+        } else {
+            self.open_local_popup();
+            self.local_from_login = true;
         }
     }
 
@@ -158,49 +140,38 @@ impl AppView {
         }
     }
 
-    fn start_key_login(&mut self, target: KeyTarget, env_var: &str, tag: &str, label: &str) {
-        if let Ok(v) = std::env::var(env_var) {
+    fn start_key_login(&mut self, target: BackendTag) {
+        let login = target.info().key.as_ref().expect("key-login backend");
+        if let Ok(v) = std::env::var(login.env_var) {
             let v = v.trim().to_string();
             if !v.is_empty() {
-                self.activate_key(target, tag, v);
+                self.activate_key(target, v);
                 return;
             }
         }
         self.key_target = target;
         self.key_input.clear();
-        self.push_status(format!("paste your {label} API key, then Enter"));
+        self.push_status(format!("paste your {} API key, then Enter", login.label));
         self.popup = Popup::Key;
     }
 
     pub const fn key_target_label(&self) -> &'static str {
-        match self.key_target {
-            KeyTarget::OpenRouter => "OpenRouter",
-            KeyTarget::OpenAi => "OpenAI",
-            KeyTarget::OpencodeGo => "OpenCode Go",
-            KeyTarget::Mistral => "Mistral Vibe",
-        }
+        self.key_target
+            .info()
+            .key
+            .as_ref()
+            .expect("key-login backend")
+            .label
     }
 
-    fn activate_key(&mut self, target: KeyTarget, tag: &str, key: String) {
-        if let Err(e) = config::save_provider_key(tag, &key) {
+    fn activate_key(&mut self, target: BackendTag, key: String) {
+        let login = target.info().key.as_ref().expect("key-login backend");
+        if let Err(e) = config::save_provider_key(login.config_name, &key) {
             self.push_status(format!("could not save key: {e}"));
         }
-        let (backend_tag, provider) = match target {
-            KeyTarget::OpenRouter => (
-                BackendTag::OpenRouter,
-                OpenRouter::openrouter_flavor(key.clone()),
-            ),
-            KeyTarget::OpenAi => (BackendTag::OpenAi, OpenRouter::openai(key.clone())),
-            KeyTarget::OpencodeGo => (BackendTag::OpencodeGo, OpenRouter::opencode_go(key.clone())),
-            KeyTarget::Mistral => (BackendTag::Mistral, OpenRouter::mistral(key.clone())),
-        };
-        match target {
-            KeyTarget::OpenRouter => self.core.saved.openrouter_key = Some(key),
-            KeyTarget::OpenAi => self.core.saved.openai_key = Some(key),
-            KeyTarget::OpencodeGo => self.core.saved.opencode_key = Some(key),
-            KeyTarget::Mistral => self.core.saved.mistral_key = Some(key),
-        }
-        self.core.backends.set(backend_tag, provider);
+        let provider = OpenRouter::with_key(target, key.clone());
+        self.core.saved.set_key(target, key);
+        self.core.backends.set(target, provider);
         self.popup = Popup::None;
         self.push_status("key saved, loading models…".to_string());
         self.core.fetch_models();
@@ -214,13 +185,7 @@ impl AppView {
             self.popup = Popup::None;
             return;
         }
-        let (target, tag) = match self.key_target {
-            KeyTarget::OpenRouter => (KeyTarget::OpenRouter, "openrouter"),
-            KeyTarget::OpenAi => (KeyTarget::OpenAi, "openai"),
-            KeyTarget::OpencodeGo => (KeyTarget::OpencodeGo, "opencode"),
-            KeyTarget::Mistral => (KeyTarget::Mistral, "mistral"),
-        };
-        self.activate_key(target, tag, key);
+        self.activate_key(self.key_target, key);
     }
 
     pub fn favorite_models(&self) -> Vec<&Model> {
