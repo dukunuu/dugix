@@ -92,6 +92,7 @@ impl SubagentRun {
         }
         let mut lead = Some((reasoning, content));
         for (call, result) in calls {
+            let step_start = lead.is_some();
             let (reasoning, said) = lead.take().unwrap_or_default();
             self.rows.push(SubagentRow {
                 role: "tool_call".into(),
@@ -99,6 +100,7 @@ impl SubagentRun {
                     "id": call.id,
                     "reasoning_content": reasoning,
                     "assistant_content": (!said.trim().is_empty()).then_some(said),
+                    "step_start": step_start,
                     "name": call.name,
                     "arguments": call.arguments,
                     "result": result,

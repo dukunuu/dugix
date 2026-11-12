@@ -316,6 +316,28 @@ fn append_tool_call_history(
         debug_assert!(*index > start);
         return;
     }
+    // One assistant message per step, each followed by its own results, exactly
+    // as the live loop sent them; merging steps would change the replayed
+    // prefix and miss the provider's prompt cache on the next turn.
+    let mut steps: Vec<Vec<(StoredToolCall, bool)>> = Vec::new();
+    for (row, masked) in rows {
+        match steps.last_mut() {
+            Some(step) if !row.starts_step() => step.push((row, masked)),
+            _ => steps.push(vec![(row, masked)]),
+        }
+    }
+    for step in steps {
+        append_tool_step(history, step, seen_results, tool_images_dir, result_cap);
+    }
+}
+
+fn append_tool_step(
+    history: &mut Vec<ChatMessage>,
+    rows: Vec<(StoredToolCall, bool)>,
+    seen_results: &mut std::collections::HashMap<(String, String), String>,
+    tool_images_dir: Option<&std::path::Path>,
+    result_cap: Option<usize>,
+) {
     let calls = rows
         .iter()
         .map(|(row, _)| row.call.clone())
@@ -389,6 +411,18 @@ struct StoredToolCall {
     result: String,
     reasoning_content: Option<String>,
     assistant_content: Option<String>,
+    /// `None` on rows written before steps were recorded.
+    step_start: Option<bool>,
+}
+
+impl StoredToolCall {
+    /// Whether this row opens a new assistant step. Older rows carry no flag:
+    /// a step's reasoning and visible text ride on its first call only, so
+    /// either one marks a boundary.
+    fn starts_step(&self) -> bool {
+        self.step_start
+            .unwrap_or_else(|| self.reasoning_content.is_some() || self.assistant_content.is_some())
+    }
 }
 
 fn parse_tool_call_row(content: &str) -> Option<StoredToolCall> {
@@ -416,6 +450,7 @@ fn parse_tool_call_row(content: &str) -> Option<StoredToolCall> {
             .get("assistant_content")
             .and_then(serde_json::Value::as_str)
             .map(str::to_string),
+        step_start: v.get("step_start").and_then(serde_json::Value::as_bool),
     })
 }
 

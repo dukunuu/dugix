@@ -1657,6 +1657,7 @@ impl OpenRouter {
                             reasoning: (index == 0).then(|| reasoning.clone()).flatten(),
                             assistant_content: (index == 0 && !content.is_empty())
                                 .then(|| content.clone()),
+                            step_start: index == 0,
                             name: call.name.clone(),
                             arguments: call.arguments.clone(),
                             result: result.clone(),
