@@ -1,7 +1,5 @@
-//! `PowerPoint` (`.pptx`) to deck v2. The inverse of `export/pptx`: every
-//! shape is placed absolutely (`mode: none`), faithful first; nothing tries
-//! to infer auto-layout. What has no deck equivalent is approximated and
-//! reported as a warning, never as a failure.
+//! `PowerPoint` (`.pptx`) to deck: the inverse of `export/pptx`, every shape placed
+//! absolutely. What has no deck equivalent is approximated and reported as a warning.
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -40,8 +38,7 @@ use props::{ListStyle, list_style};
 
 // -- warnings ------------------------------------------------------------------
 
-/// Warnings, each said once: single events with their place, and tallies of
-/// kinds of approximation that happen many times.
+/// Warnings, each said once: single events with their place, and tallies of repeats.
 #[derive(Default)]
 struct Warnings {
     lines: Vec<String>,
@@ -270,7 +267,6 @@ impl State {
         format!("n{}", self.next)
     }
 
-    /// Reserve room for `n` nodes on this slide.
     pub fn reserve(&mut self, n: usize) -> bool {
         if self.budget >= n {
             self.budget -= n;

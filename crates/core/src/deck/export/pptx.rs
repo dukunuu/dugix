@@ -24,12 +24,10 @@ mod timing;
 
 const NS: &str = "xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\"";
 const WIDTH: f64 = 12_192_000.0;
-/// Points across the slide (12700 EMU per point): 960 pt, so 1920 px text
-/// is exported at half its pixel size.
+/// Points across the slide: 960 pt, so 1920 px text exports at half its pixel size.
 const WIDTH_PT: f64 = WIDTH / 12_700.0;
 
-/// Portable families available in Google Slides; other families (including
-/// Google Fonts) retain their author-selected name.
+/// Portable families available in Google Slides; others keep their author-selected name.
 pub(crate) fn google_font(family: &str) -> &str {
     let first = family
         .split(',')

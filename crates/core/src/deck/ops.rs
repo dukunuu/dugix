@@ -1,9 +1,5 @@
-//! The editing language: atomic transactions on a copy of the deck.
-//!
-//! Nodes are addressed by id alone (ids are unique across a deck). `parent`
-//! names a slide or a frame. `update_node` and `update_slide` take a JSON
-//! merge patch: objects merge key by key, `null` removes a key, anything else
-//! replaces.
+//! The editing language: atomic transactions on a copy of the deck. Nodes are
+//! addressed by id alone; `parent` names a slide or a frame.
 
 use anyhow::{Context as _, Result, anyhow, bail, ensure};
 use serde::{Deserialize, Serialize};
@@ -16,10 +12,8 @@ use super::model::{
     Slide, Theme, Transition, default_text_styles,
 };
 
-/// The complete editing language. Slide indices in `move_slide` are zero-based.
-/// A missing `after` appends; a missing `index` appends to the parent.
-// Operations are short-lived values (parsed, applied, dropped), so the size
-// gap between a whole `Slide` or `Node` payload and a rename is harmless.
+/// The complete editing language; indices are zero-based and a missing one appends.
+// Operations are short-lived, so the variant size gap is harmless.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
@@ -39,7 +33,7 @@ pub enum Op {
         slide: String,
         notes: String,
     },
-    /// Change slide fields (`name`, `fill`, `transition`, `layout`) by merge patch.
+    /// Change slide fields by merge patch.
     UpdateSlide {
         id: String,
         fields: Map<String, Value>,
@@ -69,12 +63,10 @@ pub enum Op {
         /// The new frame's id; generated when absent.
         id: Option<String>,
     },
-    /// Replace a frame by its children.
     Unwrap {
         id: String,
     },
-    /// Set the auto-layout of a slide or frame, converting children's
-    /// positions the way Figma does.
+    /// Set the auto-layout of a slide or frame, converting children like Figma does.
     SetLayout {
         target: String,
         layout: AutoLayout,
@@ -109,8 +101,7 @@ pub enum Op {
     },
 }
 
-/// Apply an entire transaction on a copy. Any invalid or stale operation
-/// discards the copy; the original deck is never changed.
+/// Apply a transaction on a copy; any invalid or stale operation discards it.
 pub fn apply(deck: &Deck, ops: &[Op]) -> Result<Deck> {
     apply_with_resolver(deck, ops, None)
 }
@@ -137,9 +128,7 @@ pub fn apply_with_resolver(
     })
 }
 
-/// Apply one operation to `working` without the whole-deck check, so a
-/// caller can build and locate a long transaction one operation at a time.
-/// `update_node` preconditions are measured against the working copy.
+/// Apply one operation without the whole-deck check; preconditions use `working`.
 pub(crate) fn apply_step(working: &mut Deck, op: &Op) -> Result<()> {
     apply_step_with_resolver(working, op, None)
 }
@@ -156,8 +145,7 @@ pub(crate) fn apply_step_with_resolver(
     Ok(())
 }
 
-/// The whole-deck check every edit ends with. Loading forgives unparseable
-/// animation data; an edit must not, so those notes are errors here.
+/// The whole-deck check every edit ends with; load notes become errors here.
 pub(crate) fn validate_deck(next: &Deck) -> std::result::Result<Deck, Vec<CheckError>> {
     let source = serde_json::to_string(next).map_err(|e| {
         vec![CheckError {
@@ -178,9 +166,8 @@ pub(crate) fn validate_deck(next: &Deck) -> std::result::Result<Deck, Vec<CheckE
     }
 }
 
-/// Resolve `add_slide {layout, slots, after?, id?}` into the existing concrete
-/// `AddSlide` operation. This preserves the public freeform payload and makes
-/// prepared suggestions self-contained, even after the design is updated.
+/// Resolve an `add_slide {layout, slots}` request into a concrete `AddSlide`, so a
+/// prepared suggestion stays valid after the design changes.
 pub fn resolve_layout_request(
     deck: &Deck,
     value: &mut Value,
@@ -209,8 +196,8 @@ pub fn resolve_layout_request(
     Ok(())
 }
 
-/// A deck made before its design gained a style (say `kicker`) keeps its
-/// own styles; layout text using the new one gets it inline over `body`.
+/// A deck missing a style its design has keeps its own; that text gets the style
+/// inline over `body`.
 fn inline_missing_styles(nodes: &mut [Node], deck: &Deck, design: &crate::design::Design) {
     for node in nodes {
         if let Kind::Text { style, font, .. } = &mut node.kind
@@ -256,7 +243,6 @@ fn node_mut<'a>(deck: &'a mut Deck, id: &str) -> Result<&'a mut Node> {
         .ok_or_else(|| anyhow!("unknown node {id}"))
 }
 
-/// The children of a slide or frame.
 fn container_mut<'a>(deck: &'a mut Deck, id: &str) -> Result<&'a mut Vec<Node>> {
     if let Some(i) = deck.slides.iter().position(|s| s.id == id) {
         return Ok(&mut deck.slides[i].children);
@@ -296,7 +282,6 @@ fn contains(node: &Node, id: &str) -> bool {
     node.id == id || node.children().iter().any(|c| contains(c, id))
 }
 
-/// The layout of a slide or frame.
 fn layout_of(deck: &Deck, id: &str) -> Result<AutoLayout> {
     if let Some(slide) = deck.slides.iter().find(|s| s.id == id) {
         return Ok(slide.layout.clone());
@@ -308,7 +293,7 @@ fn layout_of(deck: &Deck, id: &str) -> Result<AutoLayout> {
     }
 }
 
-/// Index of the slide holding `id` (a node or the slide itself).
+/// The slide holding `id`, which may be the slide itself.
 fn slide_of(deck: &Deck, id: &str) -> Result<usize> {
     deck.slides
         .iter()
@@ -526,8 +511,8 @@ fn update_node(
     base_hash: &str,
 ) -> Result<()> {
     no_structure(fields, "node")?;
-    // The precondition names the node as the caller last saw it. Earlier
-    // operations of the same transaction may already have changed it.
+    // The precondition names the node as the caller last saw it, before this
+    // transaction's earlier operations.
     let seen = original.node(id).map(Node::hash);
     let node = node_mut(next, id)?;
     ensure!(
@@ -597,7 +582,6 @@ fn parent_id(deck: &Deck, si: usize, id: &str) -> String {
     slide.id.clone()
 }
 
-/// An id for a new frame that nothing else uses.
 fn free_frame_id(deck: &Deck) -> String {
     (1..10_000_u32)
         .map(|n| format!("frame_{n}"))

@@ -1,8 +1,5 @@
-//! Space files as deck images. A model that has a photo or a generated image
-//! in the space files can name it as an image `src` (`us_1.jpg`,
-//! `files/us_1.jpg`, the relative path a tool printed); this module checks it
-//! really is an image, copies it into the deck's `assets/` folder under a
-//! content-addressed name and gives back the `assets/…` path to store.
+//! Space files as deck images: a checked image is copied into the deck's `assets/`
+//! folder under a content-addressed name.
 
 use std::fmt::Write as _;
 use std::io::Cursor;
@@ -15,13 +12,10 @@ use sha2::{Digest, Sha256};
 
 use super::write_atomic;
 
-/// Largest image file taken from the space files.
 pub const MAX_IMAGE_BYTES: u64 = 16 * 1024 * 1024;
-/// Longest side accepted, in pixels.
 const MAX_SIDE: u32 = 16_384;
 
-/// Call `f` on every image `src` an edit or a list of slides carries: image
-/// nodes anywhere in the value, and the `src` of an `update_node` patch.
+/// Call `f` on every image `src` a value carries.
 pub fn visit_srcs(value: &mut Value, f: &mut dyn FnMut(&mut String) -> Result<()>) -> Result<()> {
     match value {
         Value::Array(items) => {
@@ -87,9 +81,7 @@ fn extension(format: ImageFormat) -> Option<&'static str> {
     }
 }
 
-/// A file in the space files named by `src`: relative to the space files, with
-/// or without a leading `files/`, or an absolute path inside them. Symlinks
-/// and `..` must not leave the space files.
+/// The space file `src` names; symlinks and `..` must not leave the space files.
 #[must_use]
 pub fn find_space_file(src: &str, space_files: &Path) -> Option<std::path::PathBuf> {
     let cleaned = src.trim().trim_start_matches("./");
@@ -115,12 +107,8 @@ pub fn find_space_file(src: &str, space_files: &Path) -> Option<std::path::PathB
     None
 }
 
-/// Resolve an image `src` to something a deck can store.
-///
-/// Returns `Ok(None)` when `src` should stay as written: an https URL, a path
-/// already inside the deck's `assets/`, or a name that matches no file (the
-/// deck keeps it and reports a placeholder). Returns `Ok(Some(path))` with the
-/// `assets/…` path of the copy when a space file was imported.
+/// Resolve an image `src` to something a deck can store; `Ok(None)` keeps it as
+/// written, `Ok(Some(path))` is the `assets/…` copy of an imported space file.
 ///
 /// # Errors
 /// When the file exists but is not an acceptable image: not an image by
@@ -161,11 +149,8 @@ pub fn import_space_image(src: &str, space_files: &Path, assets: &Path) -> Resul
     store_image_bytes(&bytes, src, &stem, assets).map(Some)
 }
 
-/// Check that `bytes` are an acceptable image (PNG, JPEG or WebP by content,
-/// at most [`MAX_IMAGE_BYTES`] and 16384 px on a side) and store them in the
-/// deck's `assets/` folder under a content-addressed name made from `stem`.
-/// Returns the `assets/…` path to store; the same bytes always give the same
-/// path. `label` names the source in error messages.
+/// Store `bytes` in the deck's `assets/` under a content-addressed name; the same
+/// bytes always give the same path. `label` names the source in errors.
 ///
 /// # Errors
 /// When the bytes are not an acceptable image, or cannot be written.

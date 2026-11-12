@@ -1,13 +1,5 @@
-//! Google Fonts on demand. A family a deck uses that this device does not have
-//! is downloaded once per weight into the deck folder's `assets/fonts/` and
-//! listed in the theme's `font_files`, so renders, studio and exports all draw
-//! it, and a PPTX opens with the same family in Google Slides.
-//!
-//! Only two hosts are contacted: `fonts.googleapis.com` for the stylesheet
-//! (which, asked by a plain client, names one static TTF per weight) and
-//! `fonts.gstatic.com` for the files. Family names are plain words, files are
-//! bounded and checked as fonts before they are kept, and families Google does
-//! not have are remembered for ten minutes.
+//! Google Fonts on demand: a family this device lacks is downloaded once per weight
+//! into the deck's `assets/fonts/` and listed in the theme's `font_files`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::future::Future;
@@ -44,8 +36,7 @@ pub type Fetched<'a> = Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>
 
 /// Where the bytes come from: the network, or a fixture in tests.
 pub trait Source: Send + Sync {
-    /// The body of an https GET, bounded to `limit` bytes; an error for any
-    /// status other than 200.
+    /// The body of an https GET, bounded to `limit` bytes; non-200 is an error.
     fn get<'a>(&'a self, url: &'a str, limit: usize) -> Fetched<'a>;
 }
 
@@ -53,8 +44,6 @@ pub trait Source: Send + Sync {
 pub struct Http(reqwest::Client);
 
 impl Http {
-    /// # Errors
-    /// When the HTTP client cannot be built.
     pub fn new() -> Result<Self> {
         Ok(Self(
             reqwest::Client::builder()
@@ -136,9 +125,8 @@ pub fn file_name(family: &str, weight: u16) -> String {
     )
 }
 
-/// The families and weights a deck draws with, by family name: theme roles
-/// resolved, fallback lists cut to their first name, weights snapped to the
-/// hundreds Google serves. Regular is always included.
+/// The families and weights a deck draws with, weights snapped to the hundreds
+/// Google serves; regular is always included.
 #[must_use]
 pub fn wanted(deck: &Deck) -> BTreeMap<String, BTreeSet<u16>> {
     let roles = &deck.theme.fonts;
@@ -206,7 +194,6 @@ fn known_missing(family: &str) -> bool {
     map.contains_key(&family.to_ascii_lowercase())
 }
 
-/// Download one weight into `fonts_dir`, unless it is already there.
 async fn fetch_weight(
     source: &dyn Source,
     fonts_dir: &Path,
@@ -229,10 +216,8 @@ async fn fetch_weight(
     super::write_atomic(&path, &bytes)
 }
 
-/// Make every Google family `deck` uses drawable here: download what is
-/// missing into `assets/fonts/` beside the deck and add it to the theme.
-/// Returns a line per family that could not be fetched; the deck then draws
-/// it with the fallback. Never fails the edit.
+/// Make every Google family `deck` uses drawable: download what is missing and add
+/// it to the theme. Returns a line per family that fell back; never fails the edit.
 pub async fn provide(
     source: &dyn Source,
     assets: &Path,
@@ -290,8 +275,8 @@ pub async fn provide(
     problems
 }
 
-/// [`provide`] for synchronous callers such as studio's backend: it runs on a
-/// thread with its own runtime, so it works inside or outside Tokio.
+/// [`provide`] for synchronous callers; it runs on its own thread and runtime, so
+/// it works inside or outside Tokio.
 pub fn provide_blocking(
     source: &dyn Source,
     assets: &Path,
@@ -314,8 +299,8 @@ pub fn provide_blocking(
     })
 }
 
-/// A source answering from a table of URLs (anything else is Google's "no
-/// such family"), for tests anywhere in the crate.
+/// A source answering from a table of URLs; anything else is Google's "no such
+/// family".
 #[cfg(test)]
 pub(crate) struct Table(pub HashMap<String, Vec<u8>>);
 

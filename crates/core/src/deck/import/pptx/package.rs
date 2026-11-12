@@ -7,11 +7,8 @@ use anyhow::{Context as _, Result, bail};
 
 use super::super::xml::{self, El};
 
-/// One XML part may not inflate past this.
 const MAX_XML: u64 = 24 * 1024 * 1024;
-/// One media part may not inflate past this.
 const MAX_MEDIA: u64 = 48 * 1024 * 1024;
-/// Everything read from one package.
 const MAX_TOTAL: u64 = 600 * 1024 * 1024;
 const MAX_ENTRIES: usize = 20_000;
 
@@ -82,10 +79,6 @@ fn resolve(part: &str, target: &str) -> String {
 }
 
 impl Package {
-    /// Open `bytes` as a zip package.
-    ///
-    /// # Errors
-    /// When the bytes are not a zip archive, or hold implausibly many entries.
     pub fn open(bytes: &[u8]) -> Result<Self> {
         if bytes.starts_with(&[0xD0, 0xCF, 0x11, 0xE0]) {
             bail!(
@@ -153,12 +146,10 @@ impl Package {
         )
     }
 
-    /// A media part's bytes.
     pub fn media(&mut self, part: &str) -> Result<Vec<u8>> {
         self.bytes(part, MAX_MEDIA)
     }
 
-    /// An XML part, parsed.
     pub fn xml(&mut self, part: &str) -> Result<El> {
         let bytes = self.bytes(part, MAX_XML)?;
         let text = String::from_utf8_lossy(&bytes);

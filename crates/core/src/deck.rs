@@ -1,6 +1,5 @@
-//! Deck v2: bounded, UI-independent slide data, auto-layout and atomic
-//! editing operations. Slides are 1920 x 1080 px frames holding a tree of
-//! nodes; version-1 grid decks are migrated on load.
+//! Deck: bounded, UI-independent slide data, auto-layout and atomic editing
+//! operations. Slides are 1920 x 1080 px frames holding a tree of nodes.
 
 pub mod assets;
 pub mod brief;
@@ -44,11 +43,10 @@ pub use model::{
 };
 pub use ops::{Op, apply};
 
-/// Maximum UTF-8 source size, in bytes.
 pub const MAX_SOURCE: usize = 2 * 1024 * 1024;
-/// Version-1 canvas width in grid units (used only by migration).
+/// The old canvas width in grid units, used only by migration.
 pub const WIDTH: i32 = 32;
-/// Version-1 canvas height in grid units (used only by migration).
+/// The old canvas height in grid units, used only by migration.
 pub const HEIGHT: i32 = 18;
 
 /// A located validation failure.
@@ -59,8 +57,7 @@ pub struct CheckError {
 }
 
 impl Deck {
-    /// Start a self-contained deck following a design. Storage supplies its slug
-    /// when the design's display name differs from its filename.
+    /// Start a self-contained deck following a design.
     #[must_use]
     pub fn from_design(title: &str, design: &crate::design::Design) -> Self {
         Self {
@@ -84,13 +81,11 @@ impl Deck {
         self.slides.iter().find(|s| s.id == id)
     }
 
-    /// A node by id, on any slide.
     #[must_use]
     pub fn node(&self, id: &str) -> Option<&Node> {
         self.slides.iter().find_map(|s| s.node(id))
     }
 
-    /// The slide that holds node `id`.
     #[must_use]
     pub fn slide_of_node(&self, id: &str) -> Option<&Slide> {
         self.slides.iter().find(|s| s.node(id).is_some())
@@ -105,7 +100,7 @@ impl Deck {
             .collect()
     }
 
-    /// A fixed two-slide deck for tests: the migrated version-1 classic deck.
+    /// A fixed two-slide deck for tests, from the migrated classic fixture.
     #[cfg(test)]
     pub(crate) fn classic_fixture(title: &str) -> Self {
         let mut deck = Self::check(include_str!("../tests/fixtures/deck/classic.deck.json"))
@@ -189,8 +184,8 @@ fn is_hex(color: &str) -> bool {
     })
 }
 
-/// A relative image path within the deck assets directory. Backslashes and
-/// URL escapes are rejected too, so interpretation cannot vary by platform.
+/// A relative image path within the deck assets; backslashes and URL escapes are
+/// rejected so interpretation cannot vary by platform.
 #[must_use]
 pub fn safe_asset_path(path: &str) -> bool {
     !path.is_empty()
@@ -205,9 +200,8 @@ pub fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
     a == b || matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
 }
 
-/// Write `bytes` next to `path` and rename over it, so a reader (studio, the
-/// model's tools, a sync) never sees a half-written file. Refuses to write
-/// through a symlink.
+/// Write `bytes` beside `path` and rename over it, so no reader sees a half-written
+/// file. Refuses to write through a symlink.
 pub fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
     use std::io::Write as _;
     let parent = path

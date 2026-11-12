@@ -21,8 +21,7 @@ pub(super) enum Bullet {
     Numbered,
 }
 
-/// What a run (`a:rPr`, `a:defRPr`) says; every field is optional so that
-/// layers can be merged.
+/// What a run (`a:rPr`, `a:defRPr`) says; every field is optional so layers merge.
 #[derive(Clone, Debug, Default)]
 pub(super) struct RunProps {
     /// Points.

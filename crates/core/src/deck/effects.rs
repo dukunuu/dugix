@@ -16,7 +16,6 @@ pub enum Color {
     Alpha { color: String, opacity: f64 },
 }
 impl Color {
-    /// The underlying role or hex color.
     #[must_use]
     pub fn value(&self) -> &str {
         match self {
@@ -89,7 +88,7 @@ impl From<&str> for Fill {
     }
 }
 impl Fill {
-    /// Colors contributing to this paint, for validation and design lint.
+    /// Colors contributing to this paint.
     #[must_use]
     pub fn colors(&self) -> Vec<&Color> {
         match self {
@@ -255,8 +254,7 @@ pub struct Background {
     pub overlay: Option<Overlay>,
 }
 
-/// Image masks supported consistently across renderers. `circle` is the
-/// largest centered circle; the others fill the image box.
+/// Image masks every renderer supports; `circle` is the largest centered circle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Mask {
@@ -284,8 +282,7 @@ pub const BLOB: [[f64; 6]; 4] = [
 ];
 
 impl Mask {
-    /// The arch's top corner radius: half the width, or the height when the
-    /// box is wider than twice its height.
+    /// The arch's top corner radius: half the width, capped at the height.
     #[must_use]
     pub fn arch_radius(w: f64, h: f64) -> f64 {
         (w / 2.0).min(h).max(0.0)

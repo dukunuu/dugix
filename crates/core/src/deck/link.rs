@@ -1,9 +1,5 @@
-//! Version-two, secret-free JSON-lines canvas protocol. One envelope per line.
-//!
-//! Version 2 renames `deck_path` to `path` (still accepted on input), adds the
-//! envelope's `kind` (`deck` or `doc`) and gives docs their own `Comment` and
-//! `Focus` payloads. Nexus and studio ship together; a peer that speaks another
-//! version gets a clear "update" error instead of misbehaving.
+//! Secret-free JSON-lines canvas protocol, one envelope per line. Nexus and studio
+//! ship together; a peer on another version gets a clear "update" error.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -13,7 +9,6 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
-/// The protocol version this build speaks.
 pub const VERSION: u8 = 2;
 
 /// What a message is about: a slide deck or a flowing document.
@@ -40,9 +35,7 @@ impl Kind {
     }
 }
 
-/// Protocol envelope; reject unsupported versions before handling a message.
-/// `kind` names the document the message is about; it is absent for messages
-/// that are about neither (`Theme`, `Bye`).
+/// Protocol envelope; `kind` names the document, absent for `Theme` and `Bye`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Line {
     pub version: u8,
@@ -52,12 +45,8 @@ pub struct Line {
     pub message: Message,
 }
 
-/// Studio sends Hello/Comment/Reply/Focus; nexus sends Open/Focus/Theme/Activity/Bye.
-///
-/// `DocComment` and `DocFocus` are the Rust names of the `Comment` and `Focus`
-/// messages of a `kind: "doc"` envelope: [`Line`] maps them on the wire, so a
-/// peer sees `{"kind":"doc","type":"Comment",…}`. The paths are named `path` on
-/// the wire; `deck_path` is still accepted on input.
+/// `DocComment` and `DocFocus` are the `Comment` and `Focus` of a `kind: "doc"`
+/// envelope; `deck_path` is `path` on the wire, and still accepted on input.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Message {
@@ -159,7 +148,6 @@ pub struct TurnOutcome {
 }
 
 impl Message {
-    /// The document this message names, as a path.
     #[must_use]
     pub fn path(&self) -> Option<&std::path::Path> {
         match self {
@@ -253,8 +241,7 @@ impl Line {
         Ok(line + "\n")
     }
 
-    /// Decode one bounded, versioned message. A peer on another version is
-    /// told to update rather than misread.
+    /// Decode one bounded, versioned message.
     pub fn decode(source: &str) -> Result<Message> {
         ensure!(source.len() <= 64 * 1024, "link message too large");
         let mut value: serde_json::Value = serde_json::from_str(source)?;
@@ -290,15 +277,14 @@ impl Line {
     }
 }
 
-/// What the terminal and the `canvas` tool share about the open canvas: what
-/// studio is showing, and which decks the model just changed. Studio's link is
+/// What the terminal and the `canvas` tool share about the open canvas; the link is
 /// per terminal, not per conversation, so this holds no session.
 #[derive(Default)]
 pub struct Context {
     /// The deck, slide and selected blocks studio last reported.
     pub focus: Option<(PathBuf, String, Vec<String>)>,
-    /// Decks the model created or edited since the terminal last looked, with
-    /// the first changed slide, in order.
+    /// Decks the model changed since the terminal last looked, with the first
+    /// changed slide.
     pub changed: Vec<(PathBuf, String)>,
     /// Whether canvas already sent its deck field reference this session.
     pub schema_shown: bool,

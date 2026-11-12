@@ -325,8 +325,8 @@ fn layout_lists_every_node_in_tree_order() {
 // -- parity with the browser -----------------------------------------------------
 
 /// `crates/studio/ui-dev/fixtures`: `parity-<name>.deck.json` laid out by taffy
-/// against `rects-<name>.json`, the same decks laid out by Chromium with the
-/// CSS mapping in this module's header (`node crates/studio/ui-dev/rects.mjs`).
+/// against `rects-<name>.json`, the same decks laid out by Chromium with the same
+/// CSS mapping (`node crates/studio/ui-dev/rects.mjs`).
 fn fixtures() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../studio/ui-dev/fixtures")
 }
@@ -345,10 +345,8 @@ fn depends_on_text(node: &crate::deck::Node) -> bool {
         || node.children().iter().any(depends_on_text)
 }
 
-/// Compare every `parity-<name>.deck.json` with `rects-<name>.json`. Returns
-/// the largest delta seen for boxes that do not depend on text and for those
-/// that do. A deck whose rects are absent is only validated; text decks are
-/// skipped when the machine lacks the font the rects were made with.
+/// Compare every `parity-<name>.deck.json` with `rects-<name>.json`, returning the
+/// largest delta for boxes that do not depend on text and for those that do.
 fn compare_parity(dir: &std::path::Path) -> Vec<(String, f64, f64)> {
     let mut report = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {

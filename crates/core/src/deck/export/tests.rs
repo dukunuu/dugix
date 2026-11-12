@@ -344,8 +344,7 @@ fn pdf_is_vector_with_real_text_unicode_and_determinism() {
         assert_eq!(media[2].as_float().unwrap(), 960.0);
         assert_eq!(media[3].as_float().unwrap(), 540.0);
     }
-    // Text slides are vector: no image XObject covers a page, and the old
-    // invisible-text rendering mode is gone.
+    // Text slides are vector: no image XObject covers a page.
     for object in doc.objects.values() {
         if let Ok(stream) = object.as_stream() {
             assert_ne!(
@@ -387,9 +386,8 @@ fn pdf_is_vector_with_real_text_unicode_and_determinism() {
         assert!(text.contains(needle), "missing {needle}: {text}");
     }
     assert!(!text.contains("Pausehere"));
-    // The code slide's `=` is real text too: every font carries a ToUnicode
-    // map, and one of them maps a glyph to U+003D. (Extractors garble
-    // individually positioned monospace glyphs, so read the map instead.)
+    // The code slide's `=` is real text: a font's ToUnicode map maps a glyph to
+    // U+003D (extractors garble individually positioned monospace glyphs).
     let maps = doc
         .objects
         .values()

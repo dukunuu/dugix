@@ -1,12 +1,5 @@
-//! Deck history: the way back after an edit that went wrong.
-//!
-//! Every write of a deck file, by the `canvas` tool and by studio, first keeps
-//! the version it is about to replace in `<decks folder>/.history/<deck
-//! stem>/<timestamp>-<rev8>-<who>.json`, where `rev8` is the first eight
-//! characters of that version's revision and `who` (`model` or `user`) is the
-//! writer that replaced it. A version identical to the newest kept one is
-//! skipped, and only the last [`KEEP`] versions stay. Restoring a version is
-//! a normal write of its content, so it is itself undoable.
+//! Deck history: every write first keeps the version it replaces in
+//! `<decks folder>/.history/<stem>/`, and only the last [`KEEP`] versions stay.
 
 use std::path::{Path, PathBuf};
 
@@ -39,7 +32,6 @@ impl Document for crate::doc::Doc {
     }
 }
 
-/// Versions kept per deck.
 pub const KEEP: usize = 50;
 
 /// Who made the write that replaced a kept version.
@@ -89,10 +81,6 @@ impl Entry {
         }
     }
 
-    /// The kept deck.
-    ///
-    /// # Errors
-    /// When the file is unreadable or no longer a valid deck.
     pub fn load(&self) -> Result<Deck> {
         let bytes = std::fs::read(&self.path)?;
         ensure!(bytes.len() <= MAX_SOURCE, "kept version is too large");
@@ -183,10 +171,8 @@ pub fn list(deck_path: &Path) -> Result<Vec<Entry>> {
     Ok(entries)
 }
 
-/// Keep the version of `deck_path` that is about to be replaced by a write
-/// whose result has revision `next_revision`. Does nothing when the file does
-/// not exist, is not a valid deck, equals the result, or equals the newest
-/// kept version.
+/// Keep the version `deck_path` holds before a write with revision `next_revision`;
+/// a missing, invalid, identical or already-kept version is skipped.
 ///
 /// # Errors
 /// When the history folder cannot be written.
@@ -194,7 +180,7 @@ pub fn record_before_write(deck_path: &Path, next_revision: &str, who: Who) -> R
     record_before_write_for::<Deck>(deck_path, next_revision, who)
 }
 
-/// Keep a version of either document kind, preserving deck filenames/bytes.
+/// Keep a version of either document kind.
 pub fn record_before_write_for<D: Document>(
     deck_path: &Path,
     next_revision: &str,
@@ -268,7 +254,6 @@ pub fn find(deck_path: &Path, prefix: &str) -> Result<Entry> {
     }
 }
 
-/// Image nodes in a deck.
 #[must_use]
 pub fn image_count(deck: &Deck) -> usize {
     deck.slides

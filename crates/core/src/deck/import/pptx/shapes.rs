@@ -16,7 +16,6 @@ use super::{Chain, Cx, State};
 const MAX_FRAME_DEPTH: usize = 7;
 /// Pixels beyond this are clamped; the deck accepts +-20000.
 const LIMIT: f64 = 19_000.0;
-/// Largest picture, in pixels, that is decoded to crop it.
 const MAX_CROP_PIXELS: u64 = 48_000_000;
 
 // -- geometry ------------------------------------------------------------------
@@ -467,8 +466,8 @@ pub(super) fn tree(
         if let Some(node) = out.get_mut(start) {
             native_effects(cx, el, node);
         }
-        // Like the exporter’s Frame background marker, these names identify
-        // an otherwise ordinary editable shape as the preceding image's scrim.
+        // These names mark an ordinary shape as the preceding image's scrim; the
+        // exporter writes the same marker.
         if out.len() == start + 1 && start > 0 {
             let (before, after) = out.split_at_mut(start);
             let (image, overlay) = (&mut before[start - 1], &after[0]);
@@ -764,8 +763,7 @@ fn geometry(st: &mut State, chain: &[&El], ext: (f64, f64)) -> Geometry {
     }
 }
 
-/// Where `part` of `rect` ends up when `rect` is turned by `rot` degrees
-/// about its own center: a node placed there can carry the rotation itself.
+/// Where `part` of `rect` lands when `rect` turns by `rot` about its own center.
 fn turned_part(rect: Rect, part: [f64; 4], rot: f64) -> Rect {
     let sub = Rect {
         x: rect.x + part[0] * rect.w,
@@ -790,8 +788,8 @@ fn turned_part(rect: Rect, part: [f64; 4], rot: f64) -> Rect {
     }
 }
 
-/// A fill that fades out from the middle, as stacked translucent ellipses
-/// (outermost first) inside a `w` by `h` box.
+/// A fill that fades out from the middle, as stacked translucent ellipses, the
+/// outermost first.
 fn glow(cx: &Cx, st: &mut State, stops: &[(f64, Rgba)], w: f64, h: f64) -> Vec<Node> {
     const RINGS: usize = 10;
     let reach = stops.last().map_or(1.0, |s| s.0).clamp(0.05, 1.0);
@@ -853,7 +851,7 @@ fn glow(cx: &Cx, st: &mut State, stops: &[(f64, Rgba)], w: f64, h: f64) -> Vec<N
     out
 }
 
-/// The nodes that draw a shape's outline and fill, positioned inside its box.
+/// The nodes that draw a shape's outline and fill, inside its box.
 fn background(cx: &Cx, st: &mut State, geo: Geometry, look: &Look, rect: Rect) -> Vec<Node> {
     if let Some(stops) = &look.glow {
         return glow(cx, st, stops, rect.w, rect.h);
@@ -888,8 +886,7 @@ fn background(cx: &Cx, st: &mut State, geo: Geometry, look: &Look, rect: Rect) -
     )]
 }
 
-/// An `sp` (or `SmartArt` `dsp:sp`): a text box, a placeholder, a plain shape,
-/// or a line.
+/// An `sp` (or `SmartArt` `dsp:sp`): a text box, placeholder, shape or line.
 fn shape(cx: &Cx, st: &mut State, sp: &El, space: &Space, out: &mut Vec<Node>) {
     if hidden(sp) {
         return;
@@ -1201,8 +1198,7 @@ fn cropped(bytes: &[u8], crop: [f64; 4]) -> Option<Vec<u8>> {
     Some(out.into_inner())
 }
 
-/// Store the picture a relationship points at, optionally cropped. Returns
-/// the deck `src`, or `None` after warning.
+/// Store the picture a relationship points at; `None` after warning.
 pub(super) fn picture_src(
     cx: &Cx,
     st: &mut State,
@@ -1683,8 +1679,7 @@ fn smartart(
     xf: &Xfrm,
     out: &mut Vec<Node>,
 ) {
-    // The drawing part is named by the data model's extension, through the
-    // slide's own relationships.
+    // The drawing part is named by the data model's extension, via the slide's rels.
     let model = data
         .find("relIds")
         .and_then(|r| r.rel("dm"))

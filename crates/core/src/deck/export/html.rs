@@ -1,6 +1,5 @@
-//! Standalone playback, bundling studio's actual renderer and animation modules.
-//! They are read through `assets/studio-ui`, symlinks to `crates/studio/ui`,
-//! so the published crate (which cannot reach outside itself) packages them.
+//! Standalone playback, bundling studio's actual renderer and animation modules,
+//! read through `assets/studio-ui` symlinks so the published crate packages them.
 
 use super::super::{Deck, Kind, layout::image_path, text::escape};
 use anyhow::Result;
@@ -100,9 +99,8 @@ pub(super) fn with_warnings(
         }
     }
     deck.theme.font_files.retain(|f| !f.file.is_empty());
-    // These modules use one-line relative imports and named exports only.
-    // Concatenate their original source into a single lexical scope, so file://
-    // playback needs neither module fetches, a server, nor a bundler dependency.
+    // The modules use one-line relative imports and named exports only, so their
+    // source concatenates into one scope: file:// playback needs no fetches or bundler.
     let source = MODULES
         .iter()
         .flat_map(|s| s.lines())

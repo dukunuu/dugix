@@ -1,6 +1,5 @@
 //! One-line descriptions of fonts and nodes, shared by the `canvas` tool and the
-//! terminal's comment messages, so the model sees the same compact shapes
-//! everywhere.
+//! terminal's comment messages.
 
 use std::fmt::Write as _;
 
@@ -53,8 +52,7 @@ pub fn font_line(font: &Font) -> String {
     parts.join(" ")
 }
 
-/// The node a comment is anchored to, on one line: id, kind, rectangle, text
-/// style and font overrides, and its text (at most `text_chars` characters).
+/// The node a comment is anchored to, on one line, with its text cut to `text_chars`.
 #[must_use]
 pub fn node_brief(
     deck: &Deck,

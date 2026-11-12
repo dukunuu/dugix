@@ -1,27 +1,5 @@
-//! Auto-layout with `taffy`, measuring text with the renderer's own glyph
-//! metrics. The editor lays the same trees out with CSS flexbox; this is the
-//! mapping both sides follow:
-//!
-//! | Deck | Flexbox |
-//! |---|---|
-//! | `mode: row` / `column` | `display: flex`, `flex-direction`, `gap`, `padding` |
-//! | `mode: none` | children are absolute; the parent's flow is empty |
-//! | `wrap` | `flex-wrap: wrap`, `align-content: flex-start`, `gap_cross` as the line gap |
-//! | `main` | `justify-content` (`space_between` is `space-between`) |
-//! | `cross` | `align-items` (`stretch` also stretches `hug` children) |
-//! | size `fixed(n)` | `width`/`height: n`; on the main axis `flex: 0 0 auto` |
-//! | size `hug` | `auto`; on the main axis `flex: 0 1 auto` |
-//! | size `fill` | main axis `flex: 1 1 0`; cross axis `align-self: stretch` |
-//! | `min_*` / `max_*` | `min-width` ... `max-height` |
-//! | `position: absolute{x,y}` | `position: absolute; left; top` (origin: parent's box, ignoring padding) |
-//! | `fill` on an absolute node | the other edge is pinned at `0` |
-//! | `clip` | `overflow: hidden` |
-//! | `stroke` | drawn inside the box; takes no layout space |
-//! | `hidden` | `display: none` |
-//! | everything is `box-sizing: border-box` | |
-//!
-//! Text nodes measure with the typesetter: max-content is the widest unwrapped
-//! line, min-content the longest word.
+//! Auto-layout with `taffy`, measuring text with the renderer's own glyph metrics.
+//! The editor lays the same trees out with CSS flexbox, with the same semantics.
 
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 
@@ -60,8 +38,7 @@ pub(crate) fn image_path(src: &str, assets: Option<&Path>) -> Option<PathBuf> {
     path.starts_with(root.canonicalize().ok()?).then_some(path)
 }
 
-/// Whether an image `src` can be drawn right now: a file in the deck's
-/// `assets/` or an https image the fetcher already holds. Never fetches.
+/// Whether an image `src` can be drawn now, without fetching anything.
 #[must_use]
 pub fn image_resolves(src: &str, assets: Option<&Path>) -> bool {
     image_path(src, assets).is_some()
@@ -94,8 +71,7 @@ enum Leaf {
         style: TextStyle,
         rows: Vec<Vec<String>>,
     },
-    /// A natural size. With `ratio` (images) the other dimension follows the
-    /// aspect ratio when one is known; charts and shapes size each axis alone.
+    /// A natural size; with `ratio` the other dimension follows the aspect ratio.
     Natural(f64, f64, bool),
 }
 
@@ -267,7 +243,6 @@ fn container_style(style: &mut Style, layout: &AutoLayout, clip: bool) {
     }
 }
 
-/// The style of `node` as a child of a parent with `parent` layout.
 fn node_style(node: &Node, parent: &AutoLayout) -> Style {
     let mut style = Style {
         display: if node.hidden {
@@ -425,15 +400,14 @@ impl Builder<'_, '_> {
     }
 }
 
-/// Resolved rectangles for every node on `slide`, in tree order (parents
-/// before children). Imported deck fonts are not loaded; use [`layout_at`].
+/// Resolved rectangles for every node on `slide`, in tree order, without the deck's
+/// fonts; use [`layout_at`] to measure with them.
 #[must_use]
 pub fn layout(deck: &Deck, slide: &Slide) -> Vec<(String, Rect)> {
     layout_at(deck, slide, None)
 }
 
-/// Like [`layout`], measuring with the deck's own `assets` folder: its
-/// imported fonts and image sizes.
+/// Like [`layout`], measuring with the deck's own fonts and image sizes.
 #[must_use]
 pub fn layout_at(deck: &Deck, slide: &Slide, assets: Option<&Path>) -> Vec<(String, Rect)> {
     let mut ts = Typesetter::new(&deck.theme, assets);
@@ -518,7 +492,6 @@ pub(super) fn layout_with(
     out
 }
 
-/// `layout` as a lookup.
 #[must_use]
 pub fn layout_map(deck: &Deck, slide: &Slide, assets: Option<&Path>) -> HashMap<String, Rect> {
     layout_at(deck, slide, assets).into_iter().collect()

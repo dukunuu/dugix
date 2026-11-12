@@ -12,8 +12,7 @@ use uuid::Uuid;
 use super::suggest::Suggestion;
 use super::{Deck, Op};
 
-/// A point on a slide, in slide pixels, optionally attached to a node (the
-/// field is still called `block`, as in version 1).
+/// A point on a slide, in slide pixels, optionally attached to a node.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Anchor {
@@ -21,8 +20,7 @@ pub struct Anchor {
     pub block: Option<String>,
     pub x: i32,
     pub y: i32,
-    /// False only in sidecars written for version-1 grid decks, whose points
-    /// were grid cells; [`load`] converts those.
+    /// False only in old grid-cell sidecars, which [`load`] converts.
     #[serde(default)]
     pub px: bool,
 }
@@ -123,7 +121,7 @@ pub fn now() -> u64 {
 }
 
 impl Message {
-    /// Construct a deck reply, preserving the original default type.
+    /// Construct a deck reply.
     #[must_use]
     pub fn new(role: Role, text: String, edits: Vec<Edit>) -> Self {
         Self::new_for(role, text, edits)
