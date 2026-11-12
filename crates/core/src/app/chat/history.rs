@@ -18,7 +18,6 @@ impl App {
         )
     }
 
-    /// After a reply, clear old observations in bulk once the token trigger is met.
     pub fn maybe_mask(&mut self) {
         if !self.experiments.mask_tool_results || self.is_streaming() {
             return;
@@ -59,7 +58,6 @@ impl App {
         if through <= self.mask_through {
             return;
         }
-        // Already compacted or masked observations cannot save any more context.
         let start = self
             .mask_through
             .max(self.messages.len() - self.effective_messages().len());
@@ -89,7 +87,6 @@ impl App {
         ));
     }
 
-    /// Conversation estimate with cleared observations counted at their masked size.
     pub(in crate::app) fn effective_conversation_chars(&self) -> usize {
         let effective = self.effective_messages();
         let offset = self.messages.len() - effective.len();
@@ -119,22 +116,16 @@ impl App {
             .sum()
     }
 
-    /// The exact message list a completion request will carry: system prompt,
-    /// compaction digest, then the effective conversation tail.
-    /// User messages with images become multimodal parts for vision models, or
-    /// get their stored descriptions appended as text for everything else.
+    /// Reconstruct the wire history with compaction, images, and tool-call replay.
     #[allow(clippy::too_many_lines)]
     pub fn build_history(&mut self) -> Vec<ChatMessage> {
         let mut history: Vec<ChatMessage> = Vec::with_capacity(self.messages.len() + 3);
         history.push(ChatMessage::text("system", self.system_prompt()));
-        // Include space-file images inline for vision models.
         if self.current_model_supports_images()
             && let Some(img_msg) = self.space_images_message()
         {
             history.push(img_msg);
         }
-        // If this session has been auto-compacted, send the digest instead of
-        // the raw messages it covers — only the tail after it goes verbatim.
         if let Some(summary) = self
             .session
             .as_ref()
@@ -147,13 +138,7 @@ impl App {
         }
         let vision = self.current_model_supports_images();
         let result_cap = self.model_profile().result_cap;
-        // Dedup state for replayed tool results: (tool, arguments) → latest
-        // full result. A row whose result is byte-identical to the latest
-        // one for the same tool+arguments (e.g. a re-read of an unchanged
-        // file) is replayed as a one-line note instead of the full copy, so
-        // duplicates don't re-enter the context on every request. The live
-        // tool loop applies the same rule with the same state (seeded from
-        // this history), keeping the prompt-cache prefix continuous.
+        // Replay and the live tool loop must deduplicate identically to preserve cached prefixes.
         let mut seen_results: std::collections::HashMap<(String, String), String> =
             std::collections::HashMap::new();
         let effective = self.effective_messages();
@@ -191,8 +176,7 @@ impl App {
             .then(|| self.toolbox.space_files_dir())
             .flatten();
         let mut index = 0;
-        // A `recall` row is replayed as a prefix of the user message after it,
-        // byte-identical on every request so the cached prefix holds.
+        // Recall prefixes must remain byte-identical across requests for provider caching.
         let mut recall: Option<String> = None;
         while index < effective.len() {
             let m = &effective[index];
@@ -201,16 +185,6 @@ impl App {
                 index += 1;
                 continue;
             }
-            // Replay past tool calls as real assistant/tool message pairs so
-            // the model remembers what it already tried (and got back) in
-            // prior turns — dropping these caused it to repeat the same
-            // mistakes on file-writing tools with no memory of the failure.
-            // Skip every row that must never reach the model (shared with
-            // compaction, so a digest can't leak the same rows later):
-            // background-job scratch, UI-only prompts, transport failures,
-            // per-persona swarm round replies, and gate replies (whose
-            // survey/plan sections are excluded, so a bare "the second
-            // option" or "drop Q2" must not reach the model without context).
             if Self::excluded_from_model_history(m) {
                 index += 1;
                 continue;
@@ -247,9 +221,7 @@ impl App {
             } else {
                 ChatMessage::text(m.role.clone(), m.content.clone())
             };
-            // On every assistant turn with a broken block, not just the
-            // latest: a note that vanished once the turn aged would change
-            // the replayed prefix and miss the prompt cache.
+            // Removing an older turn's diagnostic would invalidate the cached prefix.
             if m.role == "assistant" {
                 if let Some(content) = ui_replay.get(&index) {
                     cm.content.clone_from(content);
@@ -292,19 +264,7 @@ impl App {
         history
     }
 
-    /// Mark where the cacheable prefix ends, for models that cache only when
-    /// asked. No-op for backends that cache automatically.
-    ///
-    /// Two breakpoints, on the boundaries [`App::bump_cache_epoch`] already
-    /// keeps byte-identical for the life of a cache epoch:
-    ///
-    /// 1. the end of the leading system block (base prompt, space
-    ///    instructions, file/app/script sections, memory snapshot, skills);
-    /// 2. the last message before the live tail, so a tool loop replays over
-    ///    a cached prefix instead of resending the whole conversation.
-    ///
-    /// Placing them anywhere later would invalidate the cache on every turn,
-    /// which is the failure this exists to avoid.
+    // Breakpoints must precede the live tail so each turn preserves the cached prefix.
     fn mark_cache_breakpoints(&self, history: &mut [ChatMessage]) {
         if !self.wants_explicit_cache_breakpoints() {
             return;
@@ -317,9 +277,6 @@ impl App {
         if let Some(message) = history.get_mut(last_system) {
             message.cache_breakpoint = true;
         }
-        // The tail message is the live one; the prefix worth caching ends
-        // just before it. With fewer than two messages after the system
-        // block there is no separate prefix to mark.
         if history.len() >= last_system + 3
             && let Some(message) = history.get_mut(history.len() - 2)
         {
@@ -327,10 +284,7 @@ impl App {
         }
     }
 
-    /// Whether the active model caches only when the request marks a
-    /// breakpoint. `OpenAI`, Gemini and `DeepSeek`-family models cache
-    /// automatically and reject or ignore the marker; Anthropic-family models
-    /// cache nothing without it.
+    // Anthropic requires explicit markers; auto-caching providers may reject them.
     #[must_use]
     pub fn wants_explicit_cache_breakpoints(&self) -> bool {
         self.current_model
@@ -339,8 +293,6 @@ impl App {
     }
 }
 
-/// Append one persisted assistant tool-call batch and its tool results to a
-/// reconstructed request history.
 fn append_tool_call_history(
     history: &mut Vec<ChatMessage>,
     effective: &[Message],
@@ -361,7 +313,6 @@ fn append_tool_call_history(
         *index += 1;
     }
     if rows.is_empty() {
-        // Keep malformed legacy rows out of the model.
         debug_assert!(*index > start);
         return;
     }
@@ -390,7 +341,6 @@ fn append_tool_call_history(
             .filter(|_| !masked)
             .and_then(|dir| crate::provider::openrouter::extract_tool_images(&row.result, dir));
         let key = (call.name.clone(), call.arguments.clone());
-        // Dedup the model-visible result so replay and live-loop seeding agree.
         let visible = result_cap.map_or_else(
             || row.result.clone(),
             |cap| crate::tools::cap_head_tail(&row.result, cap),
@@ -431,8 +381,6 @@ fn append_tool_call_history(
     }
 }
 
-/// One persisted tool-call transcript row, including the provider call id,
-/// assistant content, and optional reasoning needed to reconstruct the batch.
 struct StoredToolCall {
     call: ToolCall,
     result: String,
@@ -440,8 +388,6 @@ struct StoredToolCall {
     assistant_content: Option<String>,
 }
 
-/// Recover a stored tool-call row from its JSON content. Older rows did not
-/// persist an id, so they retain the legacy synthetic id as a fallback.
 fn parse_tool_call_row(content: &str) -> Option<StoredToolCall> {
     let v: serde_json::Value = serde_json::from_str(content).ok()?;
     let name = v.get("name")?.as_str()?.to_string();
@@ -470,7 +416,6 @@ fn parse_tool_call_row(content: &str) -> Option<StoredToolCall> {
     })
 }
 
-/// Compact byte counts: 940 B, 1.2 KB, 3.4 MB.
 pub fn human_size(bytes: u64) -> String {
     match bytes {
         b if b < 1024 => format!("{b} B"),
@@ -479,10 +424,7 @@ pub fn human_size(bytes: u64) -> String {
     }
 }
 
-/// Strip `<think>...</think>` blocks out of `text`, returning the cleaned
-/// content and the extracted reasoning (blocks joined by newlines), if any. An
-/// unterminated tag (e.g. a truncated stream) treats the remainder as
-/// reasoning rather than leaking a dangling tag into the answer.
+/// Separate inline reasoning tags from answer content, including truncated reasoning blocks.
 pub fn split_inline_reasoning(text: &str) -> (String, Option<String>) {
     const OPEN: &str = "<think>";
     const CLOSE: &str = "</think>";

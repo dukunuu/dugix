@@ -1,6 +1,4 @@
-//! The App side of memory (`docs/memory.md`): the frozen table of contents
-//! in the system prompt, per-message hints, editing, and `/memory tidy`.
-//! Storage and text forms live in `crate::memory`.
+//! Memory snapshots, recall hints, editing, and tidying for conversations.
 
 #[cfg(test)]
 #[path = "memory_tests.rs"]
@@ -15,7 +13,6 @@ use super::App;
 use crate::db::Message;
 use crate::memory::{self, book, recall};
 
-/// A transcript row the app writes itself (no model, tokens or cost).
 pub(super) fn note(role: &str, content: String) -> Message {
     Message {
         role: role.to_string(),
@@ -32,10 +29,7 @@ pub(super) fn note(role: &str, content: String) -> Message {
 }
 
 impl App {
-    /// Rebuild the frozen `## Memory` section from the db and the space's
-    /// docs, and begin a new prompt-cache epoch. Runs when a session starts
-    /// or switches, never mid-session: a fact saved during a chat is already
-    /// in its transcript.
+    /// Freeze memory for a new session or cache epoch.
     pub fn refresh_memory_snapshot(&mut self) {
         let conn = self.db.conn();
         let space = &self.active_space.id;
@@ -52,42 +46,33 @@ impl App {
         self.bump_cache_epoch();
     }
 
-    /// The table of contents frozen for the active cache epoch.
     #[must_use]
     pub fn memory_snapshot(&self) -> &str {
         &self.memory_snapshot
     }
 
-    /// Chapters over the tidy threshold, for the status bar.
     #[must_use]
     pub fn memory_tidy_due(&self) -> usize {
         self.memory_tidy_due
     }
 
-    /// Advance the app-local prompt-cache epoch after a serialized-prefix
-    /// boundary such as a memory or prompt refresh.
     pub(crate) fn bump_cache_epoch(&mut self) {
         self.cache_epoch = self.cache_epoch.wrapping_add(1);
         self.meter.warned = false;
         self.prompt_datetime = chrono::Utc::now()
             .format("%Y-%m-%d %H:%M UTC, %A")
             .to_string();
-        // The exact total belongs to the previous serialized prompt/model
-        // lane. Let the next request establish a fresh value rather than
-        // pinning the context bar to an unrelated boundary.
+        // Exact usage from a different prompt/model lane cannot measure this epoch.
         self.meter.total = None;
         self.meter.last_cache_rate = None;
         self.meter.turn_cache = super::CacheTally::default();
     }
 
-    /// Build a non-sensitive cache-lane key for one session and epoch.
     #[must_use]
     pub(crate) fn prompt_cache_key_for(&self, session_id: &str) -> String {
         format!("{session_id}:{}", self.cache_epoch)
     }
 
-    /// The chapters and docs worth naming before `text` is sent, minus any
-    /// already named in this session. `None` in incognito.
     pub(super) fn memory_hint(&self, text: &str) -> Option<recall::Recall> {
         if self.incognito {
             return None;
@@ -110,8 +95,6 @@ impl App {
         )
     }
 
-    /// Append an app-written row to the open session (persisted unless
-    /// incognito).
     pub(super) fn push_note(
         &mut self,
         session_id: &str,
@@ -136,8 +119,6 @@ impl App {
             .with_context(|| format!("no space named {name:?}"))
     }
 
-    /// Render a space's memory to a Markdown file for `$EDITOR`; read it back
-    /// with [`App::finish_memory_edit`].
     pub fn memory_edit_file(&self, space_name: &str) -> Result<PathBuf> {
         let space = self.space_id_by_name(space_name)?;
         let conn = self.db.conn();
@@ -151,8 +132,6 @@ impl App {
         Ok(path)
     }
 
-    /// Apply an edited memory file as a diff, remove it, and refresh the
-    /// table of contents when it belongs to the active space.
     pub fn finish_memory_edit(&mut self, space_name: &str, path: &std::path::Path) -> Result<()> {
         let space = self.space_id_by_name(space_name)?;
         let text = std::fs::read_to_string(path)?;
@@ -171,7 +150,6 @@ impl App {
         Ok(())
     }
 
-    /// The book as editable Markdown (the host's memory document).
     pub fn memory_markdown(&self) -> Result<String> {
         let conn = self.db.conn();
         let space = &self.active_space.id;
@@ -181,8 +159,6 @@ impl App {
         ))
     }
 
-    /// Apply edited Markdown to the active space's memory (the host's memory
-    /// document).
     pub fn save_memory_markdown(&mut self, text: &str) -> Result<book::EditSummary> {
         let summary = book::apply_edit(
             self.db.conn(),
@@ -195,7 +171,6 @@ impl App {
         Ok(summary)
     }
 
-    /// `/memory tidy`: ask the session model to tidy memory in the conversation.
     pub fn memory_tidy(&mut self) -> Result<()> {
         if self.incognito {
             self.push_status("memory is off in incognito");

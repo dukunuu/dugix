@@ -1,13 +1,9 @@
-//! The `/usage` popup's domain half: aggregate token/cache/cost analytics
-//! drawn from the per-request `usage_log`. Content-free — only
-//! backend/model/tokens — so it works even for sessions long compacted
-//! away.
+//! Content-free usage analytics from per-request accounting.
 
 use super::App;
 
 use crate::db::{SessionUsageRow, UsageByBackend, UsageByModel, UsageRange, UsageRow, UsageTotals};
 
-/// Session totals; unknown costs remain explicit rather than looking free.
 #[derive(Default, serde::Serialize)]
 pub struct SessionUsageTotals {
     pub requests: usize,
@@ -42,7 +38,7 @@ impl SessionUsageTotals {
     }
 }
 
-/// Shared text for Ctrl+G and `nexus usage --session` (times are local).
+/// Format session usage with local timestamps.
 #[must_use]
 pub fn session_usage_lines(rows: &[SessionUsageRow]) -> Vec<String> {
     let cost = |value: Option<f64>| value.map_or_else(|| "—".to_string(), |v| format!("${v:.4}"));
@@ -93,8 +89,6 @@ pub fn session_usage_lines(rows: &[SessionUsageRow]) -> Vec<String> {
     lines
 }
 
-/// Snapshot of the aggregates the popup renders, loaded on open (and on
-/// Ctrl+R refresh).
 pub struct UsageData {
     pub totals: UsageTotals,
     pub by_backend: Vec<UsageByBackend>,
@@ -111,8 +105,7 @@ impl App {
         })
     }
 
-    /// Attribution for background work (file and chat indexing) that belongs
-    /// to the space, not to whichever session happens to be open.
+    /// Attribute indexing usage to the space rather than the viewed session.
     pub(crate) fn background_usage_log(&self) -> Option<crate::db::UsageLog> {
         self.usage_log().map(|log| crate::db::UsageLog {
             session_id: None,
@@ -128,13 +121,10 @@ impl App {
         provider.logged(self.usage_log(), kind)
     }
 
-    /// Load the aggregates for the persisted range preference.
     pub fn load_usage(&self) -> UsageData {
         self.load_usage_for_range(self.usage_range)
     }
 
-    /// Load usage analytics for a requested window without changing the
-    /// persisted TUI preference. Thin clients use this for range tabs.
     pub fn load_usage_for_range(&self, range: UsageRange) -> UsageData {
         let since = range.since().map(|t| t.to_rfc3339());
         UsageData {
@@ -154,15 +144,10 @@ impl App {
         }
     }
 
-    /// Domain half of the range cycle: persist the choice (the view switches
-    /// `usage_range` and reloads).
     pub fn persist_usage_range(&mut self) {
         let _ = self.db.set_setting("usage_range", self.usage_range.key());
     }
 
-    /// Recompute historical costs from the current catalog before rendering —
-    /// rows logged before pricing existed stay accurate. Called on popup open
-    /// and refresh.
     pub fn backfill_usage_costs(&mut self) {
         let _ = self.db.backfill_usage_costs();
     }

@@ -1,9 +1,4 @@
-//! Space filesets: importing files into `spaces/<name>/files/`, keeping the
-//! db index in sync with the directory, and extracting searchable text.
-
-// Casts here are on bounded values: token counts, byte sizes, and
-// selection indices — never on unbounded input. JSON-derived indices in
-// provider/tools go through try_from instead.
+//! Import, extract, and index files in the active space.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -21,20 +16,15 @@ use sha2::{Digest, Sha256};
 
 use super::App;
 
-/// A message from the background converter batch about one file.
 #[derive(Clone)]
 pub enum OcrUpdate {
-    /// A human-readable phase ("convert: pandoc") shown while nothing is
-    /// countable yet.
     Stage(String),
     /// (pages done, total pages, pages failed so far).
     Progress(usize, usize, usize),
-    /// Final outcome: (extracted text, per-page errors as (index, reason)),
-    /// or a whole-document error message.
+    /// Extracted text and per-page errors, or a whole-document error.
     Done(std::result::Result<(String, Vec<(usize, String)>), String>),
 }
 
-/// A stem that looks like a UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).
 fn is_uuid_like(stem: &str) -> bool {
     let hex = |s: &str| s.chars().all(|c| c.is_ascii_hexdigit());
     let parts: Vec<&str> = stem.split('-').collect();
@@ -51,8 +41,6 @@ fn is_uuid_like(stem: &str) -> bool {
         && hex(parts[4])
 }
 
-/// First ~90 chars of an error, so a page failure fits in the status column
-/// without swallowing the reason.
 fn clip_err(e: &str) -> String {
     let mut s: String = e.chars().take(90).collect();
     if s.len() < e.len() {
@@ -63,12 +51,8 @@ fn clip_err(e: &str) -> String {
 
 const MAX_EMBEDDED_PAGES: u32 = 30;
 
-/// Prefix of the transient status shown while a file's chunks are embedded.
 const EMBEDDING_STATUS: &str = "embedding…";
 
-/// The embedding marker for a file whose settled status is `prev`: a plain
-/// "ok" stays "embedding…", a richer one ("ok · html → text") is carried
-/// along so it comes back afterwards.
 fn embedding_status(prev: &str) -> String {
     if prev == "ok" {
         EMBEDDING_STATUS.to_string()
@@ -77,7 +61,6 @@ fn embedding_status(prev: &str) -> String {
     }
 }
 
-/// Undo [`embedding_status`].
 fn restored_status(status: &str) -> String {
     status
         .strip_prefix(EMBEDDING_STATUS)
@@ -85,7 +68,6 @@ fn restored_status(status: &str) -> String {
         .map_or_else(|| "ok".to_string(), str::to_string)
 }
 
-/// How a finished conversion job read the file, for the status.
 fn read_label(previous_status: &str) -> String {
     previous_status
         .trim_start_matches("convert: ")
@@ -94,9 +76,6 @@ fn read_label(previous_status: &str) -> String {
         .to_string()
 }
 
-/// Run a file's background converter (pandoc, `LibreOffice`, ffprobe/whisper or
-/// a user hook) on a blocking thread, with the tool's name as the final
-/// stage so the status can say how the file was read.
 async fn convert_flow(
     path: std::path::PathBuf,
     tx: &tokio::sync::mpsc::UnboundedSender<(String, String, OcrUpdate)>,
@@ -121,8 +100,6 @@ async fn convert_flow(
     }
 }
 
-/// SHA-256 of a file as lowercase hex, plus its bytes when small enough to
-/// hand to the extractor without reading the file twice. `None` = unreadable.
 fn read_and_hash(path: &Path, size: i64) -> Option<(String, Option<Vec<u8>>)> {
     use std::io::Read as _;
     let hex = |digest: &[u8]| {
@@ -135,7 +112,7 @@ fn read_and_hash(path: &Path, size: i64) -> Option<(String, Option<Vec<u8>>)> {
         let bytes = std::fs::read(path).ok()?;
         return Some((hex(&Sha256::digest(&bytes)), Some(bytes)));
     }
-    // Big files (video, disk images) are hashed as a stream, never held.
+    // Stream large files to bound memory use while hashing.
     let mut file = std::fs::File::open(path).ok()?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 1 << 20];
@@ -150,12 +127,7 @@ fn read_and_hash(path: &Path, size: i64) -> Option<(String, Option<Vec<u8>>)> {
 }
 
 impl App {
-    /// Sync the active space's files directory with the db: new or changed
-    /// files (by sha256) are re-extracted and re-indexed, rows for deleted
-    /// files are dropped, and `files_cache` is refreshed. Best-effort: a
-    /// single bad file gets an "error: …" status instead of failing the scan.
-    /// ponytail: runs synchronously on the UI task — extraction of a huge PDF
-    /// blocks a beat; move to a blocking task if that ever hurts.
+    /// Reconcile the active space's files with its searchable index.
     pub fn rescan_files(&mut self) {
         if self.index.embed_rx.is_none()
             && self
@@ -164,13 +136,11 @@ impl App {
                 .as_ref()
                 .is_some_and(crate::provider::embedding::Embedder::is_ollama)
         {
-            // Re-probe digests/capabilities on a fresh scan, not between files.
             self.index.embedding_backend = None;
         }
         self.rescan_files_with(&crate::extract::ExtractConfig::load());
     }
 
-    /// [`Self::rescan_files`] with explicit converter settings.
     #[allow(clippy::too_many_lines)]
     pub fn rescan_files_with(&mut self, cfg: &crate::extract::ExtractConfig) {
         let dir = self.space.files_dir(&self.active_space.name);
@@ -200,17 +170,13 @@ impl App {
                 .map_or(0, |d| d.as_secs() as i64);
             let disk_size = entry.metadata().map_or(0, |m| m.len() as i64);
             let existing = known.iter().find(|f| f.name == name);
-            // Unchanged by stat: skip entirely — no read, no hash. This is what
-            // keeps /files and space switches snappy with big filesets.
+            // Avoid reading and hashing unchanged files on the UI thread.
             if let Some(f) = existing
                 && f.size == disk_size
                 && f.mtime == mtime
                 && mtime != 0
             {
-                // Stale "convert: …" (app quit mid-job) re-queues once
-                // no batch is in flight.  Do not let the stat fast path hide a
-                // file imported by an older build that has no chunks yet, or
-                // one indexed by an older extractor.
+                // Matching stats do not guarantee complete or current extraction state.
                 if crate::extract::status_is_queued(&f.status) {
                     if self.index.convert_rx.is_none() {
                         ocr_jobs.push((self.active_space.id.clone(), name.clone(), path.clone()));
@@ -229,17 +195,13 @@ impl App {
                 && self.db.file_indexed(&f.id).unwrap_or(false)
                 && self.db.file_has_chunks(&f.id).unwrap_or(false)
             {
-                // Content unchanged (touched, or indexed before mtimes were
-                // tracked): just record the stat for next time.
                 let _ = self.db.set_file_mtime(&f.id, mtime);
                 if crate::extract::status_is_queued(&f.status) && self.index.convert_rx.is_none() {
                     ocr_jobs.push((self.active_space.id.clone(), name.clone(), path.clone()));
                 }
                 continue;
             }
-            // Cold cache (fresh restore, wiped cache.db): the durable row
-            // survives but this device's index state is gone — fall through
-            // to re-extract so chunks/embeddings rebuild here.
+            // A durable file row can survive loss of the device-local extraction cache.
             let size = disk_size;
             let extracted = match &bytes {
                 Some(b) => crate::extract::to_text_bytes(b, &name, cfg),
@@ -254,9 +216,7 @@ impl App {
                     let _ = self.db.set_file_chunks(&id, &chunks);
                     let _ = self.db.set_file_mtime(&id, mtime);
                     let _ = self.db.set_file_extractor(&id, version);
-                    // Only queue a file whose row exists: without one the
-                    // result can't be recorded, and the batch-done rescan
-                    // would queue the same file again.
+                    // Without a durable row, results cannot be recorded and rescans would requeue forever.
                     if crate::extract::status_is_queued(&status) {
                         ocr_jobs.push((self.active_space.id.clone(), name.clone(), path.clone()));
                     }
@@ -268,8 +228,6 @@ impl App {
             let _ = self.db.delete_file(&gone.id);
         }
         self.start_ocr(ocr_jobs);
-        // Backfill vectors for anything whose chunks changed (or that predates
-        // semantic search entirely).
         self.start_embedding();
         self.caches.files = self
             .db
@@ -277,9 +235,6 @@ impl App {
             .unwrap_or_default();
     }
 
-    /// Run queued converters sequentially off the UI thread. One batch at a
-    /// time: jobs arriving while a batch runs stay at "convert: …" and
-    /// re-queue on a later rescan.
     pub fn start_ocr(&mut self, jobs: Vec<(String, String, std::path::PathBuf)>) {
         if jobs.is_empty() || self.index.convert_rx.is_some() {
             return;
@@ -296,15 +251,11 @@ impl App {
         });
     }
 
-    /// Zero a file's chunks and hash/size so the next rescan re-indexes it
-    /// from disk.
     pub fn reextract_file(&mut self, name: &str) {
         let Some(f) = self.caches.files.iter().find(|f| f.name == name).cloned() else {
             return;
         };
         let _ = self.db.set_file_chunks(&f.id, &[]);
-        // Zeroing hash + size guarantees the rescan takes the re-extract path
-        // (a real file is never 0 bytes with an empty hash).
         let _ = self
             .db
             .upsert_file(&self.active_space.id, &f.name, "", 0, "re-extracting");
@@ -312,18 +263,12 @@ impl App {
         self.rescan_files();
     }
 
-    /// Embed the next imported file whose chunks lack vectors, one file per
-    /// job (the done-handler chains the next). Files with no extractable text
-    /// receive a small filename metadata chunk so they are still searchable.
-    /// No-op without a provider, without an embedding model, or while a job is
-    /// already in flight.
     #[allow(clippy::too_many_lines)]
     pub fn start_embedding(&mut self) {
         if self.index.embed_rx.is_some() {
             return;
         }
-        // Chat backfill runs on its own timer only, never inline with the
-        // rescans that follow every turn, so it stays behind foreground work.
+        // Timer-only chat backfill gives foreground work priority over indexing.
         let chats_due = std::time::Instant::now() >= self.index.next_chat_index;
         if chats_due {
             self.index_chats();
@@ -335,8 +280,7 @@ impl App {
         let Some(embedder) = self.file_embedder() else {
             return;
         };
-        // The toolbox's search path holds a clone that shares the probed
-        // profile, so it only needs rebuilding when the instance is new.
+        // Toolbox clones share the probed profile; only a new instance requires rebuilding.
         let new_instance = self
             .index
             .embedding_backend
@@ -346,8 +290,7 @@ impl App {
         if new_instance {
             self.refresh_toolbox();
         }
-        // The cache key (model digest, dimension, capabilities) is learned
-        // by a probe with synthetic content only; no file text goes out first.
+        // Probe identity with synthetic content before sending any file text.
         let Some(identity) = embedder
             .identity()
             .map(crate::provider::embedding::EmbedIdentity::key)
@@ -375,10 +318,7 @@ impl App {
             }
             return;
         };
-        // Converters own files in this state. They remain in the database
-        // work queue, but must not receive a placeholder chunk while running.
-        // The ready-file filter above prevents a converter row from blocking
-        // all other files.
+        // Do not install placeholder chunks while a converter owns the file.
         let file_id = file.id.clone();
         let Ok(mut chunks) = self.db.file_chunk_texts(&file_id) else {
             return;
@@ -396,14 +336,9 @@ impl App {
                 Err(_) => return,
             };
         }
-        // Embedding is best-effort background work; outside a runtime (sync
-        // unit tests) there's nowhere to run it, so just skip.
         let Ok(handle) = tokio::runtime::Handle::try_current() else {
             return;
         };
-        // Keep extraction status text for metadata-only and failed files;
-        // the transient embedding marker is only safe to replace with "ok"
-        // when the original index status was already "ok".
         let show_embedding_status =
             crate::extract::status_is_ok(&file.status) || file.status.starts_with(EMBEDDING_STATUS);
         if show_embedding_status && !file.status.starts_with(EMBEDDING_STATUS) {
@@ -461,8 +396,7 @@ impl App {
             crate::extract::chunk_lines(&text)
         };
         if self.index.embedding_chunks.is_empty() {
-            // Blank text must still yield a vector, or the same file would be
-            // picked again forever.
+            // A blank file still needs a vector to prevent endless requeueing.
             self.index.embedding_chunks = crate::extract::metadata_chunks(&file_name);
         }
         let pdf_path = is_scanned_pdf.then(|| image_path.clone());
@@ -511,9 +445,7 @@ impl App {
                             crate::provider::embedding::image_input(&path).ok()
                         })
                         .await;
-                        // A file the model cannot take (corrupt, over the size
-                        // bound) must not stall the queue: it stays findable by
-                        // name through its metadata chunk.
+                        // Metadata keeps unsupported files searchable without stalling the queue.
                         inputs.push(match prepared {
                             Ok(Some(input)) => input,
                             _ => embedder.document(
@@ -553,10 +485,7 @@ impl App {
         });
     }
 
-    /// One embedding job finished: store vectors and chain the next file, or
-    /// surface the error and stop (a dead endpoint shouldn't be hammered —
-    /// the next rescan retries). Search falls back to keywords while vectors
-    /// are missing.
+    // Stop chaining after errors to avoid hammering a dead embedding endpoint.
     pub fn on_embed_done(&mut self, r: Option<crate::app::EmbedMsg>) {
         let Some((space_id, file_id, result)) = r else {
             self.index.embed_rx = None;
@@ -622,15 +551,11 @@ impl App {
         }
     }
 
-    /// A finished converter job: persist chunks/status, refresh the cache only if the
-    /// file's space is still active. `None` = batch done (channel closed).
     #[allow(clippy::too_many_lines)]
     pub fn on_ocr_done(&mut self, r: Option<(String, String, OcrUpdate)>) {
         let Some((space_id, name, update)) = r else {
             self.index.convert_rx = None;
-            // Files imported mid-batch sat at "convert: …" unqueued; this rescan
-            // chains them into a fresh batch instead of stalling until the
-            // user reopens /files.
+            // A rescan picks up files imported while the completed batch was running.
             self.rescan_files();
             return;
         };
@@ -638,16 +563,15 @@ impl App {
             return;
         };
         let Some(f) = files.iter().find(|f| f.name == name) else {
-            return; // deleted mid-conversion
+            return;
         };
         if !crate::extract::status_is_queued(&f.status) {
-            return; // re-imported mid-job — this result is for stale content
+            return;
         }
         let completed = matches!(update, OcrUpdate::Done(_));
         match update {
             OcrUpdate::Stage(s) => {
-                // Keep the "convert:" prefix — the stale-check above
-                // depends on it.
+                // The stale-result check depends on this prefix.
                 let shown = if s.starts_with("convert:") {
                     s.clone()
                 } else {
@@ -672,12 +596,9 @@ impl App {
                 }
             }
             OcrUpdate::Done(Ok((text, errors))) if text.trim().is_empty() => {
-                // Nothing usable came back; keep a filename metadata chunk so
-                // even an image/scanned document remains searchable.
                 let _ = self
                     .db
                     .set_file_chunks(&f.id, &crate::extract::metadata_chunks(&name));
-                // Nothing usable came back; say exactly why if we know.
                 let status = match errors.first() {
                     Some((i, e)) => {
                         format!("all pages failed (p{}: {})", i + 1, clip_err(e))
@@ -709,7 +630,6 @@ impl App {
                 };
                 let _ = self.db.set_file_status(&f.id, &status);
 
-                // Rename pasted images (uuid.ext) to uuid-<slug>.ext for @-completion.
                 if let Some(new_name) = Self::descriptive_paste_name(f, &text) {
                     let dir = self.space.files_dir(&self.active_space.name);
                     let old_path = dir.join(&f.name);
@@ -722,7 +642,6 @@ impl App {
                         if space_id == self.active_space.id {
                             self.push_status(format!("conversion done: {new_name}"));
                         }
-                        // f.name needs the updated name for the message below.
                     } else if space_id == self.active_space.id {
                         self.push_status(format!("conversion done: {name}"));
                     }
@@ -731,9 +650,6 @@ impl App {
                 }
             }
             OcrUpdate::Done(Err(msg)) => {
-                // A failed first conversion has no chunks to embed. Preserve old
-                // extracted text when converting an already indexed file, but
-                // create metadata for a file that has never been indexed.
                 if self
                     .db
                     .file_chunk_texts(&f.id)
@@ -758,9 +674,7 @@ impl App {
         }
     }
 
-    /// Copy `path` into the active space's files dir and index it. Returns
-    /// the imported file's name. An existing file with the same name is
-    /// overwritten (the rescan re-extracts it).
+    /// Import and index a file, overwriting an existing file with the same name.
     pub fn import_file(&mut self, path: &Path) -> Result<String> {
         let name = path
             .file_name()
@@ -775,7 +689,6 @@ impl App {
         Ok(name)
     }
 
-    /// Remove a file's disk copy and index rows, then refresh the cache.
     pub fn delete_file(&mut self, name: &str) -> Result<()> {
         let Some(f) = self.caches.files.iter().find(|f| f.name == name).cloned() else {
             return Ok(());
@@ -790,10 +703,6 @@ impl App {
         Ok(())
     }
 
-    /// Move a file on disk; the
-    /// rescan swaps the index rows (old name dropped, new name re-extracted).
-    /// Returns an error message string when the target already exists or the
-    /// name is invalid.
     pub fn rename_file(&mut self, name: &str, new: &str) -> Result<()> {
         if new.is_empty() || new == name {
             return Ok(());
@@ -812,12 +721,9 @@ impl App {
         Ok(())
     }
 
-    /// If `f` is a pasted image (UUID.ext), generate a descriptive name
-    /// `uuid-<slug>.ext` from converted text. Returns None for non-pasted files.
     fn descriptive_paste_name(f: &FileRow, text: &str) -> Option<String> {
         let stem = std::path::Path::new(&f.name).file_stem()?.to_str()?;
         let ext = std::path::Path::new(&f.name).extension()?.to_str()?;
-        // Only rename files whose stem is a UUID (pasted images).
         if !is_uuid_like(stem) {
             return None;
         }
@@ -825,8 +731,6 @@ impl App {
         Some(format!("{stem}-{slug}.{ext}"))
     }
 
-    /// Generate a `snake_case` name from converted text. Takes first N meaningful
-    /// words and slugifies them. Returns None if text is empty or has no words.
     fn slug_from_text(text: &str) -> Option<String> {
         let words: Vec<&str> = text
             .split_whitespace()
@@ -873,20 +777,17 @@ mod tests {
         a.db.set_file_chunks(&id, &[("l".into(), "text".into())])
             .unwrap();
 
-        // No provider → no-op.
         let saved = a.backends.clone();
         a.backends = crate::app::Backends::default();
         a.start_embedding();
         assert!(a.index.embed_rx.is_none());
         a.backends = saved;
 
-        // Blank embedding model → no-op.
         let m = std::mem::take(&mut a.index.embedding_model);
         a.start_embedding();
         assert!(a.index.embed_rx.is_none());
         a.index.embedding_model = m;
 
-        // Missing vectors + provider → queued, status flips.
         a.start_embedding();
         assert!(a.index.embed_rx.is_some());
         let files = a.db.list_files(&space).unwrap();
@@ -896,7 +797,6 @@ mod tests {
             files[0].status
         );
 
-        // Success: vectors stored, status ok, file leaves the missing list.
         a.on_embed_done(Some((
             space.clone(),
             id.clone(),
@@ -905,7 +805,6 @@ mod tests {
         assert!(a.db.files_missing_embeddings(&space).unwrap().is_empty());
         assert_eq!(a.db.list_files(&space).unwrap()[0].status, "ok");
 
-        // Error: status restored, no re-queue (don't hammer a dead endpoint).
         a.db.set_file_chunks(&id, &[("l".into(), "new".into())])
             .unwrap();
         a.on_embed_done(Some((space.clone(), id.clone(), Err("offline".into()))));
@@ -925,9 +824,7 @@ mod tests {
         assert_eq!(name, src.file_name().unwrap().to_string_lossy());
         assert_eq!(a.caches.files.len(), 1);
         assert_eq!(a.caches.files[0].status, "ok");
-        // Copied into the space's files dir.
         assert!(a.space.files_dir(&a.active_space.name).join(&name).exists());
-        // Indexed: searchable.
         let hits = crate::db::search_chunks(a.db.conn_for_test(), &a.active_space.id, "revenue", 8)
             .unwrap();
         assert_eq!(hits.len(), 1);
@@ -940,8 +837,6 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("page.html"), "<main>searchable markup</main>").unwrap();
         std::fs::write(dir.join("job.py"), "def searchable_code():\n    return 42").unwrap();
-        // A binary file cannot provide content to a text embedding model, but
-        // its metadata still makes the upload searchable by name.
         std::fs::write(dir.join("asset.bin"), [0u8, 1, 2, 3]).unwrap();
 
         a.rescan_files();
@@ -970,9 +865,6 @@ mod tests {
 
     #[test]
     fn cold_cache_after_restore_reindexes_from_disk() {
-        // A real file db: the cold-cache scenario only exists when the
-        // sibling cache.db can be deleted underneath the durable db (a
-        // restore does exactly that — backup excludes cache.db).
         let root = std::env::temp_dir().join(format!("nexus-cold-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
         let space = Space { root };
@@ -989,12 +881,9 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
-        // A restore runs with the app closed — drop the connections so the
-        // cache file can actually go away.
         let root = a.space.root.clone();
         drop(a);
 
-        // Restore: durable db survives, cache.db is dropped.
         let cache_path = root.join("cache.db");
         assert!(cache_path.exists());
         std::fs::remove_file(&cache_path).unwrap();
@@ -1006,8 +895,6 @@ mod tests {
         );
         assert!(!a.db.file_indexed(&id).unwrap());
 
-        // The rescan must not trust the stat skip on an unchanged file — it
-        // re-extracts and rewrites the index state.
         a.rescan_files();
         assert!(a.db.file_indexed(&id).unwrap());
         assert_eq!(
@@ -1028,7 +915,6 @@ mod tests {
         a.rescan_files();
         let id = a.caches.files[0].id.clone();
 
-        // Simulate a bad old extraction.
         a.db.set_file_chunks(&id, &[("p1".into(), "garbage".into())])
             .unwrap();
 
@@ -1055,7 +941,6 @@ mod tests {
         assert_eq!(a.caches.files.len(), 1);
         assert_eq!(a.caches.files[0].name, "dropped.txt");
 
-        // Changing content re-extracts (hash change), deleting drops the row.
         std::fs::write(dir.join("dropped.txt"), "hello again").unwrap();
         a.rescan_files();
         assert_eq!(a.caches.files.len(), 1);
@@ -1084,14 +969,11 @@ mod tests {
         let f = a.caches.files[0].clone();
         assert!(f.mtime > 0, "mtime recorded on index");
 
-        // Plant a wrong hash; a stat-unchanged rescan must not correct it —
-        // proof the file wasn't re-read/re-hashed.
         a.db.upsert_file(&a.active_space.id, "book.txt", "sentinel", f.size, "ok")
             .unwrap();
         a.rescan_files();
         assert_eq!(a.caches.files[0].hash, "sentinel");
 
-        // A size change busts the stat check and re-hashes for real.
         std::fs::write(dir.join("book.txt"), "big content grew").unwrap();
         a.rescan_files();
         assert_ne!(a.caches.files[0].hash, "sentinel");
@@ -1107,14 +989,11 @@ mod tests {
         std::fs::write(dir.join("taken.txt"), "x").unwrap();
         a.rescan_files();
 
-        // Collides with an existing name: rejected, nothing moves.
         assert!(a.rename_file("old.txt", "taken.txt").is_err());
         assert!(dir.join("old.txt").exists());
 
-        // Bad name rejected.
         assert!(a.rename_file("old.txt", "../evil.txt").is_err());
 
-        // Valid rename: disk moves, index follows.
         a.rename_file("old.txt", "new.txt").unwrap();
         assert!(!dir.join("old.txt").exists());
         assert!(dir.join("new.txt").exists());
@@ -1142,7 +1021,6 @@ mod tests {
         assert_eq!(a.caches.files.len(), 1);
         assert_eq!(a.caches.files[0].name, name);
 
-        // A bad path is an error, and the cache stays unchanged.
         assert!(
             a.import_file(std::path::Path::new("/definitely/not/a/file"))
                 .is_err()
@@ -1202,8 +1080,6 @@ mod tests {
     fn html_export_is_indexed_as_clean_text_with_a_status() {
         let mut a = test_app();
         let dir = files_dir_of(&a);
-        // Shaped like a chat export: styles, scripts, an inline data URI and
-        // the actual messages.
         let blob = "QUJD".repeat(300);
         let html = format!(
             "<html><head><style>.a{{color:red}}</style><script>var track=1;</script></head><body>\
@@ -1251,7 +1127,6 @@ mod tests {
             status.starts_with("binary: unknown, no converter — install pandoc/libreoffice"),
             "{status}"
         );
-        // No text chunk: `files read` has nothing to show and says why.
         assert!(
             crate::db::file_text(a.db.conn_for_test(), &a.active_space.id, "asset.bin")
                 .unwrap()
@@ -1280,7 +1155,6 @@ mod tests {
             crate::extract::EXTRACTOR_VERSION
         );
 
-        // Simulate an index made by an older extractor (raw markup chunks).
         a.db.set_file_chunks(&id, &[("lines 1-1".into(), "<p>stale markup</p>".into())])
             .unwrap();
         a.db.set_file_extractor(&id, 0).unwrap();
@@ -1293,7 +1167,6 @@ mod tests {
             crate::extract::EXTRACTOR_VERSION
         );
 
-        // Current version, unchanged file: left alone (the stat fast path).
         a.db.set_file_chunks(&id, &[("lines 1-1".into(), "sentinel".into())])
             .unwrap();
         a.rescan_files();
@@ -1348,7 +1221,6 @@ mod tests {
         a.rescan_files_with(&bin.cfg());
         assert_eq!(status_of(&a, "notes.rst"), "convert: pandoc…");
         assert!(a.index.convert_rx.is_some(), "a job is queued");
-        // The built-in text is searchable while the converter works.
         let hits =
             crate::db::search_chunks(a.db.conn_for_test(), &a.active_space.id, "words", 8).unwrap();
         assert_eq!(hits.len(), 1);
@@ -1371,7 +1243,6 @@ mod tests {
             .unwrap();
         assert_eq!(text, "# converted by pandoc");
 
-        // A failed conversion keeps the stand-in text and says so.
         std::fs::write(dir.join("other.rst"), "Other\n=====\nkept words").unwrap();
         a.index.convert_rx = None;
         a.rescan_files_with(&bin.cfg());

@@ -4,7 +4,6 @@ use super::App;
 use crate::db::Space as SpaceRow;
 
 impl App {
-    /// Switch back to the default space (after the active space is deleted).
     pub fn switch_to_default_space(&mut self) -> Result<()> {
         let default_id = self.db.default_space_id()?;
         let row = self
@@ -17,9 +16,6 @@ impl App {
         Ok(())
     }
 
-    /// Switch the active space, clearing the open conversation (a session
-    /// belongs to exactly one space). The space picker's confirm (view layer)
-    /// calls this after closing its popup.
     pub fn set_active_space(&mut self, row: SpaceRow) {
         self.active_space = row;
         self.session = None;
@@ -35,9 +31,7 @@ impl App {
         self.push_status(format!("space: {}", self.active_space.name));
     }
 
-    /// Path to the highlighted space's instructions file, creating a stub with
-    /// a short header comment if it doesn't exist yet (so $EDITOR has something
-    /// to open).
+    /// Create an instructions stub if needed and return its path for editing.
     pub fn instructions_path_for_space(&self, name: &str) -> Option<std::path::PathBuf> {
         let path = self.space.instructions_path(name);
         if !path.exists() {

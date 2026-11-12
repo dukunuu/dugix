@@ -1,13 +1,10 @@
 //! Standing research jobs, with a startup fallback when no daemon is running.
-//! Legacy watch rows and the pure `due_watches` helper remain compatible.
 
 use chrono::{DateTime, Utc};
 use std::fmt::Write as _;
 
 use crate::db::Watch;
 
-/// Watches whose interval has elapsed since their last run (or that have
-/// never run) as of `now`.
 pub fn due_watches(watches: &[Watch], now: DateTime<Utc>) -> Vec<Watch> {
     watches
         .iter()
@@ -21,12 +18,8 @@ pub fn due_watches(watches: &[Watch], now: DateTime<Utc>) -> Vec<Watch> {
         .collect()
 }
 
-/// A "## What changed since last run" section prepended to a watch's new
-/// report: lists newly-seen sources (by URL) not cited in the previous
-/// report. Does not diff prose: a source-level diff is what a user scans
-/// for first.
 pub fn diff_section(previous_report: &str, new_report: &str, new_sources: &[String]) -> String {
-    let _ = (previous_report, new_report); // reserved for a future prose diff; unused today
+    let _ = (previous_report, new_report);
     let mut out = String::from("## What changed since last run\n\n");
     if new_sources.is_empty() {
         out.push_str("No new sources since the last run.\n");
@@ -39,8 +32,6 @@ pub fn diff_section(previous_report: &str, new_report: &str, new_sources: &[Stri
     out
 }
 
-/// New (not-previously-cited) sources in `new_report` vs `previous_citations`
-/// — a plain set difference over normalized URLs.
 pub fn new_sources_since(new_report: &str, previous_citations: &[String]) -> Vec<String> {
     let previous: std::collections::HashSet<String> = previous_citations
         .iter()
@@ -54,9 +45,6 @@ pub fn new_sources_since(new_report: &str, previous_citations: &[String]) -> Vec
 }
 
 impl super::App {
-    /// `/watch <topic>` with no existing watch of that exact topic in this
-    /// space: create one (fixed 24h interval) plus its own research
-    /// session, and kick off the first run immediately (ungated).
     pub fn create_watch(&mut self, topic: &str) {
         if topic.is_empty() {
             self.push_status("usage: /watch <topic>".to_string());
@@ -81,8 +69,6 @@ impl super::App {
         }
     }
 
-    /// Drop a watch row from the db and refresh the cache. Returns whether a
-    /// row existed.
     pub fn delete_watch(&mut self, id: &str) -> anyhow::Result<bool> {
         let existed = self.caches.watches.iter().any(|w| w.id == id);
         if existed {
@@ -92,12 +78,7 @@ impl super::App {
         Ok(existed)
     }
 
-    /// Start one watch's research job (due or not — `nexus watch run <id>`
-    /// force-runs). A watch may belong to a space other than whatever's
-    /// currently active — `start_research_with_gate` reads `self.active_space`
-    /// for the toolbox/file paths and `save_research_report`'s destination,
-    /// so it must be switched to the watch's own space for the run, same as
-    /// its session. Returns whether a job actually started.
+    /// Start a watch in its own space, whether due or manually requested.
     pub fn run_one_watch(&mut self, w: &crate::db::Watch) -> bool {
         let Ok(spaces) = self.db.list_spaces() else {
             return false;
@@ -121,17 +102,7 @@ impl super::App {
                 topic: w.topic.clone(),
                 gated: false,
             });
-            // `start_research_with_gate` only allows one job at a time —
-            // for the 2nd+ due watch in the startup loop, `research_rx.is_some()`
-            // is still set from the first watch's job (it isn't cleared until
-            // that job's background task finishes, long after this synchronous
-            // loop returns), so the guard fires and the call above is a no-op:
-            // `self.session` is left exactly as set on the line above (the
-            // watch's *prior* session), unchanged. Only when a new session was
-            // actually created do we know the job really started — compare ids
-            // to tell those cases apart, and leave a not-actually-run watch
-            // untouched (still due) for the next startup rather than falsely
-            // marking it caught up.
+            // A busy pipeline creates no new session; leave that watch due rather than marking it run.
             if let Some(new_session) = self.session.as_ref()
                 && new_session.id != prior_session_id
             {
@@ -152,14 +123,7 @@ impl super::App {
         started
     }
 
-    /// `Some(urls)` if `session_id` is a watch's session and it has a prior
-    /// run (citations already indexed from an earlier `save_research_report`
-    /// call); `Ok(None)` for a first run or a non-watch session — either way
-    /// means "no diff section". Takes the report's own `space_id` rather than
-    /// reading `self.active_space`: this runs from `on_research_done`, which
-    /// fires asynchronously and may land well after the user (or
-    /// the caller, which restores it right after spawning the job) has
-    /// switched the active space away from the one this job actually ran in.
+    // Completion may arrive after a space switch; use the report's space, not the active space.
     pub fn previous_citations_for_watch_session(
         &self,
         session_id: &str,
@@ -173,12 +137,7 @@ impl super::App {
         else {
             return Ok(None);
         };
-        // Scope to this watch's own prior report(s): `save_research_report`
-        // names every report it saves `research-<slug>-<timestamp>.md` where
-        // `slug = slugify(topic)`, and a watch's topic (hence its slug) is
-        // stable across re-runs. Filtering `report_file` to that prefix keeps
-        // an unrelated `/research` session elsewhere in the same space from
-        // suppressing a source as "not new" for this watch.
+        // Unrelated reports in the same space must not suppress this watch's new sources.
         let slug = super::sessions::slugify(&w.topic);
         let prefix = format!("research-{slug}-");
         let rows = self.db.search_citations(space_id, Some(&prefix))?;
@@ -229,7 +188,6 @@ mod tests {
         a.current_model = Some("openai/gpt-5-mini".to_string());
         let space_id = a.active_space.id.clone();
 
-        // The watch's original session, from some earlier run.
         let first_session =
             a.db.create_session("first run", "openai/gpt-5-mini", &space_id, "chat")
                 .unwrap();
@@ -272,11 +230,6 @@ mod tests {
             a.db.create_watch(&space_id, "wasm gc proposal", 24, &second_session.id)
                 .unwrap();
 
-        // Only one research job can run at a time — the pipeline's guard
-        // (`research_rx.is_some()`) fires for a second watch while the first
-        // job runs. So watch_a's run actually starts (fresh session,
-        // repointed + touched); watch_b's call is a no-op and must be left
-        // exactly as it was — still due — for the next run.
         assert!(a.run_one_watch(&watch_row(&a, &watch_a)));
         assert!(!a.run_one_watch(&watch_row(&a, &watch_b)));
 
@@ -401,8 +354,6 @@ mod tests {
                 .unwrap();
         let _ = watch_id;
 
-        // This watch's own prior report (named per `save_research_report`'s
-        // `research-<slug>-<timestamp>.md` scheme, slug derived from its topic).
         let slug = super::super::sessions::slugify("rust async runtimes");
         a.db.add_citations(
             &space_id,
@@ -411,9 +362,6 @@ mod tests {
         )
         .unwrap();
 
-        // An unrelated report elsewhere in the *same space* (a plain
-        // `/research` session, or another watch's topic) must not pollute
-        // this watch's diff.
         a.db.add_citations(
             &space_id,
             "research-some-other-topic-20260101-000000.md",
@@ -435,7 +383,6 @@ mod tests {
 
     #[test]
     fn new_sources_since_normalizes_urls_before_comparing() {
-        // Trailing slash / scheme case differences shouldn't count as "new".
         let new_report = "Body [1].\n\n## Sources\n1. https://Old.example/a/\n";
         let previous = vec!["https://old.example/a".to_string()];
         assert!(new_sources_since(new_report, &previous).is_empty());
@@ -446,8 +393,6 @@ mod tests {
         let a = test_app();
         let space_id = a.active_space.id.clone();
 
-        // Two watches: one with topic "rust", another with "rust async".
-        // Their slugs are "rust" and "rust-async" respectively.
         let session_rust =
             a.db.create_session("rust", "openai/gpt-5-mini", &space_id, "chat")
                 .unwrap();
@@ -462,8 +407,6 @@ mod tests {
             a.db.create_watch(&space_id, "rust async", 24, &session_rust_async.id)
                 .unwrap();
 
-        // Add citations to the "rust async" watch (the one with the longer slug).
-        // Its report file starts with "research-rust-async-" then the timestamp.
         let slug_rust_async = super::super::sessions::slugify("rust async");
         a.db.add_citations(
             &space_id,
@@ -472,8 +415,6 @@ mod tests {
         )
         .unwrap();
 
-        // The "rust" watch must not see the "rust async" watch's citations,
-        // even though "research-rust-async-..." starts with "research-rust-".
         let prev_rust = a
             .previous_citations_for_watch_session(&session_rust.id, &space_id)
             .unwrap();

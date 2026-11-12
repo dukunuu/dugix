@@ -1,18 +1,13 @@
-//! The `/apps` popup's domain half: app URLs and file counts. The popup
-//! flow (browse/edit/delete state) lives in the TUI view layer.
-
 use super::App;
 
 impl App {
-    /// An app's live URL, when the server is running.
     pub fn app_url(&self, name: &str) -> Option<String> {
         let s = self.app_server.as_ref()?;
         let uuid = s.registry().resolve(&self.active_space.name, name)?;
         Some(s.app_url(&uuid))
     }
 
-    /// How many files an app holds (recursive; `node_modules` counted as one
-    /// "deps" marker would be noise, so it's skipped entirely).
+    /// Count app files recursively, excluding dependencies.
     pub fn app_file_count(&self, name: &str) -> usize {
         fn count(dir: &std::path::Path) -> usize {
             let Ok(rd) = std::fs::read_dir(dir) else {

@@ -1,14 +1,10 @@
-//! What each `task` sub-agent did, for the sub-agent view: its prompt, every
-//! round's reasoning and tool calls, its answer, and what it cost. Runs live
-//! in memory while they stream and are saved in the device-local cache
-//! (never in incognito), so a finished session's sub-agents can be read back.
+//! Live and device-local sub-agent transcripts, never persisted in incognito.
 
 use serde::{Deserialize, Serialize};
 
 use super::App;
 use crate::provider::{SubagentEvent, SubagentUpdate};
 
-/// Runs kept in memory across sessions; older ones are read from the cache.
 const LIVE_LIMIT: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,7 +27,7 @@ impl SubagentStatus {
 
     #[must_use]
     pub fn parse(text: &str) -> Self {
-        // A run saved as running belonged to a process that is gone.
+        // Persisted running state cannot outlive the process that owned the task.
         if text == "done" {
             Self::Done
         } else {
@@ -40,8 +36,6 @@ impl SubagentStatus {
     }
 }
 
-/// One transcript row: a `tool_call` (the same JSON as a chat tool row), an
-/// `assistant` answer with its reasoning, or an `error`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SubagentRow {
     pub role: String,
@@ -53,7 +47,6 @@ pub struct SubagentRow {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubagentRun {
     pub id: String,
-    /// The conversation whose turn started it.
     pub session_id: String,
     pub number: u64,
     pub prompt: String,
@@ -63,14 +56,11 @@ pub struct SubagentRun {
     pub status: SubagentStatus,
     pub started_at: String,
     pub finished_at: Option<String>,
-    /// Model rounds finished so far.
     pub steps: usize,
     pub tokens: u64,
     /// USD, provider-reported or estimated from the catalog; `None` while unknown.
     pub cost: Option<f64>,
-    /// Time spent in model rounds.
     pub secs: f64,
-    /// A workspace task's branch summary and diff.
     pub review: Option<String>,
     pub rows: Vec<SubagentRow>,
     /// Text of the round in flight, cleared when the round lands.
@@ -79,14 +69,12 @@ pub struct SubagentRun {
 }
 
 impl SubagentRun {
-    /// The prompt's first line, for lists.
     #[must_use]
     pub fn title(&self) -> &str {
         self.prompt.lines().next().unwrap_or_default().trim()
     }
 
-    /// A finished round's rows: its answer, or one row per tool call with the
-    /// round's reasoning and words leading the first, as in a chat transcript.
+    /// Project a round into transcript rows with reasoning on the first call only.
     fn push_round(
         &mut self,
         reasoning: Option<String>,
@@ -122,8 +110,6 @@ impl SubagentRun {
     }
 }
 
-/// Add a round's usage to a running total, keeping "unknown" only while
-/// nothing is known.
 fn add_cost(total: Option<f64>, cost: Option<f64>) -> Option<f64> {
     match (total, cost) {
         (Some(a), Some(b)) => Some(a + b),
@@ -132,8 +118,7 @@ fn add_cost(total: Option<f64>, cost: Option<f64>) -> Option<f64> {
 }
 
 impl App {
-    /// Fold one sub-agent event into its run, saving it unless the turn is
-    /// incognito. Returns the round's cost, which belongs to the parent turn.
+    /// Update a sub-agent run and return the cost attributed to its parent turn.
     pub(crate) fn on_subagent(
         &mut self,
         session_id: &str,
@@ -177,7 +162,6 @@ impl App {
             SubagentEvent::Delta { reasoning, content } => {
                 run.live_reasoning.push_str(&reasoning);
                 run.live_content.push_str(&content);
-                // Streamed text is not saved; the round that follows is.
                 return None;
             }
             SubagentEvent::Round {
@@ -235,7 +219,6 @@ impl App {
         round_cost
     }
 
-    /// Keep a new run, dropping the oldest finished one past [`LIVE_LIMIT`].
     fn start_subagent(&mut self, run: SubagentRun) {
         if self.subagent_runs.len() >= LIVE_LIMIT
             && let Some(done) = self
@@ -248,8 +231,6 @@ impl App {
         self.subagent_runs.push(run);
     }
 
-    /// A turn ended: any of its sub-agents still marked running were cut off
-    /// with it (a stopped reply aborts its tool calls).
     pub(crate) fn end_subagents(&mut self, session_id: &str, incognito: bool) {
         for run in self
             .subagent_runs
@@ -271,8 +252,7 @@ impl App {
         }
     }
 
-    /// The session's sub-agent runs, oldest first: saved ones from the cache
-    /// with this process's live state laid over them.
+    /// Merge cached and live runs for a session, oldest first.
     #[must_use]
     pub fn subagents_for(&self, session_id: &str) -> Vec<SubagentRun> {
         self.with_live_subagents(
@@ -281,9 +261,7 @@ impl App {
         )
     }
 
-    /// `saved` runs of a session with this process's live state laid over
-    /// them and its unsaved runs added, oldest first. No db read, so a view
-    /// can call it every frame.
+    /// Merge saved and live runs without a database read.
     #[must_use]
     pub fn with_live_subagents(
         &self,
@@ -304,7 +282,6 @@ impl App {
         runs
     }
 
-    /// The live state of one run, when this process has it.
     #[must_use]
     pub fn live_subagent(&self, id: &str) -> Option<&SubagentRun> {
         self.subagent_runs.iter().find(|run| run.id == id)

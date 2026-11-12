@@ -1,7 +1,4 @@
-//! `/connectors`: the domain half. Adding, removing, enabling, importing and
-//! setting per-tool policy for MCP connectors; the popup (view state) lives
-//! in the TUI. Secrets never travel through `AppCommand`: a bearer token is
-//! stored by the frontend straight into the keychain.
+//! Connector secrets go directly from the frontend to the keychain, never through commands.
 
 use anyhow::{Result, bail};
 
@@ -10,9 +7,7 @@ use crate::connectors::config::{ConnectorConfig, Policy};
 use crate::connectors::import::{self, ImportPaths, Source};
 
 impl App {
-    /// Local-command connectors start a process on this machine, so they are
-    /// only added from the terminal UI (a person at the keyboard), never from
-    /// a remote command channel.
+    /// Only a local interactive frontend may authorize spawning connector processes.
     fn ensure_may_run_commands(&self) -> Result<()> {
         if self.interactive_ui {
             Ok(())

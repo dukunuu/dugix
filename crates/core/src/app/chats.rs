@@ -1,5 +1,3 @@
-//! Low-priority chat work on the shared embedding channel.
-
 use std::time::{Duration, Instant};
 
 use crate::db::chats;
@@ -83,8 +81,7 @@ impl App {
             self.index.next_chat_index = Instant::now() + Duration::from_secs(60);
         }
         self.update_chat_index_status();
-        // Do not chain chat jobs: one bounded batch per background tick leaves
-        // foreground work and newly imported files priority over backfill.
+        // One batch per tick gives foreground work and file imports priority.
     }
 }
 

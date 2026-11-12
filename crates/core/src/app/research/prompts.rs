@@ -1,5 +1,3 @@
-//! Stage prompts and the message lists sent to each research stage.
-
 use std::fmt::Write as _;
 
 use crate::prompts;
@@ -13,9 +11,7 @@ pub(super) const PLANNER_PROMPT: &str = prompts::RESEARCH_PLANNER.trim_ascii_end
 
 pub const SEARCHER_PROMPT: &str = prompts::RESEARCH_SEARCHER.trim_ascii_end();
 
-/// Fixed protocol text placed before every research-stage instruction. Keeping
-/// this prefix byte-identical gives independent stages and agent branches a
-/// common provider-cache anchor; stage-specific instructions follow it.
+// A byte-identical prefix gives research stages a shared provider-cache anchor.
 #[cfg(test)]
 pub(super) const RESEARCH_CACHE_PREFIX: &str = prompts::RESEARCH_CACHE_PREFIX.trim_ascii_end();
 
@@ -30,10 +26,6 @@ pub(super) const VERIFIER_PROMPT: &str = prompts::RESEARCH_VERIFIER.trim_ascii_e
 #[cfg(test)]
 pub(super) const WRITER_PROMPT: &str = prompts::RESEARCH_WRITER.trim_ascii_end();
 
-/// The Planner's request: the topic, the user's survey answers ("what they
-/// said they want"), and any locally-known context (chunks from the space's
-/// own files plus a preliminary web survey, semantically matched to the
-/// topic) framed as "already known — plan sub-questions for the gaps".
 pub(super) fn planner_messages_with_context(
     topic: &str,
     answers: &[(String, String)],
@@ -66,10 +58,6 @@ pub(super) fn planner_messages_with_context(
     ]
 }
 
-/// The scoping agent's request: the topic, and on later rounds the questions
-/// asked + answers given so far. One prompt serves both the initial questions
-/// (empty rounds) and each follow-up round — the agent replies COMPLETE when
-/// it has enough.
 pub(super) fn survey_messages(topic: &str, rounds: &[(String, String)]) -> Vec<ChatMessage> {
     let mut user = format!("Research topic: {topic}\n");
     if !rounds.is_empty() {
@@ -91,9 +79,6 @@ pub(super) fn survey_messages(topic: &str, rounds: &[(String, String)]) -> Vec<C
     ]
 }
 
-/// Fold the user's reply to the presented plan back into the pipeline: the
-/// approval agent either recognizes an approval (APPROVED) or returns a
-/// revised plan.
 pub(super) fn plan_approval_messages(
     topic: &str,
     questions: &[PlanQuestion],

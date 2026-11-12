@@ -1,5 +1,3 @@
-//! The background pipeline: usage accounting, searcher fan-out, survey/plan gates and orchestration.
-
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
@@ -19,9 +17,7 @@ use super::{
     parse_plan_blocks, parse_survey_reply,
 };
 
-/// Content-free usage sink for background research requests. Each stage uses
-/// the same provider accounting as interactive chat without putting prompt
-/// text into the database.
+// Research usage accounting must never persist prompt text.
 #[derive(Clone)]
 pub(super) struct ResearchUsage {
     pub(super) db_path: std::path::PathBuf,
@@ -56,7 +52,6 @@ impl ResearchUsage {
     }
 }
 
-/// Send the `(session_id, space_id, space_name)` triple's stage update.
 fn send_stage(
     tx: &mpsc::UnboundedSender<ResearchMsg>,
     ids: &(String, String, String),
@@ -74,9 +69,6 @@ fn send_stage(
     ));
 }
 
-/// Every steer instruction queued since the last drain, without blocking —
-/// `try_recv` until the channel is empty. Called at each round boundary so
-/// a user's mid-flight `/steer` gets picked up as an extra searcher round.
 pub fn drain_steers(rx: &mut mpsc::UnboundedReceiver<String>) -> Vec<String> {
     let mut out = Vec::new();
     while let Ok(s) = rx.try_recv() {
@@ -103,8 +95,6 @@ async fn complete_text(
         .map_err(|e| e.to_string())
 }
 
-/// Run a non-streaming pipeline agent and terminalize its activity row on
-/// failure. The caller owns the stage-specific success detail.
 async fn complete_agent(
     provider: &OpenRouter,
     model: &str,
@@ -156,24 +146,7 @@ async fn plan(
     Ok(qs)
 }
 
-/// One Searcher agent: given one focused sub-question prompt, runs the normal
-/// tool-loop (restricted to `search/fetch_url`) and returns its final prose
-/// findings (including its own "Sources:" citation list). Never returns an
-/// `Err` — a dead search/fetch/model call becomes a placeholder finding
-/// string so one bad sub-question can't sink the whole pipeline.
-///
-/// `prompt` is the full block handed to the model (topic + why/angles/sources
-/// brief — detail is functional); `display` is the short label used in the
-/// live activity rows, so a searcher's status never leaks the whole brief.
-///
-/// Every `Status`/`ToolCall` event along the way is forwarded as a live
-/// stage update under this searcher's own label (`searcher N/total`), so the
-/// UI shows what it's actually doing (searching, fetching a URL, etc.) in
-/// real time instead of going silent until it finishes.
 #[allow(clippy::too_many_arguments)]
-/// The execution plumbing a searcher agent shares with the rest of the
-/// research pipeline: the tool box, the job's stage-update channel, and the
-/// job's session/space identity.
 pub struct SearcherCtx<'a> {
     pub toolbox: Arc<dyn ToolExecutor>,
     usage: Arc<ResearchUsage>,
@@ -181,8 +154,6 @@ pub struct SearcherCtx<'a> {
     pub ids: &'a (String, String, String),
 }
 
-/// Which slot in which batch a searcher agent occupies — its stage-row
-/// identity (`searcher {batch} {idx}/{total}`) in the live activity view.
 pub struct SearcherSlot {
     pub batch: String,
     pub idx: usize,
@@ -197,8 +168,7 @@ async fn run_searcher(
     ctx: SearcherCtx<'_>,
     slot: SearcherSlot,
 ) -> String {
-    // Include the batch in the identity so follow-up and steered agents never
-    // overwrite earlier activity rows that happen to have the same index.
+    // Batch identity prevents follow-up searchers from overwriting earlier activity rows.
     let label = format!("searcher {} {}/{}", slot.batch, slot.idx + 1, slot.total);
     send_stage(
         ctx.tx,
@@ -267,13 +237,7 @@ async fn run_searcher(
     }
 }
 
-/// Run the Verifier stage with a cache-only toolbox so it can check direct
-/// quotes against exactly the pages searchers already gathered (never a
-/// fresh fetch). Never returns an `Err` — returns whatever text accumulated
-/// before the stream ended, or an empty string if it errored before
-/// producing any. The caller falls back to the unverified draft when this
-/// comes back empty, so verification failing must never blank out an
-/// otherwise-good report.
+// Verify against cached pages only so quotes are checked against the searchers' exact sources.
 async fn verify_with_quote_check(
     provider: &OpenRouter,
     model: &str,
@@ -335,7 +299,6 @@ async fn verify_with_quote_check(
     buf
 }
 
-/// The shared plumbing for one searcher fan-out batch.
 struct SearcherBatch<'a> {
     provider: &'a OpenRouter,
     model: &'a str,
@@ -346,7 +309,6 @@ struct SearcherBatch<'a> {
     batch: &'a str,
 }
 
-/// What every stage of one research run shares.
 struct Run<'a> {
     provider: &'a OpenRouter,
     model: &'a str,
@@ -359,12 +321,10 @@ struct Run<'a> {
 }
 
 impl Run<'_> {
-    /// Send a stage update for this run.
     fn stage(&self, label: impl Into<String>, detail: impl Into<String>) {
         send_stage(self.tx, self.ids, label, detail);
     }
 
-    /// Run an agent and terminalize its activity row on failure.
     async fn agent(&self, messages: Vec<ChatMessage>, label: &str) -> Result<String, String> {
         complete_agent(
             self.provider,
@@ -378,7 +338,6 @@ impl Run<'_> {
         .await
     }
 
-    /// Run a searcher batch and persist its sources.
     async fn search(&self, batch: &str, items: &[(String, String)]) -> Vec<String> {
         let found = run_searchers(
             SearcherBatch {
@@ -397,14 +356,7 @@ impl Run<'_> {
         found
     }
 
-    // One stage row per drained steer, keyed by a job-global sequence number
-    // (`steer #N` — N = the steer's 1-based queue position, which equals its
-    // drain order). The stage upsert matches rows by label, so the key must
-    // never be user text: duplicate, prefix-of-each-other, or LIKE-wildcard
-    // (`%`/`_`) steer text would collapse or hijack rows and leave picked-up
-    // steers looking queued (the live popup derives picked-up from the same
-    // numbered keys).
-    /// Drain queued steers and search them with distinct stage rows.
+    // Use sequence keys: user text can collide through duplicates, prefixes, or SQL LIKE wildcards.
     async fn steer(
         &self,
         steer_rx: &mut mpsc::UnboundedReceiver<String>,
@@ -423,7 +375,6 @@ impl Run<'_> {
         self.search(batch, &items).await
     }
 
-    /// Critique a draft and report its coverage and contradiction verdict.
     async fn critic(&self, draft: &str, second: bool) -> Result<Critique, String> {
         let (label, working) = if second {
             ("critic r2", "working — reviewing the revised draft")
@@ -443,8 +394,6 @@ impl Run<'_> {
                 "done — draft is sufficiently complete"
             }
             .to_string(),
-            // Surface the actual gap questions, not just a count — the
-            // follow-up searchers are about to investigate exactly these.
             Critique::Gaps(gaps) => {
                 let list = gaps
                     .iter()
@@ -452,7 +401,6 @@ impl Run<'_> {
                     .map(|(i, g)| format!("{}. {g}", i + 1))
                     .collect::<Vec<_>>()
                     .join("\n");
-                // Same shape as round 1: the remaining gap questions, not a count.
                 if second {
                     format!("done — {} gaps remain:\n{list}", gaps.len())
                 } else {
@@ -471,12 +419,6 @@ impl Run<'_> {
     }
 }
 
-/// Fan out one Searcher per question in parallel, sending a running
-/// `{done}/{total}` stage update as each finishes (in addition to each
-/// searcher's own live per-tool-call feed). Order of the returned findings
-/// doesn't matter (synthesis treats them as an unordered set). Each item is
-/// `(prompt, display)`: the full prompt goes to the agent, the short display
-/// label goes into the activity rows.
 async fn run_searchers(batch_ctx: SearcherBatch<'_>, items: &[(String, String)]) -> Vec<String> {
     let SearcherBatch {
         provider,
@@ -535,10 +477,6 @@ async fn run_searchers(batch_ctx: SearcherBatch<'_>, items: &[(String, String)])
     findings
 }
 
-/// Run the full pipeline and send exactly one final `Done` on `tx` (the
-/// caller's channel then closes naturally when this function returns and
-/// `tx` is dropped).
-/// Everything `run_research` needs to start a gated or ungated research job.
 pub struct ResearchOptions {
     pub research_provider: OpenRouter,
     pub research_model: String,
@@ -568,10 +506,6 @@ pub async fn run_research(mut opts: ResearchOptions) {
     ));
 }
 
-/// Top-k chunks from the space's files already relevant to `topic`, for the
-/// Planner's "already known" context — silently empty when embeddings are
-/// unconfigured, embedding fails, or the space has no files (never blocks
-/// `/research` on any of those).
 async fn local_known_chunks(
     provider: &OpenRouter,
     embedding_model: &str,
@@ -604,10 +538,6 @@ async fn local_known_chunks(
         .unwrap_or_default()
 }
 
-/// One survey round's questions, sent to the UI and awaited: park on
-/// `reply_rx` until the user answers (or the job is stopped and the channel
-/// drops). Returns the user's trimmed reply, or `None` when the channel
-/// closed.
 async fn await_survey_reply(
     tx: &mpsc::UnboundedSender<ResearchMsg>,
     ids: &(String, String, String),
@@ -627,15 +557,6 @@ async fn await_survey_reply(
     reply_rx.recv().await.map(|r| r.trim().to_string())
 }
 
-/// The conversational survey: the scoping agent asks what the user wants
-/// (1–3 rounds), the user answers in chat, and the agent declares the survey
-/// complete once it has enough — no phrase-matching in app code. An empty
-/// reply (Enter on an empty input) skips ahead. Request failures (auth,
-/// rate limits, network), malformed agent output, and a closed reply channel
-/// all propagate as `Err` — the survey is a promised phase of the
-/// conversational flow, not an optional garnish, so it must not silently
-/// skip and still report success. Returns the (questions, answer) rounds
-/// for the planner's context.
 async fn run_user_survey(
     provider: &OpenRouter,
     model: &str,
@@ -667,13 +588,10 @@ async fn run_user_survey(
             }
             SurveyReply::Questions(qs) => {
                 let Some(reply) = await_survey_reply(tx, ids, reply_rx, &qs, round).await else {
-                    // The reply channel closed — the job is being torn down
-                    // (or a stop raced the parked gate). Don't keep planning
-                    // as if the scoping happened.
                     return Err("survey cancelled — the reply channel closed".to_string());
                 };
                 if reply.is_empty() {
-                    return Ok(rounds); // Empty Enter = skip the rest.
+                    return Ok(rounds);
                 }
                 let asked = qs.join("\n");
                 rounds.push((asked.clone(), reply.clone()));
@@ -681,10 +599,7 @@ async fn run_user_survey(
                 if round > MAX_SURVEY_ROUNDS {
                     return Ok(rounds);
                 }
-                // Preserve the exact prior request and append only the
-                // user's answer. Rebuilding one growing user string changes
-                // the serialized history and forfeits the provider's cached
-                // prefix on every survey round.
+                // Append to the exact prior request to preserve the provider's cached prefix.
                 history.push(ChatMessage::text(
                     "user",
                     format!("Questions asked:\n{asked}\nUser answer: {reply}"),
@@ -699,7 +614,6 @@ async fn run_user_survey(
     }
 }
 
-/// The shared plumbing for the plan-approval agent.
 pub(super) struct PlanApprovalContext<'a> {
     pub(super) provider: &'a OpenRouter,
     pub(super) model: &'a str,
@@ -709,13 +623,7 @@ pub(super) struct PlanApprovalContext<'a> {
     pub(super) ids: &'a (String, String, String),
 }
 
-/// The plan-approval phase: present the plan, park for a chat reply, and fold
-/// edits back in via the approval agent. An empty reply (Enter) or an
-/// agent-recognized "approve" runs the questions as-is; edits are re-presented
-/// once (`rework` cap) for a final approval. A second edit, a failed approval
-/// call, malformed agent output, or a closed reply channel (job teardown
-/// racing the parked gate) fails visibly (`Err`) — searchers never run on a
-/// plan the user hasn't approved, and approval never fails open.
+// Approval must fail closed: searchers must never execute an unapproved plan.
 pub(super) async fn await_plan_approval(
     ctx: PlanApprovalContext<'_>,
     questions: &mut Vec<PlanQuestion>,
@@ -741,16 +649,13 @@ pub(super) async fn await_plan_approval(
             },
         ));
         let Some(reply) = reply_rx.recv().await else {
-            // The reply channel closed without an approval (job teardown, or
-            // a stop racing the parked gate). Fail visibly rather than
-            // running searchers on a plan the user hasn't approved.
             return Err(
                 "plan approval cancelled — the reply channel closed before the plan was approved"
                     .to_string(),
             );
         };
         if reply.trim().is_empty() {
-            return Ok(()); // Enter on an empty input = approve.
+            return Ok(());
         }
         let text = complete_text(
             provider,
@@ -765,9 +670,6 @@ pub(super) async fn await_plan_approval(
             Approval::Approved => return Ok(()),
             Approval::Revised(revised) if !revised.is_empty() => {
                 if rework {
-                    // Second edit: never silently folded in and run. The
-                    // rework cap is one re-presentation — fail visibly
-                    // rather than execute an unapproved revision.
                     return Err(
                         "plan was revised twice — rework cap reached; re-run /research \
                          with the final plan"
@@ -786,7 +688,6 @@ pub(super) async fn await_plan_approval(
     }
 }
 
-// Long by design (pipeline orchestration).
 #[allow(clippy::too_many_lines)]
 async fn run_research_inner(opts: &mut ResearchOptions) -> Result<String, String> {
     let ids = &(
@@ -833,10 +734,6 @@ async fn run_research_inner(opts: &mut ResearchOptions) -> Result<String, String
         db_path,
         topic,
     };
-    // Gather the planning context (local chunks + a web landscape survey)
-    // concurrently with the conversational survey — the user answers while
-    // the ground truth arrives, so the plan targets real gaps. The two
-    // gatherers also run concurrently with each other.
     let gather_task = {
         let provider = embedding_provider.clone().logged(usage.log(), "embed");
         let model = embedding_model.clone();
@@ -891,15 +788,9 @@ async fn run_research_inner(opts: &mut ResearchOptions) -> Result<String, String
             (known, survey)
         })
     };
-    // Abort-on-drop guard: dropping the JoinHandle alone would detach the
-    // gather task instead of cancelling it, so web calls and DB writes could
-    // keep running after the user stops research. Aborting the outer task
-    // drops this handle, which cancels the gather task.
+    // Dropping a JoinHandle detaches it; abort the gather task when research is cancelled.
     let gather_guard = super::AbortOnDrop(gather_task.abort_handle());
 
-    // Phase 1: the conversational survey (skipped entirely for `/research!`).
-    // Failures propagate visibly — the survey is a promised phase, and a
-    // silent skip would report success without the user's scoping input.
     let answers: Vec<(String, String)> = if let Some(rx) = reply_rx.as_mut() {
         run_user_survey(
             research_provider,
@@ -919,10 +810,6 @@ async fn run_research_inner(opts: &mut ResearchOptions) -> Result<String, String
         Vec::new()
     };
 
-    // Join the concurrent gathering and fold it into planning context. A
-    // panic (or cancellation) inside the gather task terminates the job with
-    // context — defaulting to empty context would mask a programming failure
-    // and let the pipeline report success on invented ground truth.
     let (known, web_survey) = match gather_task.await {
         Ok(v) => v,
         Err(e) if e.is_panic() => return Err(format!("context gathering panicked: {e}")),
@@ -965,11 +852,6 @@ async fn run_research_inner(opts: &mut ResearchOptions) -> Result<String, String
         format!("done — proposed {} questions", questions.len()),
     );
 
-    // Phase 2: plan approval — reply in chat to approve or change it. The
-    // gate parks with no timeout; Ctrl+↑ then Ctrl+X (the live view's stop)
-    // is the escape hatch. Skipped entirely for `/research!`. Approval is
-    // fail-closed: any failure here returns `Err` and research stops rather
-    // than running searchers on an unapproved plan.
     if let Some(rx) = reply_rx.as_mut() {
         await_plan_approval(
             PlanApprovalContext {
@@ -992,15 +874,10 @@ async fn run_research_inner(opts: &mut ResearchOptions) -> Result<String, String
         .unwrap_or_default();
 
     let mut findings: Vec<String> = if !web_survey.is_empty() && !web_survey.starts_with('[') {
-        // Successful web survey: seed it into the findings so synthesis can
-        // cite the landscape overview alongside each answer's own citations.
         vec![format!("--- Survey overview ---\n{web_survey}")]
     } else {
         Vec::new()
     };
-    // Each searcher gets the full question block as its prompt (detail is
-    // functional) but only the bare question as its live display label, so
-    // the activity rows stay short.
     let searcher_items: Vec<(String, String)> = questions
         .iter()
         .map(|q| (q.prompt(topic), q.question.clone()))
@@ -1037,9 +914,7 @@ async fn run_research_inner(opts: &mut ResearchOptions) -> Result<String, String
         findings.extend(follow_up_findings.clone());
 
         run.stage("synthesizer r2", "working — merging follow-up findings");
-        // Continue the original synthesis conversation instead of
-        // rebuilding one giant user message. The earlier request remains an
-        // exact prefix and only the new findings are appended.
+        // Append findings without rebuilding history to preserve the provider's cached prefix.
         synthesizer_history.push(ChatMessage::text("assistant", draft.clone()));
         synthesizer_history.push(ChatMessage::text(
             "user",
@@ -1122,9 +997,6 @@ async fn run_research_inner(opts: &mut ResearchOptions) -> Result<String, String
     }
 }
 
-/// Link every URL cited in `findings` into the session's source bundle
-/// (they're already in `web_cache` from `fetch_url`'s write-through). Best
-/// effort — a failed write never disturbs the pipeline.
 fn persist_session_sources(db_path: &std::path::Path, session_id: &str, findings: &[String]) {
     let url_norms = crate::tools::cited_url_norms(findings);
     if url_norms.is_empty() {

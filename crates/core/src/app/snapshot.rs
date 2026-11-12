@@ -1,16 +1,13 @@
-//! The serde-shaped view of app state the `nexus host` API serves: sessions,
-//! models, settings, tasks. The TUI reads domain state directly instead.
+//! App state exposed through the host API.
 
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 
 use super::App;
 
-/// One snapshot of the app's domain state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoreSnapshot {
-    /// The session currently selected by the host actor. `None` means the
-    /// next message will lazily create a new session.
+    /// The selected session, or `None` until the next message creates one.
     pub active_session_id: Option<String>,
     pub active_space_id: String,
     pub active_space_name: String,
@@ -30,8 +27,7 @@ pub struct SessionSnapshot {
     pub created_at: String,
 }
 
-/// A persisted transcript row exposed to thin clients. Provider credentials
-/// and internal database identifiers are intentionally not part of this view.
+/// A transcript row without provider credentials or internal database identifiers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessageSnapshot {
     pub role: String,
@@ -48,8 +44,7 @@ pub struct MessageSnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelSnapshot {
-    /// Composite id (backend prefix + wire id) — what `current_model`,
-    /// favorites, and last-used store.
+    /// Persistent model key combining backend and wire id.
     pub id: String,
     pub name: String,
     pub context_length: Option<u64>,
@@ -57,7 +52,7 @@ pub struct ModelSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(clippy::struct_excessive_bools)] // Independent user preferences in the wire format.
+#[allow(clippy::struct_excessive_bools)]
 pub struct SettingsSnapshot {
     #[serde(default)]
     pub show_stats: bool,
@@ -70,8 +65,7 @@ pub struct SettingsSnapshot {
     pub incognito: bool,
     /// Sanitized `SearXNG` endpoint (credentials/query strings are removed).
     pub searxng_url: String,
-    /// Whether the local `LangSearch` credential is configured. The key never
-    /// crosses the host API boundary.
+    /// Credential availability only; the key must never cross the host API boundary.
     #[serde(default)]
     pub langsearch_configured: bool,
     pub search_provider: String,
@@ -89,19 +83,15 @@ pub struct TaskSnapshot {
     pub session_title: String,
     pub model: String,
     pub backend: String,
-    /// "tool" while a tool runs, "streaming" otherwise. Tasks only live in
-    /// the map while their loop is active, so there is no idle state.
+    /// Active tasks are either `tool` or `streaming`, never idle.
     pub status: String,
     pub buffer_chars: usize,
-    /// Partial answer buffer, allowing thin clients to recover after an SSE
-    /// reconnect. It contains model output only, never credentials.
+    /// Partial model output for recovery after an SSE reconnect.
     #[serde(default)]
     pub buffer: String,
 }
 
-/// Remove URL userinfo, query, and fragment components before an endpoint is
-/// exposed in a remote snapshot. Search endpoints are local configuration, not
-/// credentials storage, but URLs commonly grow accidental `?token=` values.
+// Endpoint URLs can contain credentials in userinfo, query, or fragment components.
 fn sanitized_endpoint(value: &str) -> String {
     let value = value.trim();
     let value = value.split_once('#').map_or(value, |(prefix, _)| prefix);
@@ -115,7 +105,6 @@ fn sanitized_endpoint(value: &str) -> String {
 }
 
 impl App {
-    /// Load one session's transcript for thin clients such as the web UI.
     pub fn session_messages(&self, session_id: &str) -> Result<Vec<MessageSnapshot>> {
         self.db
             .load_messages(session_id)
@@ -139,9 +128,6 @@ impl App {
             })
     }
 
-    /// Serde-shaped state for API consumers (the host). Sessions
-    /// come from the picker cache when loaded, else a fresh db read — a
-    /// failed read is an error, never a silently-empty session list.
     pub fn snapshot(&self) -> Result<CoreSnapshot> {
         let sessions = if self.caches.sessions.is_empty() {
             self.db
@@ -218,10 +204,6 @@ impl App {
 mod tests {
     use super::*;
 
-    /// Clients (web/mobile/`--remote`) parse `CoreSnapshot` `JSON`
-    /// — this golden string locks the wire shape so a field rename or
-    /// reorder can never silently break a client. Update it deliberately
-    /// when the shape changes.
     #[test]
     fn golden_json_locks_wire_shape() {
         let snap = CoreSnapshot {
@@ -274,7 +256,6 @@ mod tests {
             json,
             r#"{"active_session_id":"s1","active_space_id":"sp1","active_space_name":"Default","sessions":[{"id":"s1","title":"hello","slug":"hello","model":"openrouter:anthropic/claude-sonnet-4","kind":"chat","created_at":"2025-01-01T00:00:00Z"}],"models":[{"id":"openrouter:anthropic/claude-sonnet-4","name":"Claude Sonnet 4","context_length":200000,"favorite":true}],"settings":{"show_stats":false,"show_reasoning":false,"hide_hints":false,"model":"openrouter:anthropic/claude-sonnet-4","verbosity":"high","incognito":false,"searxng_url":"","langsearch_configured":false,"search_provider":"searxng","temperature":0.7,"top_p":null,"max_tokens":null,"compact_threshold":60,"blocked_domains":[]},"tasks":[{"id":1,"session_id":"s1","session_title":"hello","model":"openrouter:anthropic/claude-sonnet-4","backend":"OpenRouter","status":"streaming","buffer_chars":12,"buffer":""}]}"#
         );
-        // The golden string must also parse back into the same shape.
         let back: CoreSnapshot = serde_json::from_str(&json).expect("golden parses");
         assert_eq!(back.sessions[0].title, "hello");
         assert_eq!(back.sessions[0].slug.as_deref(), Some("hello"));

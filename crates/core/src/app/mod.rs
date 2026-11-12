@@ -1,6 +1,3 @@
-// Casts here are on bounded values: token counts, byte sizes, and
-// selection indices — never on unbounded input. JSON-derived indices in
-// provider/tools go through try_from instead.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -96,10 +93,8 @@ pub use watches::due_watches;
 use chat::split_inline_reasoning;
 use sessions::parse_topic;
 
-/// Non-interactive permissions for a disposable eval workspace.
 #[derive(Default)]
 pub struct EvalApprover {
-    /// Exact command-text prefixes allowed for shell runs.
     pub allow_shell: Vec<String>,
 }
 
@@ -121,7 +116,7 @@ impl Approver for EvalApprover {
                 .unwrap_or(&req.summary)
                 .strip_prefix("$ ")
             {
-                // The toolbox appends a separate cwd annotation to the command.
+                // The toolbox adds a cwd annotation outside the command text being authorized.
                 let command = summary.rsplit_once("\nin ").map_or(summary, |(cmd, _)| cmd);
                 if crate::workspace::escalation::check_command(command).is_ok()
                     && !command.contains([';', '&', '|', '$', '`', '>', '<', '\n', '\r'])
@@ -138,15 +133,13 @@ impl Approver for EvalApprover {
     }
 }
 
-/// Sends permission requests to an interactive frontend and remembers grants
-/// only for the lifetime of this approver.
+/// Interactive permission requests with session-lifetime grants.
 pub struct ChannelApprover {
     sender: mpsc::UnboundedSender<(ApprovalRequest, oneshot::Sender<Decision>)>,
     allowed: Arc<Mutex<HashSet<(String, String)>>>,
 }
 
 impl ChannelApprover {
-    /// Start a new approval session with no remembered permissions.
     #[must_use]
     pub fn new(
         sender: mpsc::UnboundedSender<(ApprovalRequest, oneshot::Sender<Decision>)>,
@@ -166,9 +159,7 @@ impl Approver for ChannelApprover {
         Box::pin(async move {
             let key = (req.tool.clone(), req.action.clone());
             let allow_session = req.allow_session;
-            // A connector's grants live in the connector registry, keyed by
-            // the tool's definition hash, so a changed definition asks again;
-            // this approver's name-only memory must not shortcut that.
+            // Name-only grants must not bypass the registry's definition-hash approval checks.
             let connector = req.class.as_deref() == Some(crate::connectors::exec::CLASS);
             if allow_session
                 && !connector
@@ -238,8 +229,6 @@ impl Approver for ChannelApprover {
                 .join(", ");
             for (index, req) in reqs.iter().enumerate() {
                 let _ = write!(summary, "\n{}. {} {}", index + 1, req.tool, req.action);
-                // The popup is the only reader of a wave: show each call's
-                // full preview.
                 for line in req.detail.as_ref().unwrap_or(&req.summary).split('\n') {
                     let _ = write!(summary, "\n  {line}");
                 }
@@ -274,9 +263,6 @@ impl Approver for ChannelApprover {
     }
 }
 
-/// Nudge a bounded selection index by `delta`, hard-clamping to `[0, len-1]`
-/// (or `0` if `len` is `0`). Shared by the picker/list selection-movement
-/// methods that clamp at the ends rather than wrapping around.
 pub fn clamp_cursor(current: usize, len: usize, delta: i32) -> usize {
     if len == 0 {
         return 0;
@@ -284,9 +270,6 @@ pub fn clamp_cursor(current: usize, len: usize, delta: i32) -> usize {
     (current as i32 + delta).clamp(0, len as i32 - 1) as usize
 }
 
-/// Filter `items` down to those `score_fn` returns `Some` for, sorted
-/// descending by score (best match first, stable on ties). Shared by the
-/// space and session pickers' fuzzy filters.
 pub fn fuzzy_filter_sorted<T>(items: &[T], score_fn: impl Fn(&T) -> Option<i32>) -> Vec<&T> {
     let mut scored: Vec<(i32, &T)> = items
         .iter()
@@ -296,7 +279,6 @@ pub fn fuzzy_filter_sorted<T>(items: &[T], score_fn: impl Fn(&T) -> Option<i32>)
     scored.into_iter().map(|(_, item)| item).collect()
 }
 
-/// Which tab in the `/files` popup is active.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum FilesTab {
     Files,
@@ -304,7 +286,6 @@ pub enum FilesTab {
     Scripts,
 }
 
-/// Which modal popover, if any, is open.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Popup {
     None,
@@ -313,47 +294,30 @@ pub enum Popup {
     Key,
     Settings,
     Copy,
-    /// Permission for one workspace mutation or command.
     Approval,
     Space,
     Context,
     Skills,
     Files,
     Apps,
-    /// Focused model-authored interactive output (opened from the transcript).
     InteractiveUi,
     Watch,
     ResearchLive,
     Swarm,
-    /// `/connectors`: MCP connectors, their status, tools and policies.
     Connectors,
-    /// `/library`: the space's decks and docs, to open in studio, export or delete.
     Library,
-    /// `/agents`: the conversation's sub-agents and their transcripts.
     Subagents,
-    /// `/usage`: aggregated per-backend/per-model token, cache, and cost stats.
     Usage,
-    /// `/harness`: ranked tool failure modes and their latest transcripts.
     Harness,
-    /// `/procs`: session-owned background commands.
     Procs,
-    /// Durable scheduled agent jobs and their creation form.
     Jobs,
-    /// `/login`'s provider selector (`OpenRouter` / `OpenCode` Go / `OpenAI` /
-    /// Codex / local runtime).
     Login,
-    /// `/local`'s runtime selector (Ollama / MLX / LM Studio / edge0 / off).
     Local,
-    /// `/help` (or F1): keybindings plus the slash-command catalog.
     Help,
-    /// Full-screen in-terminal image viewer (opened from the transcript, the
-    /// files popup, an interactive block, or `/view`).
     ImageViewer,
 }
 
-/// Which backend a pasted key in `Popup::Key` is for — set by whichever
-/// `/login` row opened the prompt, since these keys aren't distinguishable
-/// by shape (unlike `OpenRouter`'s `sk-or-` prefix).
+/// Login destination for keys that cannot be distinguished by their format.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum KeyTarget {
     OpenRouter,
@@ -362,34 +326,26 @@ pub enum KeyTarget {
     Mistral,
 }
 
-/// What the `/swarm` roster popup is doing.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum SwarmPopupMode {
     Browse,
     ConfirmDelete,
 }
 
-/// What the apps popup is doing: browsing the space's apps or confirming
-/// removal of the highlighted one.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum AppsMode {
     Browse,
     ConfirmDelete,
     EditFile,
-    /// Typing a new name for the highlighted pinned panel.
     RenamePanel,
 }
 
-/// What the watch picker is doing: browsing or confirming removal of the
-/// highlighted watch.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum WatchMode {
     Browse,
     ConfirmDelete,
 }
 
-/// What the skills popup is doing: browsing, typing a GitHub `owner/repo/path`
-/// to install, or confirming removal of the highlighted skill.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum SkillsMode {
     Browse,
@@ -397,8 +353,6 @@ pub enum SkillsMode {
     ConfirmRemove,
 }
 
-/// What the files popup is doing: browsing the fileset, typing a path to
-/// import, renaming the highlighted file, or confirming its removal.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum FilesMode {
     Browse,
@@ -408,15 +362,12 @@ pub enum FilesMode {
     Pick,
 }
 
-/// What the images popup is doing: browsing or confirming removal.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum ImagesMode {
     Browse,
     ConfirmDelete,
 }
 
-/// What the scripts popup is doing: browsing, creating, renaming, or
-/// confirming removal of the highlighted script.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum ScriptsMode {
     Browse,
@@ -425,8 +376,6 @@ pub enum ScriptsMode {
     ConfirmDelete,
 }
 
-/// What the space picker is doing: browsing, naming a new space, renaming the
-/// highlighted one, or confirming a delete.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum SpaceMode {
     Browse,
@@ -435,13 +384,11 @@ pub enum SpaceMode {
     ConfirmDelete,
 }
 
-/// One entry in the `/copy` menu: what to show and the text it puts on the clipboard.
 pub struct CopyOption {
     pub label: String,
     pub text: String,
 }
 
-/// Token estimate breakdown shown in the context popup (Ctrl+G).
 pub struct ContextBreakdown {
     pub system_tokens: u64,
     pub memory_tokens: u64,
@@ -449,11 +396,9 @@ pub struct ContextBreakdown {
     pub tools_tokens: u64,
     pub conversation_tokens: u64,
     pub limit: Option<u64>,
-    /// Whether the session has ever been auto-compacted.
     pub compacted: bool,
 }
 
-/// Whether the active conversation has access to a local workspace.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum WorkMode {
     Chat,
@@ -462,7 +407,6 @@ pub enum WorkMode {
 }
 
 impl WorkMode {
-    /// Both agent modes expose the same workspace tools and prompt.
     pub fn is_agent(self) -> bool {
         self != Self::Chat
     }
@@ -476,8 +420,6 @@ impl WorkMode {
     }
 }
 
-/// What the session picker is doing: browsing, renaming the highlighted row, or
-/// confirming a delete.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum SessionMode {
     Browse,
@@ -485,7 +427,6 @@ pub enum SessionMode {
     ConfirmDelete,
 }
 
-/// Which pane an in-progress mouse press is driving.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum MouseTarget {
     None,
@@ -493,33 +434,22 @@ pub enum MouseTarget {
     History,
 }
 
-/// The two columns of the model picker.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum ModelPanel {
     Favorites,
     Available,
 }
 
-/// Cache accounting summed over one user turn.
-///
-/// A turn is one user message plus every API request the tool loop makes to
-/// answer it. Later requests in a loop carry a longer cached prefix than the
-/// first, so the last request's rate is not the turn's rate — reporting one as
-/// the other is what made this number look erratic.
+/// Cache accounting across every API request in a user turn.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CacheTally {
-    /// Prompt tokens across requests whose accounting is trustworthy.
     pub prompt_tokens: u64,
-    /// Cache reads across those same requests.
     pub cache_read_tokens: u64,
-    /// Requests in this turn whose provider reported no cache accounting at
-    /// all. Non-zero means the rate covers only part of the turn.
+    /// Requests without cache accounting, excluded from the reported rate.
     pub unrated_requests: u64,
 }
 
 impl CacheTally {
-    /// Fold in one request's accounting. Requests with an unidentifiable
-    /// convention are counted, not guessed at.
     pub fn observe(&mut self, usage: &crate::provider::Usage) {
         if usage.prompt_convention.ratio_is_meaningful() {
             self.prompt_tokens += usage.prompt_tokens;
@@ -529,32 +459,25 @@ impl CacheTally {
         }
     }
 
-    /// The turn's hit rate, or `None` when nothing rateable was recorded.
     #[must_use]
-    #[allow(clippy::cast_precision_loss)] // a ratio of token counts loses nothing meaningful
+    #[allow(clippy::cast_precision_loss)]
     pub fn rate(&self) -> Option<f64> {
         (self.prompt_tokens > 0).then(|| self.cache_read_tokens as f64 / self.prompt_tokens as f64)
     }
 
-    /// Whether some request in the turn went unaccounted, so the UI can mark
-    /// the rate as partial rather than presenting it as the whole story.
     #[must_use]
     pub const fn is_partial(&self) -> bool {
         self.unrated_requests > 0
     }
 }
 
-/// What a confirmed model picker selection is for: the active session's model
-/// or one row of the swarm roster.
 #[derive(PartialEq, Eq, Clone, Copy, Default)]
 pub enum ModelPickTarget {
     #[default]
     Session,
-    /// Picking the model for one row of the active session's `/swarm` roster.
     SwarmPersona(usize),
 }
 
-/// Editable rows in the nerd-config popup.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum SettingsField {
     RemoteImages,
@@ -623,10 +546,6 @@ impl SettingsField {
     }
 }
 
-/// A functional group of settings fields, shown as a collapsible section in
-/// the nerd-config popup — grouped by what part of the pipeline the fields
-/// configure (chat display, sampling, context, web
-/// search, or reply layout), not by widget type.
 pub struct SettingsGroup {
     pub name: &'static str,
     pub fields: &'static [SettingsField],
@@ -674,8 +593,6 @@ pub const SETTINGS_GROUPS: &[SettingsGroup] = &[
     },
 ];
 
-/// One visible row in the settings popup: a collapsible group header, or a
-/// field nested under one (only present when its group isn't collapsed).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SettingsRow {
     Group(usize),
@@ -683,8 +600,6 @@ pub enum SettingsRow {
 }
 
 pub const REPLY_STYLES: [&str; 4] = ["interactive", "auto", "rich", "plain"];
-/// Where an image opens: the in-terminal viewer, the OS viewer, or whichever
-/// the terminal's graphics support makes sensible (`auto`).
 pub const IMAGE_VIEWERS: [&str; 3] = ["auto", "terminal", "system"];
 pub const VERBOSITY_LEVELS: [&str; 3] = ["normal", "concise", "caveman"];
 pub const SEARCH_PROVIDERS: [&str; 6] = [
@@ -696,38 +611,24 @@ pub const SEARCH_PROVIDERS: [&str; 6] = [
     "duckduckgo",
 ];
 
-/// Nerd config: footer toggles + core sampling parameters.
 #[derive(Debug, Clone)]
-// A settings struct is inherently many booleans; grouped by feature in the popup.
 #[allow(clippy::struct_excessive_bools)]
 pub struct Settings {
-    /// Fetch untrusted remote images and link sites' icons through the safe,
-    /// device-local cache.
+    /// Fetch untrusted remote images through the device-local safety cache.
     pub remote_images: bool,
-    /// Model-selected layouts, preferred layouts, or no layout guidance.
     pub reply_style: String,
-    /// `auto`, `terminal` or `system`: which viewer opens an image on click.
-    /// Only the terminal frontend reads it; it lives here because it persists
-    /// with the other display settings.
     pub image_viewer: String,
-    /// Show the per-message model · TPS footer.
     pub show_stats: bool,
-    /// Expand stored reasoning traces (vs. a collapsed one-liner).
     pub show_reasoning: bool,
-    /// Hide keybind hints (input hint, popup titles, "Ctrl+R to expand", …).
     pub hide_hints: bool,
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
     pub max_tokens: Option<u32>,
-    /// Auto-compact once context usage crosses this percent of the model's
-    /// context window. 0 disables auto-compaction.
+    /// Context-window percentage that triggers compaction, or zero to disable it.
     pub compact_threshold: u8,
-    /// Width of the conversation column: `auto`, `full`, or a cell count.
-    /// Only the terminal frontend reads it; it lives here because it persists
-    /// with the other display settings.
+    /// Conversation width as `auto`, `full`, or a cell count.
     pub column_width: String,
-    /// Per-popup size overrides (`id:WWxHH` percentages of the screen,
-    /// comma-separated), written by dragging a popup's border.
+    /// Comma-separated `id:WWxHH` overrides in screen percentages.
     pub popup_sizes: String,
 }
 
@@ -750,10 +651,6 @@ impl Default for Settings {
     }
 }
 
-/// The three answer-length presets, cycled by the settings popup's
-/// `verbosity` field. "concise" is the default — terse but not telegraphic;
-/// "caveman" is deliberately more aggressive (dropped articles/grammar),
-/// matching the community caveman-prompt technique, for users who want it.
 fn verbosity_clause(level: &str) -> &'static str {
     match level {
         "normal" => {
@@ -770,7 +667,6 @@ fn verbosity_clause(level: &str) -> &'static str {
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// Greeting lines for the start screen; one is picked at random per launch.
 const GREETINGS: [&str; 8] = [
     "What are we building today?",
     "Ask me anything.",
@@ -782,8 +678,6 @@ const GREETINGS: [&str; 8] = [
     "How can I help?",
 ];
 
-/// Dumb little "thinking" verbs, Claude-Code style: (present, past). One pair is
-/// picked per request — "⠹ Vibing" while streaming, "Vibed for 3s" once done.
 const THINKING: [(&str, &str); 16] = [
     ("Thinking", "Thought"),
     ("Pondering", "Pondered"),
@@ -803,9 +697,6 @@ const THINKING: [(&str, &str); 16] = [
     ("Doing the thing", "Did the thing"),
 ];
 
-/// Spinner colour for an in-flight response. Core names the palette
-/// abstractly (the TUI maps it to terminal colors) so this type can cross
-/// the host API boundary unchanged.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SpinnerColor {
     Green,
@@ -813,7 +704,6 @@ pub enum SpinnerColor {
     Magenta,
 }
 
-/// Palette the spinner colour is randomly drawn from each request.
 const SPINNER_COLORS: [SpinnerColor; 3] = [
     SpinnerColor::Green,
     SpinnerColor::Cyan,
@@ -822,7 +712,6 @@ const SPINNER_COLORS: [SpinnerColor; 3] = [
 
 type ModelsResult = std::result::Result<Vec<Model>, String>;
 
-/// One row in the `/image` popup: name, size in bytes, modified rfc3339.
 #[derive(Clone)]
 pub struct ImageMeta {
     pub name: String,
@@ -830,7 +719,6 @@ pub struct ImageMeta {
     pub modified: String,
 }
 
-/// One row in the `/script` popup: name, size in bytes, modified rfc3339.
 #[derive(Clone)]
 pub struct ScriptMeta {
     pub name: String,
@@ -838,58 +726,45 @@ pub struct ScriptMeta {
     pub modified: String,
 }
 
-/// Maximum number of concurrent interactive chat responses.
 pub const MAX_CHAT_TASKS: usize = 10;
 
 pub type ChatTaskId = u64;
 
-/// An exact context count and the conversation it measured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ContextBasis {
-    /// The provider's exact count (`context_total` while it still matches).
     pub exact: u64,
-    /// `context_chars()` when the count arrived.
     pub chars: usize,
-    /// `messages.len()` then; unchanged and idle means nothing to estimate.
     pub messages: usize,
-    /// The chat task whose request reported it.
     pub task: ChatTaskId,
 }
 
-/// Identity of a parked survey/plan gate, as surfaced on the event stream.
 #[derive(Clone)]
 pub struct GateState {
-    /// The session the reply must come from.
     pub session_id: String,
-    /// Which phase is waiting (drives the prompt shown).
     pub phase: SurveyPhase,
 }
 
-/// One event routed from a provider stream to its originating chat task.
 pub struct ChatEvent {
     pub task_id: ChatTaskId,
     pub event: StreamEvent,
 }
 
-/// State owned by one in-flight chat response. Provider/toolbox values stay in
-/// the spawned task; this state is the UI/database-facing projection.
+/// UI and persistence state for one in-flight chat response.
 pub struct ChatTask {
     pub id: ChatTaskId,
     pub session_id: String,
     pub session_title: String,
     pub space_id: String,
     pub model: String,
-    /// Raw wire model id (backend prefix stripped) — the key for pricing.
+    /// Wire model id without the backend prefix, used for pricing.
     pub model_id: String,
-    /// Which backend serves this task's requests.
     pub backend: BackendTag,
     pub incognito: bool,
     pub buffer: String,
     pub thinking: String,
     pub tool_status: Option<String>,
     pub usage: Option<Usage>,
-    /// Most recent `usage_log` row for this task; a trailing `OpenCode` Zen
-    /// cost event updates it rather than inserting a duplicate.
+    /// Latest usage row, revised in place by trailing `OpenCode` Zen cost events.
     pub usage_row_id: Option<i64>,
     pub started: std::time::Instant,
     pub thinking_idx: usize,
@@ -897,9 +772,7 @@ pub struct ChatTask {
     pub abort: tokio::task::AbortHandle,
 }
 
-/// One chat turn's requests added up: the model's output tokens across every
-/// round of its tool loop, and their cost. A cost-only follow-up event (`OpenCode`
-/// Zen) revises the latest request's cost instead of adding a request.
+/// Token and cost totals across a turn's requests, including cost-only revisions.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct TurnTally {
     pub output_tokens: u64,
@@ -908,8 +781,7 @@ pub struct TurnTally {
 }
 
 impl TurnTally {
-    /// Record one usage event: `output_tokens` is `Some` for a new request,
-    /// `None` for a cost-only revision of the latest one.
+    /// Record a request or, with no token count, revise the latest request's cost.
     pub fn observe(&mut self, output_tokens: Option<u64>, cost: Option<f64>) {
         if let Some(tokens) = output_tokens {
             self.settled_cost = add_cost(self.settled_cost, self.last_cost.take());
@@ -920,7 +792,6 @@ impl TurnTally {
         }
     }
 
-    /// The turn's cost so far; `None` when no request had a known cost.
     #[must_use]
     pub fn cost(&self) -> Option<f64> {
         add_cost(self.settled_cost, self.last_cost)
@@ -934,7 +805,6 @@ fn add_cost(a: Option<f64>, b: Option<f64>) -> Option<f64> {
     }
 }
 
-/// A completed chat task waiting for the user to open its session.
 pub struct ChatNotification {
     pub session_id: String,
     pub title: String,
@@ -942,44 +812,29 @@ pub struct ChatNotification {
     pub success: bool,
 }
 
-/// Shared embedding result: (space id, file id or `chats` job marker,
-/// (seq, vector) pairs or error). An empty id denotes a capability probe.
+/// Embedding result keyed by space and file, with an empty file id denoting a probe.
 pub type EmbedMsg = (
     String,
     String,
     std::result::Result<Vec<(i64, Vec<f32>)>, String>,
 );
 
-/// A background research pipeline update: (session id, space id, space name,
-/// stage update or final result).
 pub type ResearchMsg = (String, String, String, research::ResearchUpdate);
 
-/// A parked conversation awaiting a chat reply: which session the reply
-/// must come from, the channel to send it on, and which phase is waiting.
-/// Generic — the research survey/plan-approval gates ride it, and any other
-/// mode (swarm, watch setup, plain chat) can arm it the same way. Armed by
-/// the owning job's update handler on each pending section, cleared when
-/// the user replies or the job ends.
 pub struct SurveyGate {
     pub session_id: String,
     pub reply_tx: mpsc::UnboundedSender<String>,
     pub phase: SurveyPhase,
-    /// The actionable transcript row for this gate. Keeping it with the gate
-    /// lets an incognito prompt be restored after the user switches away and
-    /// back without writing private content to the database.
+    /// Retain the prompt in memory so incognito gates survive session switches without persistence.
     pub prompt_role: String,
     pub prompt_content: String,
 }
 
-/// What a parked survey gate is waiting for — drives the status line and
-/// which phase's reply is routed. Mode-agnostic: `Clarify` is any
-/// clarifying-question round, `Approve` any presented-artifact approval.
 #[derive(Clone)]
 pub enum SurveyPhase {
-    /// A clarifying-question round (1-based).
+    /// One-based clarification round.
     Clarify { round: u8 },
-    /// Approval of a presented artifact; `rework` is true on a
-    /// re-presentation after the user's edits were folded in.
+    /// `rework` marks an artifact revised after user edits.
     Approve { rework: bool },
 }
 
@@ -989,25 +844,20 @@ pub enum LoginMsg {
     Done(Result<crate::config::CodexCredentials, String>),
 }
 
-/// External-editor request queued by app/input code. The event loop owns the
-/// terminal suspend/resume and applies structured edits after `$EDITOR` exits.
+/// A request for the frontend to suspend its terminal and run an external editor or command.
 pub enum PendingEditor {
     AppFile(std::path::PathBuf),
     Persona(std::path::PathBuf),
     ScriptFile(std::path::PathBuf),
-    /// An interactive `!` command (`!tty <cmd>`, `sudo`, `ssh`, …) that gets
-    /// the real terminal; only its command and exit code are recorded.
+    /// A terminal command recorded without capturing its output.
     UserCommand(String),
-    /// `/memory edit`: a space's memory rendered to Markdown; the frontend
-    /// calls `App::finish_memory_edit` once the editor closes.
     Memory {
         space: String,
         path: std::path::PathBuf,
     },
 }
 
-/// Ensures a child stream spawned by `OpenRouter::stream_chat` is cancelled
-/// when its parent research/swarm task is aborted or otherwise dropped.
+// Dropping a JoinHandle detaches its task; this guard must abort child streams instead.
 pub struct AbortOnDrop(pub tokio::task::AbortHandle);
 
 impl Drop for AbortOnDrop {
@@ -1016,233 +866,141 @@ impl Drop for AbortOnDrop {
     }
 }
 
-/// A background event surfaced to the event loop. `None` means that source's
-/// channel closed (task ended).
+/// Frontend feedback and background results, with `None` marking a closed source channel.
 #[derive(Clone)]
 pub enum AppEvent {
-    /// A one-line status update from a domain path.
     Status(String),
-    /// The composer should be replaced with this text (e.g. a send-failure
-    /// path restoring the user's message). The view layer applies it to its
-    /// `TextArea`.
     ComposerSet(String),
-    /// The composer should be cleared.
     ComposerClear,
-    /// The view should reset its viewport state (scroll, selection, pinning
-    /// baseline) — pushed wherever domain code switches sessions, starts a
-    /// stream, or otherwise invalidates the rendered conversation.
     ViewportReset,
-    /// The wrapped-history render cache must be rebuilt (in-place message
-    /// edits would otherwise leave stale wrapped content).
     HistoryInvalidated,
-    /// A domain path fell back to "no backend configured" and wants the
-    /// login selector shown (e.g. a swarm turn with no resolvable model).
     OpenLoginPopup,
-    /// A survey/plan gate armed (`Some`) or cleared (`None`). `GateState`
-    /// carries the session id the reply must come from, so a gate in another
-    /// session can never swallow typing — the consumer compares the payload
-    /// against the viewed session.
+    /// Consumers must match the gate's session before intercepting input.
     Gate(Option<GateState>),
     Stream(Option<(ChatTaskId, StreamEvent)>),
     Models(Option<ModelsResult>),
-    /// A generated session topic: (session id, title, slug).
     Title(Option<(String, String, String)>),
-    /// A compaction digest: (session id, digest, messages covered, pre-compaction %).
     Compact(Option<(String, String, i64, u64)>),
-    /// Result of `/skills` install: skill name on success, error message on failure.
     SkillInstall(Option<Result<String, String>>),
 
-    /// A progress or final converter result for one file, or `None`
-    /// when the batch's channel closed.
     Ocr(Option<(String, String, files::OcrUpdate)>),
-    /// One file's chunk-embedding job finished (or the channel closed).
     Embed(Option<EmbedMsg>),
-    /// A deep-research pipeline update, or `None` when its channel closed.
     Research(Option<ResearchMsg>),
-    /// `/research` with no topic: a distilled topic from recent chat, or an error.
     ResearchTopic(Option<Result<String, String>>),
-    /// Startup update check: newest published version, or `None` when the
-    /// check failed (offline, index hiccup) — silently ignored.
     UpdateCheck(Option<String>),
-    /// `OpenAI` Codex subscription login status or final result.
     Login(Option<LoginMsg>),
-    /// A `/swarm` turn update, or `None` when its channel closed.
     Swarm(Option<swarm::SwarmMsg>),
-    /// A finished `/local` server survey: every runtime's liveness, memory and
-    /// budget verdict, or `None` when its channel closed.
     LocalServers(Option<Vec<crate::provider::serve::RuntimeStatus>>),
 }
 
-// Channel/state fields share *_rx/*_tx postfixes by design — the postfix is the meaning.
-// App state is inherently many booleans (modes, toggles, dirty flags).
 #[allow(clippy::struct_field_names, clippy::struct_excessive_bools)]
 pub struct App {
     pub db: Db,
     pub space: Space,
-    /// Every backend currently logged into. `/model` merges all of their
-    /// catalogs into one list; picking a model resolves back to the right
-    /// one here.
     pub backends: Backends,
-    /// Every credential configured on disk, kept in sync with `backends`.
     pub saved: crate::config::SavedCreds,
-    /// Opt-in experiments loaded at boot; no reductions are implemented here.
     pub experiments: config::Experiments,
-    /// Device-local trace store, opened only when a chat turn needs recording.
     pub trace_store: Option<std::sync::Arc<crate::trace::TraceStore>>,
-    /// Most recently recorded chat turn's session and turn IDs.
     pub last_turn: Option<(String, String)>,
 
-    /// The space the current/next session belongs to.
     pub active_space: SpaceRow,
-    /// The memory table of contents captured when the active session/cache
-    /// epoch began; facts saved mid-session appear in the next one.
+    /// Memory frozen for the cache epoch; mid-session facts remain in the transcript.
     pub(crate) memory_snapshot: String,
-    /// The space's docs as of that snapshot (also scored for hints).
     pub(crate) memory_docs: Vec<crate::memory::book::DocEntry>,
-    /// Chapters over the tidy threshold, for the status bar.
     pub(crate) memory_tidy_due: usize,
-    /// App-local prompt-cache epoch. Changes that alter the serialized prefix
-    /// advance it so a provider gets a fresh cache lane.
+    /// Advance when the serialized prefix changes to select a fresh provider-cache lane.
     pub(crate) cache_epoch: u64,
-    /// Timestamp captured for the current prompt-cache epoch. Keeping the
-    /// `{{datetime}}` expansion stable prevents a clock tick from invalidating
-    /// the entire serialized prefix on every request.
+    /// Frozen timestamp preventing clock ticks from invalidating the provider-cache prefix.
     pub(crate) prompt_datetime: String,
     pub index: IndexState,
     pub search: SearchConfig,
-    /// Bundled base system prompt with unresolved runtime placeholders.
     pub base_system_prompt: String,
-    /// App-level user additions from `system_prompt.md`, editable via `$EDITOR`.
-    /// Loaded by `boot()`; empty in a bare `App::new`.
+    /// User additions from `system_prompt.md`, loaded at boot.
     pub system_prompt_overlay: String,
-    /// Client capability advertised to the model, not persistent view state.
     pub interactive_ui: bool,
-    /// Whether a frontend can ask the user for workspace permissions.
     pub interactive_approvals: bool,
     pub approvals: ApprovalState,
-    /// Session-local canvas focus and deck edit notifications, shared with tools.
     pub deck_link: Arc<std::sync::Mutex<crate::deck::link::Context>>,
-    /// An approved `request_workspace` root, applied when its chat task finishes.
+    /// Approved workspace root deferred until the current chat task finishes.
     pub(crate) queued_workspace: Option<(ChatTaskId, String)>,
     pub user_command: UserCommandState,
-    /// Answer-length preference woven into the system prompt: "normal",
-    /// "concise" (default), or "caveman".
     pub verbosity: String,
     pub ui_repair: UiRepairState,
     pub compaction: CompactionState,
 
-    /// Discovered skills (name/description only — bodies are read from disk on
-    /// invocation, so this list is cheap and reloaded whenever it changes).
     pub skills: Vec<crate::skills::Skill>,
-    /// MCP connectors (`/connectors`): shared with every toolbox this app
-    /// builds. Empty until `boot()` loads `config.toml`.
     pub connectors: crate::connectors::Registry,
-    /// Where `/connectors import` looks for other tools' MCP configs; `None`
-    /// means the real locations. Tests point it at fixtures.
+    /// Override connector import locations, or `None` for the device's real paths.
     pub import_paths: Option<crate::connectors::import::ImportPaths>,
-    /// Where the registry's background tasks send short status notes.
     pub connector_notes_tx: mpsc::UnboundedSender<String>,
     connector_notes_rx: mpsc::UnboundedReceiver<String>,
-    /// A skill armed by `/<skill-name>`, injected into the next message only.
     pub forced_skill: Option<String>,
-    /// Chat by default; agent mode exposes the bound workspace's tools.
     pub work_mode: WorkMode,
-    /// Device capability, also used for the visible auto-mode fallback badge.
     pub auto_sandbox_available: bool,
     decision_context: Arc<Mutex<(String, String)>>,
     decider_availability: Arc<crate::decider::Availability>,
     decider_status_rx: mpsc::UnboundedReceiver<String>,
-    /// Active workspace, retained in chat for Shift+Tab until the session changes.
     pub workspace: Option<std::sync::Arc<crate::workspace::Workspace>>,
     pub incognito: bool,
-    /// Temp directory for incognito image files, cleaned up on toggle.
     pub incognito_img_dir: Option<std::path::PathBuf>,
     pub research: ResearchState,
-    /// `task` sub-agent runs of this process, live and recent (see `subagents`).
     pub subagent_runs: Vec<SubagentRun>,
-    /// What each chat task's sub-agents have cost so far, added to its reply.
     pub subagent_turn_cost: HashMap<ChatTaskId, f64>,
-    /// Each chat task's own requests so far — every tool-loop round, not
-    /// just the last — totalled into its reply's tokens and cost.
     pub turn_usage: HashMap<ChatTaskId, TurnTally>,
     pub toolbox: std::sync::Arc<dyn crate::tools::ToolExecutor>,
     image_fetcher: Arc<crate::remote_image::Fetcher>,
-    /// Background commands survive session switches, but not app exit.
     pub procs: Arc<crate::workspace::procs::Procs>,
-    /// Local static server for model-created apps (None if it failed to bind).
     pub app_server: Option<crate::appserver::AppServer>,
     pub skills_rx: Option<mpsc::UnboundedReceiver<Result<String, String>>>,
     pub local: LocalRuntimeState,
     pub login_rx: Option<mpsc::UnboundedReceiver<LoginMsg>>,
-    /// Startup update check result (newest published version, or `None` on failure).
     pub update_rx: Option<mpsc::UnboundedReceiver<Option<String>>>,
-    /// Startup Codex refresh result, handled internally so tokens never enter events.
+    /// Handle refreshed Codex tokens internally so they never enter frontend events.
     codex_refresh_rx: Option<mpsc::UnboundedReceiver<Result<config::CodexCredentials, String>>>,
     pub swarm: SwarmState,
     pub caches: ListCaches,
-    /// Time window the `/usage` dashboard aggregates (`24h/7d/30d/all`) — a
-    /// persisted preference, applied by `apply_setting` on load.
     pub usage_range: crate::db::UsageRange,
-    /// Device-local tool-call summary loaded by `/harness`.
     pub harness: Option<crate::db::HarnessSummary>,
 
-    /// Live model catalog (fetched on demand, never hardcoded).
     pub models: Vec<Model>,
     pub current_model: Option<String>,
-    /// Router cache warning is emitted only once per app run, for session picks.
     router_note_shown: bool,
     pub models_rx: Option<mpsc::UnboundedReceiver<ModelsResult>>,
-    /// Model ids marked favorite, and when each model was last used (rfc3339).
     pub favorites: HashSet<String>,
     pub last_used: HashMap<String, String>,
-    /// Per-model reasoning effort (wire string from `ReasoningEffort::as_str`,
-    /// e.g. "minimal" / "low" / "high" / "xhigh" / "max" / "none").
     pub reasoning: HashMap<String, String>,
 
     pub session: Option<Session>,
     pub messages: Vec<Message>,
-    /// Tool-call rows before this device-local session boundary replay masked.
     pub mask_through: usize,
 
-    /// Central event channel for all in-flight chat tasks.
     pub chat_event_tx: mpsc::UnboundedSender<ChatEvent>,
     pub chat_event_rx: mpsc::UnboundedReceiver<ChatEvent>,
     pub chat_tasks: HashMap<ChatTaskId, ChatTask>,
     pub next_chat_task_id: ChatTaskId,
-    /// Completed task notifications, kept independently of the one-line status.
     pub notifications: VecDeque<ChatNotification>,
-    /// Queued `Status`/`Gate` events, drained by `next_event` before the
-    /// channel sources. The TUI/CLI/host consume the same stream either way.
+    /// Locally queued events take priority over background channels.
     pub(crate) pending_events: VecDeque<AppEvent>,
-    /// Sessions holding a response that finished while the user was elsewhere.
     pub unread: std::collections::HashSet<String>,
     pub meter: ContextMeter,
 
     pub settings: Settings,
-    /// What a confirmed model-picker selection is currently for (the active
-    /// session's model, a feature model from `/config`, or a swarm persona).
     pub model_pick_target: ModelPickTarget,
-    /// Animated "thinking" indicator shown while a response streams.
     pub spinner_frame: usize,
     pub thinking_idx: usize,
     pub spinner_color: SpinnerColor,
 
-    /// Background topic-generation result channel.
     pub(crate) title_rx: Option<mpsc::UnboundedReceiver<(String, String, String)>>,
 }
 
 impl App {
-    /// Construct from a single guessed key for tests and single-key bootstraps.
     pub fn new(db: Db, key: Option<&str>, space: Space) -> Self {
         Self::with_creds(db, space, config::SavedCreds::from_key(key))
     }
 
-    /// Construct every configured backend from the saved credentials without network access.
-    // Long by design (app bootstrap).
+    /// Construct app state from saved credentials without network access.
     #[allow(clippy::too_many_lines)]
     pub fn with_creds(db: Db, space: Space, saved: config::SavedCreds) -> Self {
-        // Fall back to a fresh in-memory default row if the db lookup somehow
-        // fails — the space name still resolves to real files on disk.
         let active_space = db
             .default_space_id()
             .ok()
@@ -1263,8 +1021,6 @@ impl App {
         let (chat_event_tx, chat_event_rx) = mpsc::unbounded_channel();
         let (decider_status_tx, decider_status_rx) = mpsc::unbounded_channel();
         let (connector_notes_tx, connector_notes_rx) = mpsc::unbounded_channel();
-        // Built with search disabled; `load_settings()` below reads the
-        // persisted config (if any) and rebuilds this via `refresh_toolbox`.
         let image_fetcher =
             crate::remote_image::Fetcher::new(space.db_path().with_file_name("cache"));
         let toolbox = std::sync::Arc::new(
@@ -1280,8 +1036,6 @@ impl App {
                     space_id: active_space.id.clone(),
                     embedder: None,
                 }),
-                // No apps ctx yet — the app server starts after construction;
-                // main() calls refresh_toolbox() once it's up.
                 None,
             )
             .with_skill_dirs(skill_dirs),
@@ -1389,8 +1143,6 @@ impl App {
         if !app.backends.any() {
             app.push_status("no API key — run /login to add OpenRouter, OpenAI, OpenCode, Codex, Mistral or a local model".to_string());
         }
-        // Capture the first session snapshot before any request can be built.
-        // Subsequent session switches/new chats refresh it explicitly.
         app.refresh_memory_snapshot();
         app.load_prefs();
         app.load_settings();
@@ -1418,7 +1170,6 @@ impl App {
         ))
     }
 
-    /// Validate and canonicalize a job's source using the normal workspace deny list.
     pub fn validate_job_root(&self, root: &str) -> Result<String> {
         Ok(self
             .open_workspace(Some(root))?
@@ -1427,7 +1178,6 @@ impl App {
             .into_owned())
     }
 
-    /// Enter only a generated run directory; source workspaces are validated separately.
     pub(crate) fn enter_job_workspace(
         &mut self,
         root: &std::path::Path,
@@ -1455,7 +1205,6 @@ impl App {
         Ok(())
     }
 
-    /// Surface newly finished daemon runs using existing TUI notification state.
     pub fn collect_job_notifications(&mut self) -> Result<()> {
         let seen = self.db.setting("jobs_seen").unwrap_or_default();
         let jobs = self.db.list_jobs()?;
@@ -1512,11 +1261,7 @@ impl App {
         Ok(workspace)
     }
 
-    /// Enter a disposable agent workspace in incognito, with no session binding
-    /// or durable checkpoints. Set `eval_approver` first to permit shell prefixes.
-    ///
-    /// # Errors
-    /// Rejects inaccessible roots and the same denied paths as normal agent mode.
+    /// Enter an incognito evaluation workspace without session bindings or durable checkpoints.
     pub fn enter_eval_workspace(&mut self, root: &std::path::Path) -> Result<()> {
         let workspace = self.open_workspace_root(root)?;
         if !self.incognito {
@@ -1664,7 +1409,6 @@ impl App {
         Ok(())
     }
 
-    /// Whether the active space has consented to device-local chat recording.
     pub fn training_enabled(&self) -> bool {
         !self.incognito
             && self
@@ -1674,7 +1418,6 @@ impl App {
                 == Some("on")
     }
 
-    /// Every saved credential, for scrubbing traces and command output.
     pub(crate) fn saved_secrets(&self) -> Vec<String> {
         [
             self.saved.openrouter_key.as_deref(),
@@ -1715,9 +1458,6 @@ impl App {
         }
     }
 
-    /// Load favorites + last-used timestamps from the db (best effort), and
-    /// default the active model to the most-recently-used one so a new session
-    /// needs no re-selection.
     fn load_prefs(&mut self) {
         if let Ok(prefs) = self.db.load_model_prefs() {
             for p in prefs {
@@ -1741,7 +1481,6 @@ impl App {
         }
     }
 
-    /// Load persisted nerd-config settings from the db (best effort).
     fn load_settings(&mut self) {
         let Ok(kv) = self.db.load_settings() else {
             return;
@@ -1752,8 +1491,6 @@ impl App {
         self.refresh_toolbox();
     }
 
-    /// Apply one persisted setting key to live state. Shared by
-    /// `load_settings` and the `SetSetting` command.
     fn apply_setting(&mut self, k: &str, v: &str) {
         match k {
             "remote_images" => {
@@ -1776,8 +1513,7 @@ impl App {
             "column_width" if settings::valid_column_width(v) => {
                 self.settings.column_width = v.trim().to_string();
             }
-            // Unknown ids and out-of-range entries are dropped, not fatal: a
-            // row written by a newer build must not break an older one.
+            // Settings written by newer builds must remain readable by older clients.
             "popup_sizes" => self.settings.popup_sizes = settings::sanitize_popup_sizes(v),
             "reply_style" if REPLY_STYLES.contains(&v) => {
                 if self.settings.reply_style != v {
@@ -1850,22 +1586,18 @@ impl App {
         }
     }
 
-    /// Rebuild the toolbox from the current `searxng_url`, so a settings
-    /// change takes effect immediately (no restart). Web search tries the
-    /// configured backends first, then keyless Exa and the session provider.
     pub fn refresh_toolbox(&mut self) {
         self.rebuild_toolbox();
         self.reload_skills();
     }
 
-    #[allow(clippy::too_many_lines)] // Keep the toolbox's capability wiring together.
+    #[allow(clippy::too_many_lines)]
     fn rebuild_toolbox(&mut self) {
         let url = (!self.search.searxng_url.trim().is_empty())
             .then(|| self.search.searxng_url.trim().to_string());
         let key = (!self.search.langsearch_key.trim().is_empty())
             .then(|| self.search.langsearch_key.trim().to_string());
-        // The toolbox sits behind the `ToolExecutor` seam. It writes only
-        // to the app-managed root but reads the full Agent Skills search path.
+        // Skill discovery may read external roots, but writes must stay in the managed root.
         let skills_dir = crate::skills::skills_dir(&self.space.root);
         crate::skills::install_builtin(&skills_dir);
         let skill_dirs = crate::skills::app_skill_roots(&self.space.root);
@@ -1896,8 +1628,6 @@ impl App {
                 space_id: self.active_space.id.clone(),
                 embedder: self.file_embedder(),
             }),
-            // App tools only exist while the server runs — an app(action=write) whose
-            // link can never load is worse than no tool. Disabled in incognito.
             self.app_server
                 .as_ref()
                 .filter(|_| !self.incognito)
@@ -1937,7 +1667,7 @@ impl App {
         toolbox.space_apps_dir = self.space.apps_dir(&self.active_space.name);
         toolbox.space_scripts_dir = self.space.scripts_dir(&self.active_space.name);
         toolbox.supports_images = self.current_model_supports_images();
-        // Evals run in a hermetic workspace: no outside services.
+        // Evaluation workspaces must not access outside services.
         toolbox.connectors = self
             .approvals
             .eval_approver
@@ -1990,13 +1720,10 @@ impl App {
         };
     }
 
-    /// Whether the active session is a research session.
     pub fn is_research_session(&self) -> bool {
         self.session.as_ref().is_some_and(|s| s.kind == "research")
     }
 
-    /// The active space's always-excluded search domains, from its
-    /// `blocked_domains.txt` (comma-separated; missing file = none).
     pub fn blocked_domains(&self) -> Vec<String> {
         std::fs::read_to_string(self.space.blocked_domains_path(&self.active_space.name))
             .unwrap_or_default()
@@ -2006,8 +1733,6 @@ impl App {
             .collect()
     }
 
-    /// Kick off the initial model fetch if a key is already present. Call once
-    /// after construction, from within the tokio runtime.
     pub fn init(&mut self) {
         if self.backends.any() {
             self.fetch_models();
@@ -2015,10 +1740,6 @@ impl App {
         self.rescan_files();
     }
 
-    /// Kick off the startup update check: once per day, compare the newest
-    /// published version against this build. Best-effort — offline or a
-    /// failed fetch is silent. Spawned before the event loop starts; the
-    /// result arrives as `AppEvent::UpdateCheck`.
     pub fn spawn_update_check(&mut self) {
         if !self.db.update_check_due() {
             return;
@@ -2031,7 +1752,6 @@ impl App {
         });
     }
 
-    /// Refresh a Codex token expiring within a minute without blocking startup.
     pub fn refresh_codex_in_background(&mut self) {
         if self.codex_refresh_rx.is_some() {
             return;
@@ -2053,8 +1773,6 @@ impl App {
         });
     }
 
-    /// Say a newer release is out and how to install it; nothing installs
-    /// on its own. `None` (failed check) and same/older versions are silent.
     pub fn on_update_check(&mut self, latest: Option<String>) {
         let Some(latest) = latest else {
             return;
@@ -2098,35 +1816,27 @@ impl App {
         self.active_chat_task().map(|task| task.buffer.as_str())
     }
 
-    /// True when the in-flight stream belongs to the active session (every
-    /// stream carries its origin `session_id`, so this is exact).
     pub fn viewing_stream(&self) -> bool {
         self.active_chat_task().is_some()
     }
 
-    /// The empty start screen (banner + greeting + clock) shows when there's no
-    /// conversation yet — a stream running in another session doesn't hide it.
     pub fn is_welcome(&self) -> bool {
         self.messages.is_empty() && !self.viewing_stream()
     }
 
-    /// Advance the spinner one frame (called on the animation tick).
     pub const fn tick_spinner(&mut self) {
         self.spinner_frame = self.spinner_frame.wrapping_add(1);
     }
 
-    /// Current spinner glyph.
     pub const fn spinner_char(&self) -> &'static str {
         SPINNER[self.spinner_frame % SPINNER.len()]
     }
 
-    /// Randomly-chosen spinner colour for the current response.
     pub fn spinner_color(&self) -> SpinnerColor {
         self.active_chat_task()
             .map_or(self.spinner_color, |task| task.spinner_color)
     }
 
-    /// Present-tense phrase for the in-progress response ("Vibing").
     pub fn thinking_phrase(&self) -> &'static str {
         self.active_chat_task()
             .map_or(THINKING[self.thinking_idx].0, |task| {
@@ -2134,36 +1844,24 @@ impl App {
             })
     }
 
-    /// Reasoning tokens accumulated so far this stream, if any.
     pub fn thinking_text(&self) -> Option<&str> {
         self.active_chat_task()
             .and_then(|task| (!task.thinking.is_empty()).then_some(task.thinking.as_str()))
     }
 
-    // --- async event sources (drained by the event loop) ---
-
-    /// Queue a one-line status update as `AppEvent::Status`. The TUI keeps
-    /// its own `status` field fed by these events; headless consumers track
-    /// them locally.
     pub fn push_status(&mut self, s: impl Into<String>) {
         self.pending_events.push_back(AppEvent::Status(s.into()));
     }
 
-    /// Ask the view to replace its composer contents (a send-failure path
-    /// restoring the user's message, a gate reply rolled back, …).
     pub fn push_composer_set(&mut self, text: impl Into<String>) {
         self.pending_events
             .push_back(AppEvent::ComposerSet(text.into()));
     }
 
-    /// Ask the view to clear its composer.
     pub fn push_composer_clear(&mut self) {
         self.pending_events.push_back(AppEvent::ComposerClear);
     }
 
-    /// Ask the view to reset its viewport state (scroll, selection, pinning
-    /// baseline) — pushed wherever domain code switches sessions, starts a
-    /// stream, or otherwise invalidates the rendered conversation.
     pub fn push_viewport_reset(&mut self) {
         if self
             .user_command
@@ -2176,23 +1874,15 @@ impl App {
         self.pending_events.push_back(AppEvent::ViewportReset);
     }
 
-    /// Ask the view to rebuild its wrapped-history render cache (in-place
-    /// message edits would otherwise leave stale wrapped content).
     pub fn push_history_invalidated(&mut self) {
         self.pending_events.push_back(AppEvent::HistoryInvalidated);
     }
 
-    /// Pop one locally-queued event (status lines, gate arming, composer
-    /// feedback). The view drains these before every draw so status changes
-    /// land on the same frame as the action that caused them; `next_event`
-    /// drains any remainder before blocking on the channel sources.
+    /// Drain immediate frontend feedback before drawing or waiting on background channels.
     pub fn pop_pending_event(&mut self) -> Option<AppEvent> {
         self.pending_events.pop_front()
     }
 
-    /// Test helper: drain the pending event queue in one pass, returning
-    /// `(composer sets in order, last status line)` — the status line and the
-    /// composer live in the view, so tests assert on the events.
     #[doc(hidden)]
     pub fn drain_ui_events(&mut self) -> (Vec<String>, String) {
         let mut sets = Vec::new();
@@ -2207,28 +1897,21 @@ impl App {
         (sets, last)
     }
 
-    /// Test helper: the last queued `Status` event, draining the queue.
     #[doc(hidden)]
     pub fn last_status(&mut self) -> String {
         self.drain_ui_events().1
     }
 
-    /// Test helper: every queued `ComposerSet` payload, in order, draining
-    /// the queue (asserts composer-restore paths without a `TextArea`).
     #[doc(hidden)]
     pub fn drain_composer_sets(&mut self) -> Vec<String> {
         self.drain_ui_events().0
     }
 
-    /// Redaction context for panel tool arguments, outputs and approval previews.
     #[must_use]
     pub fn panel_scrubber(&self) -> crate::trace::Scrubber {
         crate::trace::Scrubber::new(self.saved_secrets())
     }
 
-    /// Persist a panel operation using the same compact tool cards as model calls.
-    /// # Errors
-    /// Returns database failures; incognito conversations remain memory-only.
     pub fn record_panel_call(
         &mut self,
         session_id: &str,
@@ -2270,11 +1953,8 @@ impl App {
         Ok(())
     }
 
-    /// Next background event from either the streaming task or a model fetch.
-    /// Pends on an idle source, so it only resolves when something happens.
-    #[allow(clippy::too_many_lines)] // One select branch per background source.
+    #[allow(clippy::too_many_lines)]
     pub async fn next_event(&mut self) -> AppEvent {
-        // Locally-queued events (status lines, gate arming) drain first.
         if let Some(ev) = self.pending_events.pop_front() {
             return ev;
         }
@@ -2445,11 +2125,7 @@ impl App {
         match result {
             Ok(models) => {
                 let n = models.len();
-                // Keep per-model catalog pricing current (OpenRouter only;
-                // other backends report none). Costs are computed against
-                // this table when usage is logged. Batched into a single
-                // transaction — hundreds of per-model writes on the UI task
-                // would stall the interface after every catalog fetch.
+                // Batch pricing writes into one transaction to avoid stalling the UI task.
                 let prices: Vec<_> = models
                     .iter()
                     .filter_map(|m| {
@@ -2458,30 +2134,18 @@ impl App {
                     })
                     .collect();
                 let _ = self.db.upsert_model_prices(&prices);
-                // Fresh catalog in hand — recompute every logged request's
-                // cost against it (fills rows logged before pricing existed
-                // and heals any legacy per-token-shaped catalog).
                 let _ = self.db.backfill_usage_costs();
                 self.models = models;
                 self.push_status(format!("loaded {n} models"));
-                // A session may have been opened before the catalog arrived.
-                // Re-check it now so old, already-large conversations are
-                // compacted without requiring another user turn.
+                // Catalog arrival may complete the prerequisites for a pending compaction.
                 self.maybe_compact();
-                // The view layer opens the model picker here: it owns the
-                // `popup` state, and checks `models`/`current_model` after
-                // this handler runs.
             }
             Err(e) => self.push_status(format!("model fetch failed: {e}")),
         }
     }
-
-    // --- nerd config (settings popup) ---
 }
 
 impl App {
-    /// Abort every interactive chat task before the TUI exits. Chat streams are
-    /// intentionally not persisted or resumed across process restarts.
     pub fn cancel_chat_tasks(&mut self) {
         for task in self.chat_tasks.values() {
             task.abort.abort();
@@ -2492,9 +2156,6 @@ impl App {
         self.approvals.queue.clear();
     }
 
-    /// Display the oldest queued approval once nothing is displayed,
-    /// skipping requests whose tool call has gone away. Returns whether one
-    /// was shown.
     pub fn show_next_approval(&mut self) -> bool {
         if self.approvals.pending.is_some() {
             return false;
@@ -2511,7 +2172,6 @@ impl App {
         false
     }
 
-    /// Requests awaiting an answer: the displayed one and the live queued ones.
     #[must_use]
     pub fn approval_count(&self) -> usize {
         usize::from(self.approvals.pending.is_some())
@@ -2523,16 +2183,12 @@ impl App {
                 .count()
     }
 
-    /// Answer the displayed approval and display the next one. Allowing for
-    /// the session also allows every waiting request of the same kind, so
-    /// they are never shown.
     pub(crate) fn answer_approval(&mut self, decision: Decision) {
         let request = self.approvals.pending_request.take();
         let connector = request.as_ref().is_some_and(|request| {
             request.class.as_deref() == Some(crate::connectors::exec::CLASS)
         });
-        // "Always" writes policy to config; only a connector request offers
-        // it, so anything else answering with it is just a plain allow.
+        // Only connector requests may persist an "Always" policy.
         let decision = match decision {
             Decision::AllowAlways if !connector => Decision::Allow,
             Decision::AllowForSession
@@ -2572,9 +2228,7 @@ impl App {
     }
 }
 
-/// Best-effort transient Linux desktop notification. The TUI notification
-/// remains the actionable one because `notify-send` cannot route a click back
-/// into this running process without a long-lived D-Bus action listener.
+// notify-send cannot route clicks back without a long-lived D-Bus action listener.
 pub fn send_system_notification(title: &str, body: &str) {
     #[cfg(all(target_os = "linux", not(test)))]
     {
@@ -2593,10 +2247,7 @@ pub fn send_system_notification(title: &str, body: &str) {
     let _ = (title, body);
 }
 
-// Long by design (tool-summary table).
 #[allow(clippy::too_many_lines)]
-/// The one-line transcript summary for a tool-call block: the tool's name
-/// plus the argument (and result shape) a reader actually cares about.
 pub fn tool_call_summary(name: &str, args: &str, result: &str) -> String {
     if let Some(view) = tool_view::parse(name, args, result) {
         return view.summary();
@@ -2764,7 +2415,6 @@ pub fn tool_call_summary(name: &str, args: &str, result: &str) -> String {
     }
 }
 
-/// First line of a tool result, e.g. `report.pdf (lines 1-200 of 831):`.
 fn first_line(result: &str) -> String {
     result
         .lines()

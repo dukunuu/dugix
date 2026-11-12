@@ -28,7 +28,6 @@ fn round(step: usize, calls: Vec<(ToolCall, String)>, cost: f64) -> SubagentEven
     }
 }
 
-/// An app with one session and a chat task streaming in it.
 async fn streaming(incognito: bool) -> (App, String) {
     let mut app = app_with_key();
     let session = app
@@ -135,7 +134,6 @@ async fn a_run_streams_saves_its_transcript_and_adds_its_cost_to_the_reply() {
     assert!(run.live_reasoning.is_empty() && run.live_content.is_empty());
     let roles: Vec<_> = run.rows.iter().map(|row| row.role.as_str()).collect();
     assert_eq!(roles, ["tool_call", "tool_call", "assistant"]);
-    // The round's reasoning and words lead its first call only.
     let first: serde_json::Value = serde_json::from_str(&run.rows[0].content).unwrap();
     assert_eq!(first["reasoning_content"], "why 0");
     assert_eq!(first["assistant_content"], "said 0");
@@ -146,7 +144,6 @@ async fn a_run_streams_saves_its_transcript_and_adds_its_cost_to_the_reply() {
     assert_eq!(run.rows[2].reasoning.as_deref(), Some("why 1"));
     assert_eq!(app.subagents_for(&session), saved);
 
-    // The reply's cost is the turn's: its own request plus the sub-agent's.
     app.on_chat_event(
         1,
         StreamEvent::Usage(Usage {
@@ -183,7 +180,6 @@ async fn a_stopped_reply_ends_its_running_subagents_and_incognito_saves_nothing(
     assert_eq!(run.status, SubagentStatus::Failed);
     assert_eq!(run.rows.last().unwrap().content, "stopped with the reply");
     assert!(app.db.subagent_runs(&session).unwrap().is_empty());
-    // Still listed from memory for this process.
     assert_eq!(app.subagents_for(&session).len(), 1);
 }
 

@@ -8,12 +8,9 @@ use super::{CacheTally, ContextBasis, EmbedMsg, ImageMeta, ResearchMsg, ScriptMe
 use super::{chat, chats, files, swarm};
 use crate::tools::{ApprovalRequest, Approver, Decision};
 
-/// A running research job and its interactive gates and progress.
 #[derive(Default)]
 pub struct ResearchState {
-    /// A parked conversation's chat-reply gate, armed only while a reply is pending.
     pub survey_gate: Option<SurveyGate>,
-    /// Sender into a parked gate, created at job start as pending-section updates arm/disarm it.
     pub survey_reply_tx: Option<mpsc::UnboundedSender<String>>,
     /// Queued `/steer` positions and text, dropped on acknowledgement or when the job stops.
     pub steer_log: Vec<(usize, String)>,
@@ -23,31 +20,25 @@ pub struct ResearchState {
     pub stage_rows: Vec<String>,
     /// Incognito mode at job start, governing artifact persistence even if the mode changes.
     pub incognito: bool,
-    /// Queues `/steer` instructions into the running job's round-boundary check; `None` when idle.
     pub steer_tx: Option<mpsc::UnboundedSender<String>>,
-    /// In-progress `/research` (no args) topic distillation from recent chat.
     pub topic_rx: Option<mpsc::UnboundedReceiver<Result<String, String>>>,
     /// Composer buffer for the live research-activity view's steer input.
     pub live_input: String,
-    /// A running `/research` job's channel and cancellation handle.
     pub rx: Option<mpsc::UnboundedReceiver<ResearchMsg>>,
     pub abort: Option<tokio::task::AbortHandle>,
     /// (session id, topic) of the running `/research` job, cleared when its channel closes.
     pub running: Option<(String, String)>,
 }
 
-/// Semantic file and conversation indexing runtime state.
 pub struct IndexState {
     /// Automatically chosen embedding model: local `EmbeddingGemma` 2, backend default, or empty.
     pub embedding_model: String,
     /// Probed runtime shared with file search; never contains cloud credentials in its identity.
     pub embedding_backend: Option<crate::provider::embedding::Embedder>,
-    /// Runtime health and indexing progress for frontends.
     pub embedding_status: String,
     pub(super) embedding_chunks: Vec<(String, String)>,
     pub(super) embedding_chat_job: Option<chats::ChatEmbedJob>,
     pub(super) next_chat_index: Instant,
-    /// Device-local conversation indexing progress for the files popup.
     pub chat_index_status: String,
     pub(super) embedding_discovery:
         Option<Arc<std::sync::OnceLock<(String, crate::provider::embedding::Embedder)>>>,
@@ -74,7 +65,6 @@ impl IndexState {
     }
 }
 
-/// Permission gates and queued interactive approval requests.
 #[derive(Default)]
 pub struct ApprovalState {
     /// Shared interactive channel for panel mutations, independent of work mode.
@@ -85,9 +75,8 @@ pub struct ApprovalState {
     pub job_approver: Option<Arc<crate::jobs::JobApprover>>,
     /// Reply channel for the currently displayed approval request.
     pub pending: Option<oneshot::Sender<Decision>>,
-    /// The action waiting for a response from the interactive frontend.
     pub pending_request: Option<ApprovalRequest>,
-    /// Requests waiting behind the displayed one, oldest first, from concurrent tool calls.
+    /// Concurrent approval requests in arrival order.
     pub queue: VecDeque<(ApprovalRequest, oneshot::Sender<Decision>)>,
     /// Counts displayed requests so a view can distinguish consecutive identical requests.
     pub shown: u64,
@@ -97,10 +86,8 @@ pub struct ApprovalState {
     pub proposed_command: Option<String>,
 }
 
-/// The user's captured terminal command and shell setup.
 #[derive(Default)]
 pub struct UserCommandState {
-    /// The running captured `!` command's result, at most one at a time.
     pub(super) rx: Option<mpsc::UnboundedReceiver<chat::UserCommandRun>>,
     /// The user's terminal directory; never used by agent tools.
     pub dir: Option<std::path::PathBuf>,
@@ -111,7 +98,6 @@ pub struct UserCommandState {
     pub(super) epoch: u64,
 }
 
-/// Background interactive UI repairs and feedback deduplication.
 pub struct UiRepairState {
     /// Finished UI repairs share a channel so switching sessions cannot lose a result.
     pub(super) tx: mpsc::UnboundedSender<chat::UiRepairResult>,
@@ -133,7 +119,6 @@ impl UiRepairState {
     }
 }
 
-/// In-flight conversation compaction and its last failure.
 #[derive(Default)]
 pub struct CompactionState {
     /// Background compaction result: (session id, digest, messages-covered, pre-compaction %).
@@ -144,10 +129,8 @@ pub struct CompactionState {
     pub(crate) error: Arc<Mutex<Option<String>>>,
 }
 
-/// A running swarm discussion and the active session's roster.
 #[derive(Default)]
 pub struct SwarmState {
-    /// A running `/swarm` discussion's channel, cancellation handle, and origin session id.
     pub rx: Option<mpsc::UnboundedReceiver<swarm::SwarmMsg>>,
     pub abort: Option<tokio::task::AbortHandle>,
     pub session: Option<String>,
@@ -155,23 +138,16 @@ pub struct SwarmState {
     pub cache: Vec<crate::db::Persona>,
 }
 
-/// Cached feature lists for the active space and sessions.
 #[derive(Default)]
 pub struct ListCaches {
-    /// The active space's imported files (refreshed by `rescan_files`).
     pub files: Vec<crate::db::FileRow>,
-    /// The space's apps (`/apps` popup).
     pub apps: Vec<String>,
-    /// The space's images (`/image` popup).
     pub images: Vec<ImageMeta>,
-    /// The space's scripts (`/script` popup).
     pub scripts: Vec<ScriptMeta>,
-    /// The space's standing research watches (`/watch` picker).
     pub watches: Vec<crate::db::Watch>,
     pub sessions: Vec<crate::db::Session>,
 }
 
-/// Managed local provider servers and their latest survey.
 #[derive(Default)]
 pub struct LocalRuntimeState {
     /// Servers Nexus started with `/local start`, owned so stop/exit can reclaim their memory.
@@ -183,7 +159,6 @@ pub struct LocalRuntimeState {
     pub status_announce: bool,
 }
 
-/// Conversation token estimates and prompt-cache accounting.
 #[derive(Default)]
 pub struct ContextMeter {
     /// Exact conversation token total from the last completed response.
@@ -200,13 +175,12 @@ pub struct ContextMeter {
     pub(crate) warned: bool,
 }
 
-/// Configured web-search credentials and backend preference.
 pub struct SearchConfig {
-    /// `SearXNG` base URL, or empty to disable; configured in-app (`/config`), not a config file.
+    /// Empty disables `SearXNG`.
     pub searxng_url: String,
-    /// `LangSearch` API key (free tier), or empty to disable it.
+    /// Empty disables `LangSearch`.
     pub langsearch_key: String,
-    /// Preferred web-search backend: "auto"/"langsearch"/"searxng"/"duckduckgo".
+    /// One of `auto`, `langsearch`, `searxng`, or `duckduckgo`.
     pub provider: String,
 }
 

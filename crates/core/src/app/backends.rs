@@ -1,7 +1,3 @@
-//! Every backend the app can be logged into at once. `/model` merges every
-//! configured backend's models into one list, so sending a request resolves
-//! *which* backend a picked model belongs to.
-
 use crate::provider::openrouter::OpenRouter;
 use crate::provider::{BackendTag, Model};
 
@@ -25,7 +21,6 @@ impl Backends {
             || self.local.is_some()
     }
 
-    /// Whether a credential-backed provider exists for `tag`.
     pub const fn configured(&self, tag: BackendTag) -> bool {
         self.get(tag).is_some()
     }
@@ -52,8 +47,6 @@ impl Backends {
         }
     }
 
-    /// Which backend tags are currently configured, in a fixed display
-    /// order — used to drive the model picker's backend filter.
     pub fn configured_tags(&self) -> Vec<BackendTag> {
         [
             BackendTag::OpenRouter,
@@ -68,10 +61,7 @@ impl Backends {
         .collect()
     }
 
-    /// Split a composite model id (see `composite_id`) into the backend
-    /// that owns it and the raw id to actually send in a request, and
-    /// clone out that backend's provider. `None` if the composite id's
-    /// backend isn't configured (e.g. its login was removed).
+    /// Resolve a composite model id to its provider and wire id.
     pub fn resolve(&self, composite_id: &str) -> Option<(OpenRouter, String)> {
         for tag in [
             BackendTag::OpenAi,
@@ -84,10 +74,7 @@ impl Backends {
                 return self.get(tag).cloned().map(|p| (p, raw.to_string()));
             }
         }
-        // No known prefix matched => a bare id. Prefer OpenRouter for
-        // backwards compatibility with existing stored model choices; if it
-        // isn't configured (tests/single-backend setups), use the first
-        // configured backend so unprefixed defaults still work.
+        // Persisted bare model ids belong to OpenRouter when it is configured.
         self.get(BackendTag::OpenRouter)
             .or_else(|| self.configured_tags().first().and_then(|t| self.get(*t)))
             .cloned()
@@ -95,10 +82,7 @@ impl Backends {
     }
 }
 
-/// The key used to persist/compare a model choice (favorites, last-used,
-/// current-model, per-feature model settings): bare id for `OpenRouter`
-/// (unprefixed, so existing users' saved data keeps working untouched),
-/// prefixed for the other three backends since their raw ids can collide.
+/// A persistent model key, backend-prefixed except for `OpenRouter`.
 pub fn composite_id(m: &Model) -> String {
     format!("{}{}", m.backend.key_prefix(), m.id)
 }

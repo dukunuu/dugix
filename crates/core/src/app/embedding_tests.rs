@@ -22,7 +22,6 @@ fn point_at(app: &mut App, endpoint: &str) {
     });
 }
 
-/// An endpoint nothing listens on.
 async fn dead_endpoint() -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
@@ -30,8 +29,6 @@ async fn dead_endpoint() -> String {
     endpoint
 }
 
-/// Apply embed-channel messages until the pipeline is idle, returning the
-/// status line seen after each step.
 async fn drain(app: &mut App) -> Vec<String> {
     let mut seen = Vec::new();
     for _ in 0..50 {
@@ -145,7 +142,6 @@ async fn local_model_embeds_text_and_images_directly_and_queues_no_ocr() {
     );
 }
 
-/// Duplicate a blank page: no text operators or text layer in the fixture.
 fn scanned_pdf(page_count: u32) -> Vec<u8> {
     use pdf_extract::{Document, Object};
 
@@ -278,13 +274,11 @@ async fn same_identity_is_not_reembedded_but_a_new_digest_is() {
     assert_eq!(documents(&mock).len(), 2);
     let first = stored(&app)[0].2.clone();
 
-    // A rescan re-probes the runtime, finds the same identity, embeds nothing.
     app.rescan_files();
     drain(&mut app).await;
     assert_eq!(documents(&mock).len(), 2);
     assert!(stored(&app).iter().all(|row| row.2 == first));
 
-    // `ollama pull` replaced the weights: same name, different digest.
     mock.state.lock().unwrap().digest = "sha256:two".to_string();
     app.rescan_files();
     drain(&mut app).await;
@@ -323,9 +317,7 @@ async fn discovering_the_local_model_replaces_old_vectors_lazily() {
         )
         .unwrap();
 
-    // Ollama gaining the model is the only way the embedder changes now.
     app.discover_embeddings();
-    // Nothing blocks: the switch only started a background probe.
     assert!(app.index.embed_rx.is_some());
     drain(&mut app).await;
     assert_eq!(app.index.embedding_model, "local:embeddinggemma-2:270m");
@@ -351,8 +343,6 @@ async fn default_is_local_only_when_reachable() {
             .all(|(k, _)| k != "embedding_model")
     );
 
-    // A stored `embedding_model` row (an older build's explicit choice, or one
-    // synced from another device) is ignored: discovery still runs and wins.
     for stored_choice in ["", "google/gemini-embedding-2"] {
         let mut stale = app_with_key();
         point_at(&mut stale, &mock.endpoint);
@@ -369,7 +359,6 @@ async fn default_is_local_only_when_reachable() {
         assert_eq!(stale.index.embedding_model, "local:embeddinggemma-2:270m");
     }
 
-    // Nothing reachable: behave as before.
     let mut unreachable = app_with_key();
     let dead = dead_endpoint().await;
     point_at(&mut unreachable, &dead);
@@ -380,7 +369,6 @@ async fn default_is_local_only_when_reachable() {
         "google/gemini-embedding-2"
     );
 
-    // Reachable server without the model installed: behave as before.
     mock.state.lock().unwrap().installed = false;
     let mut missing = app_with_key();
     point_at(&mut missing, &mock.endpoint);
@@ -414,7 +402,6 @@ async fn choosing_local_never_falls_back_to_a_cloud_embedder() {
     );
     assert!(stored(&app).is_empty());
 
-    // An unusable endpoint yields no embedder at all, not a cloud one.
     point_at(&mut app, "http://user:secret@127.0.0.1:1");
     assert!(app.file_embedder().is_none());
 }

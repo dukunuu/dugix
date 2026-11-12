@@ -9,7 +9,6 @@ fn test_app() -> App {
     std::fs::create_dir_all(root.join("spaces")).unwrap();
     let space = Space { root };
     let mut a = App::new(db, Some("k"), space);
-    // Research inherits the session/global model — give tests one.
     a.current_model = Some("openai/gpt-5-mini".to_string());
     a
 }
@@ -41,7 +40,6 @@ async fn drain_steers_collects_all_queued_without_blocking() {
         drained,
         vec!["look into X".to_string(), "also Y".to_string()]
     );
-    // Second call with nothing queued returns empty immediately (no hang).
     let empty = drain_steers(&mut rx);
     assert!(empty.is_empty());
 }
@@ -132,10 +130,6 @@ fn parse_plan_blocks_filters_empty_questions_and_caps_at_max() {
 
 #[test]
 fn parse_plan_blocks_rejects_malformed_json_without_line_fallback() {
-    // Structured JSON is unambiguous: malformed or unusable output must
-    // fail planning — the raw JSON lines are never reinterpreted as bare
-    // questions (`[{}]` must not become a plan whose question is
-    // literally `[{}]`).
     assert!(parse_plan_blocks("[{}]").is_empty(), "[{{}}] must fail");
     assert!(
         parse_plan_blocks(r#"[{"question":""}]"#).is_empty(),
@@ -149,13 +143,10 @@ fn parse_plan_blocks_rejects_malformed_json_without_line_fallback() {
         parse_plan_blocks(r#"{"question":"q1"}"#).is_empty(),
         "a bare object is not the required array and must fail"
     );
-    // Non-JSON legacy line output still falls back to bare questions.
     assert_eq!(parse_plan_blocks("- what is X").len(), 1);
-    // JSON wrapped in model prose is still JSON — never re-read as lines.
     let prose = parse_plan_blocks("Here is the plan:\n[{\"question\":\"q1\"}]");
     assert_eq!(prose.len(), 1, "prose-prefixed JSON must parse as JSON");
     assert_eq!(prose[0].question, "q1");
-    // A legacy JSON array of strings still works.
     let legacy = parse_plan_blocks(r#"["what is X", "how does Y work"]"#);
     assert_eq!(legacy.len(), 2);
     assert_eq!(legacy[0].question, "what is X");
@@ -173,7 +164,6 @@ fn parse_survey_reply_recognizes_complete_markers() {
         parse_survey_reply("COMPLETE — proceed"),
         SurveyReply::Complete
     );
-    // Trailing punctuation counts too — the docs promise prose tolerance.
     assert_eq!(parse_survey_reply("COMPLETE."), SurveyReply::Complete);
     assert_eq!(parse_survey_reply("COMPLETE!"), SurveyReply::Complete);
 }
@@ -195,9 +185,6 @@ fn parse_survey_reply_reads_numbered_questions() {
 
 #[test]
 fn parse_survey_reply_marks_output_contract_violations_and_caps_questions() {
-    // Empty output and arbitrary prose violate the agent's contract
-    // (COMPLETE or numbered questions) — they must be `Malformed`, not
-    // silently indistinguishable from the required COMPLETE marker.
     assert_eq!(parse_survey_reply(""), SurveyReply::Malformed);
     assert_eq!(parse_survey_reply("\n\n"), SurveyReply::Malformed);
     assert_eq!(
@@ -212,12 +199,10 @@ fn parse_survey_reply_marks_output_contract_violations_and_caps_questions() {
         parse_survey_reply("No further questions are needed"),
         SurveyReply::Malformed
     );
-    // An unmarked line is only a question when it looks like one.
     assert_eq!(
         parse_survey_reply("Depth or breadth?"),
         SurveyReply::Questions(vec!["Depth or breadth?".to_string()])
     );
-    // Numbered lines are questions; prose mixed in is skipped.
     let mixed = "1. Depth or breadth?\nPlease be specific.\n2. History too?";
     assert_eq!(
         parse_survey_reply(mixed),
@@ -243,24 +228,18 @@ fn parse_approval_recognizes_approved_and_revised_plans() {
         revised,
         Approval::Revised(vec![PlanQuestion::bare("revised q".to_string())])
     );
-    // Malformed output is never treated as approval — the phase fails
-    // visibly instead of running an unapproved plan.
     assert_eq!(parse_approval("huh?"), Approval::Malformed);
     assert_eq!(parse_approval(""), Approval::Malformed);
     assert_eq!(
         parse_approval("Here is the revised plan I prepared for you"),
         Approval::Malformed
     );
-    // Structured JSON that parses but holds no usable questions, or that
-    // has wrong field types, is Malformed — never re-read as bare lines.
     assert_eq!(parse_approval("[{}]"), Approval::Malformed);
     assert_eq!(parse_approval("[{\"question\": 5}]"), Approval::Malformed);
-    // JSON wrapped in model prose is still JSON.
     assert_eq!(
         parse_approval("Here is my revised plan:\n[{\"question\":\"q\"}]\n"),
         Approval::Revised(vec![PlanQuestion::bare("q".to_string())])
     );
-    // A recognizably list-formatted revision still counts.
     assert_eq!(
         parse_approval("- drop q2"),
         Approval::Revised(vec![PlanQuestion::bare("drop q2".to_string())])
@@ -281,7 +260,6 @@ fn plan_question_prompt_includes_topic_and_full_brief() {
     assert!(p.contains("mechanism matters"));
     assert!(p.contains("internals; benchmarks"));
     assert!(p.contains("papers"));
-    // A bare question stays prompt-safe too.
     assert!(PlanQuestion::bare("q".into()).prompt("t").contains('q'));
 }
 
@@ -353,7 +331,6 @@ async fn on_research_done_final_report_populates_citation_index() {
             .unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].1, "https://example.com/a");
-    // And a miss filter returns nothing.
     assert!(
         a.db.search_citations(&space_id, Some("nope.example"))
             .unwrap()
@@ -369,7 +346,6 @@ async fn plan_ready_arms_the_gate_and_reply_routes_into_the_pipeline() {
     let space_id = a.active_space.id.clone();
     let space_name = a.active_space.name.clone();
 
-    // The pipeline's reply sender must be reachable for the gate to arm.
     let (tx, mut rx) = mpsc::unbounded_channel();
     a.research.survey_reply_tx = Some(tx);
     let q1 = PlanQuestion::bare("q1".to_string());
@@ -389,7 +365,6 @@ async fn plan_ready_arms_the_gate_and_reply_routes_into_the_pipeline() {
     assert!(a.messages.iter().any(|m| m.role == "research_plan"));
     let stored = a.db.load_messages(&session_id).unwrap();
     assert!(stored.iter().any(|m| m.role == "research_plan"));
-    // The presented plan includes the block briefs.
     let plan_msg = a
         .messages
         .iter()
@@ -397,9 +372,6 @@ async fn plan_ready_arms_the_gate_and_reply_routes_into_the_pipeline() {
         .unwrap();
     assert!(plan_msg.content.contains("1. q1"));
 
-    // A chat reply (with an edit) routes into the pipeline and is
-    // recorded as a gate reply in the session transcript — rendered like
-    // a user message but never replayed to the model.
     a.reply_to_survey_gate("drop q2");
     assert!(a.research.survey_gate.is_none());
     assert!(!a.survey_gate_targets_current_session());
@@ -415,7 +387,6 @@ async fn plan_ready_arms_the_gate_and_reply_routes_into_the_pipeline() {
             .iter()
             .any(|m| m.role == "gate_reply" && m.content == "drop q2")
     );
-    // The gate reply must not leak into model history without context.
     let history = a.build_history();
     assert!(
         !history.iter().any(|m| m.content == "drop q2"),
@@ -513,7 +484,6 @@ async fn gate_only_targets_the_viewed_gated_session() {
     )));
     assert!(a.survey_gate_targets_current_session());
 
-    // Switch to a different session: the gate must not intercept typing.
     let other =
         a.db.create_session("other", "m", &a.active_space.id, "chat")
             .unwrap();
@@ -528,10 +498,6 @@ async fn gate_only_targets_the_viewed_gated_session() {
 
 #[tokio::test]
 async fn closed_reply_channel_fails_plan_approval_closed() {
-    // A gate whose reply channel closed (job teardown racing the parked
-    // approval) must fail closed — never run searchers on an unapproved
-    // plan. The closed channel surfaces immediately, before any provider
-    // call, so a bare test client is fine.
     let (reply_tx, mut reply_rx) = mpsc::unbounded_channel::<String>();
     drop(reply_tx);
     let (tx, _rx) = mpsc::unbounded_channel::<ResearchMsg>();
@@ -604,7 +570,6 @@ async fn start_research_refuses_a_second_concurrent_job() {
     a.start_research("topic two");
     let (_, status) = a.drain_ui_events();
     assert!(status.contains("already running"));
-    // Still the first job's session.
     assert!(a.session.as_ref().unwrap().title.contains("topic one"));
 }
 
@@ -640,7 +605,6 @@ async fn on_research_done_stage_update_persists_and_shows_when_viewing() {
     let (_, status) = a.drain_ui_events();
     assert!(status.contains("planning"));
 
-    // A second tick with the same label replaces the row, not appends.
     let space_id = a.active_space.id.clone();
     let space_name = a.active_space.name.clone();
     a.on_research_done(Some((
@@ -678,10 +642,6 @@ async fn multiple_drained_steers_each_keep_their_own_stage_row() {
     let space_id = a.active_space.id.clone();
     let space_name = a.active_space.name.clone();
 
-    // Two drained steers arrive as `steer #N` rows (N = queue position =
-    // drain order). A text-keyed label would collapse rows when one
-    // steer's text is a prefix of another's — the sequence key keeps
-    // every drained steer its own persisted + visible row.
     for (i, steer) in ["look into X", "also Y"].iter().enumerate() {
         a.on_research_done(Some((
             session_id.clone(),
@@ -693,8 +653,6 @@ async fn multiple_drained_steers_each_keep_their_own_stage_row() {
             },
         )));
     }
-    // The pipeline's acknowledgements are job-global: both steers must
-    // no longer count as queued, and their rows persist for display.
     assert_eq!(
         a.research.steer_acked,
         std::collections::HashSet::from([1, 2])
@@ -721,11 +679,6 @@ async fn steer_rows_do_not_collide_on_duplicate_prefix_or_wildcard_text() {
     let space_id = a.active_space.id.clone();
     let space_name = a.active_space.name.clone();
 
-    // The bug this guards against: steers were keyed by their text, so
-    // "a: b" then "a" collapsed into one row (the upsert matches labels
-    // by prefix), identical duplicates collapsed too, and `%`/`_` acted
-    // as SQL LIKE wildcards in the match. Sequence keys make the text
-    // irrelevant to row identity.
     let steers = ["a: b", "a", "same", "same", "100% done"];
     for (i, steer) in steers.iter().enumerate() {
         a.on_research_done(Some((
@@ -756,7 +709,6 @@ async fn steer_rows_do_not_collide_on_duplicate_prefix_or_wildcard_text() {
             i + 1
         );
     }
-    // The pipeline's acknowledgements are job-global and position-keyed.
     assert_eq!(
         a.research.steer_acked,
         (1..=steers.len()).collect::<std::collections::HashSet<usize>>(),
@@ -782,8 +734,6 @@ fn steer_log_drops_acknowledged_entries_and_clears_on_stop() {
         ]
     );
 
-    // The pipeline drains 1 and 2: acknowledged entries are dropped on
-    // the next queue (positions are never renumbered).
     a.research.steer_acked = std::collections::HashSet::from([1, 2]);
     a.steer_research("fourth");
     assert_eq!(
@@ -791,8 +741,6 @@ fn steer_log_drops_acknowledged_entries_and_clears_on_stop() {
         vec![(3, "third".into()), (4, "fourth".into())]
     );
 
-    // An ack that arrives while the job is parked prunes the log
-    // immediately — no need to wait for the next `/steer`.
     a.research.steer_acked.insert(3);
     a.on_research_done(Some((
         "s".to_string(),
@@ -805,7 +753,6 @@ fn steer_log_drops_acknowledged_entries_and_clears_on_stop() {
     )));
     assert_eq!(a.research.steer_log, vec![(4, "fourth".into())]);
 
-    // Stopping the job drops the whole retained log.
     let (_tx, rx) = mpsc::unbounded_channel::<ResearchMsg>();
     a.research.rx = Some(rx);
     a.research.running = Some(("s".to_string(), "t".to_string()));
@@ -820,9 +767,6 @@ fn steer_queue_is_hard_bound() {
     let (tx, _rx) = mpsc::unbounded_channel::<String>();
     a.research.steer_tx = Some(tx);
 
-    // Fill the queue to the bound; further steers are refused with a
-    // status message (which also bounds the unbounded channel and the
-    // retained log).
     for i in 0..MAX_QUEUED_STEERS {
         a.steer_research(&format!("steer {i}"));
     }
@@ -857,10 +801,6 @@ async fn plan_ready_in_incognito_mode_writes_no_plan_file() {
         },
     )));
 
-    // "Nothing persists": the plan (which folds in the user's survey
-    // replies) must not land on disk, and must not be written to the
-    // message db either — the in-memory transcript still shows it while
-    // the session is viewed.
     let dir = a.space.files_dir(&space_name);
     let _ = std::fs::create_dir_all(&dir);
     let saved: Vec<String> = std::fs::read_dir(&dir)
@@ -889,8 +829,6 @@ async fn incognito_gate_rows_follow_the_mode_captured_at_job_start() {
     let session_id = a.session.as_ref().unwrap().id.clone();
     assert!(a.research.incognito);
 
-    // A later UI-mode change must not make this already-private job start
-    // persisting its survey or the user's answer.
     a.incognito = false;
     let (tx, mut rx) = mpsc::unbounded_channel();
     a.research.survey_reply_tx = Some(tx);
@@ -960,9 +898,6 @@ async fn undelivered_gate_reply_is_rolled_back_and_restored_to_composer() {
     let mut a = test_app();
     a.start_research("rust async runtimes");
     let session_id = a.session.as_ref().unwrap().id.clone();
-    // The gate's receiver is already gone: persisting succeeds, but
-    // channel delivery fails — the persisted reply must be rolled back
-    // so a retry can't duplicate it.
     let (reply_tx, rx) = mpsc::unbounded_channel::<String>();
     drop(rx);
     a.research.survey_reply_tx = Some(reply_tx.clone());
@@ -980,7 +915,6 @@ async fn undelivered_gate_reply_is_rolled_back_and_restored_to_composer() {
     a.reply_to_survey_gate("drop q2");
 
     assert!(a.research.survey_gate.is_none());
-    // Composer restored, nothing persisted, nothing mirrored in memory.
     let (sets, _) = a.drain_ui_events();
     assert_eq!(sets, vec!["drop q2".to_string()]);
     let stored = a.db.load_messages(&session_id).unwrap();
@@ -996,7 +930,6 @@ async fn off_screen_gate_marks_the_session_unread_and_notifies() {
     let mut a = test_app();
     a.start_research("rust async runtimes");
     let session_id = a.session.as_ref().unwrap().id.clone();
-    // Navigate away before the gate arrives.
     let other =
         a.db.create_session("other", "m", &a.active_space.id, "chat")
             .unwrap();
@@ -1015,9 +948,6 @@ async fn off_screen_gate_marks_the_session_unread_and_notifies() {
         },
     )));
 
-    // The gate is armed for the job's session and the user is told where
-    // input is needed — a silently parked pipeline can't block later
-    // research unnoticed.
     assert!(a.research.survey_gate.is_some());
     assert!(!a.survey_gate_targets_current_session());
     assert!(
@@ -1037,7 +967,6 @@ async fn on_research_done_final_report_posts_message_saves_file_and_notifies_whe
     let space_id = a.active_space.id.clone();
     let space_name = a.active_space.name.clone();
 
-    // Simulate the user navigating away before the job finishes.
     a.session = None;
     a.messages.clear();
 
@@ -1058,7 +987,6 @@ async fn on_research_done_final_report_posts_message_saves_file_and_notifies_whe
             .any(|m| m.role == "assistant" && m.content.contains("Rust Async Runtimes"))
     );
 
-    // Saved into the space's files dir and picked up by a rescan.
     let dir = a.space.files_dir(&space_name);
     let saved = report_files(&dir);
     assert_eq!(
@@ -1066,7 +994,6 @@ async fn on_research_done_final_report_posts_message_saves_file_and_notifies_whe
         1,
         "expected exactly one saved report file in {dir:?}"
     );
-    // And as a doc in the library, titled by the report's heading.
     let library = crate::canvas::library(&dir);
     assert_eq!(library.len(), 1, "{library:?}");
     assert_eq!(library[0].title, "Rust Async Runtimes");
@@ -1076,7 +1003,6 @@ async fn on_research_done_final_report_posts_message_saves_file_and_notifies_whe
     );
 }
 
-/// Names of the `.md` files at the top of a space's files.
 fn report_files(dir: &std::path::Path) -> Vec<String> {
     std::fs::read_dir(dir).map_or_else(
         |_| Vec::new(),
@@ -1125,13 +1051,11 @@ async fn research_doc_keeps_watch_notes_and_links_unusable_images() {
 async fn on_research_done_saves_report_to_original_space_even_if_user_switched() {
     let mut a = test_app();
 
-    // Start research in the default space (space A)
     a.start_research("rust async runtimes");
     let session_id = a.session.as_ref().unwrap().id.clone();
     let original_space_id = a.active_space.id.clone();
     let original_space_name = a.active_space.name.clone();
 
-    // Create a second space (space B) and switch to it
     let second_space = a.db.create_space("research-test-space-2").unwrap();
     a.space.ensure_space_dir(&second_space.name).unwrap();
     a.active_space = second_space.clone();
@@ -1139,11 +1063,9 @@ async fn on_research_done_saves_report_to_original_space_even_if_user_switched()
     a.messages.clear();
     a.caches.files.clear();
 
-    // Verify we're now in space B
     assert_eq!(a.active_space.id, second_space.id);
     assert_ne!(a.active_space.id, original_space_id);
 
-    // Simulate the research job completing while we're in space B
     a.on_research_done(Some((
         session_id.clone(),
         original_space_id.clone(),
@@ -1153,7 +1075,6 @@ async fn on_research_done_saves_report_to_original_space_even_if_user_switched()
         )),
     )));
 
-    // Assert: the report file lands in the ORIGINAL space's files_dir
     let original_dir = a.space.files_dir(&original_space_name);
     let original_files = report_files(&original_dir).len();
     assert_eq!(crate::canvas::library(&original_dir).len(), 1);
@@ -1162,7 +1083,6 @@ async fn on_research_done_saves_report_to_original_space_even_if_user_switched()
         "expected exactly one report file in original space {original_dir:?}"
     );
 
-    // Assert: the report file did NOT land in the second (now-active) space's files_dir
     let second_dir = a.space.files_dir(&second_space.name);
     let second_files =
         std::fs::read_dir(&second_dir).map_or(0, |d| d.filter_map(std::result::Result::ok).count());
@@ -1171,8 +1091,6 @@ async fn on_research_done_saves_report_to_original_space_even_if_user_switched()
         "expected no files in second (active) space {second_dir:?}"
     );
 
-    // Assert: files_cache is still empty (rescan_files was NOT called for space B,
-    // because the report was saved to space A, not space B)
     assert_eq!(
         a.caches.files.len(),
         0,

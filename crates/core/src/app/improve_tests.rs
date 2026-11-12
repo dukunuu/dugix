@@ -27,7 +27,6 @@ fn repository_app() -> (PathBuf, App) {
             root: dir.join("data"),
         },
     );
-    // Persist the first user message, but do not start a provider or use the network.
     app.current_model = Some("local:offline".into());
     let config: toml::Value = toml::from_str(&format!(
         "[agent]\nnexus_repo = {:?}\n",

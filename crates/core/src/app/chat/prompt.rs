@@ -1,5 +1,3 @@
-//! The system prompt and its sections.
-
 use std::fmt::Write as _;
 
 use crate::app::{App, WorkMode, verbosity_clause};
@@ -7,12 +5,7 @@ use crate::prompts;
 use crate::provider::ChatMessage;
 
 impl App {
-    /// Instructions + the active session's memory snapshot, combined into one
-    /// system message. Stable base, rendering and environment instructions
-    /// precede space instructions, user additions, skills and the frozen
-    /// memory snapshot; the date comes last. Space files, apps and scripts are
-    /// not listed here — the model lists them with their tools, so importing a
-    /// file never changes the cached prefix.
+    /// Build the cache-stable instructions and memory snapshot for this session.
     pub fn system_prompt(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
         let base = self.resolved_base_system_prompt();
@@ -107,8 +100,6 @@ impl App {
         let mut guidance = crate::interactive::LAYOUTS.to_string();
         match self.settings.reply_style.as_str() {
             "rich" => guidance.push_str("\nPrefer a layout for most substantive answers.\n"),
-            // Coding replies stay Markdown: in agent mode the interactive
-            // style falls back to auto.
             "interactive" if !self.work_mode.is_agent() => {
                 guidance.push('\n');
                 guidance.push_str(crate::interactive::INTERACTIVE_FIRST);
@@ -137,7 +128,6 @@ impl App {
             .replace("{{datetime}}", &self.prompt_datetime)
     }
 
-    /// User additions with the same runtime placeholders as the bundled base.
     pub(in crate::app) fn resolved_system_prompt_overlay(&self) -> String {
         self.system_prompt_overlay
             .trim()
@@ -145,7 +135,7 @@ impl App {
             .replace("{{datetime}}", &self.prompt_datetime)
     }
 
-    /// Re-read the user additions in `system_prompt.md` after a Ctrl+E hand-edit.
+    /// Reload user additions from `system_prompt.md`.
     pub fn reload_base_system_prompt(&mut self) {
         let text = crate::config::load_system_prompt_overlay();
         if text != self.system_prompt_overlay {
@@ -155,8 +145,6 @@ impl App {
         self.push_status("system prompt reloaded".to_string());
     }
 
-    /// Names + descriptions of installed skills and how to invoke one — full
-    /// bodies stay off the wire until the model calls the `skill` tool.
     fn skills_section(&self) -> Option<String> {
         if self.skills.is_empty() {
             return None;
@@ -172,15 +160,11 @@ impl App {
         Some(s.trim_end().to_string())
     }
 
-    /// A system message with space-file images inline, for vision models.
-    /// Returns None when there are no image-type space files.
     pub(super) fn space_images_message(&self) -> Option<ChatMessage> {
         let files_dir = self.space.files_dir(&self.active_space.name);
         let mut urls: Vec<String> = Vec::new();
         let mut names: Vec<&str> = Vec::new();
         for f in &self.caches.files {
-            // Judged by content: a renamed PDF is never sent as an image, and
-            // a PNG with a wrong extension still is one.
             let Ok(bytes) = std::fs::read(files_dir.join(&f.name)) else {
                 continue;
             };
@@ -209,7 +193,6 @@ impl App {
         })
     }
 
-    /// Names of the active space's existing apps (directory listing).
     pub fn list_apps(&self) -> Vec<String> {
         let dir = self.space.apps_dir(&self.active_space.name);
         let Ok(rd) = std::fs::read_dir(dir) else {

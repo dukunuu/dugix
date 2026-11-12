@@ -35,8 +35,6 @@ fn ui_failures_are_replay_only_and_stable_across_turns() {
         "{bad}\n[nexus: the nexus-ui block \"Quiz\" failed to render — view[0]: unknown node type \"radio\" — valid: {}. Correct the reported errors and resend it if the user still needs it.]",
         crate::interactive::NODE_TYPES
     );
-    // Every broken turn carries its note, so an older turn replays the
-    // same bytes it did when it was the latest (cache-stable prefix).
     assert_eq!(assistants[0].content, noted);
     assert_eq!(assistants[1].content, noted);
     assert_eq!(app.messages[2].content, bad);
@@ -143,9 +141,7 @@ async fn captured_command_timeout_kills_its_process_group() {
 async fn an_escaped_descendant_holding_the_pipe_does_not_stall_the_command() {
     let dir = temp_dir();
     let started = std::time::Instant::now();
-    // The perl child leaves the process group (the shell waits until it
-    // has), so the group kill misses it and it keeps the output pipe open
-    // for ten seconds.
+    // setsid escapes the group kill while retaining the output pipe.
     let (exit, ran, output) = capture_user_command(
         "perl -MPOSIX -e 'POSIX::setsid(); open my $f, \">\", \"escaped\"; close $f; sleep 10' & \
          while [ ! -e escaped ]; do sleep 0.05; done; echo hi",

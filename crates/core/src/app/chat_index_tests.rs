@@ -21,7 +21,6 @@ fn local_app(endpoint: &str) -> App {
     app
 }
 
-/// The background timer firing: chat backfill only runs when it is due.
 fn due(app: &mut App) {
     app.index.next_chat_index = std::time::Instant::now();
 }
@@ -58,8 +57,6 @@ fn chat_documents(mock: &MockOllama) -> usize {
 #[tokio::test]
 async fn chats_share_local_file_embedder_and_identity_without_cloud_fallback() {
     let mock = MockOllama::start(false).await;
-    // app_with_key has a cloud backend configured; local selection must win
-    // for both files and chats, not merely for the file half of the queue.
     let mut app = local_app(&mock.endpoint);
     let session = app
         .db
@@ -75,7 +72,6 @@ async fn chats_share_local_file_embedder_and_identity_without_cloud_fallback() {
     due(&mut app);
     app.rescan_files();
     drain(&mut app).await;
-    // Files go first; the chat backfill takes the next background tick.
     due(&mut app);
     app.start_embedding();
     drain(&mut app).await;
@@ -175,7 +171,6 @@ async fn chat_backfill_yields_after_one_bounded_batch_and_keyword_index_works_wi
             .add_user_message(&session, &format!("financial message {n}"))
             .unwrap();
     }
-    // Preparing the shared backend doesn't consume a chat backfill tick.
     let embedder = app.file_embedder().unwrap();
     embedder.prepare().await.unwrap();
     app.index.embedding_backend = Some(embedder);

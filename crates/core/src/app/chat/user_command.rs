@@ -10,15 +10,11 @@ use crate::db::Message;
 use super::App;
 
 impl App {
-    /// Whether a `!` command is still running (its output becomes the next
-    /// user turn, so nothing else may send until it lands).
     #[must_use]
     pub fn user_command_running(&self) -> bool {
         self.user_command.rx.is_some()
     }
 
-    /// Where `!` commands run: the workspace root in agent mode, else the
-    /// active space's directory (created if missing; `!` itself is agent-only).
     pub fn user_command_cwd(&self) -> std::path::PathBuf {
         if let Some(dir) = &self.user_command.dir {
             return dir.clone();
@@ -57,7 +53,6 @@ impl App {
         }
     }
 
-    /// Report a cached startup failure only once, also when completion initializes it.
     pub fn report_user_shell_warning(&mut self) {
         if !self.user_command.shell_warning_shown
             && let Some(reason) = self
@@ -71,10 +66,7 @@ impl App {
         }
     }
 
-    /// `!cmd`: run the user's shell as the user — full environment, no gate, no
-    /// sandbox — on a background task. Its scrubbed, capped output becomes a
-    /// `user_command` row the model sees next turn (`finish_user_command`).
-    /// Agent modes only: in chat mode it is refused with a status line.
+    /// Run an unsandboxed user command and capture its output for the conversation.
     pub fn run_user_command(&mut self, cmd: String) -> Result<()> {
         if !self.work_mode.is_agent() {
             self.push_status(CHAT_MODE_BANG_STATUS);
@@ -136,7 +128,6 @@ impl App {
         Ok(())
     }
 
-    /// Store a finished captured `!` command in the session it started in.
     pub(in crate::app) fn finish_user_command(&mut self, run: &UserCommandRun) -> Result<()> {
         if run.epoch == self.user_command.epoch
             && let Some(dir) = &run.next_dir
@@ -161,8 +152,7 @@ impl App {
         Ok(())
     }
 
-    /// Record an interactive `!` command the terminal UI ran on the real
-    /// terminal. Its output never passed through nexus.
+    /// Record a terminal command whose output was not captured.
     pub fn record_user_command(
         &mut self,
         cmd: &str,
@@ -229,20 +219,15 @@ impl App {
     }
 }
 
-/// Status shown when a `!` command reaches chat mode.
 const CHAT_MODE_BANG_STATUS: &str = "! commands run in agent mode";
 
-/// A captured `!` command can run this long before its process group is killed.
 pub(super) const USER_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(10);
-/// Characters of a captured command's output kept in its row (head and tail).
 const USER_COMMAND_CHARS: usize = 8_000;
-/// Bytes of raw output buffered from each end while a command runs.
 pub(super) const USER_COMMAND_KEEP_BYTES: usize = 64 * 1024;
 pub(super) const USER_COMMAND_INTERACTIVE_NOTE: &str =
     "(interactive — output not captured; paste anything relevant)";
 
-/// How long the output reader may stay open after the command's process
-/// group is gone (a descendant that left the group can hold the pipe).
+// Escaped descendants can hold the output pipe open after the process group exits.
 const USER_COMMAND_DRAIN: std::time::Duration = std::time::Duration::from_secs(2);
 pub(super) const USER_COMMAND_STREAM_OPEN_NOTE: &str =
     "(output stream still open — a background process kept it; not waited for)";
@@ -255,7 +240,6 @@ pub(in crate::app) struct UserCommandContext {
     root: Option<std::path::PathBuf>,
 }
 
-/// A finished captured `!` command, sent from its task to `next_event`.
 pub(crate) struct UserCommandRun {
     session_id: String,
     incognito: bool,
@@ -268,8 +252,6 @@ pub(crate) struct UserCommandRun {
     output: String,
 }
 
-/// How a `!` command ended: `exit <code>`, `killed` (by a signal or the
-/// timeout), or `failed to start`.
 pub fn user_command_outcome_label(exit: Option<i32>, started: bool) -> String {
     match exit {
         Some(code) => format!("exit {code}"),
@@ -278,7 +260,6 @@ pub fn user_command_outcome_label(exit: Option<i32>, started: bool) -> String {
     }
 }
 
-/// A `user_command` row's outcome, shared by the replay and the TUI card.
 pub fn user_command_outcome(row: &serde_json::Value) -> String {
     user_command_outcome_label(
         row["exit"]
@@ -307,7 +288,6 @@ pub(super) fn user_command_row(
     .to_string()
 }
 
-/// A `user_command` row as the user message the model reads.
 pub(super) fn user_command_replay(content: &str) -> String {
     let Ok(row) = serde_json::from_str::<serde_json::Value>(content) else {
         return content.to_string();
@@ -323,7 +303,6 @@ pub(super) fn user_command_replay(content: &str) -> String {
     if row["interactive"].as_bool() == Some(true) {
         text.push_str(output);
     } else {
-        // A fence longer than any backtick run in the output keeps it intact.
         let longest = output
             .split(|c| c != '`')
             .map(str::len)
@@ -335,10 +314,6 @@ pub(super) fn user_command_replay(content: &str) -> String {
     text
 }
 
-/// Run `sh -c <cmd>` with the user's environment and stdin closed, returning
-/// its exit code, whether it started, and combined stdout+stderr. The process
-/// group is killed when the shell exits (no stray background jobs) or at
-/// `timeout`.
 #[cfg(test)]
 pub(super) async fn capture_user_command(
     cmd: &str,
@@ -392,8 +367,7 @@ fn spawn_captured(
     #[cfg(unix)]
     command.process_group(0);
     let child = command.spawn()?;
-    // Dropping `command` closes this side's write ends, so the reader sees
-    // EOF once every process holding the pipe has exited.
+    // Dropping `command` closes the parent's write ends so the reader can reach EOF.
     Ok((child, reader))
 }
 
@@ -406,8 +380,7 @@ async fn collect_captured(
     let sink = std::sync::Arc::new(std::sync::Mutex::new(HeadTail::default()));
     let reader_sink = std::sync::Arc::clone(&sink);
     let (done_tx, done_rx) = tokio::sync::oneshot::channel();
-    // A plain thread, not `spawn_blocking`: a reader stuck on an escaped
-    // descendant must never hold up runtime shutdown.
+    // A reader stuck on an escaped descendant must not block runtime shutdown.
     std::thread::spawn(move || {
         let _ = done_tx.send(read_into(reader, &reader_sink));
     });
@@ -449,8 +422,7 @@ fn kill_group(group: Option<u32>) {
 #[cfg(not(unix))]
 fn kill_group(_group: Option<u32>) {}
 
-/// A stream's first and last `USER_COMMAND_KEEP_BYTES`, so a runaway command
-/// cannot exhaust memory.
+/// Bounded output capture that preserves the start and end of a stream.
 #[derive(Default)]
 pub(super) struct HeadTail {
     head: Vec<u8>,
@@ -481,7 +453,6 @@ impl HeadTail {
     }
 }
 
-/// Read a stream to its end into `sink`, which stays readable meanwhile.
 fn read_into(
     mut reader: impl std::io::Read,
     sink: &std::sync::Mutex<HeadTail>,

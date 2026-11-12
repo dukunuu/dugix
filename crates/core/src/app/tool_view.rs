@@ -4,7 +4,6 @@ use std::fmt::Write as _;
 
 use serde_json::Value;
 
-/// How a tool call ended, inferred only from the tool's result.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolOutcome {
     Ok,
@@ -13,10 +12,9 @@ pub enum ToolOutcome {
     Blocked,
 }
 
-/// The readable parts of a tool card, without any terminal styling.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolView {
-    /// Empty when the call uses the legacy generic summary.
+    /// Empty when only a generic summary is available.
     pub verb: String,
     pub target: String,
     pub stats: Vec<String>,
@@ -25,17 +23,14 @@ pub struct ToolView {
     pub outcome: ToolOutcome,
     pub diff: Option<String>,
     pub output: Option<String>,
-    /// Web search hits in result order, for a sources list.
     pub sources: Vec<Source>,
     /// Rendered slides the result refers to, as `(alt, path under the space files)`.
     pub images: Vec<(String, String)>,
-    /// A call to an MCP connector (or its search): drawn with the connector glyph.
     pub connector: bool,
     /// Sub-calls in argument order; missing capped results are retained as such.
     pub batch: Vec<BatchEntry>,
 }
 
-/// One operation inside a batch, using the same presentation as a standalone call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BatchEntry {
     pub tool: String,
@@ -52,21 +47,17 @@ pub struct BatchEntry {
     pub view: ToolView,
 }
 
-/// One web search hit: what a reader scans for in a results list.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Source {
     /// Provider-supplied thumbnail; never discovered by fetching the page.
     pub image: Option<String>,
     pub title: String,
     pub url: String,
-    /// The host, without `www.` (`en.wikipedia.org`).
     pub domain: String,
-    /// The first few lines of the hit's text, joined.
     pub snippet: String,
 }
 
 impl ToolView {
-    /// The same one-line header used by every frontend.
     #[must_use]
     pub fn summary(&self) -> String {
         if self.verb.is_empty() {
@@ -158,7 +149,6 @@ fn outcome(result: &str) -> ToolOutcome {
     }
 }
 
-// One arm per emitted workspace-tool format, with a common fallback.
 #[allow(clippy::too_many_lines)]
 pub(super) fn parse(name: &str, args: &str, result: &str) -> Option<ToolView> {
     let args: Value = serde_json::from_str(args).ok()?;
@@ -433,9 +423,8 @@ pub(super) fn parse(name: &str, args: &str, result: &str) -> Option<ToolView> {
     Some(view)
 }
 
-/// Parse both the original `[i/N] label` output and byte-framed results.
-/// Byte lengths keep header-looking fetched content inside its own result.
-#[allow(clippy::too_many_lines)] // argument/result alignment, then aggregate counts
+// Byte lengths keep header-looking fetched content inside its own result.
+#[allow(clippy::too_many_lines)]
 fn batch_view(args: &Value, result: &str, mut view: ToolView) -> Option<ToolView> {
     let calls: Vec<_> = args
         .get("calls")?
@@ -564,8 +553,7 @@ fn batch_view(args: &Value, result: &str, mut view: ToolView) -> Option<ToolView
     Some(view)
 }
 
-/// Length-framed results cannot be confused with headers in page/file text.
-/// Old sessions use the exact next argument-derived header as a best effort.
+// Byte framing prevents page text from being mistaken for result headers.
 fn take_batch_result<'a>(
     remaining: &mut &'a str,
     header: &str,
@@ -626,8 +614,6 @@ fn batch_target(args: &Value) -> String {
     String::new()
 }
 
-/// The `canvas` tool: `created deck`, `edited slide 3`, `viewed 4 slides`,
-/// `commented on slide 2`, with the rendered slides the result shows.
 fn deck_view(view: &mut ToolView, action: &str, path: Option<&str>, result: &str) -> Option<()> {
     let first = result.lines().next().unwrap_or_default();
     let lead = first.split(" · ").next().unwrap_or_default();
@@ -695,9 +681,6 @@ fn deck_view(view: &mut ToolView, action: &str, path: Option<&str>, result: &str
     Some(())
 }
 
-/// A connector tool call (`<connector>__<tool>`) or the `connectors`
-/// meta-tool: the tool's title (or name) is the verb, the connector the
-/// target, with the arguments and the result's first line as detail.
 fn connector_view(name: &str, args: &Value, result: &str, mut view: ToolView) -> Option<ToolView> {
     let (exposed, inner) = if name == "connectors" {
         match args.get("action")?.as_str()? {
@@ -751,8 +734,6 @@ fn finish_connector_view(view: &mut ToolView, result: &str) {
     }
 }
 
-/// `key=value` pairs for the first few scalar arguments, short enough for a
-/// card header.
 fn argument_preview(args: &Value) -> String {
     let Some(object) = args.as_object() else {
         return String::new();
@@ -773,7 +754,6 @@ fn argument_preview(args: &Value) -> String {
     parts.join(" ").chars().take(60).collect()
 }
 
-/// Parse the search tools' `[N] Title` / indented URL / text blocks.
 fn search_sources(result: &str) -> Vec<Source> {
     let mut sources: Vec<Source> = Vec::new();
     let mut lines = result.lines().peekable();
@@ -827,14 +807,12 @@ fn search_sources(result: &str) -> Vec<Source> {
     sources
 }
 
-/// The host of `url`, without a `www.` prefix.
 fn domain(url: &str) -> String {
     let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
     let host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
     host.strip_prefix("www.").unwrap_or(host).to_string()
 }
 
-/// `host/path` for a header, without the scheme, `www.` or a long tail.
 fn short_url(url: &str) -> String {
     let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
     let rest = rest

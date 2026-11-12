@@ -376,7 +376,6 @@ async fn a_reply_counts_every_round_of_its_tool_loop() {
             ..Usage::default()
         })
     };
-    // Round one writes a tool call; a cost-only event then revises its price.
     app.on_chat_event(1, usage(40, 0.01)).unwrap();
     app.on_chat_event(
         1,
@@ -391,7 +390,6 @@ async fn a_reply_counts_every_round_of_its_tool_loop() {
     )
     .unwrap();
     app.on_chat_event(1, usage(0, 0.02)).unwrap();
-    // Round two writes the answer.
     app.on_chat_event(1, usage(10, 0.03)).unwrap();
     app.on_chat_event(1, StreamEvent::Token("done".into()))
         .unwrap();
@@ -628,8 +626,6 @@ async fn local_ollama_embeddings_do_not_write_usage_rows() {
 
 #[test]
 fn subagents_log_their_own_requests() {
-    // Sub-agents record usage under the model they actually ran on (often the
-    // fast helper), so the chat task must not also log it as the session model.
     let fixture = Fixture::new();
     let app = &fixture.app;
     let provider = crate::provider::openrouter::OpenRouter::from_key_auto("sk-or-test".into());
@@ -662,7 +658,6 @@ async fn subagent_rounds_use_the_inherited_session_usage_sink() {
         .await
         .unwrap();
     assert_eq!(answer.content, "Subagent answer");
-    // The live view saw the answer as it streamed.
     assert_eq!(*streamed.lock().unwrap(), "Subagent answer");
     server.await.unwrap();
     let rows = app

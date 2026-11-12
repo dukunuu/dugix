@@ -1,6 +1,3 @@
-// Casts here are on bounded values: token counts, byte sizes, and
-// selection indices — never on unbounded input. JSON-derived indices in
-// provider/tools go through try_from instead.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -12,11 +9,7 @@ use anyhow::{Result, bail};
 use super::{App, SEARCH_PROVIDERS, VERBOSITY_LEVELS};
 
 impl App {
-    /// Set one named setting by key, persisting it and applying it live —
-    /// the host's `SetSetting` command. Unlike
-    /// `load_settings` (which ignores unknown persisted rows), this fails
-    /// fast: an unknown key or an invalid value for a constrained key is an
-    /// error, never a silent no-op reported as success.
+    /// Validate, persist, and apply a setting.
     pub fn set_setting(&mut self, key: &str, value: &str) -> Result<()> {
         if !SETTING_KEYS.contains(&key) {
             bail!("unknown setting: {key}");
@@ -26,8 +19,7 @@ impl App {
         }
         self.apply_setting(key, value);
         if key == "blocked_domains" {
-            // Per-space (not a db setting): lives next to the space's other
-            // config files so it travels with the space.
+            // Keep this configuration with the space so it travels with its files.
             std::fs::write(
                 self.space.blocked_domains_path(&self.active_space.name),
                 value,
@@ -41,8 +33,6 @@ impl App {
     }
 }
 
-/// Every key `set_setting` accepts — the same keys `apply_setting` (and the
-/// `blocked_domains` special case) can actually apply.
 const SETTING_KEYS: [&str; 18] = [
     "remote_images",
     "show_stats",
@@ -64,16 +54,12 @@ const SETTING_KEYS: [&str; 18] = [
     "image_viewer",
 ];
 
-/// Narrowest and widest the conversation column can be set to, in cells.
 pub const COLUMN_WIDTH_MIN: u16 = 60;
 pub const COLUMN_WIDTH_MAX: u16 = 400;
 
-/// Smallest and largest a popup dimension can be, as a percentage of the
-/// screen.
 pub const POPUP_SIZE_MIN: u16 = 20;
 pub const POPUP_SIZE_MAX: u16 = 100;
 
-/// Every popup whose size can be overridden — the ids `popup_sizes` accepts.
 pub const POPUP_IDS: [&str; 20] = [
     "model",
     "session",
@@ -97,7 +83,6 @@ pub const POPUP_IDS: [&str; 20] = [
     "connectors",
 ];
 
-/// `auto`, `full`, or a plain cell count in range.
 pub(super) fn valid_column_width(value: &str) -> bool {
     matches!(value, "auto" | "full")
         || (!value.is_empty()
@@ -107,7 +92,6 @@ pub(super) fn valid_column_width(value: &str) -> bool {
                 .is_ok_and(|n| (COLUMN_WIDTH_MIN..=COLUMN_WIDTH_MAX).contains(&n)))
 }
 
-/// One `id:WWxHH` entry, if it names a known popup with in-range percentages.
 fn parse_popup_entry(entry: &str) -> Option<(&'static str, u16, u16)> {
     let (id, dims) = entry.trim().split_once(':')?;
     let id = POPUP_IDS.iter().copied().find(|known| *known == id)?;
@@ -121,7 +105,6 @@ fn parse_popup_entry(entry: &str) -> Option<(&'static str, u16, u16)> {
     (range.contains(&w) && range.contains(&h)).then_some((id, w, h))
 }
 
-/// The valid entries of a `popup_sizes` string; the last entry for an id wins.
 fn popup_entries(sizes: &str) -> Vec<(&'static str, u16, u16)> {
     let mut entries: Vec<(&'static str, u16, u16)> = Vec::new();
     for (id, w, h) in sizes.split(',').filter_map(parse_popup_entry) {
@@ -139,7 +122,6 @@ fn join_popup_entries(entries: &[(&'static str, u16, u16)]) -> String {
         .join(",")
 }
 
-/// The persisted (width %, height %) for popup `id`, if it has an override.
 #[must_use]
 pub fn popup_size(sizes: &str, id: &str) -> Option<(u16, u16)> {
     popup_entries(sizes)
@@ -148,8 +130,6 @@ pub fn popup_size(sizes: &str, id: &str) -> Option<(u16, u16)> {
         .map(|(_, w, h)| (w, h))
 }
 
-/// `sizes` with popup `id` set to `size` (percentages, clamped into range), or
-/// its override removed for `None`. Invalid entries are dropped on the way.
 #[must_use]
 pub fn with_popup_size(sizes: &str, id: &str, size: Option<(u16, u16)>) -> String {
     let mut entries = popup_entries(sizes);
@@ -161,12 +141,10 @@ pub fn with_popup_size(sizes: &str, id: &str, size: Option<(u16, u16)>) -> Strin
     join_popup_entries(&entries)
 }
 
-/// A loaded `popup_sizes` value with unknown or invalid entries dropped.
 pub(super) fn sanitize_popup_sizes(value: &str) -> String {
     join_popup_entries(&popup_entries(value))
 }
 
-/// Strict check for `set_setting`: every entry must be valid (empty is fine).
 fn valid_popup_sizes(value: &str) -> bool {
     value.is_empty()
         || value
@@ -174,9 +152,6 @@ fn valid_popup_sizes(value: &str) -> bool {
             .all(|entry| parse_popup_entry(entry).is_some())
 }
 
-/// Whether `value` is one `apply_setting` will actually apply for `key` —
-/// constrained keys must carry valid values, so a typo'd value can't be
-/// persisted as a no-op while reporting success.
 fn valid_setting_value(key: &str, value: &str) -> bool {
     match key {
         "remote_images" => matches!(value, "on" | "off"),
@@ -204,6 +179,6 @@ fn valid_setting_value(key: &str, value: &str) -> bool {
         "search_provider" => SEARCH_PROVIDERS.contains(&value),
         "column_width" => valid_column_width(value),
         "popup_sizes" => valid_popup_sizes(value),
-        _ => true, // free-form strings
+        _ => true,
     }
 }

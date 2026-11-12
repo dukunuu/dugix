@@ -85,7 +85,6 @@ fn discard(app: App) {
 fn experiment_off_replays_long_history_byte_identically_to_legacy_output() {
     let mut app = fixture(14, 5_000);
     assert!(!app.experiments.mask_tool_results);
-    // Even a boundary left by an earlier enabled run must be inert when off.
     app.mask_through = 40;
     let mut expected = vec![ChatMessage::text("system", app.system_prompt())];
     for round in 0..14 {
@@ -103,8 +102,6 @@ fn experiment_off_replays_long_history_byte_identically_to_legacy_output() {
         );
         expected.push(assistant);
         for call in 0..2 {
-            // Pre-masking replay keeps the first full result and dedups all
-            // later byte-identical results with the same tool and arguments.
             let content = if round == 0 && call == 0 {
                 "x".repeat(5_000)
             } else {
@@ -144,7 +141,6 @@ fn mask_trigger_moves_in_bulk_retains_whole_rounds_and_bumps_epoch_once() {
 
     app.meter.total = Some(50_000);
     app.maybe_mask();
-    // Each round has user + two consecutive tool rows + assistant.
     assert_eq!(app.mask_through, 9);
     assert_eq!(app.cache_epoch, epoch + 1);
     assert!(app.meter.total.is_none());
@@ -189,14 +185,14 @@ fn mask_trigger_uses_half_the_window_and_requires_two_thousand_maskable_tokens()
     assert_eq!(app.mask_through, 0);
     app.models[0].context_length = Some(100_000);
     app.maybe_mask();
-    assert_eq!(app.mask_through, 0); // 7,998 chars / 4 < 2,000
+    assert_eq!(app.mask_through, 0);
     app.messages[1] = tool("c0-0", "fs", &"x".repeat(4_001));
     app.meter.total = Some(49_999);
     app.maybe_mask();
     assert_eq!(app.mask_through, 0);
     app.meter.total = Some(50_000);
     app.maybe_mask();
-    assert_eq!(app.mask_through, 5); // exactly 8,000 chars
+    assert_eq!(app.mask_through, 5);
     discard(app);
 }
 
@@ -258,7 +254,7 @@ fn errors_and_compacted_observations_do_not_count_toward_the_mask_budget() {
     app.session.as_mut().unwrap().compact_through = 0;
     app.experiments.mask_keep_rounds = 3;
     app.maybe_mask();
-    assert_eq!(app.mask_through, 0); // fewer than K rounds
+    assert_eq!(app.mask_through, 0);
     discard(app);
 }
 
@@ -281,8 +277,6 @@ fn masked_replay_preserves_calls_reasoning_errors_and_non_tool_messages() {
     app.experiments.mask_tool_results = true;
     app.mask_through = 6;
     let history = app.build_history();
-    // All non-tool wire messages, including the complete assistant call batch,
-    // must be byte-identical; only observation contents change.
     let non_tools = |messages: &[ChatMessage]| {
         serde_json::to_vec(
             &messages
@@ -383,7 +377,7 @@ fn masked_tool_images_are_not_resent() {
     app.experiments.mask_tool_results = true;
     app.mask_through = 1;
     let history = app.build_history();
-    assert_eq!(history.len(), 3); // system + assistant call + cleared tool result
+    assert_eq!(history.len(), 3);
     assert!(history.iter().all(|m| m.images.is_empty()));
     app.messages.push(message("user", "get the image again"));
     app.messages

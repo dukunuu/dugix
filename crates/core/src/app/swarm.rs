@@ -1,9 +1,4 @@
-//! `/swarm`: a per-session roster of persona+model rows that, when swarm
-//! mode is on, turns a normal chat message into a live conversation between
-//! personas. Conversation proceeds in rounds: every persona gets a chance to
-//! respond before the moderator can decide whether the panel has converged.
-//! A synthesis reply is then written as the discussion's canonical assistant
-//! message.
+//! Per-session persona discussions synthesized into a canonical assistant reply.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -20,44 +15,28 @@ use crate::provider::openrouter::OpenRouter;
 use crate::provider::{ChatMessage, ChatParams, StreamEvent};
 use crate::tools::ToolExecutor;
 
-/// Maximum complete panel rounds before synthesis. Every persona present at
-/// the start of a round gets one response opportunity in that round.
 const MAX_ROUNDS: usize = 4;
-/// Tool round-trips available to each persona response.
 const SWARM_PERSONA_MAX_TOOL_ITERS: usize = 8;
 
-/// Hard ceiling on how many personas a conversation can grow to via the
-/// moderator adding new voices mid-run.
 const MAX_PERSONAS: usize = 6;
 
-/// A `/swarm` turn update tagged with the session it belongs to (the turn
-/// runs in the background, so the viewer may have navigated away by the
-/// time an update lands).
 pub type SwarmMsg = (String, SwarmUpdate);
 
 #[derive(Clone)]
 pub enum SwarmUpdate {
-    /// The roster was empty, so one was suggested — persist it before the
-    /// conversation's first turn.
     RosterSuggested(Vec<Persona>),
-    /// Status-line progress text.
     Progress(String),
-    /// One persona's reply for the turn just run.
     Reply {
         persona: String,
         model: String,
         content: String,
     },
-    /// The moderator decided the conversation needed a new voice — persist
-    /// it to the roster so it shows up in the popup too.
     PersonaJoined(Persona),
-    /// The turn's final synthesis reply — the canonical assistant message.
     Synthesis(String),
     Error(String),
 }
 
 impl App {
-    /// Flip swarm mode for the active session.
     pub fn toggle_swarm_mode(&mut self) -> Result<()> {
         let Some(session) = &mut self.session else {
             return Ok(());
@@ -69,8 +48,6 @@ impl App {
         Ok(())
     }
 
-    /// Start a swarm turn for the just-sent message (already pushed to
-    /// `self.messages`/the db by `send_message`). No-op if one's running.
     pub fn start_swarm_turn(&mut self) {
         let Some(session) = self.session.clone() else {
             return;
@@ -87,9 +64,6 @@ impl App {
                 .push_back(super::AppEvent::OpenLoginPopup);
             return;
         };
-        // The swarm meta agent has no separate model setting — it resolves on
-        // the current session's provider with that provider's research-class
-        // default model.
         let (meta_provider, raw_meta_model) = self
             .resolve_feature_model_backend("", OpenRouter::default_research_model)
             .unwrap_or_else(|| (default_provider.clone(), raw_default_model.clone()));
@@ -134,7 +108,6 @@ impl App {
         self.swarm.session = Some(swarm_session_id);
     }
 
-    /// Drop blank roster rows and persist.
     pub fn save_swarm_roster(&mut self) -> Result<()> {
         self.swarm.cache.retain(|p| !p.name.trim().is_empty());
         if let Some(session) = &self.session {
@@ -144,8 +117,6 @@ impl App {
         Ok(())
     }
 
-    /// Stop the running swarm immediately. Persona model/tool streams are
-    /// children of the aborted orchestration task and are dropped with it.
     pub fn stop_swarm(&mut self) {
         if let Some(abort) = self.swarm.abort.take() {
             abort.abort();
@@ -162,10 +133,6 @@ impl App {
         }
     }
 
-    /// A swarm turn update: persist it, and mirror it into the live
-    /// transcript if the session it belongs to is the one being viewed.
-    /// `None` = the job's channel closed (fires once, right after the last update).
-    // Long by design (event dispatch).
     #[allow(clippy::too_many_lines)]
     pub fn on_swarm_update(&mut self, r: Option<SwarmMsg>) {
         let Some((session_id, update)) = r else {
@@ -283,8 +250,7 @@ impl App {
                 }
             }
             SwarmUpdate::Error(e) => {
-                // Keep failures separate from the upserted progress row so a
-                // later round/tool update cannot overwrite and erase them.
+                // Progress upserts must not overwrite failure rows.
                 let _ = self
                     .db
                     .add_error_message(&session_id, &format!("swarm: {e}"));
@@ -336,9 +302,6 @@ pub fn parse_persona_editor(text: &str) -> Result<Persona, String> {
 }
 
 #[allow(clippy::too_many_arguments)]
-/// Everything needed to start one swarm conversation turn: the persona
-/// roster, the model/provider config, the conversation history, and the
-/// orchestration plumbing (toolbox, session identity, update channel).
 pub struct SwarmTurnOptions {
     pub backends: Backends,
     pub meta_provider: OpenRouter,
@@ -366,7 +329,6 @@ impl SwarmTurnOptions {
     }
 }
 
-// Long by design (roundtable orchestration).
 #[allow(clippy::too_many_lines)]
 async fn run_swarm_turn(opts: SwarmTurnOptions) {
     let params = opts.chat_params();
@@ -416,18 +378,10 @@ async fn run_swarm_turn(opts: SwarmTurnOptions) {
         return;
     }
 
-    // (persona name, reply content), in speaking order — a running transcript
-    // every persona converses through. A successful reply marks that persona
-    // as having answered; the moderator is gated on every current persona
-    // having answered at least once and on the current round being complete.
     let mut discussion: Vec<(String, String)> = Vec::new();
-    // Track roster positions, not names: users may configure duplicate names,
-    // but every row still deserves its own response opportunity.
+    // Names may be duplicated; roster positions identify distinct response opportunities.
     let mut answered: HashSet<usize> = HashSet::new();
     'convo: for round in 1..=MAX_ROUNDS {
-        // Snapshot the roster for this round. Personas can only be added by the
-        // moderator after the round, so everyone in this snapshot gets exactly
-        // one opportunity before moderation.
         let round_personas = personas.clone();
         let round_size = round_personas.len();
         for (idx, p) in round_personas.into_iter().enumerate() {
@@ -539,8 +493,7 @@ async fn run_swarm_turn(opts: SwarmTurnOptions) {
             }
         }
 
-        // The hard cap synthesizes after the final complete round. Never ask
-        // the moderator to add someone who would have no round left to speak.
+        // Do not add a persona unless another round remains for it to speak.
         if round == MAX_ROUNDS {
             break 'convo;
         }
@@ -646,9 +599,6 @@ async fn suggest_personas(
     parse_suggested_personas(&raw, default_model)
 }
 
-/// Extract a `[{"name","blurb"}, ...]` JSON array from a (possibly
-/// prose/fence-wrapped) model reply. Split out from `suggest_personas` so
-/// the parsing logic is testable without a network call.
 fn parse_suggested_personas(raw: &str, default_model: &str) -> Result<Vec<Persona>, String> {
     let start = raw.find('[').ok_or("no JSON array in response")?;
     let end = raw.rfind(']').ok_or("no JSON array in response")?;
@@ -668,12 +618,7 @@ fn parse_suggested_personas(raw: &str, default_model: &str) -> Result<Vec<Person
 enum ModeratorVerdict {
     Converged,
     Continue,
-    /// The conversation would benefit from a new voice — its name and a
-    /// one-sentence personality/perspective blurb.
-    AddPersona {
-        name: String,
-        blurb: String,
-    },
+    AddPersona { name: String, blurb: String },
 }
 
 async fn moderator_check(
@@ -700,8 +645,7 @@ async fn moderator_check(
 }
 
 fn parse_moderator_verdict(raw: &str) -> ModeratorVerdict {
-    // ASCII-only uppercasing so byte offsets stay valid for slicing `raw`
-    // (full Unicode `to_uppercase` can change a string's byte length).
+    // Unicode uppercasing can change byte lengths and invalidate offsets into `raw`.
     let upper = raw.to_ascii_uppercase();
     if let Some(rest) = upper.find("ADD:").map(|i| &raw[i + 4..])
         && let Some((name, blurb)) = rest.split_once('|')

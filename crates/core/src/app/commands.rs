@@ -1,23 +1,15 @@
-//! The command seam: one enum for every user intent, parsed from the
-//! `/`-command line (or synthesized by the TUI keys, the CLI, or the host).
-//! `run_command` is the string front; everything that mutates the app goes
-//! through `App::execute`. The slash-command catalog (`COMMANDS`, `Command`,
-//! `Match`, `fuzzy_score`) lives here too.
+//! Shared command catalog, parsing, and domain dispatch for frontends.
 
 use anyhow::Result;
 
 use super::{App, FilesTab, WorkMode};
 
-/// A slash command: canonical `name`, a short `desc`, and alias
-/// keywords. Names, aliases, and the description are all fuzzy-searchable, so
-/// typing `/history` surfaces `session`.
 pub struct Command {
     pub name: &'static str,
     pub desc: &'static str,
     pub aliases: &'static [&'static str],
 }
 
-/// One row of the slash-command autocomplete.
 pub enum Match {
     Builtin(&'static Command),
 }
@@ -275,9 +267,7 @@ pub const COMMANDS: &[Command] = &[
     },
 ];
 
-/// Subsequence fuzzy score, case-insensitive. `None` if `needle` isn't a
-/// subsequence of `hay`; higher is a better match (bonuses for contiguous runs
-/// and matching at the start).
+/// Score case-insensitive subsequence matches, preferring contiguous and leading matches.
 pub fn fuzzy_score(hay: &str, needle: &str) -> Option<i32> {
     let hay = hay.to_lowercase();
     let needle = needle.to_lowercase();
@@ -307,8 +297,7 @@ pub fn fuzzy_score(hay: &str, needle: &str) -> Option<i32> {
     Some(score)
 }
 
-/// Best fuzzy score of `needle` across a command's name/aliases/desc, with the
-/// name weighted highest and the description lowest.
+/// Score command matches with names weighted above aliases and descriptions.
 pub fn command_score(c: &Command, needle: &str) -> Option<i32> {
     if needle.is_empty() {
         return Some(0);
@@ -328,185 +317,181 @@ pub fn command_score(c: &Command, needle: &str) -> Option<i32> {
     best
 }
 
-/// One user intent, in the seam's own words. Parsed from the `/`-command
-/// line (`App::parse_command`) or synthesized by the TUI keys, the CLI, or
-/// the host; `App::execute` is the only mutation path.
-///
-/// Serde: `POST /v1/command` ships this enum directly — every payload is
-/// plain (strings, bools, optionals, [`FilesTab`](super::FilesTab)), so the
-/// seam itself is the wire type; no mirror needed.
-/// What `/memory` does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MemoryAction {
-    /// Open the book in `$EDITOR` (terminal UI only).
     Edit,
-    /// Ask the session model to tidy memory in the conversation.
     Tidy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[allow(clippy::large_enum_variant)] // Keep the infrequent job form's existing command payload.
+#[allow(clippy::large_enum_variant)]
 pub enum AppCommand {
-    /// `/quit` — exit the app.
     Quit,
-    /// Send a chat message (the composer's Enter, host messages).
-    Send { text: String },
-    /// Cancel an in-flight chat response; `None` = the active one (Esc).
-    Cancel { task: Option<u64> },
-    /// Answer the current workspace permission request, including wave review.
-    Approve { decision: crate::tools::Decision },
-    /// `/steer` — queue an extra instruction for the running research job.
-    Steer { text: String },
-    /// Reply to the parked survey/plan gate.
-    AnswerGate { text: String },
-    /// `/new` — fresh session.
+    Send {
+        text: String,
+    },
+    /// Cancel the active response when no task id is supplied.
+    Cancel {
+        task: Option<u64>,
+    },
+    Approve {
+        decision: crate::tools::Decision,
+    },
+    Steer {
+        text: String,
+    },
+    AnswerGate {
+        text: String,
+    },
     NewSession,
-    /// `/compact` — compact the session transcript.
     Compact,
-    /// `/session` — the session picker.
     OpenSessionPicker,
-    /// `/space` — the space picker.
     OpenSpacePicker,
-    /// `/model` — the model picker.
     OpenModelPicker,
-    /// `/login` — the provider login popup.
     OpenLogin,
-    /// `/local [<runtime> [endpoint] | off]` — pick the local inference
-    /// runtime. An empty `spec` opens the picker (reports the current
-    /// setting headless); `/ollama`, `/mlx`, `/mlx-serve`, `/lmstudio` and `/edge0` fill
-    /// it in.
-    ConfigureLocal { spec: String },
-    /// `/local start|stop|restart|status [<runtime>]` — manage the local
-    /// provider's own inference server. An empty `runtime` means the selected
-    /// one; `/edge0 start` names it through the alias.
-    LocalServer { verb: String, runtime: String },
-    /// `/swarm` — the swarm roster popup.
+    /// An empty spec opens the runtime picker or reports its headless status.
+    ConfigureLocal {
+        spec: String,
+    },
+    /// An empty runtime targets the selected local provider.
+    LocalServer {
+        verb: String,
+        runtime: String,
+    },
     OpenSwarm,
-    /// `/config` — the nerd-config popup.
     OpenSettings,
-    /// `/theme [opaque|transparent]` — configure the TUI background.
-    SetTheme { mode: String },
-    /// `/vim [on|off]` — vim keys in text inputs (TUI-only).
-    SetKeymap { mode: String },
-    /// `/motion [on|off]` — glides, draw-in and canvas animation in panels
-    /// (TUI-only).
-    SetMotion { mode: String },
-    /// `/retry` — regenerate the last reply.
+    SetTheme {
+        mode: String,
+    },
+    SetKeymap {
+        mode: String,
+    },
+    SetMotion {
+        mode: String,
+    },
     Retry,
-    /// `/undo` — restore the files the last agent turn changed.
     Undo,
-    /// `!cmd` in the composer — run it as the user, output captured into the
-    /// conversation (terminal UI and agent modes only; chat mode refuses it).
-    RunUserCommand { cmd: String },
-    /// An interactive `!` command the terminal UI already ran on the real
-    /// terminal — record its command and exit code, `None` when it was killed
-    /// or (`started: false`) never started (terminal UI and agent modes only).
+    RunUserCommand {
+        cmd: String,
+    },
+    /// Record a terminal command without capturing its output.
     RecordUserCommand {
         cmd: String,
         exit: Option<i32>,
         started: bool,
     },
-    /// `/copy` — the copy menu.
     OpenCopyMenu,
-    /// `/skills` — the skills popup.
     OpenSkills,
-    /// `/files`, `/image`, `/script` — the file popup on a tab.
-    OpenFiles { tab: FilesTab },
-    /// `/apps` — the apps popup.
+    OpenFiles {
+        tab: FilesTab,
+    },
     OpenApps,
-    /// `/connectors` — the connectors popup.
     OpenConnectors,
-    /// `/connectors add <name> <url | command…>` — add an MCP connector.
-    /// `bearer` marks a hosted one that authenticates with a token (stored
-    /// separately in the keychain, never in a command).
+    /// Bearer tokens must be stored separately in the keychain, never in this command.
     AddConnector {
         name: String,
         url: Option<String>,
         command: Vec<String>,
         bearer: bool,
     },
-    /// `/connectors remove <name>` — delete a connector and its keychain entries.
-    RemoveConnector { name: String },
-    /// `/connectors enable|disable <name>`.
-    SetConnectorEnabled { name: String, on: bool },
-    /// `/connectors allow|ask|deny|default <name> <tool>` — per-tool policy.
+    RemoveConnector {
+        name: String,
+    },
+    SetConnectorEnabled {
+        name: String,
+        on: bool,
+    },
     SetConnectorPolicy {
         name: String,
         tool: String,
         policy: String,
     },
-    /// `/connectors import [claude-desktop|claude-code|cursor]` — bring over
-    /// MCP servers from other tools (`names` empty = every new one).
-    ImportConnectors { source: String, names: Vec<String> },
-    /// `/pin-panel [name]` — save the focused interactive panel (program and
-    /// state) as a mini-app in this space. View-owned: only the terminal UI
-    /// knows which panel has focus.
-    PinPanel { name: Option<String> },
-    /// `/unpin-panel <name>` — remove a pinned panel app (name or id).
-    UnpinPanel { name: String },
-    /// `/rename-panel <name> <new name>` — rename a pinned panel app.
-    RenamePanel { from: String, to: String },
-    /// `/studio [deck]` — open or focus the linked slide canvas (view-owned).
-    OpenStudio { deck: Option<String> },
-    /// `/library` — the decks and docs of this space (view-owned).
+    /// Import all new connectors when `names` is empty.
+    ImportConnectors {
+        source: String,
+        names: Vec<String>,
+    },
+    PinPanel {
+        name: Option<String>,
+    },
+    UnpinPanel {
+        name: String,
+    },
+    RenamePanel {
+        from: String,
+        to: String,
+    },
+    OpenStudio {
+        deck: Option<String>,
+    },
     OpenLibrary,
-    /// `/agents` — the conversation's sub-agents (view-owned).
     OpenSubagents,
-    /// `/view <path|url>` — show an image in the in-terminal viewer (or the
-    /// system viewer, per the `image_viewer` setting). View-owned.
-    OpenImage { target: String },
-    /// `/research [topic]` — `gated: false` skips the plan-approval gate
-    /// (`/research!`); an empty topic distills one from recent chat.
-    RunResearch { topic: String, gated: bool },
-    /// `/export` — print the latest report + sources.
+    OpenImage {
+        target: String,
+    },
+    /// An empty topic is distilled from recent chat; ungated runs skip approval.
+    RunResearch {
+        topic: String,
+        gated: bool,
+    },
     Export,
-    /// `/memory [edit|tidy]`.
-    Memory { action: MemoryAction },
-    /// `/auto` — toggle automatic approval while in an agent mode.
+    Memory {
+        action: MemoryAction,
+    },
     ToggleAuto,
-    /// `/agent [path]` or `/chat` — choose local workspace access.
     SetWorkMode {
         mode: WorkMode,
         root: Option<String>,
     },
-    /// `/improve <what>` — work on the nexus checkout in an isolated review branch.
-    Improve { what: String },
-    /// `/incognito` — toggle (`on` is absolute for the host).
-    Incognito { on: bool },
-    /// `/training [on|off]` — set or toggle device-local recording consent.
-    SetTraining { on: Option<bool> },
-    /// `/watch [topic]` — open the watch picker, or create a watch.
-    Watch { topic: Option<String> },
-    /// `/jobs` — durable scheduled agent runs.
+    Improve {
+        what: String,
+    },
+    Incognito {
+        on: bool,
+    },
+    SetTraining {
+        on: Option<bool>,
+    },
+    Watch {
+        topic: Option<String>,
+    },
     OpenJobs,
-    /// `/job new` — the job creation form.
     OpenJobForm,
-    /// Create a validated device-owned job.
-    CreateJob { spec: crate::jobs::JobSpec },
-    /// Enable or disable a job owned by this device.
-    SetJobEnabled { id: String, on: bool },
-    /// Launch an isolated headless run, independent of the TUI.
-    RunJobNow { id: String },
-    /// Replicate a soft deletion without deleting review branches or transcripts.
-    DeleteJob { id: String },
-    /// `/usage` — the analytics popup.
+    CreateJob {
+        spec: crate::jobs::JobSpec,
+    },
+    SetJobEnabled {
+        id: String,
+        on: bool,
+    },
+    RunJobNow {
+        id: String,
+    },
+    /// Soft-delete the job while retaining review branches and transcripts.
+    DeleteJob {
+        id: String,
+    },
     OpenUsage,
-    /// `/harness` — tool failures over the last seven days.
     Harness,
-    /// `/procs` — background processes started by the agent.
     OpenProcs,
-    /// `/help` — the keybinding + command reference.
     OpenHelp,
-    /// `/<skill-name> [text]` — arm a skill; `text` sends it immediately.
-    ArmSkill { name: String, rest: Option<String> },
-    /// Switch the active space (CLI `--space`, host).
-    SwitchSpace { name: String },
-    /// Resolve and open a session by id/slug/prefix (CLI `open`, host).
-    ResolveSession { id: String },
-    /// Set the active model (CLI `--model`, host).
-    SetModel { id: String },
-    /// Set one named setting by key (host).
-    SetSetting { key: String, value: String },
+    ArmSkill {
+        name: String,
+        rest: Option<String>,
+    },
+    SwitchSpace {
+        name: String,
+    },
+    ResolveSession {
+        id: String,
+    },
+    SetModel {
+        id: String,
+    },
+    SetSetting {
+        key: String,
+        value: String,
+    },
 }
 
 impl App {
@@ -535,15 +520,9 @@ impl App {
         }
     }
 
-    /// Parse a `/`-command line (without the leading slash) into the command
-    /// seam. Resolves aliases via the `COMMANDS` catalog and recognizes
-    /// `/<skill-name>` arms. `Err` carries a status-line message for unknown
-    /// commands — the TUI shows it without failing the key handler.
-    // One flat arm per catalog command; splitting it would only hide the table.
+    /// Parse a command line without its leading slash, resolving aliases and skills.
     #[allow(clippy::too_many_lines)]
     pub fn parse_command(&self, cmd: &str) -> std::result::Result<AppCommand, String> {
-        // `/research! <topic>` = research without the plan-approval gate.
-        // Handled before command lookup: the `!` makes the token miss COMMANDS.
         if let Some(rest) = cmd.strip_prefix("research!") {
             return Ok(AppCommand::RunResearch {
                 topic: rest.trim().to_string(),
@@ -551,7 +530,6 @@ impl App {
             });
         }
         let token = cmd.split_whitespace().next().unwrap_or("");
-        // Resolve aliases (e.g. "history" -> "session") to a canonical name.
         let canonical = COMMANDS
             .iter()
             .find(|c| c.name == token || c.aliases.contains(&token))
@@ -565,8 +543,6 @@ impl App {
             "space" => Ok(AppCommand::OpenSpacePicker),
             "model" => Ok(AppCommand::OpenModelPicker),
             "login" => Ok(AppCommand::OpenLogin),
-            // `/local <spec>`, but also `/ollama` and friends: the runtime
-            // aliases resolve to `local`, so the token *is* the spec.
             "local" => Ok(local_command(&match (token, rest(cmd, token)) {
                 ("local", arg) => arg,
                 (runtime, arg) if arg.is_empty() => runtime.to_string(),
@@ -676,17 +652,10 @@ impl App {
         }
     }
 
-    /// Run one parsed command — the mutation path for domain intents. The
-    /// TUI's `AppView::execute` intercepts the view-only commands (quit,
-    /// popup opens, the watch picker) before delegating here; headless
-    /// consumers only ever send domain commands. `run_command` is the
-    /// `/`-string parse front.
-    #[allow(clippy::too_many_lines)] // Long by design: one arm per command.
+    /// Execute domain commands, leaving frontend-only actions to the caller.
+    #[allow(clippy::too_many_lines)]
     pub fn execute(&mut self, cmd: AppCommand) -> Result<()> {
         match cmd {
-            // View-only commands — the TUI's `AppView::execute` handles these
-            // (they need the popup/should-quit state the view owns). They
-            // land here only from headless consumers, which never send them.
             AppCommand::Quit
             | AppCommand::OpenSessionPicker
             | AppCommand::OpenSpacePicker
@@ -813,7 +782,6 @@ impl App {
                 }
             }
             AppCommand::Memory { action } => match action {
-                // Editing needs a terminal; the TUI intercepts it.
                 MemoryAction::Edit => self.push_status(
                     "edit memory in the terminal UI with /memory, or run nexus memory --edit",
                 ),
@@ -890,8 +858,6 @@ impl App {
         Ok(())
     }
 
-    /// The `/`-string front: parse into the seam, then execute. Unknown
-    /// commands surface as a status line rather than an error.
     pub fn run_command(&mut self, cmd: &str) -> Result<()> {
         match self.parse_command(cmd) {
             Ok(cmd) => self.execute(cmd),
@@ -903,9 +869,6 @@ impl App {
     }
 }
 
-/// `/connectors [add|remove|enable|disable|allow|ask|deny|default|import] …`.
-/// `/pin-panel [name]`, `/pin-panel unpin <name>`, `/pin-panel rename <name>
-/// <new>`; `/unpin-panel` and `/rename-panel` are the verbs as aliases.
 fn parse_pin_panel(token: &str, rest: &str) -> std::result::Result<AppCommand, String> {
     let mut words = rest.split_whitespace().collect::<Vec<_>>();
     let verb = match token {
@@ -1010,12 +973,6 @@ fn improve_command(what: String) -> std::result::Result<AppCommand, String> {
     }
 }
 
-/// Split `/local`'s argument into the two things it can mean: managing a
-/// runtime's server, or selecting the runtime itself.
-///
-/// The verb is looked for in any position because the runtime aliases fold
-/// themselves into the spec — `/local start edge0` and `/edge0 start` both
-/// arrive here as the same two words in the opposite order.
 fn local_command(spec: &str) -> AppCommand {
     let words: Vec<&str> = spec.split_whitespace().collect();
     let verb = words.iter().position(|word| {

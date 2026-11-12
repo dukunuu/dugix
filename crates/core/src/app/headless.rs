@@ -1,9 +1,4 @@
-//! Headless one-shot runs (`nexus ask`, `nexus chat`, `nexus research`,
-//! `nexus watch run`): the same streaming pipelines the TUI event loop
-//! drives, minus the terminal. Answers stream to stdout as they arrive,
-//! tool status goes to stderr, and every conversation is persisted as a
-//! normal session in the active space — reopen it in the TUI and it's just
-//! another chat.
+//! Headless chat and research drivers with answers on stdout and progress on stderr.
 
 use std::io::Write as _;
 
@@ -14,17 +9,12 @@ use crate::provider::{StreamEvent, Usage};
 
 use super::{App, AppCommand, AppEvent};
 
-/// Per-turn behavior switches for the headless drivers.
 #[derive(Default, Clone, Copy)]
 pub struct TurnOpts {
-    /// Stream answer tokens to stdout as they arrive (default true).
     pub stream: bool,
-    /// Suppress stderr chatter (tool status, thinking, token summary).
     pub quiet: bool,
 }
 
-/// What a finished `nexus ask` leaves behind — the answer already went to
-/// stdout unless `--json` asked for it structured.
 pub struct AskOutcome {
     pub answer: String,
     pub session_id: String,
@@ -32,15 +22,13 @@ pub struct AskOutcome {
     pub usage: Option<Usage>,
 }
 
-/// A finished headless research run (`nexus research` / a watch's run).
 pub struct ResearchOutcome {
     pub report: String,
     pub session_id: String,
     pub session_title: String,
 }
 
-/// Stream one answer chunk to stdout; exit quietly if the reader closed the
-/// pipe (`nexus ask | head -c 50`) — coreutils behavior, not a panic.
+// A closed downstream pipe is normal for callers such as `head`.
 fn stream(s: &str) {
     let mut stdout = std::io::stdout();
     if stdout.write_all(s.as_bytes()).is_err() {
@@ -48,7 +36,6 @@ fn stream(s: &str) {
     }
 }
 
-/// Print a line to stderr unless quiet mode is on.
 fn note(quiet: bool, line: impl std::fmt::Display) {
     if !quiet {
         eprintln!("{line}");
@@ -72,8 +59,6 @@ fn add_usage(total: Option<Usage>, next: Usage) -> Usage {
 }
 
 impl App {
-    /// Switch the active space by name (`--space`). Bails on an unknown
-    /// name; no-op when it's already the active space.
     pub fn switch_space_cli(&mut self, name: &str) -> Result<()> {
         let row = self
             .db
@@ -88,10 +73,7 @@ impl App {
         Ok(())
     }
 
-    /// Drive one non-interactive turn: send `prompt`, drain stream events
-    /// until the response finishes, and (unless `opts.stream`) collect the
-    /// answer. Tool status lines and the token summary go to stderr unless
-    /// `opts.quiet`. Returns the final answer text and merged usage.
+    /// Drive a non-interactive chat turn to completion.
     pub async fn run_turn(
         &mut self,
         prompt: String,
@@ -106,8 +88,6 @@ impl App {
         if self.current_model.is_none() {
             bail!("no model selected — pass --model, or pick one in the TUI first");
         }
-        // Drive through the seam, like the host API does: boot → command →
-        // event drain. The guard checks above already validated the preconditions.
         self.execute(AppCommand::Send { text: prompt })?;
 
         let mut usage: Option<Usage> = None;
@@ -145,20 +125,15 @@ impl App {
                         break;
                     }
                 }
-                // The event channel closed without a Done — nothing more is
-                // coming; fall through to the summary below.
                 AppEvent::Stream(None) => break,
                 AppEvent::Title(t) => self.on_title_result(t),
-                _ => {} // models/memory/compact/etc: nothing pending for a fresh turn
+                _ => {}
             }
         }
         if streamed_any && opts.stream {
             stream("\n");
         }
 
-        // The reply is already persisted (the turn's session is active, so
-        // finish_chat_task pushed it to self.messages too). Prefer the
-        // assistant row; surface an error row if the stream failed.
         let mut answer = None;
         for m in self.messages.iter().rev() {
             match m.role.as_str() {
@@ -186,9 +161,7 @@ impl App {
         Ok((answer, usage))
     }
 
-    /// `nexus ask`: one turn, then a short wait for the model-generated
-    /// session title so `nexus sessions` shows a real name instead of the
-    /// prompt prefix. A slow title must never hold the ask hostage — capped.
+    /// Run one turn with a bounded wait for its generated session title.
     pub async fn ask_headless(&mut self, prompt: String, opts: TurnOpts) -> Result<AskOutcome> {
         let result = self.run_turn(prompt, opts).await;
         std::mem::take(&mut self.procs).shutdown().await;
@@ -220,8 +193,7 @@ impl App {
         })
     }
 
-    /// `nexus chat`: a bare REPL — prompt on stderr, one turn per line,
-    /// all turns in the one session the first turn creates.
+    /// Run a line-oriented chat REPL in one session.
     pub async fn chat_headless(&mut self, quiet: bool) -> Result<()> {
         if !self.backends.any() {
             bail!(
@@ -260,14 +232,7 @@ impl App {
         Ok(())
     }
 
-    /// `nexus research <topic>`: run the full deep-research pipeline headless.
-    ///
-    /// Gate policy: with `approve` the pipeline runs ungated (survey and
-    /// plan-approval are skipped entirely, like `/research!`). Without it,
-    /// a gated run parks at each SurveyReady/PlanReady: when stdin is a
-    /// terminal the prompt is printed and a reply is read from the line
-    /// (empty reply skips the survey round; `approve` approves the plan);
-    /// otherwise the run bails rather than hang.
+    /// Run research headlessly, requiring terminal input unless approval is automatic.
     pub async fn research_headless(
         &mut self,
         topic: String,
@@ -288,8 +253,6 @@ impl App {
             topic,
             gated: !approve,
         })?;
-        // The execute above may have refused with a status line (already
-        // running, no model, …) — surface the last one if no job started.
         let mut refusal = String::new();
         while let Some(ev) = self.pop_pending_event() {
             if let AppEvent::Status(s) = ev {
@@ -316,9 +279,7 @@ impl App {
                         _ => {}
                     }
                     self.on_research_done(Some((session_id, space_id, space_name, update)));
-                    // A gate armed (or re-armed) by the handler above: answer
-                    // it before draining anything else — the pipeline is
-                    // parked and will not move until it gets a reply.
+                    // The pipeline cannot emit further progress until this gate is answered.
                     if !approve && let Some(gate) = self.research.survey_gate.as_ref() {
                         if !interactive {
                             bail!(
@@ -341,7 +302,7 @@ impl App {
                     }
                 }
                 AppEvent::Research(None) => break,
-                _ => {} // unrelated background events; keep draining
+                _ => {}
             }
         }
 
@@ -359,10 +320,7 @@ impl App {
         })
     }
 
-    /// `nexus watch run`: run one watch (by id or topic prefix), all watches
-    /// (`--all`), or the due ones (default). Each run drives its research
-    /// job to completion before the next starts. Returns the reports, keyed
-    /// by watch topic, for the caller to print.
+    /// Run selected watches sequentially and return their reports by topic.
     pub async fn watch_run_headless(
         &mut self,
         watch_ref: Option<&str>,
@@ -498,7 +456,6 @@ mod tests {
 
         app.switch_space_cli("research").unwrap();
         assert_eq!(app.active_space.id, row.id);
-        // Switching again (same space) is a no-op, not an error.
         app.switch_space_cli("research").unwrap();
         assert_eq!(app.active_space.id, row.id);
     }

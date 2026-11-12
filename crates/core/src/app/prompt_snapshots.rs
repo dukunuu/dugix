@@ -2,17 +2,9 @@ use std::path::Path;
 
 use super::{App, tests::app_with_key};
 
-// Measured 3,938 with per-action tool definitions; the `deck` tool is about 865 of
-// that (its ops, block kinds, commenting principles and the history action are
-// always on). Raised from 3,900 by 60 for the `history` action and the
-// one-deck-per-request / images / read-by-slides guidance. Raised to 4,120
-// for the `memory` tool (~170), which replaced a helper-model call after
-// every reply, then to 4,140 for its read `offset` (~10), so a large chapter
-// can be paged instead of truncated.
 const CHAT_PROMPT_TOKEN_CEILING: usize = 4_140;
 
 fn fixture_app() -> App {
-    // app_with_key uses a fresh temporary space, with no space instructions.
     let mut a = app_with_key();
     a.skills.clear();
     a.current_model = Some("a/one".into());
@@ -116,7 +108,6 @@ fn chat_prompt_and_tool_defs_fit_the_token_budget() {
     );
 }
 
-/// Field and operator names from the `nexus-ui` schema (`interactive-ui.md`), not tools.
 const NEXUS_UI_SCHEMA_WORDS: &[&str] = &[
     "version", "title", "state", "view", "body", "actions", "number", "null", "true",
 ];
@@ -128,7 +119,7 @@ fn assembled_prompts_mention_only_existing_tools() {
     for (name, interactive_ui) in [("chat.txt", false), ("tui.txt", true)] {
         a.interactive_ui = interactive_ui;
         let prompt = a.system_prompt();
-        // Scan adjacent backticks so fenced examples do not shift inline pairs.
+        // Fenced examples must not shift inline backtick pairs.
         for (start, _) in prompt.match_indices('`') {
             let Some((token, _)) = prompt[start + 1..].split_once('`') else {
                 continue;
@@ -252,11 +243,9 @@ fn no_connectors_leaves_the_tool_list_byte_identical() {
     for registry in [None, Some(crate::connectors::Registry::empty())] {
         toolbox.connectors = registry;
         let bare = serde_json::to_string(&toolbox.defs()).unwrap();
-        // Same builder, same capabilities: nothing about connectors leaks in.
         assert!(!bare.contains("connectors"), "{bare}");
         assert!(!bare.contains("__"));
     }
-    // The app's own list (golden-tested above) has the empty registry attached.
     assert!(a.toolbox.defs().iter().all(|d| d.name != "connectors"));
     assert_eq!(baseline, serde_json::to_string(&a.toolbox.defs()).unwrap());
 }

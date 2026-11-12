@@ -1,6 +1,3 @@
-// Casts here are on bounded values: token counts, byte sizes, and
-// selection indices — never on unbounded input. JSON-derived indices in
-// provider/tools go through try_from instead.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -16,17 +13,7 @@ use crate::prompts;
 use crate::provider::{ChatMessage, ChatParams};
 
 impl App {
-    // --- auto-compaction ---
-
-    /// Rows that must never reach a model — neither in the raw history
-    /// (`build_history`) nor in a compaction digest: background-job scratch
-    /// (research stage/plan/survey rows), transport failures, session links,
-    /// per-persona swarm round replies (the turn's synthesis carries the
-    /// context), gate replies — the survey/plan sections they answer are
-    /// excluded too, so a bare "drop Q2" must not leak into later turns via
-    /// a digest — and the compaction digest row itself (the digest is
-    /// already fed to the model via `compact_summary`, so a transcript row
-    /// must never be sent twice).
+    /// Exclude UI-only, contextless, and duplicate rows from requests and compaction.
     pub fn excluded_from_model_history(m: &Message) -> bool {
         m.role == "compaction"
             || m.role == "research_stage"
@@ -39,10 +26,7 @@ impl App {
             || m.persona.is_some()
     }
 
-    /// The messages actually sent on the next turn: everything after the
-    /// session's compaction boundary, or all of them if it hasn't compacted
-    /// (yet). The full, uncompacted history stays in `self.messages`/the db
-    /// for scrollback — only what's sent shrinks.
+    /// Return the conversation tail not covered by the compaction digest.
     pub fn effective_messages(&self) -> &[Message] {
         let through = self
             .session
@@ -53,13 +37,11 @@ impl App {
         &self.messages[through..]
     }
 
-    /// Whether `id` is the session whose background compaction is still running.
     #[must_use]
     pub fn is_compacting_session(&self, id: &str) -> bool {
         self.compaction.rx.is_some() && self.compaction.session_id.as_deref() == Some(id)
     }
 
-    /// Whether the session currently on screen is being compacted.
     #[must_use]
     pub fn is_compacting_current_session(&self) -> bool {
         self.session
@@ -67,8 +49,6 @@ impl App {
             .is_some_and(|s| self.is_compacting_session(&s.id))
     }
 
-    /// After a reply, auto-compact once context usage crosses the percentage
-    /// threshold or experimental token budget (0 disables each trigger).
     pub fn maybe_compact(&mut self) {
         if self.compaction.rx.is_some() || self.is_streaming() {
             return;
@@ -88,8 +68,6 @@ impl App {
         self.start_compaction(pct);
     }
 
-    /// Manually trigger compaction right now (`/compact`), ignoring the
-    /// threshold. No-ops with a status message if there's nothing to compact.
     pub fn force_compact(&mut self) {
         if self.compaction.rx.is_some() {
             self.push_status("already compacting…".to_string());
@@ -127,8 +105,6 @@ impl App {
         self.start_compaction(pct);
     }
 
-    /// Kick off the background compaction job on the session model.
-    /// `before_pct` is only used to report the before/after status on completion.
     fn start_compaction(&mut self, before_pct: u64) {
         let (session_id, through, prior_summary) = {
             let Some(session) = self.session.as_ref() else {
@@ -146,7 +122,7 @@ impl App {
         );
         let tail = compaction_tail(&self.messages[..end], through);
         if tail.trim().is_empty() {
-            return; // only the existing digest or excluded UI rows remain
+            return;
         }
 
         let Some(session_model) = self.current_model.clone() else {
@@ -172,8 +148,6 @@ impl App {
         let error_slot = std::sync::Arc::clone(&self.compaction.error);
         *error_slot.lock().expect("compaction error slot") = None;
         let usage_log = self.usage_log();
-        // The history pane gets a transient "compacting" block immediately;
-        // the input bar also keeps its compact status while the request runs.
         tokio::spawn(async move {
             let msgs = vec![ChatMessage::text("user", prompt)];
             let params = ChatParams {
@@ -197,7 +171,6 @@ impl App {
         });
     }
 
-    /// Say why a compaction produced no digest, once.
     fn report_compaction_failure(&mut self) {
         let reason = self
             .compaction
@@ -211,15 +184,7 @@ impl App {
         ));
     }
 
-    /// Apply a compaction digest to the matching session (in memory + db):
-    /// the digest itself becomes a visible `compaction` transcript row at the
-    /// compaction boundary, so what was folded away is shown in the chat
-    /// instead of being reachable only through the context popup's editor.
-    /// A later compaction updates that row in place (one digest row per
-    /// session, at the same boundary). Clears the exact usage total — it
-    /// reflects the pre-compaction request, so `context_used` should fall
-    /// back to the (now accurate) estimate until the next real response
-    /// reports fresh usage.
+    /// Apply a digest to its session and invalidate pre-compaction usage counts.
     pub fn on_compact_result(&mut self, result: Option<(String, String, i64, u64)>) {
         self.compaction.rx = None;
         self.compaction.session_id = None;
@@ -240,11 +205,7 @@ impl App {
             s.compact_summary = Some(summary.clone());
             s.compact_through = through;
         }
-        // Surface the digest in the transcript: update the existing row (a
-        // re-compaction folds new messages into the same digest), or insert
-        // one at the boundary — after the last message it covers, before
-        // anything the user says next. The db row is anchored to that last
-        // message's timestamp so reloads keep the same position.
+        // Anchor the digest to the last covered message so reloads preserve its position.
         let in_view = self.session.as_ref().is_some_and(|s| s.id == id);
         if in_view {
             self.bump_cache_epoch();
@@ -294,9 +255,6 @@ impl App {
             .update_compaction_message(&id, &summary)
             .is_ok_and(|n| n == 0)
         {
-            // Anchor: the in-memory row we just placed (viewing the session),
-            // else the boundary message's timestamp straight from the db
-            // (job finished after the user switched away), else now.
             let anchor = in_view
                 .then(|| {
                     self.messages
@@ -345,12 +303,6 @@ impl App {
         status
     }
 
-    /// Sessions compacted before compaction rows existed (or loaded from a
-    /// db written by such a version) carry the digest only in
-    /// `compact_summary`. Surface it as a transcript row at the boundary,
-    /// exactly like a fresh compaction would, so the digest is never hidden
-    /// behind the context popup. Idempotent: no-ops once a compaction row
-    /// exists. Called after every session load.
     pub fn backfill_compaction_row(&mut self) {
         let Some(s) = self.session.as_ref() else {
             return;
@@ -395,9 +347,6 @@ impl App {
         self.push_history_invalidated();
     }
 
-    /// System/memory/skills/tools/conversation token estimate for the context breakdown
-    /// popup (Ctrl+G). Each bucket is a ~4-chars/token estimate, same method
-    /// `context_used` falls back to, so the parts add up to (roughly) the whole.
     pub fn context_breakdown(&self) -> ContextBreakdown {
         let mut instructions_chars = self.resolved_base_system_prompt().chars().count()
             + self.resolved_system_prompt_overlay().chars().count()
@@ -452,9 +401,7 @@ impl App {
         }
     }
 
-    /// Path to a temp file holding the active session's compaction digest, so
-    /// it can be viewed/edited in `$EDITOR` from the context popup (Ctrl+G, `v`).
-    /// `None` if the session hasn't been compacted yet.
+    /// Write the session's compaction digest to a temporary file for editing.
     pub fn compact_summary_path(&self) -> Option<std::path::PathBuf> {
         let session = self.session.as_ref()?;
         let summary = session.compact_summary.as_ref()?;
@@ -463,9 +410,6 @@ impl App {
         Some(path)
     }
 
-    /// Read `path` (from `compact_summary_path`) back after `$EDITOR` closes —
-    /// hand-edits to the digest persist (db + in-memory), same as any other
-    /// file-backed edit in the app.
     pub fn reload_compact_summary(&mut self, path: &std::path::Path) -> Result<()> {
         let Some(session) = self.session.as_ref() else {
             return Ok(());
@@ -493,8 +437,6 @@ impl App {
     }
 }
 
-/// End of the compactable prefix, keeping the requested recent user turns
-/// intact. At least one new user turn must precede the retained tail.
 fn compaction_end(messages: &[Message], through: usize, tail_turns: u32) -> usize {
     if tail_turns == 0 {
         return messages.len();
@@ -532,10 +474,6 @@ fn compaction_prompt(prior_summary: Option<&str>, tail: &str, itemized: bool) ->
     prompt
 }
 
-/// The message tail handed to the compaction model: everything since the
-/// last digest except rows that must never reach a model via
-/// `App::excluded_from_model_history`. Tool-call rows are retained so a
-/// compaction cannot silently erase the model's tool findings.
 fn compaction_tail(messages: &[Message], through: usize) -> String {
     messages[through.min(messages.len())..]
         .iter()
@@ -574,7 +512,6 @@ mod tests {
         App::new(db, Some("k"), Space { root })
     }
 
-    /// A fresh session with `n` user/assistant pairs loaded as the active one.
     fn app_with_session(n: usize) -> (App, String) {
         let mut a = test_app();
         let sid =
@@ -685,7 +622,7 @@ mod tests {
             .position(|m| m.role == "user" && m.content == "u3")
             .unwrap();
         let end = compaction_end(&a.messages, 0, a.experiments.compaction_tail_turns);
-        assert_eq!(end, 12); // user + two tool calls + assistant per turn
+        assert_eq!(end, 12);
         assert_eq!(a.messages[end].role, "user");
         assert_eq!(a.messages[end].content, "u3");
         assert_eq!(a.messages[end - 1].role, "assistant");
@@ -839,7 +776,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn budget_and_percentage_triggers_are_independent() {
-        // No await: spawned provider tasks are never polled by this runtime.
+        // Do not yield: polling the spawned provider tasks would access the network.
         for (limit, threshold, budget, used, triggers) in [
             (None, 60, 40_000, 40_000, true),
             (None, 0, 40_000, 40_000, true),
@@ -907,20 +844,15 @@ mod tests {
 
         a.on_compact_result(Some((sid.clone(), "digest text".to_string(), 3, 42)));
 
-        // The digest row sits at the boundary: after the 3 compacted
-        // messages, before anything the user says next.
         assert_eq!(a.messages.len(), 5);
         assert_eq!(a.messages[3].role, "compaction");
         assert_eq!(a.messages[3].content, "digest text");
-        assert_eq!(a.messages[2].content, "u1"); // last compacted message
-        // Session state applied.
+        assert_eq!(a.messages[2].content, "u1");
         assert_eq!(a.session.as_ref().unwrap().compact_through, 3);
         assert_eq!(
             a.session.as_ref().unwrap().compact_summary.as_deref(),
             Some("digest text")
         );
-        // Persisted, anchored to the last compacted message's timestamp so
-        // reloads keep the same position.
         let stored = a.db.load_messages(&sid).unwrap();
         assert_eq!(stored.len(), 5);
         let digest = stored.iter().find(|m| m.role == "compaction").unwrap();
@@ -940,7 +872,6 @@ mod tests {
             1
         );
 
-        // Second compaction folds the rest in: same single row, new text.
         a.on_compact_result(Some((sid.clone(), "digest two".to_string(), 10, 60)));
         assert_eq!(
             a.messages.iter().filter(|m| m.role == "compaction").count(),
@@ -963,8 +894,6 @@ mod tests {
     #[test]
     fn backfill_surfaces_a_legacy_digest_at_the_boundary_and_is_idempotent() {
         let (mut a, sid) = app_with_session(1);
-        // Legacy compaction: digest only in the session row, no transcript
-        // message — the state of sessions compacted before digests rendered.
         a.db.set_compaction(&sid, "legacy digest", 2).unwrap();
         a.session = a.db.get_session(&sid).unwrap();
 
@@ -974,7 +903,6 @@ mod tests {
         assert_eq!(a.messages[2].content, "legacy digest");
         assert_eq!(a.db.load_messages(&sid).unwrap().len(), 3);
 
-        // A second backfill (another session load) adds nothing.
         a.backfill_compaction_row();
         assert_eq!(a.messages.len(), 3);
         assert_eq!(a.db.load_messages(&sid).unwrap().len(), 3);
@@ -987,8 +915,6 @@ mod tests {
         a.session = a.db.get_session(&sid).unwrap();
         a.backfill_compaction_row();
 
-        // The visible legacy digest is not new conversation content. It must
-        // not cause a second compaction request every time the session opens.
         a.force_compact();
         assert!(a.compaction.rx.is_none());
         assert!(a.last_status().contains("nothing new"));
@@ -1062,10 +988,6 @@ mod tests {
         let tail = compaction_tail(&msgs, 0);
         assert!(tail.contains("what should we research?"), "{tail}");
         assert!(tail.contains("the final question"), "{tail}");
-        // Background rows, gate replies, errors, links, the digest row itself
-        // (already fed via compact_summary), and persona round replies never
-        // enter a digest — the compacted history would otherwise leak
-        // contextless "drop Q2" to later models.
         for banned in [
             "planner: working",
             "Depth?",
@@ -1085,14 +1007,12 @@ mod tests {
             tail.contains("important finding"),
             "tool findings must survive: {tail}"
         );
-        // The compaction boundary still applies.
         let partial = compaction_tail(&msgs, 1);
         assert!(!partial.contains("what should we research?"), "{partial}");
         assert!(partial.contains("the final question"), "{partial}");
     }
 }
 
-/// The first line of an error, capped for the status bar.
 fn first_line(text: &str) -> String {
     let line = text.lines().next().unwrap_or_default();
     if line.chars().count() > 160 {

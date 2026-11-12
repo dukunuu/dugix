@@ -1,6 +1,3 @@
-// Casts here are on bounded values: token counts, byte sizes, and
-// selection indices — never on unbounded input. JSON-derived indices in
-// provider/tools go through try_from instead.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -42,8 +39,6 @@ use super::{
     model_needs_cache_breakpoints, parse_topic,
 };
 
-/// The Mermaid kinds the prompt advertises; the TUI tests that each one renders
-/// so the prompt and renderer cannot drift.
 pub const MERMAID_PREVIEW_EXAMPLES: &[&str] = &[
     "flowchart LR\nA-->B",
     "sequenceDiagram\nAlice->>Bob: Hello",
@@ -51,8 +46,7 @@ pub const MERMAID_PREVIEW_EXAMPLES: &[&str] = &[
 ];
 
 impl App {
-    /// Send one chat message: validation, session auto-creation, persistence.
-    #[allow(clippy::too_many_lines)] // validation, session creation, ordered skill/user persistence
+    #[allow(clippy::too_many_lines)]
     pub fn send_message(&mut self, text: String) -> Result<()> {
         if let Some(session) = self.session.as_ref()
             && let Some(task) = self.chat_task_for_session(&session.id)
@@ -77,8 +71,6 @@ impl App {
             self.push_composer_set(&text);
             return Ok(());
         }
-        // A new turn starts a fresh tally: the rate beside the context window
-        // describes this answer, not the previous one.
         self.meter.turn_cache = super::CacheTally::default();
         let Some(model) = self.current_model.clone() else {
             self.push_status("pick a model first with /model".to_string());
@@ -138,9 +130,6 @@ impl App {
         self.start_stream()
     }
 
-    /// The active session's id, creating it (titled from `text`) when none is
-    /// open. Refresh the memory snapshot here as well as in `/new` so edits
-    /// made while no session was open are picked up.
     pub(super) fn ensure_session(&mut self, text: &str, model: String) -> Result<String> {
         if let Some(session) = &self.session {
             return Ok(session.id.clone());
@@ -179,7 +168,6 @@ impl App {
         Ok(id)
     }
 
-    /// Regenerate the last reply, retaining its user message and rejecting its trace steps.
     pub fn retry_last_reply(&mut self) -> Result<()> {
         let Some(session) = self.session.as_ref() else {
             self.push_status("nothing to retry — no active session");
@@ -242,7 +230,6 @@ impl App {
         Ok(())
     }
 
-    /// Restore the files the last agent turn changed, unless changed since.
     pub fn undo_last_turn(&mut self) -> Result<()> {
         if self.is_streaming() {
             self.push_status("wait — response still streaming");
@@ -264,8 +251,7 @@ impl App {
         Ok(())
     }
 
-    /// Build history and fire one independently-routed streaming request.
-    #[allow(clippy::too_many_lines)] // Request/profile setup and independent task registration.
+    #[allow(clippy::too_many_lines)]
     pub fn start_stream(&mut self) -> Result<()> {
         if let Some(session) = &self.session {
             self.ui_repair.messages.remove(&session.id);
@@ -280,9 +266,7 @@ impl App {
             return Ok(());
         };
         let history = self.build_history();
-        // Catalog capabilities can change underneath a persisted preference.
-        // Keep the request, in-memory badge, and database in sync rather than
-        // silently omitting a stale value while the picker still shows it.
+        // Catalog changes can invalidate persisted reasoning preferences.
         let stored_effort = self.reasoning.get(&model).cloned();
         let (reasoning_effort, reasoning_warning) = match stored_effort {
             Some(effort) if self.effort_accepted(&model, &effort) => (Some(effort), None),
@@ -383,13 +367,10 @@ impl App {
         self.spinner_frame = 0;
         self.thinking_idx = thinking_idx;
         self.spinner_color = spinner_color;
-        // New content is about to arrive below the conversation: the view
-        // resets its scroll/pinning baseline (AppEvent::ViewportReset).
         self.push_viewport_reset();
         Ok(())
     }
 
-    /// Exact tool definitions sent by the next chat request.
     #[must_use]
     pub fn chat_tool_defs(&self) -> Vec<crate::provider::ToolDef> {
         if self.model_profile().compact_tools {
@@ -399,7 +380,6 @@ impl App {
         }
     }
 
-    /// Build the main chat's parameters without starting a provider request.
     pub(super) fn chat_params(
         &mut self,
         reasoning_effort: Option<String>,
@@ -434,8 +414,6 @@ impl App {
         params
     }
 
-    /// Compatibility entry point for tests and synchronous callers. Runtime
-    /// events use `on_chat_event`, which always includes the task id.
     #[cfg(test)]
     pub fn on_stream_event(&mut self, ev: StreamEvent) -> Result<()> {
         let task_id = self
@@ -484,7 +462,7 @@ impl App {
         Ok(())
     }
 
-    #[allow(clippy::too_many_lines)] // one match per stream event; arms are short
+    #[allow(clippy::too_many_lines)]
     pub fn on_chat_event(&mut self, task_id: super::ChatTaskId, ev: StreamEvent) -> Result<()> {
         match ev {
             StreamEvent::Token(t) => {
@@ -498,15 +476,7 @@ impl App {
                 }
             }
             StreamEvent::Usage(u) => {
-                // The provider emits one Usage event per underlying API
-                // request, including each tool-loop round. Keep every real
-                // accounting event as its own row; overwriting one row for
-                // the whole top-level chat turn made a long tool loop look as
-                // if prompt tokens had gone down or vanished.
-                //
-                // OpenCode Zen may follow a real usage event with a
-                // cost-only event. That event belongs to the most recent row
-                // and is merged in place rather than logged separately.
+                // OpenCode Zen's trailing cost-only event revises the latest request's usage row.
                 let has_tokens = u.prompt_tokens + u.completion_tokens > 0;
                 if has_tokens {
                     self.meter.last_cache_rate = u.cache_hit_rate();
@@ -516,8 +486,7 @@ impl App {
                     return Ok(());
                 };
                 let merged = if has_tokens {
-                    // A real event starts a new API-request record. Do not
-                    // carry a previous request's provider cost into it.
+                    // A new API request must not inherit the previous request's provider cost.
                     u
                 } else {
                     task.usage.map_or(u, |prev| Usage {
@@ -533,8 +502,6 @@ impl App {
                         .as_ref()
                         .is_some_and(|session| session.id == session_id)
                 {
-                    // Every request of a tool loop updates the bar, not
-                    // just the turn's last one.
                     let total = if u.total_tokens > 0 {
                         u.total_tokens
                     } else {
@@ -553,10 +520,7 @@ impl App {
                 let billable = merged.prompt_tokens > 0
                     || merged.completion_tokens > 0
                     || merged.cost.is_some();
-                // Provider-reported cost wins; otherwise estimate from
-                // cache-aware catalog rates (None when unknown).
-                // Non-OpenRouter backends price via their OpenRouter
-                // catalog twin (see `Db::model_price`).
+                // Other backends use their OpenRouter catalog twin when provider cost is absent.
                 let cost_is_provider = merged.cost.is_some();
                 let cost = merged.cost.or_else(|| {
                     billable
@@ -571,7 +535,6 @@ impl App {
                         })
                         .flatten()
                 });
-                // The reply shows the whole turn, every tool-loop round included.
                 self.turn_usage
                     .entry(task_id)
                     .or_default()
@@ -651,12 +614,7 @@ impl App {
                 {
                     let _ = self.db.add_usage_tool(id, &name);
                 }
-                // What streamed before this round's calls now lives in the
-                // round's first tool row, so the transcript reads thinking →
-                // calls → thinking → answer, and the final reply carries only
-                // what came after the last round. A backend that streams
-                // reasoning without attaching it to the call keeps it as
-                // display-only `thinking` (never replayed to the model).
+                // Unattached provider reasoning is display-only and must not be replayed.
                 let streamed_thinking = std::mem::take(&mut task.thinking);
                 task.buffer.clear();
                 let thinking = (reasoning.is_none() && !streamed_thinking.trim().is_empty())
@@ -703,17 +661,13 @@ impl App {
                         serde_json::from_str::<serde_json::Value>(&arguments).unwrap_or_default();
                     let arg = |key: &str| args[key].as_str().unwrap_or_default().trim().to_string();
                     if name == "propose_command" {
-                        // The status line is the view's wake-up to take it.
                         self.approvals.proposed_command = Some(format!("!{}", arg("cmd")));
                         self.push_status(arg("reason"));
                     } else {
-                        // Applied when the reply finishes: never swap the toolbox mid-turn.
+                        // Never swap the toolbox mid-turn.
                         self.queued_workspace = Some((task_id, arg("root")));
                     }
                 }
-                // Generated images land on disk but aren't indexed until
-                // rescan_files picks them up. Without this, they'd be missing
-                // from files_cache and never OCR'd for descriptive naming.
                 let media_generated = matches!(
                     name.as_str(),
                     "generate_image" | "generate_video" | "video_transform"
@@ -746,8 +700,6 @@ impl App {
         Ok(())
     }
 
-    /// Cancel one in-flight chat task by id (kills any in-flight request and
-    /// tool loop) and keep whatever text already arrived.
     pub fn cancel_chat_task(&mut self, task_id: super::ChatTaskId) -> Result<()> {
         if let Some(task) = self.chat_tasks.remove(&task_id) {
             task.abort.abort();
@@ -756,8 +708,6 @@ impl App {
         Ok(())
     }
 
-    /// Esc while a response streams: abort the background chat task (kills any
-    /// in-flight request and tool loop) and keep whatever text already arrived.
     pub fn stop_stream(&mut self) -> Result<()> {
         let Some(task_id) = self.active_chat_task().map(|task| task.id) else {
             return Ok(());
@@ -843,7 +793,6 @@ impl App {
         result
     }
 
-    // Long by design (long state-transition fn).
     #[allow(clippy::too_many_lines)]
     fn persist_chat_task_state(
         &mut self,
@@ -888,18 +837,12 @@ impl App {
             });
             return Ok(());
         }
-        // Some reasoning models (routed without the separate `reasoning` delta
-        // field) inline their thinking as `<think>...</think>` in `content`
-        // itself. Pull that out so the stored/displayed/copied message is just
-        // the actual answer, not the thinking — same treatment as the explicit
-        // reasoning channel above.
+        // Some providers inline reasoning tags in content instead of sending reasoning deltas.
         let viewing = self
             .session
             .as_ref()
             .is_some_and(|session| session.id == task.session_id);
         let model = Some(task.model.clone());
-        // The provider's output tokens over every request of the turn (tool
-        // calls included); without usage, a ~4-chars/token estimate of the text.
         let usage = task.usage;
         let tokens = Some(if usage.is_some() {
             turn.output_tokens as i64
@@ -907,24 +850,18 @@ impl App {
             buf.chars().count().div_ceil(4) as i64
         });
         if viewing && let Some(u) = usage {
-            // Some providers omit total; derive it from prompt + completion.
+            // Some providers omit the total token count.
             let total = if u.total_tokens > 0 {
                 u.total_tokens
             } else {
                 u.prompt_tokens + u.completion_tokens
             };
-            // `observe_context` already took this task's counts as they
-            // arrived; only fill in when it never saw one.
             if self.meter.basis.is_none_or(|basis| basis.task != task.id) {
                 self.meter.total = Some(total);
             }
         }
         let secs = Some(task.started.elapsed().as_secs_f64());
-        // Every request's cost as the Usage events logged it: the provider's
-        // exact charge, otherwise the cache-aware catalog estimate.
         let cost = turn.cost();
-        // The reply's cost is the whole turn's, its sub-agents included (each
-        // priced under its own model; their rows are logged as `subagent`).
         let cost = match (cost, helpers_cost) {
             (Some(own), Some(helpers)) => Some(own + helpers),
             (own, helpers) => own.or(helpers),
@@ -980,8 +917,7 @@ impl App {
                 persona: None,
                 created_at,
             });
-            // These jobs still use active-session state, so only launch them
-            // when the task's origin is the session currently being viewed.
+            // These jobs read active-session state, not the completed task's origin.
             if !task.incognito {
                 self.maybe_generate_title();
             }
@@ -1064,8 +1000,6 @@ impl App {
         Ok(())
     }
 
-    /// After the first exchange of a session, ask the model for a short topic and
-    /// slug in the background. Runs once per session (guarded by `slug.is_none()`).
     pub fn maybe_generate_title(&mut self) {
         let Some(session) = self.session.as_ref() else {
             return;
@@ -1078,9 +1012,8 @@ impl App {
             return;
         };
         if session.slug.is_some() {
-            return; // already named
+            return;
         }
-        // Build a compact transcript of the conversation so far.
         let convo: String = self
             .messages
             .iter()
@@ -1109,7 +1042,6 @@ impl App {
         });
     }
 
-    /// Apply a generated topic/slug to the matching session (in memory + db).
     pub fn on_title_result(&mut self, result: Option<(String, String, String)>) {
         self.title_rx = None;
         let Some((id, topic, slug)) = result else {
@@ -1126,10 +1058,7 @@ impl App {
         }
     }
 
-    /// Ctrl+O: navigate to the session linked in a `session_link` message
-    /// under the text selection. Expects the message content's first line to
-    /// be the target session id. `owner` is the message index at the
-    /// selection start.
+    /// Follow a session link at the selected transcript message index.
     pub fn open_session_link(&mut self, owner: Option<usize>) {
         let Some(msg) = owner.and_then(|i| self.messages.get(i)) else {
             self.push_status(
@@ -1156,10 +1085,7 @@ impl App {
         }
     }
 
-    /// Pin or discard the `[n]` source under the current history selection
-    /// (same selection→citation resolution as `open_citation_under_selection`).
-    /// Flags are keyed by the message's normalized URL, session-scoped.
-    /// `selected`/`owner` come from the view's `HistorySel` state.
+    /// Pin or discard a citation selected in the transcript.
     pub fn flag_source_under_selection(
         &mut self,
         flag: Option<&str>,

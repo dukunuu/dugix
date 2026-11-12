@@ -1,4 +1,4 @@
-//! Embedding selection and capability probing on the existing embed channel.
+//! Embedding selection and capability probing.
 
 use crate::provider::embedding::{Embedder, discover, is_gemma};
 use crate::provider::local::LocalRuntime;
@@ -11,9 +11,7 @@ impl App {
         if model.is_empty() {
             return None;
         }
-        // EmbeddingGemma 2 is served through Ollama's native API. A local
-        // choice never falls through to a cloud backend: if the endpoint is
-        // invalid there is simply no embedder.
+        // A local selection must never send content to a cloud fallback.
         if let Some(raw) = model.strip_prefix("local:")
             && is_gemma(raw)
             && self
@@ -42,9 +40,7 @@ impl App {
         )
     }
 
-    /// Forget the probed runtime (settings changed, or a fresh scan wants to
-    /// re-read the model digest and capabilities). Cached vectors stay: they
-    /// are dropped lazily when the new identity differs.
+    /// Invalidate the runtime probe without discarding cached vectors.
     pub fn reset_embedding_backend(&mut self) {
         self.index.embed_rx = None;
         self.index.embedding_backend = None;
@@ -61,11 +57,7 @@ impl App {
             .map_or("http://127.0.0.1:11434", |c| c.endpoint())
     }
 
-    /// Pick the embedding model automatically, without blocking startup or
-    /// sending file content: local `EmbeddingGemma` 2 when Ollama has it
-    /// installed, otherwise the backend default chosen at construction
-    /// (`default_embedding_model`, empty where a backend has none, which leaves
-    /// keyword search only). There is no setting to override this.
+    /// Discover local embeddings in the background without sending file content.
     pub fn discover_embeddings(&mut self) {
         if self.index.embed_rx.is_some()
             || self
@@ -118,7 +110,6 @@ impl App {
                 self.index.embedding_model.clone_from(model);
                 self.index.embedding_backend = Some(embedder.clone());
             } else {
-                // No local candidate: keep the previous default unchanged.
                 self.start_embedding();
                 return;
             }
@@ -135,9 +126,7 @@ impl App {
                 }
                 self.push_status(self.index.embedding_status.clone());
                 self.refresh_toolbox();
-                // The identity is known now: chat backfill need not wait a tick.
                 self.index.next_chat_index = std::time::Instant::now();
-                // Images held during the probe can now use the actual capability.
                 self.rescan_files_with(&crate::extract::ExtractConfig::load());
             }
             Err(error) => {

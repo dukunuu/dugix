@@ -598,7 +598,6 @@ fn model_profile_caps_local_tool_replay_without_changing_hosted_or_stored_result
     }
 }
 
-/// A throwaway space dir under the OS temp dir, unique per test.
 fn test_space() -> Space {
     Space {
         root: std::env::temp_dir().join(format!("nexus-test-{}", uuid::Uuid::new_v4())),
@@ -786,8 +785,7 @@ async fn local_backend_discovers_models_and_uses_the_session_model() {
 
 #[test]
 fn bare_local_command_reports_the_current_runtime() {
-    // The status path is the headless half of `/local`; applying a spec
-    // writes the user's real config file, so it stays out of the suite.
+    // Applying a runtime spec would write the user's real config file.
     let mut app = App::new(Db::open_in_memory().unwrap(), None, test_space());
     let last_status = |app: &mut App| {
         app.pending_events
@@ -824,8 +822,7 @@ fn bare_local_command_reports_the_current_runtime() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn local_prompt_budget_warning_is_advisory_once_per_epoch_and_never_hosted() {
-    // Never yield: abort each request before the single-threaded runtime can
-    // poll its provider task, so this exercises start_stream without network.
+    // Do not yield: polling the spawned provider tasks would access the network.
     for (backend, context_length, warns) in [
         (BackendTag::Local, Some(2048), true),
         (BackendTag::OpenRouter, Some(2048), false),
@@ -928,8 +925,6 @@ fn local_survey_reports_liveness_and_warns_without_stopping_anything() {
             .collect::<Vec<_>>()
     };
 
-    // A survey the user asked for reports a line per runtime, and warns about
-    // the one over budget. (Boot queues a "no API key" line first.)
     let _ = drain(&mut app);
     app.local.status_announce = true;
     app.on_local_status(Some(statuses(true)));
@@ -939,12 +934,9 @@ fn local_survey_reports_liveness_and_warns_without_stopping_anything() {
     let warning = lines.last().unwrap();
     assert!(warning.contains("over the 2.9 GB budget"), "{warning}");
     assert!(warning.contains("/local stop edge0"), "{warning}");
-    // Advisory only: warning about a server does not stop it.
     assert!(!app.local.servers.manages(LocalRuntime::Edge0));
     assert_eq!(app.local.status.len(), 2);
 
-    // A background refresh (the picker opening) caches without announcing;
-    // nothing is over budget, so it says nothing at all.
     app.on_local_status(Some(statuses(false)));
     assert!(drain(&mut app).is_empty());
     assert!(app.local.status_rx.is_none());
@@ -968,7 +960,6 @@ fn stopping_a_server_nexus_did_not_start_is_refused() {
     app.manage_local_server("stop", "edge0");
     let status = last_status(&mut app);
     assert!(status.contains("did not start"), "{status}");
-    // A runtime that is off and unnamed cannot be started by guesswork.
     app.manage_local_server("start", "");
     let status = last_status(&mut app);
     assert!(status.contains("local inference is off"), "{status}");
@@ -980,7 +971,6 @@ fn parse_topic_extracts_and_slugifies() {
     let (t, s) = parse_topic(r#"{"topic": "Rust Async Runtimes", "id": "rust async!"}"#).unwrap();
     assert_eq!(t, "Rust Async Runtimes");
     assert_eq!(s, "rust-async");
-    // Tolerates surrounding prose / fences.
     let (t, s) =
         parse_topic("sure:\n```json\n{\"topic\":\"Hi There\",\"id\":\"hi\"}\n```").unwrap();
     assert_eq!(t, "Hi There");
@@ -1314,7 +1304,6 @@ fn message_without_model_is_rejected() {
     })
     .unwrap();
     assert!(a.session.is_none());
-    // The composer restore is an event — the view re-applies it.
     let (sets, status) = a.drain_ui_events();
     assert_eq!(sets, vec!["hello".to_string()]);
     assert!(status.contains("pick a model"));
@@ -1769,7 +1758,6 @@ async fn stream_is_tagged_with_its_origin_session() {
     );
     assert!(a.viewing_stream());
 
-    // Switch to a blank chat: still streaming, but not viewing it.
     a.new_session();
     assert!(a.is_streaming());
     assert!(!a.viewing_stream());
@@ -1785,13 +1773,12 @@ async fn background_finish_lands_in_origin_session_and_notifies() {
     .unwrap();
     let origin = a.session.as_ref().unwrap().id.clone();
 
-    a.new_session(); // switch away mid-stream
+    a.new_session();
     a.on_stream_event(crate::provider::StreamEvent::Token("late answer".into()))
         .unwrap();
     a.on_stream_event(crate::provider::StreamEvent::Done)
         .unwrap();
 
-    // Landed in the origin session, not the (blank) active one.
     assert!(a.messages.is_empty());
     let stored = a.db.load_messages(&origin).unwrap();
     assert_eq!(stored.last().unwrap().role, "assistant");
@@ -1822,7 +1809,6 @@ async fn each_tool_round_keeps_its_own_thinking_and_the_reply_only_the_last() {
             arguments: "{}".into(),
             result: "ok".into(),
         },
-        // A backend that streams reasoning without attaching it to the call.
         StreamEvent::Reasoning("plan B".into()),
         StreamEvent::ToolCall {
             id: "call_1".into(),
@@ -1879,7 +1865,7 @@ async fn background_tool_call_persists_to_origin_session_only() {
     })
     .unwrap();
 
-    assert!(a.messages.is_empty()); // active transcript untouched
+    assert!(a.messages.is_empty());
     let stored = a.db.load_messages(&origin).unwrap();
     assert_eq!(stored.last().unwrap().role, "tool_call");
 }
@@ -1922,12 +1908,10 @@ async fn second_send_in_the_same_session_is_rejected() {
 #[tokio::test]
 async fn update_check_notifies_only_for_newer_versions() {
     let mut a = app_with_key();
-    // Newer published version -> status + notification.
     a.on_update_check(Some("99.0.0".into()));
     let (_, status) = a.drain_ui_events();
     assert!(status.contains("run `nexus update`"));
     assert_eq!(a.notifications.len(), 1);
-    // Same/older version or a failed check -> silent.
     a.on_update_check(Some("0.0.1".into()));
     a.on_update_check(None);
     assert_eq!(a.notifications.len(), 1, "only newer versions notify");
@@ -1986,9 +1970,6 @@ async fn concurrent_chat_tasks_route_results_to_their_origin_sessions() {
 
 #[tokio::test]
 async fn opencode_split_usage_merges_cost_into_one_row() {
-    // OpenCode Zen sends accounting as two events: the finish chunk carries
-    // real usage, then a trailing chunk carries only the provider cost.
-    // Both must merge into a single usage_log row — not two.
     let mut a = app_with_key();
     a.current_model = Some("go:deepseek-v4-pro".into());
     a.execute(AppCommand::Send {
@@ -2069,9 +2050,6 @@ async fn each_real_api_usage_event_gets_its_own_row() {
 
 #[tokio::test]
 async fn cost_only_usage_event_is_logged_with_zero_tokens() {
-    // OpenCode Zen free models never report usage — the trailing cost chunk
-    // is the only accounting. It must still land in the log (provider cost
-    // beats the catalog's unknown price) and not clobber the cache rate.
     let mut a = app_with_key();
     a.current_model = Some("deepseek-v4-flash-free".into());
     a.execute(AppCommand::Send {
@@ -2179,7 +2157,7 @@ async fn opening_a_session_clears_its_unread_marker() {
     a.switch_to_session_by_id(&origin).unwrap();
     assert_eq!(a.session.as_ref().unwrap().id, origin);
     assert!(!a.unread.contains(&origin));
-    assert_eq!(a.messages.last().unwrap().content, "done"); // reloaded from db
+    assert_eq!(a.messages.last().unwrap().content, "done");
 }
 
 #[tokio::test]
@@ -2190,9 +2168,9 @@ async fn welcome_screen_shows_while_a_stream_runs_elsewhere() {
         text: "hello".to_string(),
     })
     .unwrap();
-    assert!(!a.is_welcome()); // viewing the streaming session
+    assert!(!a.is_welcome());
     a.new_session();
-    assert!(a.is_welcome()); // blank chat, stream backgrounded
+    assert!(a.is_welcome());
 }
 
 #[tokio::test]
@@ -2210,7 +2188,6 @@ async fn esc_stop_keeps_partial_response() {
     assert!(a.chat_tasks.is_empty());
     assert_eq!(a.messages.last().unwrap().content, "partial answer");
     assert_eq!(a.last_status(), "response stopped");
-    // No-op when nothing streams.
     a.stop_stream().unwrap();
 }
 
@@ -2242,14 +2219,10 @@ fn effort_accepted_follows_the_models_own_list() {
             pricing: None,
         },
     ];
-    // Claude's own list: minimal/low/medium/high.
     assert!(a.effort_accepted("claude", "minimal"));
     assert!(a.effort_accepted("claude", "high"));
-    assert!(!a.effort_accepted("claude", "max")); // not in the accepted set
-    // No reasoning mode → nothing is accepted.
+    assert!(!a.effort_accepted("claude", "max"));
     assert!(!a.effort_accepted("dumb", "low"));
-    // Unknown model → accept anything, so a stored value is never silently
-    // dropped just because the catalog isn't loaded.
     assert!(a.effort_accepted("not-in-catalog", "high"));
 }
 
@@ -2307,10 +2280,10 @@ fn settings_groups_cover_every_field_exactly_once() {
 fn base_system_prompt_is_always_present_and_resolves_verbosity() {
     let a = app_with_key();
     assert!(!a.base_system_prompt.is_empty());
-    assert!(a.base_system_prompt.contains("{{verbosity}}")); // placeholder present in the raw file
+    assert!(a.base_system_prompt.contains("{{verbosity}}"));
     let resolved = a.system_prompt();
-    assert!(!resolved.contains("{{verbosity}}")); // placeholder gets swapped
-    assert!(resolved.contains(verbosity_clause("concise"))); // default level
+    assert!(!resolved.contains("{{verbosity}}"));
+    assert!(resolved.contains(verbosity_clause("concise")));
 }
 
 #[test]
@@ -2355,7 +2328,6 @@ fn system_prompt_is_static_first() {
     ]
     .map(|text| prompt.find(text).unwrap());
     assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
-    // The date is the very last thing the model reads.
     assert!(!prompt[positions[positions.len() - 1]..].contains("\n\n## "));
 }
 
@@ -2459,7 +2431,7 @@ fn last_used_model_restored_on_startup() {
     let db = Db::open_in_memory().unwrap();
     db.mark_model_used("a/one").unwrap();
     std::thread::sleep(std::time::Duration::from_millis(2));
-    db.mark_model_used("b/two").unwrap(); // more recent
+    db.mark_model_used("b/two").unwrap();
     let a = App::new(db, Some("k"), test_space());
     assert_eq!(a.current_model.as_deref(), Some("b/two"));
 }
@@ -2467,15 +2439,15 @@ fn last_used_model_restored_on_startup() {
 #[test]
 fn context_used_and_limit() {
     let mut a = app_with_key();
-    a.skills.clear(); // isolate this test from installed skills
-    a.base_system_prompt = String::new(); // isolate from the base system prompt
+    a.skills.clear();
+    a.base_system_prompt = String::new();
     a.models[0].context_length = Some(1000);
     a.current_model = Some("a/one".into());
     assert_eq!(a.context_limit(), Some(1000));
     let prompt_only = a.context_used();
     a.messages.push(Message {
         role: "user".into(),
-        content: "x".repeat(40), // ~10 tokens
+        content: "x".repeat(40),
         model: None,
         reasoning: None,
         tokens: None,
@@ -2508,14 +2480,12 @@ fn context_bar_adds_only_what_changed_since_the_last_exact_count() {
     let mut a = app_with_key();
     a.skills.clear();
     a.base_system_prompt = String::new();
-    // JSON-heavy rows the ~4 chars/token rule overestimates.
     a.messages
         .push(context_row("user", "\\\"x\\\" ".repeat(20_000)));
     a.observe_context(1, 30_000);
     assert_eq!(a.context_used(), 30_000, "idle with nothing new: exact");
 
     a.messages.push(context_row("assistant", "y".repeat(400)));
-    // 400 chars ≈ 100 estimated tokens, scaled by the learned ratio.
     let ratio = a.meter.ratio.unwrap();
     assert_eq!(a.context_used(), 30_000 + (100.0 * ratio).round() as u64);
     assert!(
@@ -2531,11 +2501,10 @@ fn smaller_count_inside_a_turn_is_a_sub_agent_and_does_not_move_the_bar() {
     a.base_system_prompt = String::new();
     a.messages.push(context_row("user", "x".repeat(4_000)));
     a.observe_context(7, 50_000);
-    a.observe_context(7, 3_000); // a `task` sub-agent's own request
+    a.observe_context(7, 3_000);
     assert_eq!(a.meter.total, Some(50_000));
     a.observe_context(7, 51_000);
     assert_eq!(a.meter.total, Some(51_000));
-    // A new turn's first count is always taken, even if smaller (/retry).
     a.observe_context(8, 45_000);
     assert_eq!(a.meter.total, Some(45_000));
 }
@@ -2545,10 +2514,9 @@ fn estimate_without_an_exact_count_uses_the_learned_ratio() {
     let mut a = app_with_key();
     a.skills.clear();
     a.base_system_prompt = String::new();
-    a.messages.push(context_row("user", "x".repeat(4_000))); // ~1,000 estimated
+    a.messages.push(context_row("user", "x".repeat(4_000)));
     a.observe_context(1, 1_500);
     assert_eq!(a.context_used(), 1_500);
-    // A prompt-cache epoch boundary drops the exact count.
     a.meter.total = None;
     assert_eq!(a.context_used(), 1_500, "no jump back to the raw estimate");
 }
@@ -2591,8 +2559,8 @@ async fn streaming_context_estimate_does_not_shrink_below_last_exact_total() {
 #[test]
 fn compaction_narrows_effective_messages_and_context_used() {
     let mut a = app_with_key();
-    a.skills.clear(); // isolate this test from installed skills
-    a.base_system_prompt = String::new(); // isolate from the base system prompt
+    a.skills.clear();
+    a.base_system_prompt = String::new();
     a.models[0].context_length = Some(1000);
     a.current_model = Some("a/one".into());
     let prompt_only = a.context_used();
@@ -2601,7 +2569,7 @@ fn compaction_narrows_effective_messages_and_context_used() {
     for i in 0..4 {
         a.messages.push(Message {
             role: if i % 2 == 0 { "user" } else { "assistant" }.into(),
-            content: "x".repeat(40), // ~10 tokens each
+            content: "x".repeat(40),
             model: None,
             reasoning: None,
             tokens: None,
@@ -2612,13 +2580,11 @@ fn compaction_narrows_effective_messages_and_context_used() {
             created_at: None,
         });
     }
-    s.compact_summary = Some("y".repeat(80)); // ~20 tokens
-    s.compact_through = 2; // first two raw messages folded away
+    s.compact_summary = Some("y".repeat(80));
+    s.compact_through = 2;
     a.session = Some(s);
 
     assert_eq!(a.effective_messages().len(), 2);
-    // 20 (summary) + 2*10 (tail) = 40 tokens on top of the system prompt's
-    // own cost; the two compacted-away messages must NOT be counted.
     assert_eq!(a.context_used(), prompt_only + 40);
 }
 
@@ -2631,7 +2597,7 @@ fn on_compact_result_persists_and_clears_stale_total() {
     let s = a.db.create_session("t", "a/one", &space, "chat").unwrap();
     let sid = s.id.clone();
     a.session = Some(s);
-    a.meter.total = Some(999); // stale exact usage from before compaction
+    a.meter.total = Some(999);
 
     a.on_compact_result(Some((sid.clone(), "digest".into(), 3, 61)));
 
@@ -2640,10 +2606,9 @@ fn on_compact_result_persists_and_clears_stale_total() {
         Some("digest")
     );
     assert_eq!(a.session.as_ref().unwrap().compact_through, 3);
-    assert!(a.meter.total.is_none()); // stale total dropped
+    assert!(a.meter.total.is_none());
     let (_, status) = a.drain_ui_events();
     assert!(status.contains("compacted: 61%"));
-    // Persisted to the db too.
     let reloaded = &a.db.list_sessions(&space).unwrap()[0];
     assert_eq!(reloaded.compact_summary.as_deref(), Some("digest"));
 }
@@ -2653,12 +2618,11 @@ fn maybe_compact_noop_when_disabled_or_under_threshold() {
     let mut a = app_with_key();
     a.models[0].context_length = Some(1000);
     a.current_model = Some("a/one".into());
-    a.settings.compact_threshold = 0; // disabled
+    a.settings.compact_threshold = 0;
     a.maybe_compact();
     assert!(a.compaction.rx.is_none());
 
     a.settings.compact_threshold = 60;
-    // No session / far under threshold — should still no-op.
     a.maybe_compact();
     assert!(a.compaction.rx.is_none());
 }
@@ -2668,13 +2632,11 @@ async fn force_compact_reports_why_it_no_ops() {
     let mut a = app_with_key();
     a.current_model = Some("a/one".into());
 
-    // No active session yet.
     a.force_compact();
     assert!(a.compaction.rx.is_none());
     let (_, status) = a.drain_ui_events();
     assert!(status.contains("no active session"));
 
-    // Session exists but everything in it is already covered.
     let space = a.active_space.id.clone();
     let mut s = a.db.create_session("t", "a/one", &space, "chat").unwrap();
     s.compact_through = 0;
@@ -2684,7 +2646,6 @@ async fn force_compact_reports_why_it_no_ops() {
     let (_, status) = a.drain_ui_events();
     assert!(status.contains("nothing new"));
 
-    // Now there's an uncompacted message — should actually kick off a job.
     a.messages.push(Message {
         role: "user".into(),
         content: "hi".into(),
@@ -2720,7 +2681,7 @@ fn context_breakdown_reports_system_memory_conversation() {
     });
     let b = a.context_breakdown();
     assert_eq!(b.conversation_tokens, 10);
-    assert!(b.system_tokens > 0); // base system prompt is always present
+    assert!(b.system_tokens > 0);
     assert_eq!(b.limit, Some(1000));
     assert!(!b.compacted);
 }
@@ -2728,7 +2689,7 @@ fn context_breakdown_reports_system_memory_conversation() {
 #[test]
 fn compact_summary_view_and_edit_roundtrip() {
     let mut a = app_with_key();
-    assert!(a.compact_summary_path().is_none()); // not compacted yet
+    assert!(a.compact_summary_path().is_none());
 
     let space = a.active_space.id.clone();
     let mut s = a.db.create_session("t", "a/one", &space, "chat").unwrap();
@@ -2739,7 +2700,6 @@ fn compact_summary_view_and_edit_roundtrip() {
     let path = a.compact_summary_path().unwrap();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "original digest");
 
-    // Simulate a hand-edit in $EDITOR, then reload.
     std::fs::write(&path, "hand-edited digest\n").unwrap();
     a.reload_compact_summary(&path).unwrap();
     assert_eq!(
@@ -2751,7 +2711,7 @@ fn compact_summary_view_and_edit_roundtrip() {
         reloaded.compact_summary.as_deref(),
         Some("hand-edited digest")
     );
-    assert_eq!(reloaded.compact_through, 2); // boundary untouched by the edit
+    assert_eq!(reloaded.compact_through, 2);
 }
 
 #[test]
@@ -2765,8 +2725,6 @@ fn imported_files_stay_out_of_the_system_prompt() {
         a.rescan_files();
     });
 
-    // The model lists files with `files(action=list)`; importing one never
-    // changes the instructions before the date.
     let prefix = |prompt: &str| prompt.split("## Now").next().unwrap().to_string();
     assert_eq!(prefix(&a.system_prompt()), prefix(&before));
     assert!(!a.system_prompt().contains("plan.md"));
@@ -2881,7 +2839,6 @@ fn build_history_compresses_duplicate_tool_results_and_keeps_changed_ones() {
         })
         .to_string()
     };
-    // read v1 → re-read (identical) → edit → re-read v2 (changed).
     for result in ["v1", "v1", "v2"] {
         a.messages.push(Message {
             role: "tool_call".into(),
@@ -3045,7 +3002,7 @@ fn hundred_turns_preserve_messages_tool_inputs_results_and_wire_prefixes() {
     }
 
     let history = a.build_history();
-    let mut cursor = 1; // the stable system message
+    let mut cursor = 1;
     for turn in 0..100 {
         assert_eq!(history[cursor].role, "user");
         assert_eq!(
@@ -3091,7 +3048,6 @@ fn hundred_turns_preserve_messages_tool_inputs_results_and_wire_prefixes() {
     }
     assert_eq!(cursor, history.len());
 
-    // Reload exactly what was persisted and require the same wire history.
     let persisted = a.db.load_messages(&session.id).unwrap();
     assert_eq!(persisted.len(), 100 * 4);
     a.messages = persisted;
@@ -3130,7 +3086,7 @@ async fn forced_skill_with_trailing_text_sends_immediately() {
         "search instructions",
     );
     a.run_command("web-search rust news").unwrap();
-    assert!(a.forced_skill.is_none()); // consumed by send_message
+    assert!(a.forced_skill.is_none());
     assert_eq!(a.messages.last().unwrap().content, "rust news");
     assert!(a.is_streaming());
 }
@@ -3191,7 +3147,6 @@ async fn skill_row_replays_as_a_user_message_every_later_turn() {
     a.run_command("web-search rust news").unwrap();
     let first_history = a.build_history();
 
-    // Reload the snapshot, then change the source file before a later turn.
     a.messages = a.db.load_messages(&a.session.as_ref().unwrap().id).unwrap();
     std::fs::write(
         a.skills.last().unwrap().dir.join("SKILL.md"),
@@ -3294,14 +3249,11 @@ fn split_inline_reasoning_strips_think_tags() {
     assert_eq!(content, "the actual answer");
     assert_eq!(reasoning.as_deref(), Some("let me work this out"));
 
-    // Multiple blocks join; text around/between them stays in content.
     let (content, reasoning) =
         split_inline_reasoning("intro <think>step one</think>middle<think>step two</think> outro");
     assert_eq!(content, "intro middle outro");
     assert_eq!(reasoning.as_deref(), Some("step one\nstep two"));
 
-    // Unterminated tag (truncated stream): remainder is reasoning, not a
-    // dangling tag leaked into the answer.
     let (content, reasoning) = split_inline_reasoning("<think>still thinking...");
     assert_eq!(content, "");
     assert_eq!(reasoning.as_deref(), Some("still thinking..."));
@@ -3324,8 +3276,6 @@ async fn finish_stream_strips_inline_think_tags_into_reasoning() {
     let msg = a.messages.last().unwrap();
     assert_eq!(msg.content, "the real answer");
     assert_eq!(msg.reasoning.as_deref(), Some("pondering"));
-
-    // (copy_message's reasoning-strip behavior moved to the TUI copy tests)
 }
 
 #[test]
@@ -3358,7 +3308,6 @@ fn memory_hints_replay_as_a_stable_user_prefix() {
     assert_eq!(hint.targets[0].label, "Release process");
     a.messages.push(memory::note("recall", hint.to_row()));
     a.messages.push(memory::note("user", question.into()));
-    // Already hinted in this session: not named again.
     assert!(a.memory_hint(question).is_none());
 
     let first = a.build_history();
@@ -3447,7 +3396,6 @@ async fn history_carries_markdown_images_as_data_urls_for_vision_models() {
     let s =
         a.db.create_session("t", "vis/model", &a.active_space.id, "chat")
             .unwrap();
-    // A real tiny png on disk, referenced via markdown in content.
     let dir = a.space.files_dir(&a.active_space.name);
     std::fs::create_dir_all(&dir).unwrap();
     let png_path = dir.join("t.png");
@@ -3491,7 +3439,6 @@ async fn history_carries_markdown_images_as_data_urls_for_vision_models() {
     assert_eq!(user.images.len(), 1);
     assert!(user.images[0].starts_with("data:image/png;base64,"));
 
-    // Non-vision model: markdown stays as text, no data URLs.
     a.current_model = Some("txt/model".into());
     let h = a.build_history();
     let user = h.iter().find(|m| m.role == "user").unwrap();
@@ -3554,15 +3501,11 @@ fn tool_call_events_persist_and_replay_into_history() {
     })
     .unwrap();
 
-    // Rendered + persisted as a tool_call row…
     assert_eq!(a.messages.last().unwrap().role, "tool_call");
     let stored = a.db.load_messages(&s.id).unwrap();
     assert_eq!(stored.last().unwrap().role, "tool_call");
     assert!(stored.last().unwrap().content.contains("q3 revenue"));
 
-    // …and replayed into the next request as a real assistant/tool pair, so
-    // the model remembers what it already tried in a prior turn — no raw
-    // "tool_call" role ever reaches the wire.
     let h = a.build_history();
     assert!(h.iter().all(|m| m.role != "tool_call"));
     let assistant = h
@@ -3639,7 +3582,6 @@ fn research_stage_rows_are_never_replayed_into_history() {
 }
 
 #[test]
-// One assertion per tool call summary — the table is the point.
 #[allow(clippy::too_many_lines)]
 fn tool_call_summaries_name_the_interesting_argument() {
     use crate::app::tool_call_summary;
@@ -3779,7 +3721,6 @@ fn swarm_progress_and_errors_are_visible_in_transcript() {
             .any(|m| { m.role == "error" && m.content.contains("backend failed") })
     );
 
-    // Subsequent progress updates replace only the progress row, not the error.
     a.on_swarm_update(Some((
         sid.clone(),
         super::swarm::SwarmUpdate::Progress("round 1 complete".into()),
@@ -3884,10 +3825,6 @@ fn build_history_skips_persona_round_replies_but_keeps_synthesis() {
     );
 }
 
-// ── the command/event seam ─────────────────────────────────────────────────
-
-/// Every catalog entry must parse: the composer advertised `/help` for a
-/// while with no parser arm behind it ("unknown command: /help").
 #[test]
 fn every_catalog_command_parses() {
     let a = app_with_key();
@@ -3993,14 +3930,10 @@ fn parse_command_maps_the_slash_catalog_into_the_seam() {
             topic: Some("rust async".into())
         }
     );
-    // Incognito parses to an absolute on/off (toggle is the string front's
-    // choice) — the app starts off, so the command turns it on.
     assert_eq!(
         a.parse_command("incognito").unwrap(),
         AppCommand::Incognito { on: true }
     );
-    // `/local` opens the picker; the runtime aliases resolve to `local` and
-    // carry themselves through as the spec.
     for (line, spec) in [
         ("local", ""),
         ("local off", "off"),
@@ -4018,8 +3951,6 @@ fn parse_command_maps_the_slash_catalog_into_the_seam() {
             "{line}"
         );
     }
-    // Server verbs split off from runtime selection, in either word order:
-    // `/local stop edge0` and `/edge0 stop` are the same command.
     for (line, verb, runtime) in [
         ("local start", "start", ""),
         ("local stop edge0", "stop", "edge0"),
@@ -4027,7 +3958,6 @@ fn parse_command_maps_the_slash_catalog_into_the_seam() {
         ("local status", "status", ""),
         ("local restart mlx", "restart", "mlx"),
         ("mlx-serve start", "start", "mlx-serve"),
-        // `/serve` is the alias that reads as the verb it is.
         ("serve", "start", ""),
         ("serve ollama", "start", "ollama"),
     ] {
@@ -4041,7 +3971,6 @@ fn parse_command_maps_the_slash_catalog_into_the_seam() {
         );
     }
     assert!(a.parse_command("nosuchcommand").is_err());
-    // Aliases resolve to the canonical command.
     assert_eq!(
         a.parse_command("history").unwrap(),
         AppCommand::OpenSessionPicker
@@ -4071,7 +4000,6 @@ fn set_model_and_setting_commands_apply() {
 #[test]
 fn set_setting_fails_fast_on_unknown_keys_and_invalid_values() {
     let mut a = app_with_key();
-    // Unknown keys bail instead of persisting a no-op as success.
     assert!(
         a.execute(AppCommand::SetSetting {
             key: "verbosityy".into(),
@@ -4079,7 +4007,6 @@ fn set_setting_fails_fast_on_unknown_keys_and_invalid_values() {
         })
         .is_err()
     );
-    // Constrained keys reject values `apply_setting` would drop silently.
     assert!(
         a.execute(AppCommand::SetSetting {
             key: "verbosity".into(),
@@ -4094,7 +4021,7 @@ fn set_setting_fails_fast_on_unknown_keys_and_invalid_values() {
         })
         .is_err()
     );
-    assert_eq!(a.verbosity, "concise"); // untouched by the rejected values
+    assert_eq!(a.verbosity, "concise");
 }
 
 #[test]
@@ -4163,7 +4090,6 @@ fn popup_sizes_setting_validates_strictly_and_loads_leniently() {
     }
     assert_eq!(a.settings.popup_sizes, "", "rejected values change nothing");
 
-    // A stored row with bad entries loads without them instead of failing.
     a.db.set_setting(
         "popup_sizes",
         "settings:80x75,nope:50x50,help:5x50,help:90x85",
@@ -4197,7 +4123,6 @@ fn image_viewer_setting_defaults_auto_validates_and_survives_a_restart() {
         "rejected values change nothing"
     );
     a.set_setting("image_viewer", "system").unwrap();
-    // A stored row from a newer build is ignored, not fatal.
     drop(a);
     let mut b = App::new(Db::open(&path).unwrap(), None, Space { root: root.clone() });
     assert_eq!(b.settings.image_viewer, "system");
@@ -4237,10 +4162,8 @@ fn popup_size_helpers_read_replace_and_remove_entries() {
     assert_eq!(sizes, "settings:80x75,help:90x85");
     assert_eq!(popup_size(&sizes, "help"), Some((90, 85)));
     assert_eq!(popup_size(&sizes, "usage"), None);
-    // Replacing keeps one entry per id; out-of-range percentages clamp.
     let sizes = with_popup_size(&sizes, "settings", Some((10, 200)));
     assert_eq!(sizes, "help:90x85,settings:20x100");
-    // Removing, and unknown ids, leave the rest alone.
     assert_eq!(with_popup_size(&sizes, "help", None), "settings:20x100");
     assert_eq!(with_popup_size(&sizes, "nope", Some((50, 50))), sizes);
 }
@@ -4275,8 +4198,6 @@ async fn gate_in_another_session_never_swallows_typing_and_the_event_carries_its
         a.db.create_session("chat B", "a/one", &space, "chat")
             .unwrap();
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    // App::new queues a launch status event; drain it so the queue holds
-    // exactly the gate event.
     while a.pop_pending_event().is_some() {}
     a.set_survey_gate(Some(SurveyGate {
         session_id: s_a.id.clone(),
@@ -4285,13 +4206,10 @@ async fn gate_in_another_session_never_swallows_typing_and_the_event_carries_its
         prompt_role: "survey".to_string(),
         prompt_content: "q1?".to_string(),
     }));
-    // The Gate event names the session the reply must come from.
     match a.pending_events.pop_front() {
         Some(AppEvent::Gate(Some(g))) => assert_eq!(g.session_id, s_a.id),
         _other => panic!("expected Gate(Some) event, got something else"),
     }
-    // View the other session: Enter must send a normal message, not answer
-    // A's parked gate.
     a.switch_to_session_by_id(&s_b.id).unwrap();
     assert!(!a.survey_gate_targets_current_session());
     a.execute(AppCommand::Send {
@@ -4301,7 +4219,6 @@ async fn gate_in_another_session_never_swallows_typing_and_the_event_carries_its
     let msg = a.messages.last().unwrap();
     assert_eq!(msg.role, "user");
     assert_eq!(msg.content, "hello B");
-    // The gate survives, still parked on A.
     assert_eq!(a.research.survey_gate.as_ref().unwrap().session_id, s_a.id);
 }
 
@@ -4329,7 +4246,6 @@ fn cache_breakpoints_only_go_to_models_that_need_them() {
     assert!(crate::app::model_needs_cache_breakpoints(
         "claude-3-5-haiku"
     ));
-    // Auto-caching families must not be sent a marker they ignore or reject.
     for model in [
         "openai/gpt-5",
         "openai:gpt-5-mini",
@@ -4371,7 +4287,6 @@ fn explicit_cache_breakpoints_mark_the_stable_prefix() {
         .filter(|(_, m)| m.cache_breakpoint)
         .map(|(i, _)| i)
         .collect();
-    // End of the system block, and the message before the live tail.
     assert_eq!(marked, vec![0, history.len() - 2], "history: {history:?}");
     let wire = serde_json::to_value(&history[0]).expect("serializes");
     assert_eq!(
@@ -4379,8 +4294,6 @@ fn explicit_cache_breakpoints_mark_the_stable_prefix() {
         serde_json::json!({"type": "ephemeral"})
     );
 
-    // The same conversation on an auto-caching model carries no markers, and
-    // its content stays a plain string.
     a.current_model = Some("openai/gpt-5".to_string());
     let history = a.build_history();
     assert!(history.iter().all(|m| !m.cache_breakpoint));
@@ -4393,8 +4306,6 @@ fn turn_cache_reports_the_turn_not_its_last_request() {
     use crate::app::CacheTally;
     use crate::provider::{PromptConvention, Usage};
     let mut tally = CacheTally::default();
-    // A tool loop: the first request caches nothing, later ones ride a
-    // growing prefix. The last request alone would claim 90%.
     for (prompt, read) in [(1000u64, 0u64), (1200, 900), (1400, 1260)] {
         tally.observe(&Usage {
             prompt_tokens: prompt,
@@ -4407,8 +4318,6 @@ fn turn_cache_reports_the_turn_not_its_last_request() {
     assert!((rate - 2160.0 / 3600.0).abs() < 1e-9, "rate: {rate}");
     assert!(!tally.is_partial());
 
-    // A request the provider did not account for is excluded and flagged,
-    // never averaged in as a zero.
     tally.observe(&Usage {
         prompt_tokens: 5000,
         prompt_convention: PromptConvention::Unknown,
@@ -4426,9 +4335,8 @@ fn turn_cache_reports_the_turn_not_its_last_request() {
 fn user_command_app() -> App {
     let mut app = app_with_key();
     app.interactive_ui = true;
-    // `!` commands are an agent-mode feature.
     app.work_mode = WorkMode::Agent;
-    // Captured-command tests never read the developer's real shell startup.
+    // Keep captured commands isolated from the developer's shell startup.
     app.user_command
         .shell
         .set(crate::usershell::UserShell {
@@ -4489,7 +4397,6 @@ fn insert_chat_task(app: &mut App, session_id: &str) {
     );
 }
 
-/// Drive `next_event` until the captured command lands, returning the last status.
 async fn finish_captured_command(app: &mut App) -> String {
     let mut status = String::new();
     loop {
@@ -5040,7 +4947,6 @@ async fn allow_for_session_answers_waiting_requests_of_the_same_kind_unseen() {
     let (delete, mut delete_answer) = queued_request(&sender, "delete", "delete b");
     let (_, mut queued_edit_answer) = queued_request(&sender, "edit", "edit c");
     receive_approvals(&mut app, 3).await;
-    // Still in the channel when the grant lands: answered all the same.
     let (_, mut unreceived_edit_answer) = queued_request(&sender, "edit", "edit d");
     let shown = app.approvals.shown;
     app.execute(AppCommand::Approve {
@@ -5299,7 +5205,6 @@ async fn approvals_whose_tool_call_went_away_are_skipped() {
     assert_eq!(first_answer.try_recv().unwrap(), Decision::Allow);
     assert_eq!(app.approvals.pending_request.as_ref(), Some(&third));
     assert!(app.approvals.queue.is_empty());
-    // The displayed request going away shows nothing further.
     drop(third_answer);
     let event = tokio::time::timeout(std::time::Duration::from_secs(5), app.next_event())
         .await
@@ -5339,7 +5244,6 @@ async fn ui_repair_app(
     app.interactive_ui = true;
     app.incognito = incognito;
     app.settings.compact_threshold = 0;
-    // Repair must use the finished task's model, not a newly selected model.
     app.current_model = Some("b/two".into());
     let mut session = if incognito {
         crate::db::Session {
@@ -5359,7 +5263,7 @@ async fn ui_repair_app(
             .create_session("UI", "a/one", &app.active_space.id, "chat")
             .unwrap()
     };
-    session.slug = Some("ui".into()); // no unrelated title request
+    session.slug = Some("ui".into());
     insert_chat_task(&mut app, &session.id);
     app.session = Some(session);
     (app, server)
@@ -5531,7 +5435,6 @@ async fn a_new_user_turn_cancels_applying_the_old_ui_repair() {
         let sid = app.session.as_ref().unwrap().id.clone();
         finish_ui_reply(&mut app, BROKEN_UI);
         assert_eq!(app.last_status(), "fixing the UI…");
-        // The result is ready, but has not yet been applied by next_event.
         assert_eq!(server.await.unwrap().len(), 1);
         app.next_chat_task_id = 2;
         app.send_message("another turn".into()).unwrap();
@@ -5625,8 +5528,6 @@ async fn ui_repair_matches_the_stored_message_id_after_reload_and_rejects_newer_
     }
 }
 
-// ----- connectors ----------------------------------------------------------
-
 #[test]
 fn connectors_slash_command_parses_every_form() {
     use crate::app::AppCommand as C;
@@ -5700,7 +5601,6 @@ fn connectors_slash_command_parses_every_form() {
         assert!(app.parse_command(bad).is_err(), "{bad}");
     }
     assert!(COMMANDS.iter().any(|command| command.name == "connectors"));
-    // Every variant survives the host wire format.
     for command in [
         C::OpenConnectors,
         C::SetConnectorPolicy {
@@ -5728,7 +5628,6 @@ fn connector_commands_run_through_the_seam_and_local_commands_need_the_terminal_
     })
     .unwrap();
     assert_eq!(app.connectors.infos().len(), 1);
-    // A command connector starts a process: refused unless this is the TUI.
     let local = C::AddConnector {
         name: "files".into(),
         url: None,
@@ -5860,9 +5759,6 @@ async fn connector_approvals_keep_grants_in_the_registry_not_in_the_approver() {
                 .await
         })
     };
-    // "Allow for the session" on a connector tool is answered, but the
-    // approver does not remember it: asking again prompts again, so a
-    // changed definition can never ride an old name-only grant.
     for round in 0..2 {
         let ask = ask_with(Some("connector"));
         receive_approvals(&mut app, 1).await;
@@ -5873,12 +5769,10 @@ async fn connector_approvals_keep_grants_in_the_registry_not_in_the_approver() {
         app.answer_approval(Decision::AllowForSession);
         assert_eq!(ask.await.unwrap(), Decision::AllowForSession);
     }
-    // Always passes through for a connector...
     let ask = ask_with(Some("connector"));
     receive_approvals(&mut app, 1).await;
     app.answer_approval(Decision::AllowAlways);
     assert_eq!(ask.await.unwrap(), Decision::AllowAlways);
-    // ...and is a plain allow for anything else.
     let ask = ask_with(None);
     receive_approvals(&mut app, 1).await;
     app.answer_approval(Decision::AllowAlways);
@@ -5931,7 +5825,6 @@ fn toolboxes_get_the_connector_registry_but_evals_do_not() {
             crate::connectors::ConnectorConfig::remote("https://demo.example/mcp"),
         )
         .unwrap();
-    // Connecting/disconnected connectors add nothing to the model's list.
     assert_eq!(serde_json::to_string(&app.toolbox.defs()).unwrap(), before);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -5986,8 +5879,6 @@ async fn chat_toolbox_connector_writes_reach_the_existing_app_approval_channel()
     std::fs::remove_dir_all(root).unwrap();
 }
 
-// --- the session model and the automatic defaults behind the removed rows ---
-
 fn catalog_model(backend: BackendTag, id: &str) -> Model {
     Model {
         id: id.into(),
@@ -6002,8 +5893,6 @@ fn catalog_model(backend: BackendTag, id: &str) -> Model {
     }
 }
 
-/// An app whose only backend is `provider` and whose session is on
-/// `chat_model` (a composite id), with an unknown (not yet fetched) catalog.
 fn app_on(provider: OpenRouter, chat_model: &str) -> App {
     let mut a = App::new(Db::open_in_memory().unwrap(), None, test_space());
     a.backends = Backends::default();
@@ -6070,8 +5959,6 @@ fn removed_model_settings_are_ignored_on_read_and_rejected_on_set() {
     for (key, value) in removed {
         a.db.set_setting(key, value).unwrap();
     }
-    // Reading them (including a legacy blank embedding_model) must not crash
-    // or change anything.
     a.load_settings();
     assert_eq!(a.index.embedding_model, embedding_before);
     let stored = a.db.load_settings().unwrap();
@@ -6082,7 +5969,6 @@ fn removed_model_settings_are_ignored_on_read_and_rejected_on_set() {
         );
     }
 
-    // Retired keys are unknown settings and store nothing.
     for (key, _) in removed {
         let error = a.set_setting(key, "new").unwrap_err().to_string();
         assert_eq!(error, format!("unknown setting: {key}"));
@@ -6095,7 +5981,6 @@ fn removed_model_settings_are_ignored_on_read_and_rejected_on_set() {
             .to_string(),
         "unknown setting: ocr_images"
     );
-    // Unknown keys are still just unknown.
     assert!(
         !a.set_setting("nonsense", "1")
             .unwrap_err()
@@ -6131,7 +6016,6 @@ fn the_settings_popup_has_no_model_rows() {
             .count(),
         0
     );
-    // Every field is reachable through a group.
     for field in SettingsField::ALL {
         assert!(
             SETTINGS_GROUPS.iter().any(|g| g.fields.contains(&field)),
@@ -6160,7 +6044,6 @@ fn generation_follows_the_active_backends_default_model() {
         Some((BackendTag::OpenRouter, "google/veo-3.1".into()))
     );
 
-    // OpenAI generates images only.
     let a = app_on(OpenRouter::openai("k".into()), "openai:gpt-5");
     assert_eq!(
         pair(&a, image),
@@ -6168,7 +6051,6 @@ fn generation_follows_the_active_backends_default_model() {
     );
     assert_eq!(pair(&a, video), None);
 
-    // Backends without a generation model, and local runtimes, have none.
     for (provider, chat) in [
         (OpenRouter::openai_codex("k".into()), "codex:gpt-5.5"),
         (
@@ -6185,8 +6067,6 @@ fn generation_follows_the_active_backends_default_model() {
         assert_eq!(pair(&a, video), None, "{chat}");
     }
 
-    // It follows the session across configured backends, never silently
-    // reaching for another provider's model.
     let mut a = app_on(OpenRouter::openrouter_flavor("k".into()), "a/chat");
     a.backends
         .set(BackendTag::Codex, OpenRouter::openai_codex("k".into()));

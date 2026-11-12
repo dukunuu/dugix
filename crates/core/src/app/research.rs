@@ -1,13 +1,4 @@
-//! Deep research: a background multi-agent pipeline triggered by `/research`.
-//! Every stage but the Searcher fan-out is a single `Provider::complete`
-//! call; parsing/prompt-building here is pure and unit tested. The async
-//! orchestration calls real network endpoints and is exercised
-//! manually, like every other network-calling background job in this
-//! codebase (`maybe_generate_title`, image description, embedding).
-
-// Casts here are on bounded values: token counts, byte sizes, and
-// selection indices — never on unbounded input. JSON-derived indices in
-// provider/tools go through try_from instead.
+//! Background multi-agent research with conversational approval gates.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -37,27 +28,19 @@ use tokio::sync::mpsc;
 
 use super::{AbortOnDrop, ResearchMsg, SurveyGate, SurveyPhase};
 
-/// A background research pipeline update: a phase label (+ progress detail),
-/// the survey's clarifying questions awaiting a chat reply, the Planner's
-/// sub-questions awaiting approval, or the final report/error.
 #[derive(Clone)]
 pub enum ResearchUpdate {
-    /// Successive updates within one stage share a `label` so the UI/db
-    /// replace one row in place instead of appending per tick.
+    /// Labels identify stage rows for in-place progress updates.
     Stage {
         label: String,
         detail: String,
     },
-    /// The scoping agent's clarifying questions; the pipeline is parked
-    /// awaiting a chat reply (`reply_to_survey_gate`). `round` is 1-based
-    /// (max `MAX_SURVEY_ROUNDS`).
+    /// Park for clarification with a one-based round number.
     SurveyReady {
         questions: Vec<String>,
         round: u8,
     },
-    /// The Planner finished; the pipeline is parked awaiting a chat reply:
-    /// "approve" runs the questions, edits get folded in by the approval
-    /// agent and re-presented (`rework = true`) once, capped.
+    /// Park for plan approval, with `rework` marking a revised presentation.
     PlanReady {
         questions: Vec<PlanQuestion>,
         rework: bool,
@@ -65,23 +48,13 @@ pub enum ResearchUpdate {
     Done(std::result::Result<String, String>),
 }
 
-/// Hard cap on Planner-generated sub-questions per outer round.
 const MAX_SUBQUESTIONS: usize = 6;
-/// Hard bound on queued `/steer` instructions (and thus on retained steer
-/// text and the unbounded channel) — beyond this, new steers are refused
-/// with a status message until the next round boundary drains the queue.
+// Bound retained steer text and the otherwise unbounded channel.
 const MAX_QUEUED_STEERS: usize = 64;
-/// Cap on the scoping agent's clarifying questions per round.
 const MAX_SURVEY_QUESTIONS: usize = 4;
-/// Max survey rounds (initial + follow-ups) before the survey force-completes.
 pub const MAX_SURVEY_ROUNDS: u8 = 3;
-/// Tool-call budget for a single Searcher agent — a few search→fetch hops,
-/// not a whole interactive conversation's worth.
 pub const RESEARCH_SEARCHER_MAX_ITERS: usize = 6;
 
-/// One Planner sub-question with its supporting brief: why it matters, the
-/// angles to cover, and promising source types/leads. The whole block is
-/// handed to its Searcher agent as the prompt — detail is functional.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub struct PlanQuestion {
     #[serde(default)]
@@ -95,8 +68,6 @@ pub struct PlanQuestion {
 }
 
 impl PlanQuestion {
-    /// A question with no brief — the fallback shape when the Planner didn't
-    /// follow the JSON-object instructions.
     pub const fn bare(question: String) -> Self {
         Self {
             question,
@@ -106,8 +77,6 @@ impl PlanQuestion {
         }
     }
 
-    /// The Searcher's prompt: the topic plus this question's full block
-    /// (why/angles/sources), so one focused agent answers one focused brief.
     pub fn prompt(&self, topic: &str) -> String {
         let mut p = format!(
             "Research topic: {topic}\n\nSub-question: {}\n",
@@ -126,8 +95,6 @@ impl PlanQuestion {
     }
 }
 
-/// A plan rendered for the transcript / plan file: numbered questions, each
-/// with its Why/Angles/Sources brief indented under it.
 pub fn plan_text(questions: &[PlanQuestion]) -> String {
     questions
         .iter()
@@ -150,37 +117,23 @@ pub fn plan_text(questions: &[PlanQuestion]) -> String {
 }
 
 impl super::App {
-    /// `/research <topic>`: run the multi-agent research pipeline in a new
-    /// background session. One job at a time. `/research! <topic>` skips the
-    /// plan-approval gate.
     pub fn start_research(&mut self, topic: &str) {
         self.start_research_with_gate(topic, true);
     }
 
-    /// `/steer <text>`: queue an extra instruction for the running research
-    /// job, picked up at the next round boundary. No-op with a status message
-    /// if no research job is running.
     pub fn steer_research(&mut self, text: &str) {
         if text.is_empty() {
             self.push_status("usage: /steer <what to also look into>".to_string());
             return;
         }
         match &self.research.steer_tx {
-            // Hard bound: refuse once the queue is full — this also bounds
-            // the unbounded channel and the retained log.
             Some(_) if self.research.steer_log.len() >= MAX_QUEUED_STEERS => {
                 self.push_status(format!(
                     "steer queue full ({MAX_QUEUED_STEERS} pending) — wait for the next round"
                 ));
             }
             Some(tx) if tx.send(text.to_string()).is_ok() => {
-                // Keep a log so the live popup can show what's queued vs.
-                // already picked up by the pipeline. Entries carry their
-                // 1-based queue position (positions are never renumbered, so
-                // acknowledged entries can be dropped without shifting the
-                // popup's view), and entries the pipeline has drained are
-                // removed here — a long job can't retain unbounded steer
-                // text without backpressure.
+                // Stable positions let acknowledged entries be pruned without changing row identity.
                 let pos = self
                     .research
                     .steer_acked
@@ -199,11 +152,6 @@ impl super::App {
         }
     }
 
-    /// `/research` with no topic: distill one from the last ~20 chat turns
-    /// (one cheap completion, same background-channel shape as
-    /// `maybe_generate_title`) then hand it to `start_research_with_gate`
-    /// exactly as if it had been typed — the existing plan-approval gate
-    /// still lets you bail or edit before searchers run.
     pub fn start_research_from_chat(&mut self) {
         if self.research.topic_rx.is_some() {
             self.push_status("already scoping a topic from this chat…".to_string());
@@ -266,8 +214,6 @@ impl super::App {
         });
     }
 
-    /// The topic-distillation job finished: start research with it, or
-    /// report the failure. `None` = channel closed without a result.
     pub fn on_research_topic_derived(&mut self, r: Option<Result<String, String>>) {
         self.research.topic_rx = None;
         let Some(result) = r else { return };
@@ -280,7 +226,6 @@ impl super::App {
         }
     }
 
-    // Long by design (gate setup + mirroring).
     #[allow(clippy::too_many_lines)]
     pub fn start_research_with_gate(&mut self, topic: &str, gated: bool) {
         let topic = topic.trim().to_string();
@@ -292,8 +237,6 @@ impl super::App {
             self.push_status("a research job is already running".to_string());
             return;
         }
-        // Research inherits the session's model (or the global default) —
-        // there is no separate researcher-model setting.
         let Some(model) = self.current_model.clone() else {
             self.push_status("no model configured — set one in /login or /model".to_string());
             return;
@@ -305,11 +248,9 @@ impl super::App {
             return;
         };
         let title = super::chat::title_from(&topic);
-        // Hygiene: no gate or reply channel from a previous job may linger.
         self.set_survey_gate(None);
         self.research.survey_reply_tx = None;
 
-        // Check if there's a conversation to migrate to the research session.
         let parent_id = self.session.as_ref().and_then(|s| {
             let has_content = self
                 .messages
@@ -340,7 +281,6 @@ impl super::App {
         if let Some(ref pid) = parent_id {
             let _ = self.db.set_research_parent(&session.id, pid);
 
-            // Build compacted context from the original conversation
             let compact_summary = self
                 .session
                 .as_ref()
@@ -375,7 +315,6 @@ impl super::App {
             };
             let _ = self.db.add_user_message(&session.id, &msg);
 
-            // Link message in the original session
             let _ = self.db.insert_message(
                 pid,
                 "session_link",
@@ -388,7 +327,6 @@ impl super::App {
                 None,
             );
 
-            // Link message in the research session back to the original
             let back_title = parent_title.as_deref().unwrap_or("previous chat");
             let _ = self.db.insert_message(
                 &session.id,
@@ -437,14 +375,9 @@ impl super::App {
         self.research.steer_log.clear();
         self.research.steer_acked.clear();
         self.research.stage_rows.clear();
-        // Capture the mode at job start: plan-message and artifact
-        // persistence follow this, never a mid-job incognito toggle.
+        // Persistence must follow the job's initial privacy mode, not later UI toggles.
         self.research.incognito = self.incognito;
 
-        // The conversational gates (survey + plan approval) ride one reply
-        // channel: the pipeline parks on `reply_rx`, the App arms a gate on
-        // each SurveyReady/PlanReady. Ungated (`/research!`, watches) skips
-        // both phases entirely.
         let reply_rx = if gated {
             let (reply_tx, reply_rx) = mpsc::unbounded_channel();
             self.research.survey_reply_tx = Some(reply_tx);
@@ -461,8 +394,6 @@ impl super::App {
         self.refresh_memory_snapshot();
         let prompt_cache_key = format!("research:{}", self.prompt_cache_key_for(&session.id));
         self.meter.total = None;
-        // Selection + scroll point into the previous session's lines; the
-        // view resets them on `ViewportReset`.
         self.push_viewport_reset();
         self.refresh_toolbox();
 
@@ -492,8 +423,6 @@ impl super::App {
         self.research.abort = Some(task.abort_handle());
     }
 
-    /// Abort the active research pipeline, including survey/searcher/tool
-    /// streams spawned under its orchestration task.
     pub fn stop_research(&mut self) {
         self.set_survey_gate(None);
         if let Some(abort) = self.research.abort.take() {
@@ -510,8 +439,6 @@ impl super::App {
             self.set_survey_gate(None);
             self.research.survey_reply_tx = None;
             self.research.steer_tx = None;
-            // Retained steer state belongs to the job: drop it so a long
-            // session can't keep unbounded text after research stops.
             self.research.steer_log.clear();
             self.research.steer_acked.clear();
             self.push_status("research stopped".to_string());
@@ -520,10 +447,7 @@ impl super::App {
         }
     }
 
-    /// Whether the survey gate (clarifying questions or plan approval) is
-    /// armed for the currently viewed session — the only case where Enter is
-    /// intercepted and routed to the pipeline instead of a normal chat send.
-    /// A gate in another session must never swallow typing.
+    /// Intercept input only for a gate belonging to the viewed session.
     pub fn survey_gate_targets_current_session(&self) -> bool {
         self.research
             .survey_gate
@@ -531,9 +455,7 @@ impl super::App {
             .is_some_and(|g| self.session.as_ref().is_some_and(|s| s.id == g.session_id))
     }
 
-    /// Restore an actionable gate row after loading its session. Normal jobs
-    /// already load the persisted row, while incognito jobs recover it from
-    /// `SurveyGate` without writing private content to the database.
+    // Incognito gate prompts must survive session switches without being written to disk.
     pub fn restore_survey_gate_prompt(&mut self) {
         let pending = self.research.survey_gate.as_ref().and_then(|gate| {
             self.session
@@ -565,16 +487,6 @@ impl super::App {
         });
     }
 
-    /// Route a chat reply into the parked survey gate (survey answer or plan
-    /// approval/edit). Records the reply as a `gate_reply` in the session —
-    /// it renders in the transcript like a user message but is never replayed
-    /// to the model, since the survey/plan rows it answers are excluded too:
-    /// a bare "the second option" or "drop Q2" must not leak into model
-    /// history without its context.
-    /// Arm or clear the parked gate, emitting a `Gate` event either way.
-    /// The event carries the session id so consumers can compare it against
-    /// the viewed session — a gate in another session must never swallow
-    /// typing.
     pub fn set_survey_gate(&mut self, gate: Option<SurveyGate>) {
         let state = gate.as_ref().map(|g| super::GateState {
             session_id: g.session_id.clone(),
@@ -589,11 +501,7 @@ impl super::App {
             return;
         };
         self.pending_events.push_back(super::AppEvent::Gate(None));
-        // Persist before acknowledging: the pipeline and the transcript must
-        // never incorporate a reply the database didn't record (a locked or
-        // full db would otherwise silently lose the answer on reload). On a
-        // persistence failure the gate stays armed and the composer is
-        // restored so the user can retry.
+        // Persist before acknowledging so database failure cannot lose an accepted reply.
         let saved_id = if !text.trim().is_empty() && !self.research.incognito {
             match self.db.add_gate_reply_message(&gate.session_id, text) {
                 Ok(id) => Some(id),
@@ -608,9 +516,7 @@ impl super::App {
             None
         };
         if gate.reply_tx.send(text.to_string()).is_err() {
-            // Delivery failed: roll back the persisted reply so a retry
-            // can't duplicate it in the transcript, then put the text back
-            // in the composer rather than eating the user's typing.
+            // Roll back failed delivery so retrying cannot duplicate the persisted reply.
             let rollback_error = saved_id.and_then(|id| self.db.delete_message(&id).err());
             self.push_composer_set(text);
             self.push_status(match rollback_error {
@@ -655,20 +561,12 @@ impl super::App {
         }
     }
 
-    /// Persist a stage row and keep both in-memory views in sync: the
-    /// viewed transcript (`self.messages`, only when the job's session is
-    /// viewed) and the job's stage-row mirror (`research_stage_rows`, always
-    /// — the live popup renders from it without a db read per frame). One
-    /// row per label, updated in place. Also used for error rows (plan
-    /// record / report file) so a save failure is visible immediately,
-    /// not only after a reload.
     fn mirror_stage(&mut self, session_id: &str, label: &str, detail: &str) {
         let _ = self
             .db
             .upsert_research_stage_message(session_id, label, detail);
         let text = crate::db::stage_content(label, detail);
         let prefix = format!("{label}:");
-        // Job-level mirror: the live popup's single source of truth.
         if let Some(row) = self
             .research
             .stage_rows
@@ -685,9 +583,7 @@ impl super::App {
                 m.role == "research_stage" && (m.content == label || m.content.starts_with(&prefix))
             }) {
                 row.content = text;
-                // Stage rows update in place, so message count does not
-                // change and the wrapped transcript cache would otherwise
-                // keep rendering stale progress.
+                // In-place edits leave message counts unchanged, so invalidate the render cache explicitly.
                 self.push_history_invalidated();
             } else {
                 self.messages.push(crate::db::Message {
@@ -706,9 +602,6 @@ impl super::App {
         }
     }
 
-    /// A research pipeline update: a stage label, or the final report/error.
-    /// `None` = the job's channel closed (fires once, right after `Done`).
-    // Long by design (event dispatch).
     #[allow(clippy::too_many_lines)]
     pub fn on_research_done(&mut self, r: Option<ResearchMsg>) {
         let Some((session_id, space_id, space_name, update)) = r else {
@@ -718,23 +611,16 @@ impl super::App {
             self.set_survey_gate(None);
             self.research.survey_reply_tx = None;
             self.research.steer_tx = None;
-            // Retained steer state belongs to the job: drop it when the job
-            // ends so the next job starts from an empty queue view.
             self.research.steer_log.clear();
             self.research.steer_acked.clear();
             self.research.stage_rows.clear();
             self.research.incognito = false;
             self.research.live_input.clear();
-            // The view closes its live popup when the job's channel closes.
             return;
         };
         let viewing = self.session.as_ref().is_some_and(|s| s.id == session_id);
         match update {
             ResearchUpdate::Stage { label, detail } => {
-                // A `steer #N` stage row means the pipeline drained that
-                // steer: record the acknowledgment and prune the retained
-                // log immediately — acknowledged text must not linger in
-                // memory while the job is parked.
                 if let Some(n) = label.strip_prefix("steer #").and_then(|n| n.parse().ok()) {
                     self.research.steer_acked.insert(n);
                     self.research
@@ -772,9 +658,7 @@ impl super::App {
                      then say \"I approve\". (Enter on an empty input skips ahead.)"
                 );
 
-                // A normal job must make the prompt durable before it can
-                // intercept Enter. Incognito deliberately keeps it only in
-                // SurveyGate, where session loading can restore it in memory.
+                // Make the prompt recoverable before intercepting input; incognito recovery is memory-only.
                 if !self.research.incognito
                     && let Err(e) = self.db.add_survey_message(&session_id, &content)
                 {
@@ -816,9 +700,6 @@ impl super::App {
                         "survey round {round} — answer in chat · Ctrl+↑ agents"
                     ));
                 } else {
-                    // The gate is parked off-screen: mark the job's session
-                    // unread and say where input is needed. In incognito the
-                    // prompt will be restored from SurveyGate when opened.
                     self.unread.insert(session_id.clone());
                     self.push_status(format!(
                         "research is waiting on you — survey round {round} for \"{topic}\": \
@@ -841,8 +722,7 @@ impl super::App {
                 };
                 let content = format!("{heading}\n{plan}");
 
-                // As with survey prompts, normal jobs persist before arming;
-                // incognito jobs retain the actionable row only in the gate.
+                // Make the prompt recoverable before arming; incognito recovery is memory-only.
                 if !self.research.incognito
                     && let Err(e) = self.db.add_research_plan_message(&session_id, &content)
                 {
@@ -865,12 +745,7 @@ impl super::App {
                     prompt_content: content.clone(),
                 }));
 
-                // A byproduct record in the space's files, like the report:
-                // the conversation is the edit surface, the file is history.
-                // Skipped entirely in incognito — the plan folds in the user's
-                // survey replies, so "nothing persists" must not leave it on
-                // disk even if the job stops before any report. Failures
-                // surface as a transcript stage row instead of vanishing.
+                // Plans contain private survey replies and must never be written in incognito.
                 if let Err(e) = self.save_space_artifact(
                     &space_id,
                     &space_name,
@@ -904,9 +779,6 @@ impl super::App {
                             .to_string()
                     });
                 } else {
-                    // The gate is parked off-screen: mark the job's session
-                    // unread and say where input is needed. An incognito plan
-                    // is restored from SurveyGate rather than the database.
                     self.unread.insert(session_id.clone());
                     self.push_status(format!(
                         "research is waiting on you — plan approval for \"{topic}\": \
@@ -915,8 +787,6 @@ impl super::App {
                 }
             }
             ResearchUpdate::Done(Ok(report)) => {
-                // A watch session with a prior run gets a "what changed"
-                // section prepended, listing sources not cited last time.
                 let report = if let Ok(Some(prev_citations)) =
                     self.previous_citations_for_watch_session(&session_id, &space_id)
                 {
@@ -946,9 +816,6 @@ impl super::App {
                     .as_ref()
                     .map(|(_, t)| t.clone())
                     .unwrap_or_default();
-                // Failures surface as a transcript stage row (mirrored into
-                // the in-memory transcript and the live popup) instead of
-                // vanishing (incognito skips the write by design).
                 let mut in_library = None;
                 match self.save_research_report(&space_id, &space_name, &topic, &report) {
                     Ok(Some(path)) => {
@@ -1023,17 +890,7 @@ impl super::App {
         }
     }
 
-    /// Write a space artifact (finished report or presented plan) into the
-    /// job's own space — not necessarily the currently active one, since the
-    /// user may have switched spaces while the job ran — named
-    /// `{prefix}-<slug>-<timestamp>.md`. Only refreshes the files cache /
-    /// triggers a rescan if that space is still active; otherwise the file
-    /// sits on disk and gets picked up next time that space's /files is
-    /// opened, same as any externally-dropped file. Returns the written path
-    /// so callers can surface failures at the update boundary instead of
-    /// dropping them. Never writes in incognito mode: the plan folds in the
-    /// user's survey replies, so "nothing persists" must not leave it on
-    /// disk even if the job stops before any report.
+    // Background artifacts belong to the job's origin space, not the currently viewed one.
     fn save_space_artifact(
         &mut self,
         space_id: &str,
@@ -1042,10 +899,7 @@ impl super::App {
         prefix: &str,
         body: &str,
     ) -> std::io::Result<Option<std::path::PathBuf>> {
-        // "Nothing persists" mode: no plan/report records on disk at all —
-        // plan files incorporate survey replies, so even a job stopped
-        // before its report must not leak user details. The mode is the one
-        // captured when the job started, not a mid-job toggle.
+        // The job's initial privacy mode forbids persisting plans as well as finished reports.
         if self.research.incognito {
             return Ok(None);
         }
@@ -1062,11 +916,6 @@ impl super::App {
         Ok(Some(path))
     }
 
-    /// Save the finished report into the job's own space, named
-    /// `research-<slug>-<timestamp>.md`, via the shared artifact writer,
-    /// then index the report's cited sources for
-    /// `research_lookup(scope=citations)`. Failures propagate to the caller
-    /// (the `Done` handler surfaces them as a transcript stage row).
     fn save_research_report(
         &mut self,
         space_id: &str,
@@ -1076,10 +925,9 @@ impl super::App {
     ) -> std::io::Result<Option<std::path::PathBuf>> {
         let saved = self.save_space_artifact(space_id, space_name, topic, "research", report)?;
         if let Some(path) = &saved {
-            // Index the report's cited sources for research_lookup(scope=citations).
             let citations = crate::citations::parse_citations(report);
             if !citations.is_empty() {
-                // Titles aren't in the Sources-list format; index url only.
+                // The Sources-list format carries URLs but no titles.
                 let rows: Vec<(String, Option<String>)> =
                     citations.into_iter().map(|(_, url)| (url, None)).collect();
                 let name = path
@@ -1093,11 +941,7 @@ impl super::App {
         Ok(saved)
     }
 
-    /// The report as a doc in the space's library, beside its `.md` file
-    /// (`research-x-<stamp>.md` gives `docs/research-x-<stamp>.doc.json`), so
-    /// it opens in studio and exports in the space's design. The `.md` stays:
-    /// watches and citations find reports by that name. Returns the doc's
-    /// library path.
+    // Retain the Markdown report because watches and citation lookup depend on its filename.
     fn save_research_doc(
         &mut self,
         space_name: &str,

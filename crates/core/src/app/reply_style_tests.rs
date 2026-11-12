@@ -40,7 +40,6 @@ fn reply_style_defaults_to_interactive_and_round_trips_through_the_db() {
             .iter()
             .any(|(k, v)| k == "reply_style" && v == "rich")
     );
-    // A fresh App over the same db restores it.
     let reloaded = App::new(
         a.db,
         Some("sk-or-test-key"),
@@ -71,9 +70,7 @@ fn reply_style_controls_the_layout_guidance_in_the_prompt() {
     assert!(rich.contains("Prefer a layout for most substantive answers"));
     let plain = prompt(&mut a, "plain");
     assert!(!plain.contains("## Designed replies"));
-    // The interactive UI guidance is independent of the reply style.
     assert!(plain.contains(crate::interactive::INSTRUCTIONS));
-    // Clients without a renderer never get layout guidance.
     a.interactive_ui = false;
     a.settings.reply_style = "rich".into();
     assert!(!a.system_prompt().contains("## Designed replies"));
@@ -113,7 +110,6 @@ fn interactive_style_asks_for_a_card_in_chat_but_not_in_agent_mode() {
     for style in ["auto", "rich", "plain"] {
         assert!(!prompt(&mut a, style).contains("## Interactive-first replies"));
     }
-    // Coding replies stay Markdown: agent mode falls back to auto.
     a.work_mode = WorkMode::Agent;
     a.settings.reply_style = "interactive".into();
     let agent = a.layout_guidance().unwrap();

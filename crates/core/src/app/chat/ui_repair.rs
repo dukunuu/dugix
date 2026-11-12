@@ -132,8 +132,7 @@ impl App {
                 return Ok(false);
             }
             if let Some(index) = index {
-                // Only the latest reply changed; the prefix before it is the
-                // same, so the prompt-cache lane (and its key) stays put.
+                // Editing only the latest reply preserves the cached prefix and lane key.
                 self.messages[index].content = content;
                 self.push_history_invalidated();
             }
@@ -161,8 +160,7 @@ pub(super) struct UiBlock {
     title: String,
 }
 
-// Only complete UI fences count. Track other fences too, so literal examples
-// inside longer Markdown fences never become replay diagnostics or repairs.
+// Outer Markdown fences make nested UI examples literal, not repair candidates.
 fn ui_blocks(content: &str) -> Vec<UiBlock> {
     let mut fence: Option<(char, usize, bool, usize)> = None;
     let mut source = String::new();
@@ -207,7 +205,6 @@ fn ui_blocks(content: &str) -> Vec<UiBlock> {
                 fence = None;
                 source.clear();
             } else if ui {
-                // Markdown removes blockquote prefixes before handing off JSON.
                 source.push_str(body);
                 source.push('\n');
             }
@@ -299,7 +296,6 @@ fn markdown_image_ranges(content: &str) -> Vec<std::ops::Range<usize>> {
                     break;
                 };
                 let begin = start + 2 + close + 2;
-                // Inline code is literal, not a rendered image.
                 let prefix = &line[..consumed + start];
                 if prefix.chars().filter(|ch| *ch == '`').count() % 2 == 0
                     && prefix.chars().rev().take_while(|ch| *ch == '\\').count() % 2 == 0
@@ -391,7 +387,6 @@ pub(super) fn repair_image_links(content: &str, messages: &[Message]) -> (String
         }
     }
     for block in ui_blocks(content) {
-        // Read the image fields even when another node needs schema repair.
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&block.source) else {
             continue;
         };
@@ -538,7 +533,6 @@ pub(super) fn ui_failure_notes(content: &str) -> String {
         let error = &errors[0];
         let message = error.message.lines().collect::<Vec<_>>().join(" ");
         let path = error.path.replace(['\n', '\r'], " ");
-        // A program with a valid root shows without its broken pieces.
         let outcome = if crate::interactive::Document::recover(&block.source).is_ok() {
             "rendered with parts left out"
         } else {
@@ -620,7 +614,6 @@ fn repaired_ui_reply(
     Ok(content)
 }
 
-/// Each fenced code block in `md` as `(language, code)`.
 pub fn code_blocks(md: &str) -> Vec<(Option<String>, String)> {
     let mut out = Vec::new();
     let mut inside = false;
@@ -644,7 +637,7 @@ pub fn code_blocks(md: &str) -> Vec<(Option<String>, String)> {
         }
     }
     if inside && !buf.is_empty() {
-        out.push((lang.take(), buf)); // unterminated (e.g. mid-stream)
+        out.push((lang.take(), buf));
     }
     out
 }
