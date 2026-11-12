@@ -143,12 +143,12 @@ impl App {
     /// come from the picker cache when loaded, else a fresh db read — a
     /// failed read is an error, never a silently-empty session list.
     pub fn snapshot(&self) -> Result<CoreSnapshot> {
-        let sessions = if self.sessions_cache.is_empty() {
+        let sessions = if self.caches.sessions.is_empty() {
             self.db
                 .list_sessions(&self.active_space.id)
                 .context("reading sessions for snapshot")?
         } else {
-            self.sessions_cache.clone()
+            self.caches.sessions.clone()
         };
         let favorite_ids = &self.favorites;
         Ok(CoreSnapshot {
@@ -183,9 +183,9 @@ impl App {
                 model: self.current_model.clone(),
                 verbosity: self.verbosity.clone(),
                 incognito: self.incognito,
-                searxng_url: sanitized_endpoint(&self.searxng_url),
-                langsearch_configured: !self.langsearch_key.trim().is_empty(),
-                search_provider: self.search_provider.clone(),
+                searxng_url: sanitized_endpoint(&self.search.searxng_url),
+                langsearch_configured: !self.search.langsearch_key.trim().is_empty(),
+                search_provider: self.search.provider.clone(),
                 temperature: self.settings.temperature,
                 top_p: self.settings.top_p,
                 max_tokens: self.settings.max_tokens,

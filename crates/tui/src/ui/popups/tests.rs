@@ -162,8 +162,8 @@ fn approval_app(
     let mut app = test_app();
     app.settings.hide_hints = false;
     let (sender, receiver) = tokio::sync::oneshot::channel();
-    app.pending_approval = Some(sender);
-    app.pending_approval_request = Some(nexus_core::tools::ApprovalRequest {
+    app.approvals.pending = Some(sender);
+    app.approvals.pending_request = Some(nexus_core::tools::ApprovalRequest {
         tool: tool.into(),
         class: None,
         detail: None,
@@ -285,7 +285,7 @@ fn harness_popup_empty_state_snapshots() {
 fn approval_escapes_terminal_controls_in_the_header_and_command() {
     let (mut app, _receiver) = approval_app("shell", "$ echo \x1b[2K\rhidden\tend\nnext".into());
     let root = app.space.root.clone();
-    app.pending_approval_request.as_mut().unwrap().action = "run\x7f\n".into();
+    app.approvals.pending_request.as_mut().unwrap().action = "run\x7f\n".into();
     app.sync_approval_popup();
     let screen = render_to_string(120, 40, |f| super::approval::render(f, &app));
     assert!(screen.contains("shell · run\\u{7f}\\u{a}"), "{screen}");
@@ -360,8 +360,8 @@ fn approval_overflow_is_counted_scrollable_and_reset_for_each_request() {
     assert!(app.approval_scroll.get() < app.approval_max_scroll.get());
     let opened = app.approval_opened_at.unwrap();
     let (sender, mut receiver) = tokio::sync::oneshot::channel();
-    app.pending_approval = Some(sender);
-    app.pending_approval_request.as_mut().unwrap().summary =
+    app.approvals.pending = Some(sender);
+    app.approvals.pending_request.as_mut().unwrap().summary =
         format!("edit another file\n{summary}");
     app.sync_approval_popup();
     assert_eq!(app.approval_scroll.get(), 0);
@@ -387,11 +387,11 @@ fn queued_approvals_show_their_position_and_reset_the_guards_at_the_head() {
     let command = format!("$ echo {}\necho LAST_COMMAND", "payload ".repeat(500));
     let (mut app, mut first) = approval_app("shell", command);
     let root = app.space.root.clone();
-    let request = app.pending_approval_request.clone().unwrap();
+    let request = app.approvals.pending_request.clone().unwrap();
     let mut queued = Vec::new();
     for _ in 0..2 {
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        app.approval_queue.push_back((request.clone(), sender));
+        app.approvals.queue.push_back((request.clone(), sender));
         queued.push(receiver);
     }
     let mut third = queued.pop().unwrap();
@@ -461,7 +461,7 @@ fn approval_requires_the_end_of_a_wrapped_shell_command_before_allowing() {
         assert!(screen.contains("more lines"), "{screen}");
         super::approval::handle_key(&mut app, KeyCode::Char(key).into()).unwrap();
         assert!(receiver.try_recv().is_err());
-        assert!(app.pending_approval.is_some());
+        assert!(app.approvals.pending.is_some());
         while app.approval_scroll.get() < app.approval_max_scroll.get() {
             super::approval::handle_key(&mut app, KeyCode::PageDown.into()).unwrap();
             render_to_string(120, 24, |f| super::approval::render(f, &app));
@@ -495,7 +495,7 @@ fn approval_ignores_allow_keys_during_the_open_delay_but_never_delays_denial() {
     for key in ['y', 'a'] {
         super::approval::handle_key(&mut app, KeyCode::Char(key).into()).unwrap();
         assert!(receiver.try_recv().is_err());
-        assert!(app.pending_approval.is_some());
+        assert!(app.approvals.pending.is_some());
     }
     app.approval_opened_at = Some(Instant::now() - Duration::from_millis(401));
     super::approval::handle_key(&mut app, KeyCode::Char('y').into()).unwrap();
@@ -522,7 +522,7 @@ fn approval_popup_combined_wave_snapshot() {
     let root = app.space.root.clone();
     // The snapshot wraps at the old fixed 112-cell column; `auto` is wider now.
     app.settings.column_width = "112".into();
-    app.pending_approval_request.as_mut().unwrap().action = "3 calls".into();
+    app.approvals.pending_request.as_mut().unwrap().action = "3 calls".into();
     app.sync_approval_popup();
     let screen = render_to_string(120, 40, |f| super::approval::render(f, &app));
     assert!(screen.contains(" approve "), "{screen}");
@@ -871,7 +871,7 @@ fn local_popup_lists_runtimes_with_discovery_and_endpoint() {
 
     // Rows past the fold scroll into view with their own discovery hint, and
     // a surveyed row shows what its server is costing.
-    app.core.local_status = vec![nexus_core::provider::serve::RuntimeStatus {
+    app.core.local.status = vec![nexus_core::provider::serve::RuntimeStatus {
         runtime: nexus_core::provider::local::LocalRuntime::Edge0,
         endpoint: "http://localhost:8000/v1".into(),
         port: Some(8000),
@@ -1017,7 +1017,7 @@ fn research_live_popup_shows_agent_lifecycle_and_activity() {
     let mut app = test_app();
     // The popup renders from the job-level stage-row mirror, kept in sync by
     // `mirror_stage` on every Stage update.
-    app.research_stage_rows = vec![
+    app.research.stage_rows = vec![
         "planner: done — proposed 4 questions".to_string(),
         "searcher r1 1/4: working — Searching the web for rust runtimes".to_string(),
         "verifier: error — cached source unavailable".to_string(),
@@ -1035,11 +1035,11 @@ fn research_live_popup_shows_agent_lifecycle_and_activity() {
 #[test]
 fn research_live_popup_shows_queued_steers_until_picked_up() {
     let mut app = test_app();
-    app.research_steer_log = vec![(1, "look into X".to_string()), (2, "also Y".to_string())];
+    app.research.steer_log = vec![(1, "look into X".to_string()), (2, "also Y".to_string())];
     // Steer #1 was already picked up by the pipeline (acknowledged); steer
     // #2 is still queued and must show in the popup.
-    app.research_steer_acked = std::collections::HashSet::from([1]);
-    app.research_stage_rows = vec!["steer #1: look into X".to_string()];
+    app.research.steer_acked = std::collections::HashSet::from([1]);
+    app.research.stage_rows = vec!["steer #1: look into X".to_string()];
 
     let screen = render_to_string(100, 30, |f| super::research_live::render(f, &app));
 
@@ -1053,7 +1053,7 @@ fn research_live_popup_shows_queued_steers_until_picked_up() {
 #[test]
 fn research_live_popup_queued_status_ignores_steer_text_shape() {
     let mut app = test_app();
-    app.research_steer_log = vec![
+    app.research.steer_log = vec![
         (1, "a: b".to_string()),
         (2, "a".to_string()),
         (3, "same".to_string()),
@@ -1064,8 +1064,8 @@ fn research_live_popup_queued_status_ignores_steer_text_shape() {
     // are still queued. Keying by position — never by steer text — keeps
     // duplicate, prefix-of-each-other, and LIKE-wildcard text from
     // collapsing acknowledgements.
-    app.research_steer_acked = std::collections::HashSet::from([1, 3, 5]);
-    app.research_stage_rows = vec![
+    app.research.steer_acked = std::collections::HashSet::from([1, 3, 5]);
+    app.research.stage_rows = vec![
         "steer #1: a: b".to_string(),
         "steer #3: same".to_string(),
         "steer #5: 100% done".to_string(),
@@ -1091,18 +1091,18 @@ fn research_live_popup_uses_the_job_sessions_rows_from_any_session() {
     // renders from the job-level stage-row mirror (`research_stage_rows`),
     // which `on_research_done` fills for every Stage update regardless of
     // what's viewed — no db read and no dependence on the viewed session.
-    app.research_running = Some(("job-session".to_string(), "topic".to_string()));
+    app.research.running = Some(("job-session".to_string(), "topic".to_string()));
     app.session = Some(
         app.db
             .create_session("other", "a/one", &app.active_space.id, "chat")
             .unwrap(),
     );
-    app.research_stage_rows = vec![
+    app.research.stage_rows = vec![
         "steer #1: look into X".to_string(),
         "planner: done — proposed 4 questions".to_string(),
     ];
-    app.research_steer_log = vec![(1, "look into X".to_string()), (2, "also Y".to_string())];
-    app.research_steer_acked = std::collections::HashSet::from([1]);
+    app.research.steer_log = vec![(1, "look into X".to_string()), (2, "also Y".to_string())];
+    app.research.steer_acked = std::collections::HashSet::from([1]);
 
     let screen = render_to_string(100, 30, |f| super::research_live::render(f, &app));
 
@@ -1499,7 +1499,7 @@ mod watch_popup_tests {
         )
         .unwrap();
         assert_eq!(a.watch_mode, WatchMode::Browse);
-        assert!(a.watches_cache.is_empty());
+        assert!(a.caches.watches.is_empty());
         assert!(a.db.list_watches(&space).unwrap().is_empty());
     }
 
@@ -1525,7 +1525,7 @@ mod watch_popup_tests {
         .unwrap();
 
         assert_eq!(a.watch_mode, WatchMode::Browse);
-        assert_eq!(a.watches_cache.len(), 1);
+        assert_eq!(a.caches.watches.len(), 1);
     }
 }
 
@@ -1553,7 +1553,7 @@ mod stop_closes_popup_tests {
         let db = Db::open_in_memory().unwrap();
         let mut a = AppView::new(App::new(db, Some("k"), test_space()));
         a.popup = Popup::ResearchLive;
-        a.core.research_live_input = "a steer".to_string();
+        a.core.research.live_input = "a steer".to_string();
 
         crate::ui::popups::research_live::handle_key(&mut a, ctrl_x());
 
@@ -1566,13 +1566,13 @@ mod stop_closes_popup_tests {
         let mut a = AppView::new(App::new(db, Some("k"), test_space()));
         // The Ctrl+X arm is gated on a running turn; hand it a live channel.
         let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        a.core.swarm_rx = Some(rx);
+        a.core.swarm.rx = Some(rx);
         a.popup = Popup::Swarm;
 
         crate::ui::popups::swarm::handle_key(&mut a, ctrl_x()).unwrap();
 
         assert_eq!(a.popup, Popup::None);
-        assert!(a.core.swarm_rx.is_none()); // the turn was stopped
+        assert!(a.core.swarm.rx.is_none()); // the turn was stopped
     }
 }
 
@@ -1863,7 +1863,7 @@ fn session_picker_leads_with_the_title_and_marks_the_open_session() {
         .lines()
         .find(|l| l.contains("Japanese Fluency Roadmap"))
         .unwrap_or_else(|| panic!("{screen}"));
-    let when = crate::ui::fmt_created(&app.core.sessions_cache[0].created_at);
+    let when = crate::ui::fmt_created(&app.core.caches.sessions[0].created_at);
     assert!(
         title_row.contains(&when),
         "date beside the title:\n{screen}"
@@ -1948,14 +1948,14 @@ fn research_steer_input_ignores_ctrl_chords() {
     let key = |c, m| crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char(c), m);
     super::research_live::handle_key(&mut app, key('a', crossterm::event::KeyModifiers::CONTROL));
     super::research_live::handle_key(&mut app, key('b', crossterm::event::KeyModifiers::NONE));
-    assert_eq!(app.core.research_live_input, "b");
+    assert_eq!(app.core.research.live_input, "b");
 }
 
 // Async: an empty catalog makes the picker kick off a model fetch.
 #[tokio::test]
 async fn plain_m_opens_the_swarm_persona_model_picker() {
     let mut app = test_app();
-    app.core.swarm_cache = vec![nexus_core::db::Persona {
+    app.core.swarm.cache = vec![nexus_core::db::Persona {
         name: "Critic".into(),
         model: "a/one".into(),
         blurb: "pokes holes".into(),
@@ -2748,7 +2748,7 @@ fn connector_approvals_offer_session_and_always_and_warn_about_changed_definitio
     let (mut app, mut receiver) = approval_app("linear", summary);
     let root = app.space.root.clone();
     {
-        let request = app.pending_approval_request.as_mut().unwrap();
+        let request = app.approvals.pending_request.as_mut().unwrap();
         request.action = "create_issue".into();
         request.class = Some("connector".into());
     }
@@ -2786,7 +2786,7 @@ fn connector_approvals_offer_session_and_always_and_warn_about_changed_definitio
         "this tool's definition changed since you allowed it\nwrites\n\n{}".into(),
     );
     {
-        let request = changed.pending_approval_request.as_mut().unwrap();
+        let request = changed.approvals.pending_request.as_mut().unwrap();
         request.action = "create_issue".into();
         request.class = Some("connector".into());
     }

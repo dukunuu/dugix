@@ -1113,8 +1113,8 @@ mod tests {
         a.session = Some(session.clone());
         a.messages.push(msg("user", "old conversation"));
         let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        a.compact_rx = Some(rx);
-        a.compacting_session_id = Some(session.id);
+        a.compaction.rx = Some(rx);
+        a.compaction.session_id = Some(session.id);
 
         let backend = ratatui::backend::TestBackend::new(100, 20);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();

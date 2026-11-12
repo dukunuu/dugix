@@ -281,7 +281,7 @@ impl App {
         }
         if !ui_errors.is_empty()
             && let Some(key) = ui_feedback_key
-            && self.ui_feedback_seen.insert(key)
+            && self.ui_repair.feedback_seen.insert(key)
         {
             history.push(ChatMessage::text(
                 "system",

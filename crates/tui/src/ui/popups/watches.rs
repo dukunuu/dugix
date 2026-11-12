@@ -14,13 +14,14 @@ use super::chrome;
 pub fn render(f: &mut Frame, app: &AppView) {
     let area = chrome::popup_area(app, f.area(), "watches", chrome::STANDARD);
     let dim = Style::default().fg(app.theme.fg_dim);
-    let items: Vec<ListItem> = if app.watches_cache.is_empty() {
+    let items: Vec<ListItem> = if app.caches.watches.is_empty() {
         vec![chrome::empty_placeholder(
             "no watches yet — /watch <topic> to start one",
             &app.theme,
         )]
     } else {
-        app.watches_cache
+        app.caches
+            .watches
             .iter()
             .map(|w| {
                 let width = area.width.saturating_sub(6 + 2 * chrome::PAD) as usize;
@@ -89,7 +90,8 @@ pub fn render(f: &mut Frame, app: &AppView) {
     let title = match app.watch_mode {
         WatchMode::ConfirmDelete => {
             let topic = app
-                .watches_cache
+                .caches
+                .watches
                 .get(app.watch_selected)
                 .map(|w| w.topic.clone())
                 .unwrap_or_default();
@@ -99,12 +101,12 @@ pub fn render(f: &mut Frame, app: &AppView) {
     };
     let hint = match app.watch_mode {
         WatchMode::ConfirmDelete => "Ctrl+D confirm · Esc cancel".to_string(),
-        WatchMode::Browse if app.watches_cache.is_empty() => {
+        WatchMode::Browse if app.caches.watches.is_empty() => {
             "no watches yet — /watch <topic> to start one".to_string()
         }
         WatchMode::Browse => format!(
             "{}↑↓ · Enter jump to session · Ctrl+D delete",
-            chrome::count_hint(app.watches_cache.len(), "watch")
+            chrome::count_hint(app.caches.watches.len(), "watch")
         ),
     };
     let tone = if app.watch_mode == WatchMode::ConfirmDelete {
@@ -115,10 +117,10 @@ pub fn render(f: &mut Frame, app: &AppView) {
     let inner = chrome::render_hinted(f, area, title, &hint, app, true, tone);
     let list = chrome::standard_list(items, &app.theme);
     let mut state = ListState::default();
-    if !app.watches_cache.is_empty() {
-        state.select(Some(app.watch_selected.min(app.watches_cache.len() - 1)));
+    if !app.caches.watches.is_empty() {
+        state.select(Some(app.watch_selected.min(app.caches.watches.len() - 1)));
     }
-    chrome::render_list(f, list, &mut state, inner, app.watches_cache.len(), 3, app);
+    chrome::render_list(f, list, &mut state, inner, app.caches.watches.len(), 3, app);
 }
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
@@ -144,7 +146,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
                 if key
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL)
-                    && !app.watches_cache.is_empty() =>
+                    && !app.caches.watches.is_empty() =>
             {
                 app.watch_mode = WatchMode::ConfirmDelete;
             }

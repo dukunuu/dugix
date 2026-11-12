@@ -371,7 +371,7 @@ async fn plan_ready_arms_the_gate_and_reply_routes_into_the_pipeline() {
 
     // The pipeline's reply sender must be reachable for the gate to arm.
     let (tx, mut rx) = mpsc::unbounded_channel();
-    a.survey_reply_tx = Some(tx);
+    a.research.survey_reply_tx = Some(tx);
     let q1 = PlanQuestion::bare("q1".to_string());
     let q2 = PlanQuestion::bare("q2".to_string());
 
@@ -384,7 +384,7 @@ async fn plan_ready_arms_the_gate_and_reply_routes_into_the_pipeline() {
             rework: false,
         },
     )));
-    assert!(a.survey_gate.is_some());
+    assert!(a.research.survey_gate.is_some());
     assert!(a.survey_gate_targets_current_session());
     assert!(a.messages.iter().any(|m| m.role == "research_plan"));
     let stored = a.db.load_messages(&session_id).unwrap();
@@ -401,7 +401,7 @@ async fn plan_ready_arms_the_gate_and_reply_routes_into_the_pipeline() {
     // recorded as a gate reply in the session transcript — rendered like
     // a user message but never replayed to the model.
     a.reply_to_survey_gate("drop q2");
-    assert!(a.survey_gate.is_none());
+    assert!(a.research.survey_gate.is_none());
     assert!(!a.survey_gate_targets_current_session());
     assert_eq!(rx.recv().await.unwrap(), "drop q2");
     assert!(
@@ -431,7 +431,7 @@ async fn plan_ready_saves_a_plan_file_record_in_the_space() {
     let space_id = a.active_space.id.clone();
     let space_name = a.active_space.name.clone();
     let (tx, _rx) = mpsc::unbounded_channel();
-    a.survey_reply_tx = Some(tx);
+    a.research.survey_reply_tx = Some(tx);
 
     a.on_research_done(Some((
         session_id,
@@ -469,7 +469,7 @@ async fn survey_ready_arms_the_gate_and_renders_a_survey_section() {
     let space_id = a.active_space.id.clone();
     let space_name = a.active_space.name.clone();
     let (tx, mut rx) = mpsc::unbounded_channel();
-    a.survey_reply_tx = Some(tx);
+    a.research.survey_reply_tx = Some(tx);
 
     a.on_research_done(Some((
         session_id.clone(),
@@ -489,7 +489,7 @@ async fn survey_ready_arms_the_gate_and_renders_a_survey_section() {
     assert!(stored.iter().any(|m| m.role == "survey"));
 
     a.reply_to_survey_gate("depth first");
-    assert!(a.survey_gate.is_none());
+    assert!(a.research.survey_gate.is_none());
     assert_eq!(rx.recv().await.unwrap(), "depth first");
     let (_, status) = a.drain_ui_events();
     assert!(status.contains("follow-ups"));
@@ -501,7 +501,7 @@ async fn gate_only_targets_the_viewed_gated_session() {
     a.start_research("topic one");
     let gated_session = a.session.as_ref().unwrap().id.clone();
     let (tx, _rx) = mpsc::unbounded_channel();
-    a.survey_reply_tx = Some(tx);
+    a.research.survey_reply_tx = Some(tx);
     a.on_research_done(Some((
         gated_session.clone(),
         a.active_space.id.clone(),
@@ -520,7 +520,10 @@ async fn gate_only_targets_the_viewed_gated_session() {
     a.session = Some(other);
     a.messages.clear();
     assert!(!a.survey_gate_targets_current_session());
-    assert!(a.survey_gate.is_some(), "gate stays armed for its session");
+    assert!(
+        a.research.survey_gate.is_some(),
+        "gate stays armed for its session"
+    );
 }
 
 #[tokio::test]
@@ -566,21 +569,21 @@ fn start_research_rejects_blank_topic_and_missing_model() {
     a.start_research("  ");
     let (_, status) = a.drain_ui_events();
     assert!(status.contains("usage:"));
-    assert!(a.research_rx.is_none());
+    assert!(a.research.rx.is_none());
 
     a.current_model = None;
     a.start_research("rust async runtimes");
     let (_, status) = a.drain_ui_events();
     assert!(status.contains("no model configured"));
-    assert!(a.research_rx.is_none());
+    assert!(a.research.rx.is_none());
 }
 
 #[tokio::test]
 async fn start_research_creates_and_switches_into_a_new_session() {
     let mut a = test_app();
     a.start_research("rust async runtimes");
-    assert!(a.research_rx.is_some());
-    assert!(a.research_running.is_some());
+    assert!(a.research.rx.is_some());
+    assert!(a.research.running.is_some());
     let session = a
         .session
         .as_ref()
@@ -597,7 +600,7 @@ async fn start_research_creates_and_switches_into_a_new_session() {
 async fn start_research_refuses_a_second_concurrent_job() {
     let mut a = test_app();
     a.start_research("topic one");
-    assert!(a.research_rx.is_some());
+    assert!(a.research.rx.is_some());
     a.start_research("topic two");
     let (_, status) = a.drain_ui_events();
     assert!(status.contains("already running"));
@@ -693,7 +696,7 @@ async fn multiple_drained_steers_each_keep_their_own_stage_row() {
     // The pipeline's acknowledgements are job-global: both steers must
     // no longer count as queued, and their rows persist for display.
     assert_eq!(
-        a.research_steer_acked,
+        a.research.steer_acked,
         std::collections::HashSet::from([1, 2])
     );
     let stored = a.db.load_messages(&session_id).unwrap();
@@ -755,7 +758,7 @@ async fn steer_rows_do_not_collide_on_duplicate_prefix_or_wildcard_text() {
     }
     // The pipeline's acknowledgements are job-global and position-keyed.
     assert_eq!(
-        a.research_steer_acked,
+        a.research.steer_acked,
         (1..=steers.len()).collect::<std::collections::HashSet<usize>>(),
         "every steer position picked up"
     );
@@ -765,13 +768,13 @@ async fn steer_rows_do_not_collide_on_duplicate_prefix_or_wildcard_text() {
 fn steer_log_drops_acknowledged_entries_and_clears_on_stop() {
     let mut a = test_app();
     let (tx, _rx) = mpsc::unbounded_channel::<String>();
-    a.research_steer_tx = Some(tx);
+    a.research.steer_tx = Some(tx);
 
     a.steer_research("first");
     a.steer_research("second");
     a.steer_research("third");
     assert_eq!(
-        a.research_steer_log,
+        a.research.steer_log,
         vec![
             (1, "first".into()),
             (2, "second".into()),
@@ -781,16 +784,16 @@ fn steer_log_drops_acknowledged_entries_and_clears_on_stop() {
 
     // The pipeline drains 1 and 2: acknowledged entries are dropped on
     // the next queue (positions are never renumbered).
-    a.research_steer_acked = std::collections::HashSet::from([1, 2]);
+    a.research.steer_acked = std::collections::HashSet::from([1, 2]);
     a.steer_research("fourth");
     assert_eq!(
-        a.research_steer_log,
+        a.research.steer_log,
         vec![(3, "third".into()), (4, "fourth".into())]
     );
 
     // An ack that arrives while the job is parked prunes the log
     // immediately — no need to wait for the next `/steer`.
-    a.research_steer_acked.insert(3);
+    a.research.steer_acked.insert(3);
     a.on_research_done(Some((
         "s".to_string(),
         "sp".to_string(),
@@ -800,22 +803,22 @@ fn steer_log_drops_acknowledged_entries_and_clears_on_stop() {
             detail: "third".to_string(),
         },
     )));
-    assert_eq!(a.research_steer_log, vec![(4, "fourth".into())]);
+    assert_eq!(a.research.steer_log, vec![(4, "fourth".into())]);
 
     // Stopping the job drops the whole retained log.
     let (_tx, rx) = mpsc::unbounded_channel::<ResearchMsg>();
-    a.research_rx = Some(rx);
-    a.research_running = Some(("s".to_string(), "t".to_string()));
+    a.research.rx = Some(rx);
+    a.research.running = Some(("s".to_string(), "t".to_string()));
     a.stop_research();
-    assert!(a.research_steer_log.is_empty());
-    assert!(a.research_steer_acked.is_empty());
+    assert!(a.research.steer_log.is_empty());
+    assert!(a.research.steer_acked.is_empty());
 }
 
 #[test]
 fn steer_queue_is_hard_bound() {
     let mut a = test_app();
     let (tx, _rx) = mpsc::unbounded_channel::<String>();
-    a.research_steer_tx = Some(tx);
+    a.research.steer_tx = Some(tx);
 
     // Fill the queue to the bound; further steers are refused with a
     // status message (which also bounds the unbounded channel and the
@@ -823,9 +826,9 @@ fn steer_queue_is_hard_bound() {
     for i in 0..MAX_QUEUED_STEERS {
         a.steer_research(&format!("steer {i}"));
     }
-    assert_eq!(a.research_steer_log.len(), MAX_QUEUED_STEERS);
+    assert_eq!(a.research.steer_log.len(), MAX_QUEUED_STEERS);
     a.steer_research("overflow");
-    assert_eq!(a.research_steer_log.len(), MAX_QUEUED_STEERS);
+    assert_eq!(a.research.steer_log.len(), MAX_QUEUED_STEERS);
     assert!(
         a.last_status().contains("steer queue full"),
         "{}",
@@ -842,7 +845,7 @@ async fn plan_ready_in_incognito_mode_writes_no_plan_file() {
     let space_id = a.active_space.id.clone();
     let space_name = a.active_space.name.clone();
     let (tx, _rx) = mpsc::unbounded_channel();
-    a.survey_reply_tx = Some(tx);
+    a.research.survey_reply_tx = Some(tx);
 
     a.on_research_done(Some((
         session_id.clone(),
@@ -884,13 +887,13 @@ async fn incognito_gate_rows_follow_the_mode_captured_at_job_start() {
     a.incognito = true;
     a.start_research("private topic");
     let session_id = a.session.as_ref().unwrap().id.clone();
-    assert!(a.research_incognito);
+    assert!(a.research.incognito);
 
     // A later UI-mode change must not make this already-private job start
     // persisting its survey or the user's answer.
     a.incognito = false;
     let (tx, mut rx) = mpsc::unbounded_channel();
-    a.survey_reply_tx = Some(tx);
+    a.research.survey_reply_tx = Some(tx);
     a.on_research_done(Some((
         session_id.clone(),
         a.active_space.id.clone(),
@@ -920,7 +923,7 @@ async fn off_screen_incognito_plan_is_restored_when_its_session_opens() {
     a.session = Some(other);
     a.messages.clear();
     let (tx, _rx) = mpsc::unbounded_channel();
-    a.survey_reply_tx = Some(tx);
+    a.research.survey_reply_tx = Some(tx);
 
     a.on_research_done(Some((
         session_id.clone(),
@@ -962,7 +965,7 @@ async fn undelivered_gate_reply_is_rolled_back_and_restored_to_composer() {
     // so a retry can't duplicate it.
     let (reply_tx, rx) = mpsc::unbounded_channel::<String>();
     drop(rx);
-    a.survey_reply_tx = Some(reply_tx.clone());
+    a.research.survey_reply_tx = Some(reply_tx.clone());
     a.on_research_done(Some((
         session_id.clone(),
         a.active_space.id.clone(),
@@ -972,11 +975,11 @@ async fn undelivered_gate_reply_is_rolled_back_and_restored_to_composer() {
             rework: false,
         },
     )));
-    assert!(a.survey_gate.is_some());
+    assert!(a.research.survey_gate.is_some());
 
     a.reply_to_survey_gate("drop q2");
 
-    assert!(a.survey_gate.is_none());
+    assert!(a.research.survey_gate.is_none());
     // Composer restored, nothing persisted, nothing mirrored in memory.
     let (sets, _) = a.drain_ui_events();
     assert_eq!(sets, vec!["drop q2".to_string()]);
@@ -1000,7 +1003,7 @@ async fn off_screen_gate_marks_the_session_unread_and_notifies() {
     a.session = Some(other);
     a.messages.clear();
     let (tx, _rx) = mpsc::unbounded_channel();
-    a.survey_reply_tx = Some(tx);
+    a.research.survey_reply_tx = Some(tx);
 
     a.on_research_done(Some((
         session_id.clone(),
@@ -1015,7 +1018,7 @@ async fn off_screen_gate_marks_the_session_unread_and_notifies() {
     // The gate is armed for the job's session and the user is told where
     // input is needed — a silently parked pipeline can't block later
     // research unnoticed.
-    assert!(a.survey_gate.is_some());
+    assert!(a.research.survey_gate.is_some());
     assert!(!a.survey_gate_targets_current_session());
     assert!(
         a.unread.contains(&session_id),
@@ -1134,7 +1137,7 @@ async fn on_research_done_saves_report_to_original_space_even_if_user_switched()
     a.active_space = second_space.clone();
     a.session = None;
     a.messages.clear();
-    a.files_cache.clear();
+    a.caches.files.clear();
 
     // Verify we're now in space B
     assert_eq!(a.active_space.id, second_space.id);
@@ -1171,7 +1174,7 @@ async fn on_research_done_saves_report_to_original_space_even_if_user_switched()
     // Assert: files_cache is still empty (rescan_files was NOT called for space B,
     // because the report was saved to space A, not space B)
     assert_eq!(
-        a.files_cache.len(),
+        a.caches.files.len(),
         0,
         "files_cache should be empty since rescan was not triggered"
     );
@@ -1206,16 +1209,16 @@ async fn on_research_done_failure_posts_error_message() {
 async fn on_research_done_none_clears_domain_state() {
     let mut a = test_app();
     a.start_research("t");
-    assert!(a.research_rx.is_some());
-    a.research_live_input = "late steer".to_string();
-    a.research_stage_rows = vec!["writer: done".to_string()];
+    assert!(a.research.rx.is_some());
+    a.research.live_input = "late steer".to_string();
+    a.research.stage_rows = vec!["writer: done".to_string()];
 
     a.on_research_done(None);
 
-    assert!(a.research_rx.is_none());
-    assert!(a.research_running.is_none());
-    assert!(a.research_live_input.is_empty());
-    assert!(a.research_stage_rows.is_empty());
+    assert!(a.research.rx.is_none());
+    assert!(a.research.running.is_none());
+    assert!(a.research.live_input.is_empty());
+    assert!(a.research.stage_rows.is_empty());
 }
 
 #[test]

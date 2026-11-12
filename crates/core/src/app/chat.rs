@@ -79,7 +79,7 @@ impl App {
         }
         // A new turn starts a fresh tally: the rate beside the context window
         // describes this answer, not the previous one.
-        self.turn_cache = super::CacheTally::default();
+        self.meter.turn_cache = super::CacheTally::default();
         let Some(model) = self.current_model.clone() else {
             self.push_status("pick a model first with /model".to_string());
             self.push_composer_set(&text);
@@ -117,7 +117,7 @@ impl App {
         if !self.incognito {
             self.db.add_user_message(&session_id, &text)?;
         }
-        self.ui_repair_messages.remove(&session_id);
+        self.ui_repair.messages.remove(&session_id);
         self.messages.push(Message {
             role: "user".to_string(),
             content: text,
@@ -268,7 +268,7 @@ impl App {
     #[allow(clippy::too_many_lines)] // Request/profile setup and independent task registration.
     pub fn start_stream(&mut self) -> Result<()> {
         if let Some(session) = &self.session {
-            self.ui_repair_messages.remove(&session.id);
+            self.ui_repair.messages.remove(&session.id);
         }
         let Some(model) = self.current_model.clone() else {
             return Ok(());
@@ -303,7 +303,7 @@ impl App {
         params.tool_result_cap = profile.result_cap;
         let tools = self.chat_tool_defs();
         if provider.backend_tag() == crate::provider::BackendTag::Local
-            && !self.context_warned
+            && !self.meter.warned
             && let Some(limit) = self.context_limit()
         {
             let defs = serde_json::to_string(&tools)?;
@@ -312,7 +312,7 @@ impl App {
                 self.push_status(format!(
                     "prompt + tool definitions use ~{tokens} of {limit} tokens — raise [local] context_length"
                 ));
-                self.context_warned = true;
+                self.meter.warned = true;
             }
         }
         if self.work_mode.is_agent()
@@ -509,8 +509,8 @@ impl App {
                 // and is merged in place rather than logged separately.
                 let has_tokens = u.prompt_tokens + u.completion_tokens > 0;
                 if has_tokens {
-                    self.last_cache_rate = u.cache_hit_rate();
-                    self.turn_cache.observe(&u);
+                    self.meter.last_cache_rate = u.cache_hit_rate();
+                    self.meter.turn_cache.observe(&u);
                 }
                 let Some(task) = self.chat_tasks.get_mut(&task_id) else {
                     return Ok(());
@@ -704,7 +704,7 @@ impl App {
                     let arg = |key: &str| args[key].as_str().unwrap_or_default().trim().to_string();
                     if name == "propose_command" {
                         // The status line is the view's wake-up to take it.
-                        self.proposed_command = Some(format!("!{}", arg("cmd")));
+                        self.approvals.proposed_command = Some(format!("!{}", arg("cmd")));
                         self.push_status(arg("reason"));
                     } else {
                         // Applied when the reply finishes: never swap the toolbox mid-turn.
@@ -779,8 +779,8 @@ impl App {
                 .as_ref()
                 .is_some_and(|session| session.id == session_id)
             {
-                self.pending_approval = None;
-                self.pending_approval_request = None;
+                self.approvals.pending = None;
+                self.approvals.pending_request = None;
             }
         }
     }
@@ -858,8 +858,8 @@ impl App {
             .as_ref()
             .is_some_and(|session| session.id == task.session_id)
         {
-            self.pending_approval = None;
-            self.pending_approval_request = None;
+            self.approvals.pending = None;
+            self.approvals.pending_request = None;
         }
         if let Some((_, root)) = self.queued_workspace.take_if(|(id, _)| *id == task.id)
             && self
@@ -915,8 +915,8 @@ impl App {
             };
             // `observe_context` already took this task's counts as they
             // arrived; only fill in when it never saw one.
-            if self.context_basis.is_none_or(|basis| basis.task != task.id) {
-                self.context_total = Some(total);
+            if self.meter.basis.is_none_or(|basis| basis.task != task.id) {
+                self.meter.total = Some(total);
             }
         }
         let secs = Some(task.started.elapsed().as_secs_f64());
@@ -1120,7 +1120,7 @@ impl App {
             s.title.clone_from(&topic);
             s.slug = Some(slug.clone());
         }
-        if let Some(s) = self.sessions_cache.iter_mut().find(|s| s.id == id) {
+        if let Some(s) = self.caches.sessions.iter_mut().find(|s| s.id == id) {
             s.title = topic;
             s.slug = Some(slug);
         }
@@ -1210,7 +1210,7 @@ impl App {
         self.messages.clear();
         self.mask_through = 0;
         self.refresh_memory_snapshot();
-        self.context_total = None;
+        self.meter.total = None;
         self.push_composer_clear();
         self.push_viewport_reset();
         self.cleanup_incognito_images();

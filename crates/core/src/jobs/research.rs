@@ -111,7 +111,7 @@ pub(super) async fn run(
     // Research uses the ordinary space toolbox, never an agent worktree.
     app.workspace = None;
     app.work_mode = crate::app::WorkMode::Chat;
-    app.job_approver = None;
+    app.approvals.job_approver = None;
     app.refresh_toolbox();
     ensure!(app.run_one_watch(&watch), "research job could not start");
     let mut run = app

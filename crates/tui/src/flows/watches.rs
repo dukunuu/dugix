@@ -9,7 +9,7 @@ use crate::app_view::AppView;
 
 impl AppView {
     pub fn open_watch_picker(&mut self) -> Result<()> {
-        self.core.watches_cache = self.core.db.list_watches(&self.core.active_space.id)?;
+        self.core.caches.watches = self.core.db.list_watches(&self.core.active_space.id)?;
         self.watch_selected = 0;
         self.watch_mode = WatchMode::Browse;
         self.popup = Popup::Watch;
@@ -19,7 +19,7 @@ impl AppView {
     pub fn move_watch_selection(&mut self, delta: i32) {
         self.watch_selected = nexus_core::app::clamp_cursor(
             self.watch_selected,
-            self.core.watches_cache.len(),
+            self.core.caches.watches.len(),
             delta,
         );
     }
@@ -27,7 +27,7 @@ impl AppView {
     /// Enter on the watch picker: jump to the watch's own research session
     /// (the domain switch handles messages/toolbox/viewport reset).
     pub fn confirm_watch_session(&mut self) -> Result<()> {
-        if let Some(w) = self.core.watches_cache.get(self.watch_selected).cloned() {
+        if let Some(w) = self.core.caches.watches.get(self.watch_selected).cloned() {
             self.core.switch_to_session_by_id(&w.session_id)?;
         }
         self.popup = Popup::None;
@@ -35,11 +35,11 @@ impl AppView {
     }
 
     pub fn delete_selected_watch(&mut self) {
-        if let Some(w) = self.core.watches_cache.get(self.watch_selected).cloned() {
+        if let Some(w) = self.core.caches.watches.get(self.watch_selected).cloned() {
             self.core.delete_watch(&w.id).ok();
             self.watch_selected = self
                 .watch_selected
-                .min(self.core.watches_cache.len().saturating_sub(1));
+                .min(self.core.caches.watches.len().saturating_sub(1));
             self.push_status(format!("deleted watch: {}", w.topic));
         }
     }

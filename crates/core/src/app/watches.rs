@@ -84,10 +84,10 @@ impl super::App {
     /// Drop a watch row from the db and refresh the cache. Returns whether a
     /// row existed.
     pub fn delete_watch(&mut self, id: &str) -> anyhow::Result<bool> {
-        let existed = self.watches_cache.iter().any(|w| w.id == id);
+        let existed = self.caches.watches.iter().any(|w| w.id == id);
         if existed {
             let _ = self.db.delete_watch(id);
-            self.watches_cache.retain(|x| x.id != id);
+            self.caches.watches.retain(|x| x.id != id);
         }
         Ok(existed)
     }

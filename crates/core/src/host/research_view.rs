@@ -44,7 +44,7 @@ pub fn view(app: &App, session_id: &str) -> Result<ResearchView> {
         .session
         .as_ref()
         .is_some_and(|session| session.id == session_id)
-        && app.research_incognito
+        && app.research.incognito
     {
         app.messages.clone()
     } else {
@@ -92,7 +92,7 @@ pub fn view(app: &App, session_id: &str) -> Result<ResearchView> {
         })
         .unwrap_or_default();
     let gate = app
-        .survey_gate
+        .research.survey_gate
         .as_ref()
         .filter(|gate| gate.session_id == session_id)
         .map(|gate| {
@@ -107,16 +107,19 @@ pub fn view(app: &App, session_id: &str) -> Result<ResearchView> {
             }
         });
     let running = app
-        .research_running
+        .research
+        .running
         .as_ref()
         .is_some_and(|(id, _)| id == session_id);
     let topic = app
-        .research_running
+        .research
+        .running
         .as_ref()
         .filter(|(id, _)| id == session_id)
         .map_or_else(String::new, |(_, topic)| topic.clone());
     let steers = if running {
-        app.research_steer_log
+        app.research
+            .steer_log
             .iter()
             .map(|(_, text)| text.clone())
             .collect()
@@ -212,7 +215,7 @@ pub fn dispatch(
             .unwrap_or(true);
         start(app, topic, gated)?;
         return Ok(
-            json!({ "ok": true, "session_id": app.research_running.as_ref().map(|(id, _)| id) }),
+            json!({ "ok": true, "session_id": app.research.running.as_ref().map(|(id, _)| id) }),
         );
     }
     let prefix = "/v1/research/";
@@ -249,7 +252,8 @@ pub fn dispatch(
                     .and_then(Value::as_str)
                     .ok_or_else(|| anyhow::anyhow!("missing text"))?;
                 if app
-                    .research_running
+                    .research
+                    .running
                     .as_ref()
                     .is_none_or(|(id, _)| id != session_id)
                 {
@@ -258,7 +262,8 @@ pub fn dispatch(
                 app.steer_research(text);
                 if text.trim().is_empty()
                     || !app
-                        .research_steer_log
+                        .research
+                        .steer_log
                         .iter()
                         .any(|(_, queued)| queued == text)
                 {
@@ -271,6 +276,7 @@ pub fn dispatch(
                     .and_then(Value::as_str)
                     .ok_or_else(|| anyhow::anyhow!("missing text"))?;
                 if app
+                    .research
                     .survey_gate
                     .as_ref()
                     .is_none_or(|gate| gate.session_id != session_id)
@@ -278,7 +284,7 @@ pub fn dispatch(
                     bail!("research session is not waiting for an answer");
                 }
                 app.reply_to_survey_gate(text);
-                if app.survey_gate.is_some() {
+                if app.research.survey_gate.is_some() {
                     bail!("answer could not be delivered; try again");
                 }
             }
@@ -300,12 +306,13 @@ pub fn dispatch(
                     .unwrap_or(true);
                 start(app, topic, gated)?;
                 return Ok(
-                    json!({ "ok": true, "session_id": app.research_running.as_ref().map(|(id, _)| id) }),
+                    json!({ "ok": true, "session_id": app.research.running.as_ref().map(|(id, _)| id) }),
                 );
             }
             "stop" => {
                 if app
-                    .research_running
+                    .research
+                    .running
                     .as_ref()
                     .is_some_and(|(id, _)| id == session_id)
                 {
@@ -350,7 +357,7 @@ fn start(app: &mut App, topic: &str, gated: bool) -> Result<()> {
     if topic.trim().is_empty() || topic.len() > 32_000 {
         bail!("research topic must be 1–32000 bytes");
     }
-    if app.research_running.is_some() || app.research_rx.is_some() {
+    if app.research.running.is_some() || app.research.rx.is_some() {
         bail!("research is already running");
     }
     let model = app
@@ -361,7 +368,7 @@ fn start(app: &mut App, topic: &str, gated: bool) -> Result<()> {
         bail!("model backend is unavailable; configure provider login");
     }
     app.start_research_with_gate(topic, gated);
-    if app.research_running.is_none() {
+    if app.research.running.is_none() {
         bail!("research could not start");
     }
     Ok(())

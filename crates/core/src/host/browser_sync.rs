@@ -36,7 +36,7 @@ pub(super) fn dispatch(app: &mut App, method: &str, path: &str, query: &str) -> 
 }
 
 pub(super) fn refresh_after_merge(app: &mut App) -> Result<()> {
-    app.sessions_cache.clear();
+    app.caches.sessions.clear();
     match app
         .db
         .list_spaces()?
@@ -53,7 +53,8 @@ pub(super) fn refresh_after_merge(app: &mut App) -> Result<()> {
         if let Some(updated) = app.db.get_session(&selected.id)? {
             if app.chat_task_for_session(&selected.id).is_none()
                 && app
-                    .research_running
+                    .research
+                    .running
                     .as_ref()
                     .is_none_or(|(id, _)| id != &selected.id)
             {
@@ -64,7 +65,7 @@ pub(super) fn refresh_after_merge(app: &mut App) -> Result<()> {
             app.new_session();
         }
     }
-    app.files_cache = app.db.list_files(&app.active_space.id)?;
+    app.caches.files = app.db.list_files(&app.active_space.id)?;
     app.refresh_memory_snapshot();
     app.refresh_toolbox();
     Ok(())

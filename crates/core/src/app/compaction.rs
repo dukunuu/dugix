@@ -56,7 +56,7 @@ impl App {
     /// Whether `id` is the session whose background compaction is still running.
     #[must_use]
     pub fn is_compacting_session(&self, id: &str) -> bool {
-        self.compact_rx.is_some() && self.compacting_session_id.as_deref() == Some(id)
+        self.compaction.rx.is_some() && self.compaction.session_id.as_deref() == Some(id)
     }
 
     /// Whether the session currently on screen is being compacted.
@@ -70,7 +70,7 @@ impl App {
     /// After a reply, auto-compact once context usage crosses the percentage
     /// threshold or experimental token budget (0 disables each trigger).
     pub fn maybe_compact(&mut self) {
-        if self.compact_rx.is_some() || self.is_streaming() {
+        if self.compaction.rx.is_some() || self.is_streaming() {
             return;
         }
         let used = self.context_used();
@@ -91,7 +91,7 @@ impl App {
     /// Manually trigger compaction right now (`/compact`), ignoring the
     /// threshold. No-ops with a status message if there's nothing to compact.
     pub fn force_compact(&mut self) {
-        if self.compact_rx.is_some() {
+        if self.compaction.rx.is_some() {
             self.push_status("already compacting…".to_string());
             return;
         }
@@ -167,9 +167,9 @@ impl App {
         );
         let prompt_cache_key = format!("compaction:{}", self.prompt_cache_key_for(&session_id));
         let (tx, rx) = mpsc::unbounded_channel();
-        self.compact_rx = Some(rx);
-        self.compacting_session_id = Some(session_id.clone());
-        let error_slot = std::sync::Arc::clone(&self.compact_error);
+        self.compaction.rx = Some(rx);
+        self.compaction.session_id = Some(session_id.clone());
+        let error_slot = std::sync::Arc::clone(&self.compaction.error);
         *error_slot.lock().expect("compaction error slot") = None;
         let usage_log = self.usage_log();
         // The history pane gets a transient "compacting" block immediately;
@@ -200,7 +200,8 @@ impl App {
     /// Say why a compaction produced no digest, once.
     fn report_compaction_failure(&mut self) {
         let reason = self
-            .compact_error
+            .compaction
+            .error
             .lock()
             .expect("compaction error slot")
             .take();
@@ -220,8 +221,8 @@ impl App {
     /// back to the (now accurate) estimate until the next real response
     /// reports fresh usage.
     pub fn on_compact_result(&mut self, result: Option<(String, String, i64, u64)>) {
-        self.compact_rx = None;
-        self.compacting_session_id = None;
+        self.compaction.rx = None;
+        self.compaction.session_id = None;
         let Some((id, summary, through, before_pct)) = result else {
             self.report_compaction_failure();
             return;
@@ -322,7 +323,7 @@ impl App {
                 }
             }
         }
-        self.context_total = None;
+        self.meter.total = None;
         self.push_status(self.compaction_status(before_pct));
     }
 
@@ -726,7 +727,7 @@ mod tests {
         }
         a.experiments.compaction_tail_turns = 2;
         a.experiments.compaction_budget_tokens = 1;
-        a.context_total = Some(1);
+        a.meter.total = Some(1);
         a.drain_ui_events();
         for messages in [
             vec![],
@@ -740,10 +741,10 @@ mod tests {
         ] {
             a.messages = messages;
             a.force_compact();
-            assert!(a.compact_rx.is_none());
+            assert!(a.compaction.rx.is_none());
             assert_eq!(a.last_status(), "nothing new to compact");
             a.maybe_compact();
-            assert!(a.compact_rx.is_none());
+            assert!(a.compaction.rx.is_none());
             assert!(a.last_status().is_empty());
         }
         let mut excluded = msg("user", "excluded persona row");
@@ -755,10 +756,10 @@ mod tests {
             msg("user", "retained second"),
         ];
         a.force_compact();
-        assert!(a.compact_rx.is_none());
+        assert!(a.compaction.rx.is_none());
         assert_eq!(a.last_status(), "nothing new to compact");
         a.maybe_compact();
-        assert!(a.compact_rx.is_none());
+        assert!(a.compaction.rx.is_none());
         assert!(a.last_status().is_empty());
         discard(a);
     }
@@ -791,22 +792,22 @@ mod tests {
         let (mut a, sid) = app_with_session(3);
         a.on_compact_result(Some((sid.clone(), "previous digest".into(), 2, 60)));
         a.experiments.compaction_itemized = true;
-        a.context_total = Some(777);
+        a.meter.total = Some(777);
         let epoch = a.cache_epoch;
         let before = serde_json::to_vec(&a.build_history()).unwrap();
         for reply in ["unstructured digest", "mentions ## Goal but has no heading"] {
             let (_tx, rx) = mpsc::unbounded_channel();
-            a.compact_rx = Some(rx);
-            a.compacting_session_id = Some(sid.clone());
+            a.compaction.rx = Some(rx);
+            a.compaction.session_id = Some(sid.clone());
             a.on_compact_result(Some((sid.clone(), reply.into(), 6, 60)));
-            assert!(a.compact_rx.is_none());
-            assert!(a.compacting_session_id.is_none());
+            assert!(a.compaction.rx.is_none());
+            assert!(a.compaction.session_id.is_none());
             let stored = a.db.get_session(&sid).unwrap().unwrap();
             assert_eq!(stored.compact_summary.as_deref(), Some("previous digest"));
             assert_eq!(stored.compact_through, 2);
             assert_eq!(a.session.as_ref().unwrap().compact_through, 2);
             assert_eq!(serde_json::to_vec(&a.build_history()).unwrap(), before);
-            assert_eq!(a.context_total, Some(777));
+            assert_eq!(a.meter.total, Some(777));
             assert_eq!(a.cache_epoch, epoch);
             assert_eq!(
                 a.last_status(),
@@ -865,16 +866,16 @@ mod tests {
             }];
             a.settings.compact_threshold = threshold;
             a.experiments.compaction_budget_tokens = budget;
-            a.context_total = Some(used);
+            a.meter.total = Some(used);
             a.drain_ui_events();
             a.maybe_compact();
             assert_eq!(
-                a.compact_rx.is_some(),
+                a.compaction.rx.is_some(),
                 triggers,
                 "{limit:?}, {threshold}, {budget}, {used}"
             );
             assert_eq!(
-                a.compacting_session_id.as_deref(),
+                a.compaction.session_id.as_deref(),
                 triggers.then_some(sid.as_str())
             );
             assert!(a.last_status().is_empty());
@@ -989,7 +990,7 @@ mod tests {
         // The visible legacy digest is not new conversation content. It must
         // not cause a second compaction request every time the session opens.
         a.force_compact();
-        assert!(a.compact_rx.is_none());
+        assert!(a.compaction.rx.is_none());
         assert!(a.last_status().contains("nothing new"));
     }
 
@@ -1000,14 +1001,14 @@ mod tests {
             a.db.create_session("t", "m", &a.active_space.id, "chat")
                 .unwrap();
         a.session = Some(session.clone());
-        a.compacting_session_id = Some(session.id.clone());
+        a.compaction.session_id = Some(session.id.clone());
         let (_tx, rx) = mpsc::unbounded_channel();
-        a.compact_rx = Some(rx);
+        a.compaction.rx = Some(rx);
 
         a.on_compact_result(None);
 
-        assert!(a.compact_rx.is_none());
-        assert!(a.compacting_session_id.is_none());
+        assert!(a.compaction.rx.is_none());
+        assert!(a.compaction.session_id.is_none());
         assert!(a.last_status().contains("compaction failed"));
     }
 
@@ -1015,8 +1016,8 @@ mod tests {
     fn compaction_failure_names_the_cause() {
         let mut a = test_app();
         let (_tx, rx) = mpsc::unbounded_channel();
-        a.compact_rx = Some(rx);
-        *a.compact_error.lock().unwrap() =
+        a.compaction.rx = Some(rx);
+        *a.compaction.error.lock().unwrap() =
             Some("openai/gpt-6-luna: request failed (402 Payment Required)".into());
 
         a.on_compact_result(None);
@@ -1025,7 +1026,10 @@ mod tests {
             a.last_status(),
             "compaction failed — openai/gpt-6-luna: request failed (402 Payment Required)"
         );
-        assert!(a.compact_error.lock().unwrap().is_none(), "reported once");
+        assert!(
+            a.compaction.error.lock().unwrap().is_none(),
+            "reported once"
+        );
     }
 
     #[test]

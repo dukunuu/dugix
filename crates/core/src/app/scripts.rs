@@ -15,7 +15,7 @@ impl App {
     pub fn refresh_scripts(&mut self) {
         let dir = self.space.scripts_dir(&self.active_space.name);
         let _ = std::fs::create_dir_all(&dir);
-        self.scripts_cache = match std::fs::read_dir(&dir) {
+        self.caches.scripts = match std::fs::read_dir(&dir) {
             Err(_) => Vec::new(),
             Ok(entries) => entries
                 .flatten()
@@ -41,7 +41,7 @@ impl App {
                 })
                 .collect(),
         };
-        self.scripts_cache.sort_by(|a, b| a.name.cmp(&b.name));
+        self.caches.scripts.sort_by(|a, b| a.name.cmp(&b.name));
     }
 
     /// Touch the script file (if absent) and refresh the cache. Returns the

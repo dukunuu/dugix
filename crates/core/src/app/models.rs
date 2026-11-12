@@ -99,7 +99,7 @@ impl App {
             self.push_status(format!("local server: {error}"));
             return;
         }
-        self.local_status_announce = true;
+        self.local.status_announce = true;
         self.refresh_local_status();
     }
 
@@ -127,7 +127,7 @@ impl App {
             .context("the configured endpoint has no port to serve on")?;
         if matches!(verb, "stop" | "restart") {
             // A restart waits for the port back before rebinding it.
-            self.local_servers.stop(runtime, port, verb == "restart")?;
+            self.local.servers.stop(runtime, port, verb == "restart")?;
             self.push_status(format!("{} server stopped", runtime.label()));
             if verb == "stop" {
                 return Ok(());
@@ -145,7 +145,8 @@ impl App {
             kv_cache_q8: config.kv_cache_q8,
         };
         let argv = self
-            .local_servers
+            .local
+            .servers
             .start(runtime, model.as_deref(), port, options)?;
         self.push_status(format!(
             "{} starting: {argv} — /local status when it answers",
@@ -158,16 +159,17 @@ impl App {
     /// what their process trees cost, and whether that is over budget. One
     /// survey at a time; the picker and the verbs share the result.
     pub fn refresh_local_status(&mut self) {
-        if self.local_status_rx.is_some() {
+        if self.local.status_rx.is_some() {
             return;
         }
-        self.local_servers.reap();
+        self.local.servers.reap();
         let configured = self.saved.local.clone();
         let managed: Vec<(LocalRuntime, Option<u32>)> = self
-            .local_servers
+            .local
+            .servers
             .managed_runtimes()
             .into_iter()
-            .map(|runtime| (runtime, self.local_servers.pid(runtime)))
+            .map(|runtime| (runtime, self.local.servers.pid(runtime)))
             .collect();
         // A survey shells out and talks to the network, so it needs a
         // reactor. `cfg(test)` cannot express this: core is a dependency of
@@ -177,7 +179,7 @@ impl App {
             return;
         };
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        self.local_status_rx = Some(rx);
+        self.local.status_rx = Some(rx);
         handle.spawn(async move {
             let _ = tx.send(crate::provider::serve::survey(configured.as_ref(), &managed).await);
         });
@@ -187,22 +189,23 @@ impl App {
     /// asked, and warn about anything over budget. Nothing is stopped here —
     /// the budget is advisory, so a server mid-reply is never yanked.
     pub fn on_local_status(&mut self, result: Option<Vec<RuntimeStatus>>) {
-        self.local_status_rx = None;
+        self.local.status_rx = None;
         let Some(statuses) = result else {
             return;
         };
-        let announce = std::mem::take(&mut self.local_status_announce);
-        self.local_status = statuses;
+        let announce = std::mem::take(&mut self.local.status_announce);
+        self.local.status = statuses;
         if announce {
             let line = self
-                .local_status
+                .local
+                .status
                 .iter()
                 .map(RuntimeStatus::summary)
                 .collect::<Vec<_>>()
                 .join("  ·  ");
             self.push_status(format!("local: {line}"));
         }
-        if let Some(over) = self.local_status.iter().find(|status| status.over_budget) {
+        if let Some(over) = self.local.status.iter().find(|status| status.over_budget) {
             let budget = over
                 .budget_kb
                 .map(crate::provider::serve::format_kb)
@@ -221,7 +224,7 @@ impl App {
     /// Stop every local server Nexus started. The exit path calls this so
     /// quitting never leaves a multi-gigabyte server behind.
     pub async fn stop_local_servers(&mut self) {
-        self.local_servers.stop_all().await;
+        self.local.servers.stop_all().await;
     }
 
     /// Persist and activate (or clear) the local runtime, then refresh the
@@ -468,7 +471,7 @@ impl App {
     /// ratio so the switch-over doesn't jump.
     pub fn context_used(&self) -> u64 {
         let streaming = self.is_streaming();
-        if let (Some(total), Some(basis)) = (self.context_total, self.context_basis)
+        if let (Some(total), Some(basis)) = (self.meter.total, self.meter.basis)
             && total == basis.exact
         {
             if !streaming && self.messages.len() == basis.messages {
@@ -478,7 +481,7 @@ impl App {
             let tokens = total as f64 + self.calibrated(delta / 4.0);
             return tokens.max(0.0).round() as u64;
         }
-        if !streaming && let Some(total) = self.context_total {
+        if !streaming && let Some(total) = self.meter.total {
             return total;
         }
         let estimate = self.calibrated(self.context_chars() as f64 / 4.0) as u64;
@@ -486,7 +489,8 @@ impl App {
         // request: the previous completed request is a better lower bound
         // until this one reports exact usage.
         if streaming {
-            self.context_total
+            self.meter
+                .total
                 .map_or(estimate, |total| total.max(estimate))
         } else {
             estimate
@@ -495,7 +499,7 @@ impl App {
 
     /// Scale a ~4-chars/token estimate by what the provider last reported.
     fn calibrated(&self, tokens: f64) -> f64 {
-        tokens * self.context_ratio.unwrap_or(1.0)
+        tokens * self.meter.ratio.unwrap_or(1.0)
     }
 
     /// What the next request will carry, in characters: the system/memory
@@ -529,17 +533,18 @@ impl App {
     /// not move the bar; the first count of a turn is always taken.
     pub(crate) fn observe_context(&mut self, task: super::ChatTaskId, total: u64) {
         if self
-            .context_basis
+            .meter
+            .basis
             .is_some_and(|basis| basis.task == task && total < basis.exact)
         {
             return;
         }
         let chars = self.context_chars();
         if chars > 0 && total > 0 {
-            self.context_ratio = Some((total as f64 / (chars as f64 / 4.0)).clamp(0.5, 2.0));
+            self.meter.ratio = Some((total as f64 / (chars as f64 / 4.0)).clamp(0.5, 2.0));
         }
-        self.context_total = Some(total);
-        self.context_basis = Some(super::ContextBasis {
+        self.meter.total = Some(total);
+        self.meter.basis = Some(super::ContextBasis {
             exact: total,
             chars,
             messages: self.messages.len(),
@@ -599,11 +604,11 @@ impl App {
                 }
             }
             ModelPickTarget::SwarmPersona(row) => {
-                if let Some(p) = self.swarm_cache.get_mut(row) {
+                if let Some(p) = self.swarm.cache.get_mut(row) {
                     p.model = id.to_string();
                 }
                 if let Some(session) = &self.session {
-                    let _ = self.db.save_swarm_personas(&session.id, &self.swarm_cache);
+                    let _ = self.db.save_swarm_personas(&session.id, &self.swarm.cache);
                 }
                 self.push_status(format!("persona model: {id}"));
             }

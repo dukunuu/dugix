@@ -121,7 +121,7 @@ fn experiment_off_replays_long_history_byte_identically_to_legacy_output() {
         serde_json::to_vec(&expected).unwrap()
     );
     let epoch = app.cache_epoch;
-    app.context_total = Some(100_000);
+    app.meter.total = Some(100_000);
     app.maybe_mask();
     assert_eq!(app.mask_through, 40);
     assert_eq!(app.cache_epoch, epoch);
@@ -136,18 +136,18 @@ fn mask_trigger_moves_in_bulk_retains_whole_rounds_and_bumps_epoch_once() {
     app.experiments.mask_trigger_tokens = 50_000;
     let epoch = app.cache_epoch;
     app.drain_ui_events();
-    app.context_total = Some(49_999);
+    app.meter.total = Some(49_999);
     app.maybe_mask();
     assert_eq!(app.mask_through, 0);
     assert_eq!(app.cache_epoch, epoch);
     assert!(app.last_status().is_empty());
 
-    app.context_total = Some(50_000);
+    app.meter.total = Some(50_000);
     app.maybe_mask();
     // Each round has user + two consecutive tool rows + assistant.
     assert_eq!(app.mask_through, 9);
     assert_eq!(app.cache_epoch, epoch + 1);
-    assert!(app.context_total.is_none());
+    assert!(app.meter.total.is_none());
     assert_eq!(
         app.last_status(),
         "masked 4 old tool results (~5000 tokens) · experiment"
@@ -163,7 +163,7 @@ fn mask_trigger_moves_in_bulk_retains_whole_rounds_and_bumps_epoch_once() {
     assert_eq!(app.mask_through, 9);
     assert_eq!(app.cache_epoch, epoch + 1);
     assert!(app.last_status().is_empty());
-    app.context_total = Some(50_000);
+    app.meter.total = Some(50_000);
     app.maybe_mask();
     assert_eq!(app.mask_through, 13);
     assert_eq!(app.cache_epoch, epoch + 2);
@@ -171,7 +171,7 @@ fn mask_trigger_moves_in_bulk_retains_whole_rounds_and_bumps_epoch_once() {
         app.last_status(),
         "masked 2 old tool results (~2500 tokens) · experiment"
     );
-    app.context_total = Some(50_000);
+    app.meter.total = Some(50_000);
     app.maybe_mask();
     assert_eq!(app.cache_epoch, epoch + 2);
     assert!(app.last_status().is_empty());
@@ -184,17 +184,17 @@ fn mask_trigger_uses_half_the_window_and_requires_two_thousand_maskable_tokens()
     app.experiments.mask_tool_results = true;
     app.experiments.mask_keep_rounds = 1;
     app.models[0].context_length = None;
-    app.context_total = Some(100_000);
+    app.meter.total = Some(100_000);
     app.maybe_mask();
     assert_eq!(app.mask_through, 0);
     app.models[0].context_length = Some(100_000);
     app.maybe_mask();
     assert_eq!(app.mask_through, 0); // 7,998 chars / 4 < 2,000
     app.messages[1] = tool("c0-0", "fs", &"x".repeat(4_001));
-    app.context_total = Some(49_999);
+    app.meter.total = Some(49_999);
     app.maybe_mask();
     assert_eq!(app.mask_through, 0);
-    app.context_total = Some(50_000);
+    app.meter.total = Some(50_000);
     app.maybe_mask();
     assert_eq!(app.mask_through, 5); // exactly 8,000 chars
     discard(app);
@@ -208,10 +208,10 @@ fn masking_fallback_uses_half_the_compaction_budget_with_or_without_a_known_wind
         app.experiments.mask_keep_rounds = 1;
         app.experiments.compaction_budget_tokens = 40_000;
         app.models[0].context_length = limit;
-        app.context_total = Some(19_999);
+        app.meter.total = Some(19_999);
         app.maybe_mask();
         assert_eq!(app.mask_through, 0);
-        app.context_total = Some(20_000);
+        app.meter.total = Some(20_000);
         app.maybe_mask();
         assert_eq!(app.mask_through, 5);
         assert!(app.last_status().ends_with(" · experiment"));
@@ -227,10 +227,10 @@ fn explicit_masking_trigger_takes_precedence_over_the_compaction_budget() {
     app.experiments.mask_trigger_tokens = 30_000;
     app.experiments.compaction_budget_tokens = 40_000;
     app.models[0].context_length = None;
-    app.context_total = Some(29_999);
+    app.meter.total = Some(29_999);
     app.maybe_mask();
     assert_eq!(app.mask_through, 0);
-    app.context_total = Some(30_000);
+    app.meter.total = Some(30_000);
     app.maybe_mask();
     assert_eq!(app.mask_through, 5);
     discard(app);

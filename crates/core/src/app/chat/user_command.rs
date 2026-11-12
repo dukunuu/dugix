@@ -14,13 +14,13 @@ impl App {
     /// user turn, so nothing else may send until it lands).
     #[must_use]
     pub fn user_command_running(&self) -> bool {
-        self.user_command_rx.is_some()
+        self.user_command.rx.is_some()
     }
 
     /// Where `!` commands run: the workspace root in agent mode, else the
     /// active space's directory (created if missing; `!` itself is agent-only).
     pub fn user_command_cwd(&self) -> std::path::PathBuf {
-        if let Some(dir) = &self.user_command_dir {
+        if let Some(dir) = &self.user_command.dir {
             return dir.clone();
         }
         let default = self.default_user_command_cwd();
@@ -40,9 +40,9 @@ impl App {
     }
 
     pub(in crate::app) fn reset_user_command_dir(&mut self) {
-        self.user_command_dir = None;
-        self.user_command_context = None;
-        self.user_command_epoch += 1;
+        self.user_command.dir = None;
+        self.user_command.context = None;
+        self.user_command.epoch += 1;
     }
 
     pub(in crate::app) fn user_command_context(&self) -> UserCommandContext {
@@ -59,13 +59,14 @@ impl App {
 
     /// Report a cached startup failure only once, also when completion initializes it.
     pub fn report_user_shell_warning(&mut self) {
-        if !self.user_shell_warning_shown
+        if !self.user_command.shell_warning_shown
             && let Some(reason) = self
-                .user_shell
+                .user_command
+                .shell
                 .get()
                 .and_then(|setup| setup.warning.clone())
         {
-            self.user_shell_warning_shown = true;
+            self.user_command.shell_warning_shown = true;
             self.push_status(format!("! runs without your shell setup · {reason}"));
         }
     }
@@ -83,7 +84,7 @@ impl App {
             self.push_status("!commands run only in the terminal UI");
             return Ok(());
         }
-        if self.is_streaming() || self.user_command_rx.is_some() {
+        if self.is_streaming() || self.user_command.rx.is_some() {
             self.push_status(if self.is_streaming() {
                 "wait — response still streaming"
             } else {
@@ -99,14 +100,14 @@ impl App {
         let cwd = self.user_command_cwd();
         let session_id =
             self.ensure_session(&cmd, self.current_model.clone().unwrap_or_default())?;
-        self.user_command_context = Some(self.user_command_context());
-        let epoch = self.user_command_epoch;
-        let setup = std::sync::Arc::clone(&self.user_shell);
+        self.user_command.context = Some(self.user_command_context());
+        let epoch = self.user_command.epoch;
+        let setup = std::sync::Arc::clone(&self.user_command.shell);
         let data = self.space.root.clone();
         let scrubber = crate::trace::Scrubber::new(self.saved_secrets());
         let incognito = self.incognito;
         let (tx, rx) = mpsc::unbounded_channel();
-        self.user_command_rx = Some(rx);
+        self.user_command.rx = Some(rx);
         self.push_status(format!("running: {cmd}"));
         tokio::spawn(async move {
             let setup = setup
@@ -137,10 +138,10 @@ impl App {
 
     /// Store a finished captured `!` command in the session it started in.
     pub(in crate::app) fn finish_user_command(&mut self, run: &UserCommandRun) -> Result<()> {
-        if run.epoch == self.user_command_epoch
+        if run.epoch == self.user_command.epoch
             && let Some(dir) = &run.next_dir
         {
-            self.user_command_dir = Some(dir.clone());
+            self.user_command.dir = Some(dir.clone());
         }
         self.push_status(format!(
             "ran: {} · {}",
@@ -205,7 +206,7 @@ impl App {
         if !incognito {
             self.db.add_user_command_message(session_id, &content)?;
         }
-        self.ui_repair_messages.remove(session_id);
+        self.ui_repair.messages.remove(session_id);
         if self
             .session
             .as_ref()

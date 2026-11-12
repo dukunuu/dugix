@@ -49,7 +49,8 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
             let compacting_here = app.is_compacting_session(&s.id);
             let streaming_here = app.chat_task_for_session(&s.id).is_some();
             let researching_here = app
-                .research_running
+                .research
+                .running
                 .as_ref()
                 .is_some_and(|(id, _)| *id == s.id);
             let agent = Style::default().fg(app.theme.accent2);

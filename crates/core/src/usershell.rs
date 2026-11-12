@@ -635,7 +635,7 @@ mod tests {
         );
         app.interactive_ui = true;
         app.work_mode = crate::app::WorkMode::Agent;
-        app.user_shell.set(setup).unwrap();
+        app.user_command.shell.set(setup).unwrap();
         app.run_user_command("greet; nexus_fn; addon".into())
             .unwrap();
         loop {

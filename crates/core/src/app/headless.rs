@@ -137,7 +137,7 @@ impl App {
                     }
                     let parked = matches!(&ev, StreamEvent::ToolCall { result, .. } if result == crate::jobs::PARKED);
                     self.on_chat_event(task_id, ev)?;
-                    if parked && self.job_approver.is_some() {
+                    if parked && self.approvals.job_approver.is_some() {
                         self.stop_stream()?;
                         return Ok((crate::jobs::PARKED.to_string(), usage));
                     }
@@ -296,7 +296,7 @@ impl App {
                 refusal = s;
             }
         }
-        if self.research_rx.is_none() {
+        if self.research.rx.is_none() {
             bail!("research didn't start: {refusal}");
         }
 
@@ -319,7 +319,7 @@ impl App {
                     // A gate armed (or re-armed) by the handler above: answer
                     // it before draining anything else — the pipeline is
                     // parked and will not move until it gets a reply.
-                    if !approve && let Some(gate) = self.survey_gate.as_ref() {
+                    if !approve && let Some(gate) = self.research.survey_gate.as_ref() {
                         if !interactive {
                             bail!(
                                 "research needs your input at a gate ({}), but stdin isn't a \

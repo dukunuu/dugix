@@ -17,14 +17,14 @@ impl AppView {
     pub fn move_scripts_selection(&mut self, delta: i32) {
         self.scripts_selected = nexus_core::app::clamp_cursor(
             self.scripts_selected,
-            self.core.scripts_cache.len(),
+            self.core.caches.scripts.len(),
             delta,
         );
     }
 
     /// Enter in Browse: open the script in $EDITOR.
     pub fn open_selected_script(&mut self) {
-        let Some(s) = self.core.scripts_cache.get(self.scripts_selected) else {
+        let Some(s) = self.core.caches.scripts.get(self.scripts_selected) else {
             return;
         };
         let path = self
@@ -56,7 +56,7 @@ impl AppView {
 
     /// Ctrl+R in Browse: pre-fill the edit line with the current name.
     pub fn start_script_rename(&mut self) {
-        if let Some(s) = self.core.scripts_cache.get(self.scripts_selected) {
+        if let Some(s) = self.core.caches.scripts.get(self.scripts_selected) {
             self.scripts_edit = s.name.clone();
             self.scripts_mode = ScriptsMode::Rename;
         }
@@ -66,7 +66,7 @@ impl AppView {
     pub fn confirm_script_rename(&mut self) {
         let new = self.scripts_edit.trim().to_string();
         self.scripts_mode = ScriptsMode::Browse;
-        let Some(s) = self.core.scripts_cache.get(self.scripts_selected).cloned() else {
+        let Some(s) = self.core.caches.scripts.get(self.scripts_selected).cloned() else {
             return;
         };
         if new.is_empty() || new == s.name {
@@ -81,7 +81,7 @@ impl AppView {
 
     /// Ctrl+D confirm: delete the script file from disk.
     pub fn confirm_script_delete(&mut self) -> Result<()> {
-        if let Some(s) = self.core.scripts_cache.get(self.scripts_selected).cloned() {
+        if let Some(s) = self.core.caches.scripts.get(self.scripts_selected).cloned() {
             self.core.delete_script_file(&s.name)?;
             self.push_status(format!("removed {}", s.name));
         }

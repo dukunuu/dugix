@@ -15,7 +15,7 @@ impl AppView {
             self.push_status("start a chat first, then /swarm".to_string());
             return;
         };
-        self.core.swarm_cache = self
+        self.core.swarm.cache = self
             .core
             .db
             .list_swarm_personas(&session.id)
@@ -27,21 +27,21 @@ impl AppView {
 
     pub fn move_swarm_selection(&mut self, delta: i32) {
         self.swarm_selected =
-            nexus_core::app::clamp_cursor(self.swarm_selected, self.core.swarm_cache.len(), delta);
+            nexus_core::app::clamp_cursor(self.swarm_selected, self.core.swarm.cache.len(), delta);
     }
 
     /// Queue the selected persona (or a new row) as a small structured file
     /// for `$EDITOR`. Format: `name`, `model`, `---`, then free-form blurb.
     pub fn queue_swarm_persona_editor(&mut self, new: bool) -> Result<()> {
         if new {
-            self.core.swarm_cache.push(Persona {
+            self.core.swarm.cache.push(Persona {
                 name: String::new(),
                 model: self.core.current_model.clone().unwrap_or_default(),
                 blurb: String::new(),
             });
-            self.swarm_selected = self.core.swarm_cache.len() - 1;
+            self.swarm_selected = self.core.swarm.cache.len() - 1;
         }
-        let Some(persona) = self.core.swarm_cache.get(self.swarm_selected) else {
+        let Some(persona) = self.core.swarm.cache.get(self.swarm_selected) else {
             return Ok(());
         };
         let path =
@@ -66,7 +66,7 @@ impl AppView {
         let _ = std::fs::remove_file(path);
         match nexus_core::app::parse_persona_editor(&text) {
             Ok(persona) => {
-                if let Some(row) = self.core.swarm_cache.get_mut(self.swarm_selected) {
+                if let Some(row) = self.core.swarm.cache.get_mut(self.swarm_selected) {
                     *row = persona;
                 }
                 self.core.save_swarm_roster()?;
@@ -76,11 +76,12 @@ impl AppView {
             Err(e) => {
                 if self
                     .core
-                    .swarm_cache
+                    .swarm
+                    .cache
                     .get(self.swarm_selected)
                     .is_some_and(|p| p.name.trim().is_empty())
                 {
-                    self.core.swarm_cache.remove(self.swarm_selected);
+                    self.core.swarm.cache.remove(self.swarm_selected);
                     self.core.save_swarm_roster()?;
                     self.clamp_swarm_selection();
                 }
@@ -91,8 +92,8 @@ impl AppView {
     }
 
     pub fn swarm_remove_row(&mut self) -> Result<()> {
-        if self.swarm_selected < self.core.swarm_cache.len() {
-            self.core.swarm_cache.remove(self.swarm_selected);
+        if self.swarm_selected < self.core.swarm.cache.len() {
+            self.core.swarm.cache.remove(self.swarm_selected);
         }
         self.swarm_popup_mode = SwarmPopupMode::Browse;
         self.core.save_swarm_roster()?;
@@ -103,7 +104,7 @@ impl AppView {
     fn clamp_swarm_selection(&mut self) {
         self.swarm_selected = self
             .swarm_selected
-            .min(self.core.swarm_cache.len().saturating_sub(1));
+            .min(self.core.swarm.cache.len().saturating_sub(1));
     }
 }
 
@@ -141,7 +142,7 @@ mod tests {
 
         a.run_command("swarm").unwrap();
         assert_eq!(a.popup, Popup::Swarm);
-        assert!(a.core.swarm_cache.is_empty());
+        assert!(a.core.swarm.cache.is_empty());
 
         a.queue_swarm_persona_editor(true).unwrap();
         let PendingEditor::Persona(path) = a.pending_editor.take().unwrap() else {
@@ -153,10 +154,10 @@ mod tests {
         )
         .unwrap();
         a.apply_swarm_persona_editor(&path).unwrap();
-        assert_eq!(a.core.swarm_cache.len(), 1);
-        assert_eq!(a.core.swarm_cache[0].name, "Skeptic");
-        assert_eq!(a.core.swarm_cache[0].model, "a/one");
-        assert_eq!(a.core.swarm_cache[0].blurb, "pokes holes in every claim");
+        assert_eq!(a.core.swarm.cache.len(), 1);
+        assert_eq!(a.core.swarm.cache[0].name, "Skeptic");
+        assert_eq!(a.core.swarm.cache[0].model, "a/one");
+        assert_eq!(a.core.swarm.cache[0].blurb, "pokes holes in every claim");
 
         // Persisted immediately, not just held in the popup's cache.
         let stored = a.db.list_swarm_personas(&sid).unwrap();
@@ -169,7 +170,7 @@ mod tests {
         assert!(a.db.get_session(&sid).unwrap().unwrap().swarm_mode);
 
         a.swarm_remove_row().unwrap();
-        assert!(a.core.swarm_cache.is_empty());
+        assert!(a.core.swarm.cache.is_empty());
         assert!(a.db.list_swarm_personas(&sid).unwrap().is_empty());
     }
 
@@ -181,7 +182,7 @@ mod tests {
             a.db.create_session("swarm", "a/one", &space, "chat")
                 .unwrap();
         a.core.session = Some(session);
-        a.core.swarm_cache = vec![nexus_core::db::Persona {
+        a.core.swarm.cache = vec![nexus_core::db::Persona {
             name: "Skeptic".into(),
             model: "a/one".into(),
             blurb: "pokes holes".into(),
@@ -201,9 +202,9 @@ mod tests {
         .unwrap();
         a.apply_swarm_persona_editor(&path).unwrap();
 
-        assert_eq!(a.core.swarm_cache[0].name, "Critic");
-        assert_eq!(a.core.swarm_cache[0].model, "codex:gpt-5.4-mini");
-        assert_eq!(a.core.swarm_cache[0].blurb, "checks evidence");
+        assert_eq!(a.core.swarm.cache[0].name, "Critic");
+        assert_eq!(a.core.swarm.cache[0].model, "codex:gpt-5.4-mini");
+        assert_eq!(a.core.swarm.cache[0].blurb, "checks evidence");
         assert!(!path.exists());
     }
 
@@ -212,7 +213,7 @@ mod tests {
         let mut a = test_app();
         a.models.clear();
         a.popup = Popup::Swarm;
-        a.core.swarm_cache.push(nexus_core::db::Persona {
+        a.core.swarm.cache.push(nexus_core::db::Persona {
             name: "Skeptic".into(),
             model: "a/one".into(),
             blurb: "pokes holes".into(),
@@ -239,11 +240,11 @@ mod tests {
 
         a.run_command("swarm").unwrap();
         a.queue_swarm_persona_editor(true).unwrap();
-        assert_eq!(a.core.swarm_cache.len(), 1);
+        assert_eq!(a.core.swarm.cache.len(), 1);
         let PendingEditor::Persona(path) = a.pending_editor.take().unwrap() else {
             panic!("expected persona editor request");
         };
         a.apply_swarm_persona_editor(&path).unwrap(); // unchanged blank name cancels
-        assert!(a.core.swarm_cache.is_empty());
+        assert!(a.core.swarm.cache.is_empty());
     }
 }

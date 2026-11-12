@@ -157,14 +157,15 @@ impl App {
     /// ponytail: runs synchronously on the UI task — extraction of a huge PDF
     /// blocks a beat; move to a blocking task if that ever hurts.
     pub fn rescan_files(&mut self) {
-        if self.embed_rx.is_none()
+        if self.index.embed_rx.is_none()
             && self
+                .index
                 .embedding_backend
                 .as_ref()
                 .is_some_and(crate::provider::embedding::Embedder::is_ollama)
         {
             // Re-probe digests/capabilities on a fresh scan, not between files.
-            self.embedding_backend = None;
+            self.index.embedding_backend = None;
         }
         self.rescan_files_with(&crate::extract::ExtractConfig::load());
     }
@@ -211,7 +212,7 @@ impl App {
                 // file imported by an older build that has no chunks yet, or
                 // one indexed by an older extractor.
                 if crate::extract::status_is_queued(&f.status) {
-                    if self.ocr_rx.is_none() {
+                    if self.index.convert_rx.is_none() {
                         ocr_jobs.push((self.active_space.id.clone(), name.clone(), path.clone()));
                     }
                     continue;
@@ -231,7 +232,7 @@ impl App {
                 // Content unchanged (touched, or indexed before mtimes were
                 // tracked): just record the stat for next time.
                 let _ = self.db.set_file_mtime(&f.id, mtime);
-                if crate::extract::status_is_queued(&f.status) && self.ocr_rx.is_none() {
+                if crate::extract::status_is_queued(&f.status) && self.index.convert_rx.is_none() {
                     ocr_jobs.push((self.active_space.id.clone(), name.clone(), path.clone()));
                 }
                 continue;
@@ -270,7 +271,7 @@ impl App {
         // Backfill vectors for anything whose chunks changed (or that predates
         // semantic search entirely).
         self.start_embedding();
-        self.files_cache = self
+        self.caches.files = self
             .db
             .list_files(&self.active_space.id)
             .unwrap_or_default();
@@ -280,11 +281,11 @@ impl App {
     /// time: jobs arriving while a batch runs stay at "convert: …" and
     /// re-queue on a later rescan.
     pub fn start_ocr(&mut self, jobs: Vec<(String, String, std::path::PathBuf)>) {
-        if jobs.is_empty() || self.ocr_rx.is_some() {
+        if jobs.is_empty() || self.index.convert_rx.is_some() {
             return;
         }
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        self.ocr_rx = Some(rx);
+        self.index.convert_rx = Some(rx);
         tokio::spawn(async move {
             for (space_id, name, path) in jobs {
                 let result = convert_flow(path, &tx, &space_id, &name).await;
@@ -298,7 +299,7 @@ impl App {
     /// Zero a file's chunks and hash/size so the next rescan re-indexes it
     /// from disk.
     pub fn reextract_file(&mut self, name: &str) {
-        let Some(f) = self.files_cache.iter().find(|f| f.name == name).cloned() else {
+        let Some(f) = self.caches.files.iter().find(|f| f.name == name).cloned() else {
             return;
         };
         let _ = self.db.set_file_chunks(&f.id, &[]);
@@ -318,16 +319,16 @@ impl App {
     /// already in flight.
     #[allow(clippy::too_many_lines)]
     pub fn start_embedding(&mut self) {
-        if self.embed_rx.is_some() {
+        if self.index.embed_rx.is_some() {
             return;
         }
         // Chat backfill runs on its own timer only, never inline with the
         // rescans that follow every turn, so it stays behind foreground work.
-        let chats_due = std::time::Instant::now() >= self.next_chat_index;
+        let chats_due = std::time::Instant::now() >= self.index.next_chat_index;
         if chats_due {
             self.index_chats();
         }
-        let model = self.embedding_model.trim().to_string();
+        let model = self.index.embedding_model.trim().to_string();
         if model.is_empty() {
             return;
         }
@@ -337,10 +338,11 @@ impl App {
         // The toolbox's search path holds a clone that shares the probed
         // profile, so it only needs rebuilding when the instance is new.
         let new_instance = self
+            .index
             .embedding_backend
             .as_ref()
             .is_none_or(|b| !b.same_instance(&embedder));
-        self.embedding_backend = Some(embedder.clone());
+        self.index.embedding_backend = Some(embedder.clone());
         if new_instance {
             self.refresh_toolbox();
         }
@@ -367,7 +369,7 @@ impl App {
                     && !crate::extract::status_is_queued(&file.status)
             })
         }) else {
-            self.embedding_status = embedder.status();
+            self.index.embedding_status = embedder.status();
             if chats_due {
                 self.start_chat_embedding(embedder, identity);
             }
@@ -410,7 +412,7 @@ impl App {
                 .set_file_status(&file_id, &embedding_status(&file.status));
         }
         if space_id == self.active_space.id {
-            self.files_cache = self.db.list_files(&space_id).unwrap_or_default();
+            self.caches.files = self.db.list_files(&space_id).unwrap_or_default();
         }
         let file_name = file.name;
         let image_path = self
@@ -443,7 +445,7 @@ impl App {
             .map(|(_, text)| text.as_str())
             .collect::<Vec<_>>()
             .join("\n");
-        self.embedding_chunks = if is_image {
+        self.index.embedding_chunks = if is_image {
             vec![("image".to_string(), file_name.clone())]
         } else if is_scanned_pdf {
             if pages.is_empty() {
@@ -458,28 +460,29 @@ impl App {
         } else {
             crate::extract::chunk_lines(&text)
         };
-        if self.embedding_chunks.is_empty() {
+        if self.index.embedding_chunks.is_empty() {
             // Blank text must still yield a vector, or the same file would be
             // picked again forever.
-            self.embedding_chunks = crate::extract::metadata_chunks(&file_name);
+            self.index.embedding_chunks = crate::extract::metadata_chunks(&file_name);
         }
         let pdf_path = is_scanned_pdf.then(|| image_path.clone());
         let image_paths = if is_image { vec![image_path] } else { pages };
         let chunks = self
+            .index
             .embedding_chunks
             .iter()
             .enumerate()
             .map(|(seq, (_, text))| (seq as i64, text.clone()))
             .collect::<Vec<_>>();
-        self.embedding_status = format!(
+        self.index.embedding_status = format!(
             "{} · indexing {} ({} files remaining)",
             embedder.status(),
             file_name,
             missing.len()
         );
-        self.push_status(self.embedding_status.clone());
+        self.push_status(self.index.embedding_status.clone());
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        self.embed_rx = Some(rx);
+        self.index.embed_rx = Some(rx);
         handle.spawn(async move {
             let mut out: Vec<(i64, Vec<f32>)> = Vec::with_capacity(chunks.len());
             let mut err = None;
@@ -556,12 +559,12 @@ impl App {
     /// are missing.
     pub fn on_embed_done(&mut self, r: Option<crate::app::EmbedMsg>) {
         let Some((space_id, file_id, result)) = r else {
-            self.embed_rx = None;
-            self.embedding_chat_job = None;
+            self.index.embed_rx = None;
+            self.index.embedding_chat_job = None;
             return;
         };
-        self.embed_rx = None;
-        if self.embedding_chat_job.is_some() {
+        self.index.embed_rx = None;
+        if self.index.embedding_chat_job.is_some() {
             self.on_chat_embed_done(result);
             return;
         }
@@ -569,7 +572,7 @@ impl App {
             self.on_embedding_probe(result);
             return;
         }
-        let chunks = std::mem::take(&mut self.embedding_chunks);
+        let chunks = std::mem::take(&mut self.index.embedding_chunks);
         let restore_status = self
             .db
             .list_files(&space_id)
@@ -580,18 +583,20 @@ impl App {
         match result {
             Ok(vecs) => {
                 let Some(key) = self
+                    .index
                     .embedding_backend
                     .as_ref()
                     .and_then(|b| b.identity())
                     .map(crate::provider::embedding::EmbedIdentity::key)
                 else {
-                    self.embedding_status = "embeddings: backend changed, will retry".to_string();
+                    self.index.embedding_status =
+                        "embeddings: backend changed, will retry".to_string();
                     return;
                 };
                 let _ = self.db.invalidate_embedding_identity(&space_id, &key);
                 if let Err(error) = self.db.set_file_embeddings(&file_id, &key, &chunks, &vecs) {
-                    self.embedding_status = format!("embeddings: {error}");
-                    self.push_status(self.embedding_status.clone());
+                    self.index.embedding_status = format!("embeddings: {error}");
+                    self.push_status(self.index.embedding_status.clone());
                     if let Some(status) = &restore_status {
                         let _ = self.db.set_file_status(&file_id, status);
                     }
@@ -606,14 +611,14 @@ impl App {
                 if let Some(status) = &restore_status {
                     let _ = self.db.set_file_status(&file_id, status);
                 }
-                self.next_chat_index =
+                self.index.next_chat_index =
                     std::time::Instant::now() + std::time::Duration::from_secs(60);
-                self.embedding_status = format!("embeddings: {e} · keyword search available");
+                self.index.embedding_status = format!("embeddings: {e} · keyword search available");
                 self.push_status(format!("embedding failed: {e}"));
             }
         }
         if space_id == self.active_space.id {
-            self.files_cache = self.db.list_files(&space_id).unwrap_or_default();
+            self.caches.files = self.db.list_files(&space_id).unwrap_or_default();
         }
     }
 
@@ -622,7 +627,7 @@ impl App {
     #[allow(clippy::too_many_lines)]
     pub fn on_ocr_done(&mut self, r: Option<(String, String, OcrUpdate)>) {
         let Some((space_id, name, update)) = r else {
-            self.ocr_rx = None;
+            self.index.convert_rx = None;
             // Files imported mid-batch sat at "convert: …" unqueued; this rescan
             // chains them into a fresh batch instead of stalling until the
             // user reopens /files.
@@ -749,7 +754,7 @@ impl App {
             self.start_embedding();
         }
         if space_id == self.active_space.id {
-            self.files_cache = self.db.list_files(&space_id).unwrap_or_default();
+            self.caches.files = self.db.list_files(&space_id).unwrap_or_default();
         }
     }
 
@@ -772,7 +777,7 @@ impl App {
 
     /// Remove a file's disk copy and index rows, then refresh the cache.
     pub fn delete_file(&mut self, name: &str) -> Result<()> {
-        let Some(f) = self.files_cache.iter().find(|f| f.name == name).cloned() else {
+        let Some(f) = self.caches.files.iter().find(|f| f.name == name).cloned() else {
             return Ok(());
         };
         let disk = self.space.files_dir(&self.active_space.name).join(&f.name);
@@ -872,18 +877,18 @@ mod tests {
         let saved = a.backends.clone();
         a.backends = crate::app::Backends::default();
         a.start_embedding();
-        assert!(a.embed_rx.is_none());
+        assert!(a.index.embed_rx.is_none());
         a.backends = saved;
 
         // Blank embedding model → no-op.
-        let m = std::mem::take(&mut a.embedding_model);
+        let m = std::mem::take(&mut a.index.embedding_model);
         a.start_embedding();
-        assert!(a.embed_rx.is_none());
-        a.embedding_model = m;
+        assert!(a.index.embed_rx.is_none());
+        a.index.embedding_model = m;
 
         // Missing vectors + provider → queued, status flips.
         a.start_embedding();
-        assert!(a.embed_rx.is_some());
+        assert!(a.index.embed_rx.is_some());
         let files = a.db.list_files(&space).unwrap();
         assert!(
             files[0].status.starts_with("embedding"),
@@ -904,7 +909,7 @@ mod tests {
         a.db.set_file_chunks(&id, &[("l".into(), "new".into())])
             .unwrap();
         a.on_embed_done(Some((space.clone(), id.clone(), Err("offline".into()))));
-        assert!(a.embed_rx.is_none());
+        assert!(a.index.embed_rx.is_none());
         let (_, status) = a.drain_ui_events();
         assert!(status.contains("embedding failed"));
         assert_eq!(a.db.list_files(&space).unwrap()[0].status, "ok");
@@ -918,8 +923,8 @@ mod tests {
 
         let name = a.import_file(&src).unwrap();
         assert_eq!(name, src.file_name().unwrap().to_string_lossy());
-        assert_eq!(a.files_cache.len(), 1);
-        assert_eq!(a.files_cache[0].status, "ok");
+        assert_eq!(a.caches.files.len(), 1);
+        assert_eq!(a.caches.files[0].status, "ok");
         // Copied into the space's files dir.
         assert!(a.space.files_dir(&a.active_space.name).join(&name).exists());
         // Indexed: searchable.
@@ -941,7 +946,12 @@ mod tests {
 
         a.rescan_files();
         for name in ["page.html", "job.py", "asset.bin"] {
-            let file = a.files_cache.iter().find(|file| file.name == name).unwrap();
+            let file = a
+                .caches
+                .files
+                .iter()
+                .find(|file| file.name == name)
+                .unwrap();
             assert!(a.db.file_has_chunks(&file.id).unwrap(), "{name}");
         }
         let hits =
@@ -972,7 +982,7 @@ mod tests {
         let src = std::env::temp_dir().join(format!("nexus-cold-src-{}.md", uuid::Uuid::new_v4()));
         std::fs::write(&src, "# report\nresilience is a property").unwrap();
         let name = a.import_file(&src).unwrap();
-        let id = a.files_cache[0].id.clone();
+        let id = a.caches.files[0].id.clone();
         assert!(a.db.file_indexed(&id).unwrap());
         assert!(
             crate::db::file_text(a.db.conn_for_test(), &a.active_space.id, &name)
@@ -1016,7 +1026,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("doc.txt"), "real content on disk").unwrap();
         a.rescan_files();
-        let id = a.files_cache[0].id.clone();
+        let id = a.caches.files[0].id.clone();
 
         // Simulate a bad old extraction.
         a.db.set_file_chunks(&id, &[("p1".into(), "garbage".into())])
@@ -1031,7 +1041,7 @@ mod tests {
         let texts = a.db.file_chunk_texts(&id).unwrap();
         assert_eq!(texts.len(), 1);
         assert!(texts[0].1.contains("real content"), "{texts:?}");
-        assert_eq!(a.files_cache[0].status, "ok");
+        assert_eq!(a.caches.files[0].status, "ok");
     }
 
     #[test]
@@ -1042,16 +1052,16 @@ mod tests {
         std::fs::write(dir.join("dropped.txt"), "hello dropped").unwrap();
 
         a.rescan_files();
-        assert_eq!(a.files_cache.len(), 1);
-        assert_eq!(a.files_cache[0].name, "dropped.txt");
+        assert_eq!(a.caches.files.len(), 1);
+        assert_eq!(a.caches.files[0].name, "dropped.txt");
 
         // Changing content re-extracts (hash change), deleting drops the row.
         std::fs::write(dir.join("dropped.txt"), "hello again").unwrap();
         a.rescan_files();
-        assert_eq!(a.files_cache.len(), 1);
+        assert_eq!(a.caches.files.len(), 1);
         std::fs::remove_file(dir.join("dropped.txt")).unwrap();
         a.rescan_files();
-        assert!(a.files_cache.is_empty());
+        assert!(a.caches.files.is_empty());
     }
 
     #[test]
@@ -1061,7 +1071,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("empty.txt"), "   ").unwrap();
         a.rescan_files();
-        assert_eq!(a.files_cache[0].status, "no text (scanned?)");
+        assert_eq!(a.caches.files[0].status, "no text (scanned?)");
     }
 
     #[test]
@@ -1071,7 +1081,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("book.txt"), "big content").unwrap();
         a.rescan_files();
-        let f = a.files_cache[0].clone();
+        let f = a.caches.files[0].clone();
         assert!(f.mtime > 0, "mtime recorded on index");
 
         // Plant a wrong hash; a stat-unchanged rescan must not correct it —
@@ -1079,13 +1089,13 @@ mod tests {
         a.db.upsert_file(&a.active_space.id, "book.txt", "sentinel", f.size, "ok")
             .unwrap();
         a.rescan_files();
-        assert_eq!(a.files_cache[0].hash, "sentinel");
+        assert_eq!(a.caches.files[0].hash, "sentinel");
 
         // A size change busts the stat check and re-hashes for real.
         std::fs::write(dir.join("book.txt"), "big content grew").unwrap();
         a.rescan_files();
-        assert_ne!(a.files_cache[0].hash, "sentinel");
-        assert_eq!(a.files_cache[0].status, "ok");
+        assert_ne!(a.caches.files[0].hash, "sentinel");
+        assert_eq!(a.caches.files[0].status, "ok");
     }
 
     #[test]
@@ -1108,7 +1118,7 @@ mod tests {
         a.rename_file("old.txt", "new.txt").unwrap();
         assert!(!dir.join("old.txt").exists());
         assert!(dir.join("new.txt").exists());
-        assert!(a.files_cache.iter().any(|f| f.name == "new.txt"));
+        assert!(a.caches.files.iter().any(|f| f.name == "new.txt"));
     }
 
     #[test]
@@ -1119,7 +1129,7 @@ mod tests {
         std::fs::write(dir.join("gone.txt"), "bye").unwrap();
         a.rescan_files();
         a.delete_file("gone.txt").unwrap();
-        assert!(a.files_cache.is_empty());
+        assert!(a.caches.files.is_empty());
         assert!(!dir.join("gone.txt").exists());
     }
 
@@ -1129,45 +1139,45 @@ mod tests {
         let src = std::env::temp_dir().join(format!("nexus-add-{}.txt", uuid::Uuid::new_v4()));
         std::fs::write(&src, "typed in").unwrap();
         let name = a.import_file(&src).unwrap();
-        assert_eq!(a.files_cache.len(), 1);
-        assert_eq!(a.files_cache[0].name, name);
+        assert_eq!(a.caches.files.len(), 1);
+        assert_eq!(a.caches.files[0].name, name);
 
         // A bad path is an error, and the cache stays unchanged.
         assert!(
             a.import_file(std::path::Path::new("/definitely/not/a/file"))
                 .is_err()
         );
-        assert_eq!(a.files_cache.len(), 1);
+        assert_eq!(a.caches.files.len(), 1);
     }
 
     #[test]
     fn importing_an_image_indexes_metadata_without_queueing() {
         let mut a = test_app();
-        a.embedding_model.clear();
+        a.index.embedding_model.clear();
         let src = std::env::temp_dir().join(format!("nexus-image-{}.png", uuid::Uuid::new_v4()));
         image::RgbImage::new(2, 2).save(&src).unwrap();
         let name = a.import_file(&src).unwrap();
-        assert_eq!(a.files_cache[0].status, "ok · image");
-        assert!(a.ocr_rx.is_none());
-        let chunks = a.db.file_chunk_texts(&a.files_cache[0].id).unwrap();
+        assert_eq!(a.caches.files[0].status, "ok · image");
+        assert!(a.index.convert_rx.is_none());
+        let chunks = a.db.file_chunk_texts(&a.caches.files[0].id).unwrap();
         assert_eq!(chunks.len(), 1);
         assert!(chunks[0].1.contains(&format!("uploaded file: {name}")));
         a.rescan_files();
-        assert_eq!(a.files_cache[0].status, "ok · image");
-        assert!(a.ocr_rx.is_none());
+        assert_eq!(a.caches.files[0].status, "ok · image");
+        assert!(a.index.convert_rx.is_none());
         let _ = std::fs::remove_file(src);
     }
 
     #[test]
     fn scanned_pdf_is_searchable_by_name_without_queueing() {
         let mut a = test_app();
-        a.embedding_model.clear();
+        a.index.embedding_model.clear();
         let dir = files_dir_of(&a);
         std::fs::write(dir.join("scan.pdf"), crate::extract::minimal_pdf(None)).unwrap();
         a.rescan_files();
-        assert_eq!(a.files_cache[0].status, "ok · scanned pdf (no text layer)");
-        assert!(a.ocr_rx.is_none());
-        let chunks = a.db.file_chunk_texts(&a.files_cache[0].id).unwrap();
+        assert_eq!(a.caches.files[0].status, "ok · scanned pdf (no text layer)");
+        assert!(a.index.convert_rx.is_none());
+        let chunks = a.db.file_chunk_texts(&a.caches.files[0].id).unwrap();
         assert_eq!(chunks.len(), 1);
         assert!(chunks[0].1.contains("uploaded file: scan.pdf"));
     }
@@ -1179,7 +1189,8 @@ mod tests {
     }
 
     fn status_of(a: &App, name: &str) -> String {
-        a.files_cache
+        a.caches
+            .files
             .iter()
             .find(|f| f.name == name)
             .unwrap()
@@ -1263,9 +1274,9 @@ mod tests {
         let dir = files_dir_of(&a);
         std::fs::write(dir.join("page.html"), "<p>fresh words</p>").unwrap();
         a.rescan_files();
-        let id = a.files_cache[0].id.clone();
+        let id = a.caches.files[0].id.clone();
         assert_eq!(
-            a.files_cache[0].extractor,
+            a.caches.files[0].extractor,
             crate::extract::EXTRACTOR_VERSION
         );
 
@@ -1278,7 +1289,7 @@ mod tests {
         assert_eq!(texts.len(), 1);
         assert_eq!(texts[0].1, "fresh words");
         assert_eq!(
-            a.files_cache[0].extractor,
+            a.caches.files[0].extractor,
             crate::extract::EXTRACTOR_VERSION
         );
 
@@ -1331,12 +1342,12 @@ mod tests {
         let bin = Bin::new();
         bin.tool("pandoc", "echo '# converted by pandoc'");
         let mut a = test_app();
-        a.embedding_model.clear();
+        a.index.embedding_model.clear();
         let dir = files_dir_of(&a);
         std::fs::write(dir.join("notes.rst"), "Title\n=====\nrst body words").unwrap();
         a.rescan_files_with(&bin.cfg());
         assert_eq!(status_of(&a, "notes.rst"), "convert: pandoc…");
-        assert!(a.ocr_rx.is_some(), "a job is queued");
+        assert!(a.index.convert_rx.is_some(), "a job is queued");
         // The built-in text is searchable while the converter works.
         let hits =
             crate::db::search_chunks(a.db.conn_for_test(), &a.active_space.id, "words", 8).unwrap();
@@ -1362,7 +1373,7 @@ mod tests {
 
         // A failed conversion keeps the stand-in text and says so.
         std::fs::write(dir.join("other.rst"), "Other\n=====\nkept words").unwrap();
-        a.ocr_rx = None;
+        a.index.convert_rx = None;
         a.rescan_files_with(&bin.cfg());
         a.on_ocr_done(Some((
             space.clone(),

@@ -98,7 +98,7 @@ pub fn swarm_state(app: &App, session_id: &str) -> Result<SwarmState> {
     Ok(SwarmState {
         session_id: session.id,
         enabled: session.swarm_mode,
-        running: app.swarm_session.as_deref() == Some(session_id),
+        running: app.swarm.session.as_deref() == Some(session_id),
         personas: personas(app, session_id)?,
     })
 }
@@ -137,7 +137,7 @@ pub fn save_swarm_roster(
         .as_ref()
         .is_some_and(|session| session.id == session_id)
     {
-        app.swarm_cache.clone_from(&personas);
+        app.swarm.cache.clone_from(&personas);
     }
     swarm_state(app, session_id)
 }
@@ -181,7 +181,7 @@ pub fn start_swarm(app: &mut App, space_id: &str, session_id: &str) -> Result<Sw
 /// Stop the currently running swarm when it belongs to `session_id`.
 pub fn stop_swarm(app: &mut App, space_id: &str, session_id: &str) -> Result<SwarmState> {
     session_in_space(app, session_id, space_id)?;
-    if app.swarm_session.as_deref() == Some(session_id) {
+    if app.swarm.session.as_deref() == Some(session_id) {
         app.stop_swarm();
     }
     swarm_state(app, session_id)
@@ -321,7 +321,7 @@ pub fn delete_watch(app: &mut App, space_id: &str, id: &str) -> Result<bool> {
         return Ok(false);
     }
     app.db.delete_watch(id)?;
-    app.watches_cache.retain(|watch| watch.id != id);
+    app.caches.watches.retain(|watch| watch.id != id);
     Ok(true)
 }
 

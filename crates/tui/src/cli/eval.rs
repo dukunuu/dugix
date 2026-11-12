@@ -83,7 +83,7 @@ async fn run_eval_task(
             .map(eval::EvalWorkspace::copy_from)
             .transpose()?;
         if let Some(workspace) = &workspace {
-            app.eval_approver = Some(std::sync::Arc::new(app::EvalApprover {
+            app.approvals.eval_approver = Some(std::sync::Arc::new(app::EvalApprover {
                 allow_shell: task.allow_shell.clone(),
             }));
             app.enter_eval_workspace(&workspace.root())?;

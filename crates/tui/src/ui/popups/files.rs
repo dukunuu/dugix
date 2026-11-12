@@ -71,7 +71,8 @@ fn render_files(f: &mut Frame, app: &AppView) {
     let dim = Style::default().fg(app.theme.fg_dim);
     let content_w = (area.width.saturating_sub(5 + 2 * chrome::PAD)) as usize; // border + scrollbar + highlight
     let items: Vec<ListItem> = app
-        .files_cache
+        .caches
+        .files
         .iter()
         .map(|file| {
             let ok = nexus_core::extract::status_is_ok(&file.status);
@@ -106,7 +107,8 @@ fn render_files(f: &mut Frame, app: &AppView) {
         FilesMode::Rename => chrome::input_title(app, "rename to", &app.files_edit, ""),
         FilesMode::ConfirmDelete => {
             let name = app
-                .files_cache
+                .caches
+                .files
                 .get(app.files_selected)
                 .map(|f| f.name.clone())
                 .unwrap_or_default();
@@ -119,12 +121,12 @@ fn render_files(f: &mut Frame, app: &AppView) {
         FilesMode::Add => "Enter import · Esc cancel".to_string(),
         FilesMode::Rename => "Enter rename · Esc cancel".to_string(),
         FilesMode::ConfirmDelete => "Ctrl+D confirm · Esc cancel".to_string(),
-        FilesMode::Browse if app.files_cache.is_empty() => {
+        FilesMode::Browse if app.caches.files.is_empty() => {
             "Ctrl+N import · / find · drop files here · Tab tab".to_string()
         }
         FilesMode::Browse => format!(
             "{}↑↓ · Enter open · Ctrl+N import · / find · Ctrl+R rename · Ctrl+D remove · Ctrl+O re-extract · Tab tab",
-            chrome::count_hint(app.files_cache.len(), "file")
+            chrome::count_hint(app.caches.files.len(), "file")
         ),
         FilesMode::Pick => String::new(),
     };
@@ -135,7 +137,7 @@ fn render_files(f: &mut Frame, app: &AppView) {
     };
     let mut inner = chrome::render_hinted(f, area, title, &hint, app, true, tone);
     // Embedding health and re-index progress, one dim line above the list.
-    for text in [&app.embedding_status, &app.chat_index_status] {
+    for text in [&app.index.embedding_status, &app.index.chat_index_status] {
         if app.files_mode == FilesMode::Browse && !text.is_empty() && inner.height > 3 {
             let status = Rect { height: 1, ..inner };
             f.render_widget(
@@ -154,10 +156,10 @@ fn render_files(f: &mut Frame, app: &AppView) {
     }
     let list = chrome::standard_list(items, &app.theme);
     let mut state = ListState::default();
-    if !app.files_cache.is_empty() {
-        state.select(Some(app.files_selected.min(app.files_cache.len() - 1)));
+    if !app.caches.files.is_empty() {
+        state.select(Some(app.files_selected.min(app.caches.files.len() - 1)));
     }
-    chrome::render_list(f, list, &mut state, inner, app.files_cache.len(), 1, app);
+    chrome::render_list(f, list, &mut state, inner, app.caches.files.len(), 1, app);
 }
 
 /// The find picker: recent files, search results or path completions, each
@@ -233,13 +235,14 @@ fn render_images(f: &mut Frame, app: &AppView) {
     let area = chrome::popup_area(app, f.area(), "files", chrome::STANDARD);
     let dim = Style::default().fg(app.theme.fg_dim);
 
-    let items: Vec<ListItem> = if app.images_cache.is_empty() {
+    let items: Vec<ListItem> = if app.caches.images.is_empty() {
         vec![chrome::empty_placeholder(
             "no images yet — paste one, or have the model generate one",
             &app.theme,
         )]
     } else {
-        app.images_cache
+        app.caches
+            .images
             .iter()
             .map(|img| {
                 let created = crate::ui::fmt_created(&img.modified);
@@ -260,7 +263,8 @@ fn render_images(f: &mut Frame, app: &AppView) {
     let title = match app.images_mode {
         ImagesMode::ConfirmDelete => {
             let name = app
-                .images_cache
+                .caches
+                .images
                 .get(app.images_selected)
                 .map(|i| i.name.clone())
                 .unwrap_or_default();
@@ -270,10 +274,10 @@ fn render_images(f: &mut Frame, app: &AppView) {
     };
     let hint = match app.images_mode {
         ImagesMode::ConfirmDelete => "Ctrl+D confirm · Esc cancel".to_string(),
-        ImagesMode::Browse if app.images_cache.is_empty() => "Tab switch tab".to_string(),
+        ImagesMode::Browse if app.caches.images.is_empty() => "Tab switch tab".to_string(),
         ImagesMode::Browse => format!(
             "{}↑↓ · Enter open · Ctrl+D remove · Tab tab",
-            chrome::count_hint(app.images_cache.len(), "image")
+            chrome::count_hint(app.caches.images.len(), "image")
         ),
     };
     let tone = if app.images_mode == ImagesMode::ConfirmDelete {
@@ -284,10 +288,10 @@ fn render_images(f: &mut Frame, app: &AppView) {
     let inner = chrome::render_hinted(f, area, title, &hint, app, true, tone);
     let list = chrome::standard_list(items, &app.theme);
     let mut state = ListState::default();
-    if !app.images_cache.is_empty() {
-        state.select(Some(app.images_selected.min(app.images_cache.len() - 1)));
+    if !app.caches.images.is_empty() {
+        state.select(Some(app.images_selected.min(app.caches.images.len() - 1)));
     }
-    chrome::render_list(f, list, &mut state, inner, app.images_cache.len(), 1, app);
+    chrome::render_list(f, list, &mut state, inner, app.caches.images.len(), 1, app);
 }
 
 fn render_scripts(f: &mut Frame, app: &AppView) {
@@ -327,7 +331,8 @@ fn render_scripts(f: &mut Frame, app: &AppView) {
     }
 
     let items: Vec<ListItem> = app
-        .scripts_cache
+        .caches
+        .scripts
         .iter()
         .map(|s| {
             let created = crate::ui::fmt_created(&s.modified);
@@ -347,7 +352,8 @@ fn render_scripts(f: &mut Frame, app: &AppView) {
     let title = match app.scripts_mode {
         ScriptsMode::ConfirmDelete => {
             let name = app
-                .scripts_cache
+                .caches
+                .scripts
                 .get(app.scripts_selected)
                 .map(|s| s.name.clone())
                 .unwrap_or_default();
@@ -358,12 +364,12 @@ fn render_scripts(f: &mut Frame, app: &AppView) {
     };
     let hint = match app.scripts_mode {
         ScriptsMode::ConfirmDelete => "Ctrl+D confirm · Esc cancel".to_string(),
-        ScriptsMode::Browse if app.scripts_cache.is_empty() => {
+        ScriptsMode::Browse if app.caches.scripts.is_empty() => {
             "Ctrl+N create · Tab tab".to_string()
         }
         _ => format!(
             "{}↑↓ · Enter edit · Ctrl+N create · Ctrl+R rename · Ctrl+D remove · Tab tab",
-            chrome::count_hint(app.scripts_cache.len(), "script")
+            chrome::count_hint(app.caches.scripts.len(), "script")
         ),
     };
     let tone = if app.scripts_mode == ScriptsMode::ConfirmDelete {
@@ -374,10 +380,10 @@ fn render_scripts(f: &mut Frame, app: &AppView) {
     let inner = chrome::render_hinted(f, area, title, &hint, app, true, tone);
     let list = chrome::standard_list(items, &app.theme);
     let mut state = ListState::default();
-    if !app.scripts_cache.is_empty() {
-        state.select(Some(app.scripts_selected.min(app.scripts_cache.len() - 1)));
+    if !app.caches.scripts.is_empty() {
+        state.select(Some(app.scripts_selected.min(app.caches.scripts.len() - 1)));
     }
-    chrome::render_list(f, list, &mut state, inner, app.scripts_cache.len(), 1, app);
+    chrome::render_list(f, list, &mut state, inner, app.caches.scripts.len(), 1, app);
 }
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
@@ -448,7 +454,7 @@ fn handle_files_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
                 Some(BrowseAction::MoveDown) => app.move_files_selection(1),
                 Some(BrowseAction::Create) => app.import_files(),
                 Some(BrowseAction::Rename) => app.start_files_rename(),
-                Some(BrowseAction::ConfirmDelete) if !app.files_cache.is_empty() => {
+                Some(BrowseAction::ConfirmDelete) if !app.caches.files.is_empty() => {
                     app.files_mode = FilesMode::ConfirmDelete;
                 }
                 _ => {}
@@ -486,7 +492,7 @@ fn handle_images_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
             None => {}
         },
         ImagesMode::Browse => {
-            if key.code == KeyCode::Enter && !app.images_cache.is_empty() {
+            if key.code == KeyCode::Enter && !app.caches.images.is_empty() {
                 app.open_selected_image();
                 return Ok(());
             }
@@ -494,7 +500,7 @@ fn handle_images_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
                 Some(BrowseAction::Close) => app.popup = nexus_core::app::Popup::None,
                 Some(BrowseAction::MoveUp) => app.move_images_selection(-1),
                 Some(BrowseAction::MoveDown) => app.move_images_selection(1),
-                Some(BrowseAction::ConfirmDelete) if !app.images_cache.is_empty() => {
+                Some(BrowseAction::ConfirmDelete) if !app.caches.images.is_empty() => {
                     app.images_mode = ImagesMode::ConfirmDelete;
                 }
                 _ => {}
@@ -535,7 +541,7 @@ fn handle_scripts_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
             None => {}
         },
         ScriptsMode::Browse => {
-            if key.code == KeyCode::Enter && !app.scripts_cache.is_empty() {
+            if key.code == KeyCode::Enter && !app.caches.scripts.is_empty() {
                 app.open_selected_script();
                 return Ok(());
             }
@@ -545,7 +551,7 @@ fn handle_scripts_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
                 Some(BrowseAction::MoveDown) => app.move_scripts_selection(1),
                 Some(BrowseAction::Create) => app.start_script_create(),
                 Some(BrowseAction::Rename) => app.start_script_rename(),
-                Some(BrowseAction::ConfirmDelete) if !app.scripts_cache.is_empty() => {
+                Some(BrowseAction::ConfirmDelete) if !app.caches.scripts.is_empty() => {
                     app.scripts_mode = ScriptsMode::ConfirmDelete;
                 }
                 _ => {}

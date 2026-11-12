@@ -275,8 +275,8 @@ async fn run_loop(
                         app.on_research_done(r);
                         // The job's channel closed: close the live view and
                         // clear its steer input.
-                        if app.core.research_rx.is_none() {
-                            app.core.research_live_input.clear();
+                        if app.core.research.rx.is_none() {
+                            app.core.research.live_input.clear();
                             if app.popup == Popup::ResearchLive {
                                 app.popup = Popup::None;
                             }
@@ -409,12 +409,12 @@ fn on_key(app: &mut AppView, terminal: &mut DefaultTerminal, k: KeyEvent) -> Res
                 }
                 nexus_core::app::PendingEditor::UserCommand(cmd) => {
                     let cwd = app.user_command_cwd();
-                    let shell = std::sync::Arc::clone(&app.user_shell);
+                    let shell = std::sync::Arc::clone(&app.user_command.shell);
                     let data = app.space.root.clone();
                     let (exit, started, next_dir) =
                         run_interactive_command(terminal, &cmd, &cwd, shell.get(), &data)?;
                     if let Some(dir) = next_dir {
-                        app.core.user_command_dir = Some(dir);
+                        app.core.user_command.dir = Some(dir);
                     }
                     app.execute(AppCommand::RecordUserCommand { cmd, exit, started })?;
                 }
@@ -528,7 +528,7 @@ fn ctrl_c(app: &mut AppView) -> Result<()> {
 /// A `propose_command` lands in the composer only when it is empty; a draft
 /// is never replaced, so the proposal shows as a status line instead.
 fn take_proposed_command(app: &mut AppView) {
-    let Some(cmd) = app.core.proposed_command.take() else {
+    let Some(cmd) = app.core.approvals.proposed_command.take() else {
         return;
     };
     if app.input_text().is_empty() {
@@ -813,7 +813,7 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
         }
         // Ctrl+↑ opens the live research-activity view (per-searcher
         // reasoning/tool calls) — only while a research job is running.
-        KeyCode::Up if ctrl && app.research_rx.is_some() => app.open_research_live(),
+        KeyCode::Up if ctrl && app.research.rx.is_some() => app.open_research_live(),
         // Otherwise it opens this conversation's sub-agents while it has some.
         KeyCode::Up if ctrl && ui::popups::subagents::has_live(app) => {
             ui::popups::subagents::open(app);
@@ -1210,7 +1210,7 @@ mod tests {
         assert_ne!(app.popup, Popup::Approval);
         app.apply_event(&AppEvent::HistoryInvalidated);
         assert_eq!(app.popup, Popup::Approval);
-        assert_eq!(app.approval_request, app.pending_approval_request);
+        assert_eq!(app.approval_request, app.approvals.pending_request);
         assert_eq!(
             app.approval_request.as_ref().unwrap().summary,
             "write approved (+1 −0)\ndiff --git aa/workspace/approved bb/workspace/approved\nindex e69de29..396a0ba 100644\n--- aa/workspace/approved\n+++ bb/workspace/approved\n@@ -0,0 +1 @@\n+yes\n\\ No newline at end of file"
@@ -1223,7 +1223,7 @@ mod tests {
             "yes"
         );
         assert_eq!(app.popup, Popup::None);
-        assert!(app.pending_approval_request.is_none());
+        assert!(app.approvals.pending_request.is_none());
         drop(app);
         std::fs::remove_dir_all(root).unwrap();
         std::fs::remove_dir_all(workspace).unwrap();
@@ -1241,8 +1241,8 @@ mod tests {
         let mut app = test_app();
         let root = app.space.root.clone();
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        app.pending_approval = Some(sender);
-        app.pending_approval_request = Some(nexus_core::tools::ApprovalRequest {
+        app.approvals.pending = Some(sender);
+        app.approvals.pending_request = Some(nexus_core::tools::ApprovalRequest {
             tool: "shell".into(),
             class: None,
             detail: None,
@@ -1255,8 +1255,8 @@ mod tests {
         drop(receiver);
         app.sync_approval_popup();
         assert_eq!(app.popup, Popup::None);
-        assert!(app.pending_approval.is_none());
-        assert!(app.pending_approval_request.is_none());
+        assert!(app.approvals.pending.is_none());
+        assert!(app.approvals.pending_request.is_none());
         assert!(app.approval_request.is_none());
         drop(app);
         std::fs::remove_dir_all(root).unwrap();
@@ -1280,7 +1280,7 @@ mod tests {
             (ctrl('c'), Decision::Deny),
         ] {
             let (sender, mut receiver) = tokio::sync::oneshot::channel();
-            app.pending_approval = Some(sender);
+            app.approvals.pending = Some(sender);
             app.approval_request = Some(ApprovalRequest {
                 tool: "shell".into(),
                 class: None,
@@ -1299,7 +1299,7 @@ mod tests {
             handle_key(&mut app, key).unwrap();
             assert_eq!(receiver.try_recv().unwrap(), decision);
             assert_eq!(app.popup, Popup::None);
-            assert!(app.pending_approval.is_none());
+            assert!(app.approvals.pending.is_none());
             assert!(app.approval_request.is_none());
         }
         drop(app);
@@ -1314,7 +1314,8 @@ mod tests {
         for name in ["alpha", "alps"] {
             std::fs::create_dir(cwd.join(name)).unwrap();
         }
-        app.user_shell
+        app.user_command
+            .shell
             .set(nexus_core::usershell::UserShell {
                 shell: "/bin/sh".into(),
                 snapshot: None,
@@ -1598,15 +1599,15 @@ mod tests {
     #[test]
     fn proposed_command_fills_only_an_empty_composer() {
         let mut app = test_app();
-        app.core.proposed_command = Some("!sudo make install".into());
+        app.core.approvals.proposed_command = Some("!sudo make install".into());
         take_proposed_command(&mut app);
         assert_eq!(app.input_text(), "!sudo make install");
-        assert!(app.core.proposed_command.is_none());
+        assert!(app.core.approvals.proposed_command.is_none());
         app.set_input("keep this draft");
-        app.core.proposed_command = Some("!make".into());
+        app.core.approvals.proposed_command = Some("!make".into());
         take_proposed_command(&mut app);
         assert_eq!(app.input_text(), "keep this draft");
-        assert!(app.core.proposed_command.is_none());
+        assert!(app.core.approvals.proposed_command.is_none());
         assert_eq!(app.last_status(), "proposed: !make");
     }
 
@@ -1678,8 +1679,8 @@ mod tests {
             });
         }
         let (sender, _receiver) = tokio::sync::oneshot::channel();
-        app.pending_approval = Some(sender);
-        app.pending_approval_request = Some(nexus_core::tools::ApprovalRequest {
+        app.approvals.pending = Some(sender);
+        app.approvals.pending_request = Some(nexus_core::tools::ApprovalRequest {
             tool: "shell".into(),
             class: Some("runs a command".into()),
             detail: None,

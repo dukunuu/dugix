@@ -603,8 +603,8 @@ mod tests {
             Space { root },
         ));
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        app.pending_approval = Some(sender);
-        app.pending_approval_request = Some(ApprovalRequest {
+        app.approvals.pending = Some(sender);
+        app.approvals.pending_request = Some(ApprovalRequest {
             tool: "wave".into(),
             class: None,
             detail: None,
@@ -671,7 +671,7 @@ mod tests {
             }
             assert_eq!(receiver.try_recv().unwrap(), expected);
             assert_eq!(app.popup, Popup::None);
-            assert!(app.pending_approval.is_none());
+            assert!(app.approvals.pending.is_none());
             drop(app);
             std::fs::remove_dir_all(root).unwrap();
         }

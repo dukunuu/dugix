@@ -733,21 +733,22 @@ impl AppView {
 
     pub(crate) fn sync_approval_popup(&mut self) {
         if self
-            .pending_approval
+            .approvals
+            .pending
             .as_ref()
             .is_some_and(tokio::sync::oneshot::Sender::is_closed)
         {
-            self.pending_approval = None;
-            self.pending_approval_request = None;
+            self.approvals.pending = None;
+            self.approvals.pending_request = None;
         }
         self.show_next_approval();
-        if let Some(request) = &self.pending_approval_request {
+        if let Some(request) = &self.approvals.pending_request {
             if self.popup != Popup::Approval
                 || self.approval_request.as_ref() != Some(request)
-                || self.approval_displayed != self.approval_shown
+                || self.approval_displayed != self.approvals.shown
             {
                 self.approval_request = Some(request.clone());
-                self.approval_displayed = self.approval_shown;
+                self.approval_displayed = self.approvals.shown;
                 self.approval_scroll.set(0);
                 self.approval_max_scroll.set(0);
                 self.approval_page_height.set(1);
@@ -755,7 +756,7 @@ impl AppView {
                 self.approval_opened_at = Some(std::time::Instant::now());
                 self.popup = Popup::Approval;
             }
-        } else if self.popup == Popup::Approval && self.pending_approval.is_none() {
+        } else if self.popup == Popup::Approval && self.approvals.pending.is_none() {
             self.approval_request = None;
             self.popup = Popup::None;
         }
@@ -899,7 +900,7 @@ impl AppView {
     /// Ctrl+↑: open the live per-searcher activity view. Caller already
     /// gates this on a research job running.
     pub fn open_research_live(&mut self) {
-        self.core.research_live_input.clear();
+        self.core.research.live_input.clear();
         self.popup = Popup::ResearchLive;
     }
 }

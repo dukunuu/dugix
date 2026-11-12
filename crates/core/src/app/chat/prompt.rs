@@ -178,7 +178,7 @@ impl App {
         let files_dir = self.space.files_dir(&self.active_space.name);
         let mut urls: Vec<String> = Vec::new();
         let mut names: Vec<&str> = Vec::new();
-        for f in &self.files_cache {
+        for f in &self.caches.files {
             // Judged by content: a renamed PDF is never sent as an image, and
             // a PNG with a wrong extension still is one.
             let Ok(bytes) = std::fs::read(files_dir.join(&f.name)) else {

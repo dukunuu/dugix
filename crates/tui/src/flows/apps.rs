@@ -9,7 +9,7 @@ use crate::app_view::AppView;
 
 impl AppView {
     pub fn open_apps_popup(&mut self) {
-        self.core.apps_cache = self.core.list_apps();
+        self.core.caches.apps = self.core.list_apps();
         self.pinned_apps = self.core.pinned_panels().unwrap_or_default();
         self.apps_selected = self.apps_selected.min(self.apps_total().saturating_sub(1));
         self.apps_mode = AppsMode::Browse;
@@ -18,13 +18,13 @@ impl AppView {
 
     /// Web apps followed by pinned panels: the rows of the popup.
     pub fn apps_total(&self) -> usize {
-        self.core.apps_cache.len() + self.pinned_apps.len()
+        self.core.caches.apps.len() + self.pinned_apps.len()
     }
 
     /// The highlighted row, when it is a pinned panel rather than a web app.
     pub fn selected_pinned(&self) -> Option<&nexus_core::panels::Pinned> {
         self.apps_selected
-            .checked_sub(self.core.apps_cache.len())
+            .checked_sub(self.core.caches.apps.len())
             .and_then(|index| self.pinned_apps.get(index))
     }
 
@@ -65,7 +65,7 @@ impl AppView {
             self.push_status("pinned panels have no files · Ctrl+R renames");
             return;
         }
-        let Some(name) = self.core.apps_cache.get(self.apps_selected).cloned() else {
+        let Some(name) = self.core.caches.apps.get(self.apps_selected).cloned() else {
             return;
         };
         self.apps_edit = "index.html".to_string();
@@ -77,7 +77,7 @@ impl AppView {
 
     /// Confirm in `EditFile`: open the typed path in $EDITOR.
     pub fn confirm_app_edit(&mut self) {
-        let Some(name) = self.core.apps_cache.get(self.apps_selected).cloned() else {
+        let Some(name) = self.core.caches.apps.get(self.apps_selected).cloned() else {
             return;
         };
         let file = self.apps_edit.trim().to_string();
@@ -105,7 +105,7 @@ impl AppView {
             crate::interactive::open_pinned(self, &id);
             return;
         }
-        let Some(name) = self.core.apps_cache.get(self.apps_selected) else {
+        let Some(name) = self.core.caches.apps.get(self.apps_selected) else {
             return;
         };
         match self.core.app_url(name) {
@@ -128,7 +128,7 @@ impl AppView {
             self.apps_mode = AppsMode::Browse;
             return Ok(());
         }
-        if let Some(name) = self.core.apps_cache.get(self.apps_selected).cloned() {
+        if let Some(name) = self.core.caches.apps.get(self.apps_selected).cloned() {
             let dir = self
                 .core
                 .space
@@ -136,7 +136,7 @@ impl AppView {
                 .join(&name);
             std::fs::remove_dir_all(&dir).with_context(|| format!("removing {}", dir.display()))?;
             self.push_status(format!("removed app {name}"));
-            self.core.apps_cache = self.core.list_apps();
+            self.core.caches.apps = self.core.list_apps();
             self.pinned_apps = self.core.pinned_panels().unwrap_or_default();
             self.apps_selected = self.apps_selected.min(self.apps_total().saturating_sub(1));
         }

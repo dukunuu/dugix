@@ -31,7 +31,7 @@ impl App {
     pub fn refresh_images(&mut self) {
         let dir = self.space.files_dir(&self.active_space.name);
         let _ = std::fs::create_dir_all(&dir);
-        self.images_cache = match std::fs::read_dir(&dir) {
+        self.caches.images = match std::fs::read_dir(&dir) {
             Err(_) => Vec::new(),
             Ok(entries) => entries
                 .flatten()
@@ -58,7 +58,7 @@ impl App {
                 })
                 .collect(),
         };
-        self.images_cache.sort_by(|a, b| a.name.cmp(&b.name));
+        self.caches.images.sort_by(|a, b| a.name.cmp(&b.name));
     }
 
     /// Remove the image file (if any) and refresh the cache. Returns whether a

@@ -56,7 +56,8 @@ pub(super) fn render_input(f: &mut Frame, app: &mut AppView, area: Rect) {
             if n == 1 { "" } else { "s" }
         ))
     } else {
-        app.research_running
+        app.research
+            .running
             .as_ref()
             .filter(|(id, _)| app.session.as_ref().is_none_or(|s| &s.id != id))
             .map(|(_, topic)| format!("{} researching: {topic}", glyph::RESEARCH))

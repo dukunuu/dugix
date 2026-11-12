@@ -85,7 +85,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
             // Secrets never render in full (the key popup masks too).
             SettingsField::LangsearchKey => numeric(&mask_secret(&app.settings_inputs[5])),
             SettingsField::SearchProvider => Span::styled(
-                app.search_provider.clone(),
+                app.search.provider.clone(),
                 Style::default().fg(app.theme.accent),
             ),
             SettingsField::BlockedDomains => numeric(&app.settings_inputs[6]),

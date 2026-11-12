@@ -192,7 +192,7 @@ async fn background_calls_log_their_kind_and_captured_session_except_incognito()
                     app.force_compact();
                     let result = tokio::time::timeout(
                         Duration::from_secs(5),
-                        app.compact_rx.as_mut().unwrap().recv(),
+                        app.compaction.rx.as_mut().unwrap().recv(),
                     )
                     .await
                     .unwrap();
@@ -218,7 +218,7 @@ async fn background_calls_log_their_kind_and_captured_session_except_incognito()
                     app.start_research_from_chat();
                     let result = tokio::time::timeout(
                         Duration::from_secs(5),
-                        app.research_topic_rx.as_mut().unwrap().recv(),
+                        app.research.topic_rx.as_mut().unwrap().recv(),
                     )
                     .await
                     .unwrap();
@@ -484,7 +484,7 @@ async fn swarm_personas_roster_moderation_and_synthesis_each_log_a_request() {
         app.start_swarm_turn();
         app.session = None;
         tokio::time::timeout(Duration::from_secs(5), async {
-            while app.swarm_rx.as_mut().unwrap().recv().await.is_some() {}
+            while app.swarm.rx.as_mut().unwrap().recv().await.is_some() {}
         })
         .await
         .unwrap();

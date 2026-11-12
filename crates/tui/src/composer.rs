@@ -589,7 +589,7 @@ impl AppView {
         let cursor = self.cursor_byte();
         let cwd = self.user_command_cwd();
         let session = self.session.as_ref().map(|s| s.id.clone());
-        let setup = std::sync::Arc::clone(&self.user_shell);
+        let setup = std::sync::Arc::clone(&self.user_command.shell);
         let data = self.space.root.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.shell_completion_rx = Some(rx);
@@ -777,7 +777,8 @@ impl AppView {
             .iter()
             .filter_map(|path| Some((at_score(path, &query)?, AtMatch::Project(path.clone()))))
             .chain(
-                self.files_cache
+                self.caches
+                    .files
                     .iter()
                     .filter_map(|f| Some((at_score(&f.name, &query)?, AtMatch::Space(f.clone())))),
             )

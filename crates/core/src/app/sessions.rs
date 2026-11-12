@@ -29,7 +29,7 @@ impl App {
         // A selection points into the old session's wrapped lines — a stale
         // one would mis-highlight the new chat and resolve links against the
         // wrong messages; the view clears it on `ViewportReset`.
-        self.context_total = None;
+        self.meter.total = None;
         self.push_viewport_reset();
         self.cleanup_incognito_images();
         self.push_status("new chat — send a message to start it".to_string());
@@ -80,7 +80,7 @@ impl App {
         let Some(s) = self
             .db
             .get_session(id)?
-            .or_else(|| self.sessions_cache.iter().find(|s| s.id == id).cloned())
+            .or_else(|| self.caches.sessions.iter().find(|s| s.id == id).cloned())
         else {
             self.push_status(format!("session not found: {id}"));
             return Ok(());
@@ -101,7 +101,7 @@ impl App {
         self.backfill_compaction_row();
         self.restore_survey_gate_prompt();
         self.refresh_toolbox();
-        self.context_total = None;
+        self.meter.total = None;
         // Selection + scroll point into the previous session's lines; the
         // view resets them on `ViewportReset`.
         self.push_viewport_reset();

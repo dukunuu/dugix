@@ -124,7 +124,8 @@ pub fn render(f: &mut Frame, app: &AppView) {
             ]);
             let status = LocalRuntime::ALL.get(i).and_then(|runtime| {
                 app.core
-                    .local_status
+                    .local
+                    .status
                     .iter()
                     .find(|status| status.runtime == *runtime)
             });

@@ -165,10 +165,10 @@ impl super::App {
             self.push_status("usage: /steer <what to also look into>".to_string());
             return;
         }
-        match &self.research_steer_tx {
+        match &self.research.steer_tx {
             // Hard bound: refuse once the queue is full — this also bounds
             // the unbounded channel and the retained log.
-            Some(_) if self.research_steer_log.len() >= MAX_QUEUED_STEERS => {
+            Some(_) if self.research.steer_log.len() >= MAX_QUEUED_STEERS => {
                 self.push_status(format!(
                     "steer queue full ({MAX_QUEUED_STEERS} pending) — wait for the next round"
                 ));
@@ -182,15 +182,17 @@ impl super::App {
                 // removed here — a long job can't retain unbounded steer
                 // text without backpressure.
                 let pos = self
-                    .research_steer_acked
+                    .research
+                    .steer_acked
                     .iter()
-                    .chain(self.research_steer_log.iter().map(|(p, _)| p))
+                    .chain(self.research.steer_log.iter().map(|(p, _)| p))
                     .max()
                     .map_or(0, |&p| p)
                     + 1;
-                self.research_steer_log.push((pos, text.to_string()));
-                self.research_steer_log
-                    .retain(|(p, _)| !self.research_steer_acked.contains(p));
+                self.research.steer_log.push((pos, text.to_string()));
+                self.research
+                    .steer_log
+                    .retain(|(p, _)| !self.research.steer_acked.contains(p));
                 self.push_status(format!("queued steer: {text}"));
             }
             _ => self.push_status("no research job is running".to_string()),
@@ -203,11 +205,11 @@ impl super::App {
     /// exactly as if it had been typed — the existing plan-approval gate
     /// still lets you bail or edit before searchers run.
     pub fn start_research_from_chat(&mut self) {
-        if self.research_topic_rx.is_some() {
+        if self.research.topic_rx.is_some() {
             self.push_status("already scoping a topic from this chat…".to_string());
             return;
         }
-        if self.research_rx.is_some() {
+        if self.research.rx.is_some() {
             self.push_status("a research job is already running".to_string());
             return;
         }
@@ -246,7 +248,7 @@ impl super::App {
             return;
         }
         let (tx, rx) = mpsc::unbounded_channel();
-        self.research_topic_rx = Some(rx);
+        self.research.topic_rx = Some(rx);
         let provider = self.usage_provider(provider, "research:topic");
         self.push_status("scoping a research topic from this chat…".to_string());
         tokio::spawn(async move {
@@ -267,7 +269,7 @@ impl super::App {
     /// The topic-distillation job finished: start research with it, or
     /// report the failure. `None` = channel closed without a result.
     pub fn on_research_topic_derived(&mut self, r: Option<Result<String, String>>) {
-        self.research_topic_rx = None;
+        self.research.topic_rx = None;
         let Some(result) = r else { return };
         match result {
             Ok(topic) if !topic.is_empty() => self.start_research_with_gate(&topic, true),
@@ -286,7 +288,7 @@ impl super::App {
             self.push_status("usage: /research <topic>".to_string());
             return;
         }
-        if self.research_rx.is_some() {
+        if self.research.rx.is_some() {
             self.push_status("a research job is already running".to_string());
             return;
         }
@@ -305,7 +307,7 @@ impl super::App {
         let title = super::chat::title_from(&topic);
         // Hygiene: no gate or reply channel from a previous job may linger.
         self.set_survey_gate(None);
-        self.survey_reply_tx = None;
+        self.research.survey_reply_tx = None;
 
         // Check if there's a conversation to migrate to the research session.
         let parent_id = self.session.as_ref().and_then(|s| {
@@ -408,14 +410,14 @@ impl super::App {
             self.messages = self.db.load_messages(&session.id).unwrap_or_default();
         }
 
-        let searxng_url =
-            (!self.searxng_url.trim().is_empty()).then(|| self.searxng_url.trim().to_string());
-        let langsearch_key = (!self.langsearch_key.trim().is_empty())
-            .then(|| self.langsearch_key.trim().to_string());
+        let searxng_url = (!self.search.searxng_url.trim().is_empty())
+            .then(|| self.search.searxng_url.trim().to_string());
+        let langsearch_key = (!self.search.langsearch_key.trim().is_empty())
+            .then(|| self.search.langsearch_key.trim().to_string());
         let mut toolbox = ToolBox::research(
             searxng_url,
             langsearch_key,
-            self.search_provider.clone(),
+            self.search.provider.clone(),
             self.blocked_domains(),
             Some(self.space.db_path()),
         );
@@ -426,18 +428,18 @@ impl super::App {
         let toolbox = Arc::new(toolbox);
 
         let (tx, rx) = mpsc::unbounded_channel();
-        self.research_rx = Some(rx);
-        self.research_running = Some((session.id.clone(), topic.clone()));
+        self.research.rx = Some(rx);
+        self.research.running = Some((session.id.clone(), topic.clone()));
         self.push_status(format!("researching: {topic} · Ctrl+↑ agents"));
 
         let (steer_tx, steer_rx) = mpsc::unbounded_channel();
-        self.research_steer_tx = Some(steer_tx);
-        self.research_steer_log.clear();
-        self.research_steer_acked.clear();
-        self.research_stage_rows.clear();
+        self.research.steer_tx = Some(steer_tx);
+        self.research.steer_log.clear();
+        self.research.steer_acked.clear();
+        self.research.stage_rows.clear();
         // Capture the mode at job start: plan-message and artifact
         // persistence follow this, never a mid-job incognito toggle.
-        self.research_incognito = self.incognito;
+        self.research.incognito = self.incognito;
 
         // The conversational gates (survey + plan approval) ride one reply
         // channel: the pipeline parks on `reply_rx`, the App arms a gate on
@@ -445,7 +447,7 @@ impl super::App {
         // both phases entirely.
         let reply_rx = if gated {
             let (reply_tx, reply_rx) = mpsc::unbounded_channel();
-            self.survey_reply_tx = Some(reply_tx);
+            self.research.survey_reply_tx = Some(reply_tx);
             Some(reply_rx)
         } else {
             None
@@ -458,13 +460,13 @@ impl super::App {
         self.reset_work_mode();
         self.refresh_memory_snapshot();
         let prompt_cache_key = format!("research:{}", self.prompt_cache_key_for(&session.id));
-        self.context_total = None;
+        self.meter.total = None;
         // Selection + scroll point into the previous session's lines; the
         // view resets them on `ViewportReset`.
         self.push_viewport_reset();
         self.refresh_toolbox();
 
-        let embedding_model = self.embedding_model.trim().to_string();
+        let embedding_model = self.index.embedding_model.trim().to_string();
         let (embedding_provider, raw_embedding_model) = self
             .resolve_model_backend(&embedding_model)
             .unwrap_or_else(|| (provider.clone(), embedding_model.clone()));
@@ -487,18 +489,18 @@ impl super::App {
             space_id,
             space_name,
         }));
-        self.research_abort = Some(task.abort_handle());
+        self.research.abort = Some(task.abort_handle());
     }
 
     /// Abort the active research pipeline, including survey/searcher/tool
     /// streams spawned under its orchestration task.
     pub fn stop_research(&mut self) {
         self.set_survey_gate(None);
-        if let Some(abort) = self.research_abort.take() {
+        if let Some(abort) = self.research.abort.take() {
             abort.abort();
         }
-        if self.research_rx.take().is_some() {
-            if let Some((session_id, _)) = self.research_running.take() {
+        if self.research.rx.take().is_some() {
+            if let Some((session_id, _)) = self.research.running.take() {
                 let _ = self.db.upsert_research_stage_message(
                     &session_id,
                     "research",
@@ -506,12 +508,12 @@ impl super::App {
                 );
             }
             self.set_survey_gate(None);
-            self.survey_reply_tx = None;
-            self.research_steer_tx = None;
+            self.research.survey_reply_tx = None;
+            self.research.steer_tx = None;
             // Retained steer state belongs to the job: drop it so a long
             // session can't keep unbounded text after research stops.
-            self.research_steer_log.clear();
-            self.research_steer_acked.clear();
+            self.research.steer_log.clear();
+            self.research.steer_acked.clear();
             self.push_status("research stopped".to_string());
         } else {
             self.push_status("no research job is running".to_string());
@@ -523,7 +525,8 @@ impl super::App {
     /// intercepted and routed to the pipeline instead of a normal chat send.
     /// A gate in another session must never swallow typing.
     pub fn survey_gate_targets_current_session(&self) -> bool {
-        self.survey_gate
+        self.research
+            .survey_gate
             .as_ref()
             .is_some_and(|g| self.session.as_ref().is_some_and(|s| s.id == g.session_id))
     }
@@ -532,7 +535,7 @@ impl super::App {
     /// already load the persisted row, while incognito jobs recover it from
     /// `SurveyGate` without writing private content to the database.
     pub fn restore_survey_gate_prompt(&mut self) {
-        let pending = self.survey_gate.as_ref().and_then(|gate| {
+        let pending = self.research.survey_gate.as_ref().and_then(|gate| {
             self.session
                 .as_ref()
                 .filter(|session| session.id == gate.session_id)
@@ -577,12 +580,12 @@ impl super::App {
             session_id: g.session_id.clone(),
             phase: g.phase.clone(),
         });
-        self.survey_gate = gate;
+        self.research.survey_gate = gate;
         self.pending_events.push_back(super::AppEvent::Gate(state));
     }
 
     pub fn reply_to_survey_gate(&mut self, text: &str) {
-        let Some(gate) = self.survey_gate.take() else {
+        let Some(gate) = self.research.survey_gate.take() else {
             return;
         };
         self.pending_events.push_back(super::AppEvent::Gate(None));
@@ -591,7 +594,7 @@ impl super::App {
         // full db would otherwise silently lose the answer on reload). On a
         // persistence failure the gate stays armed and the composer is
         // restored so the user can retry.
-        let saved_id = if !text.trim().is_empty() && !self.research_incognito {
+        let saved_id = if !text.trim().is_empty() && !self.research.incognito {
             match self.db.add_gate_reply_message(&gate.session_id, text) {
                 Ok(id) => Some(id),
                 Err(e) => {
@@ -667,14 +670,15 @@ impl super::App {
         let prefix = format!("{label}:");
         // Job-level mirror: the live popup's single source of truth.
         if let Some(row) = self
-            .research_stage_rows
+            .research
+            .stage_rows
             .iter_mut()
             .rev()
             .find(|c| c.as_str() == label || c.starts_with(prefix.as_str()))
         {
             row.clone_from(&text);
         } else {
-            self.research_stage_rows.push(text.clone());
+            self.research.stage_rows.push(text.clone());
         }
         if self.session.as_ref().is_some_and(|s| s.id == session_id) {
             if let Some(row) = self.messages.iter_mut().rev().find(|m| {
@@ -708,19 +712,19 @@ impl super::App {
     #[allow(clippy::too_many_lines)]
     pub fn on_research_done(&mut self, r: Option<ResearchMsg>) {
         let Some((session_id, space_id, space_name, update)) = r else {
-            self.research_rx = None;
-            self.research_abort = None;
-            self.research_running = None;
+            self.research.rx = None;
+            self.research.abort = None;
+            self.research.running = None;
             self.set_survey_gate(None);
-            self.survey_reply_tx = None;
-            self.research_steer_tx = None;
+            self.research.survey_reply_tx = None;
+            self.research.steer_tx = None;
             // Retained steer state belongs to the job: drop it when the job
             // ends so the next job starts from an empty queue view.
-            self.research_steer_log.clear();
-            self.research_steer_acked.clear();
-            self.research_stage_rows.clear();
-            self.research_incognito = false;
-            self.research_live_input.clear();
+            self.research.steer_log.clear();
+            self.research.steer_acked.clear();
+            self.research.stage_rows.clear();
+            self.research.incognito = false;
+            self.research.live_input.clear();
             // The view closes its live popup when the job's channel closes.
             return;
         };
@@ -732,9 +736,10 @@ impl super::App {
                 // log immediately — acknowledged text must not linger in
                 // memory while the job is parked.
                 if let Some(n) = label.strip_prefix("steer #").and_then(|n| n.parse().ok()) {
-                    self.research_steer_acked.insert(n);
-                    self.research_steer_log
-                        .retain(|(p, _)| !self.research_steer_acked.contains(p));
+                    self.research.steer_acked.insert(n);
+                    self.research
+                        .steer_log
+                        .retain(|(p, _)| !self.research.steer_acked.contains(p));
                 }
                 self.mirror_stage(&session_id, &label, &detail);
                 if viewing {
@@ -746,7 +751,8 @@ impl super::App {
             }
             ResearchUpdate::SurveyReady { questions, round } => {
                 let topic = self
-                    .research_running
+                    .research
+                    .running
                     .as_ref()
                     .map(|(_, t)| t.clone())
                     .unwrap_or_default();
@@ -769,7 +775,7 @@ impl super::App {
                 // A normal job must make the prompt durable before it can
                 // intercept Enter. Incognito deliberately keeps it only in
                 // SurveyGate, where session loading can restore it in memory.
-                if !self.research_incognito
+                if !self.research.incognito
                     && let Err(e) = self.db.add_survey_message(&session_id, &content)
                 {
                     self.stop_research();
@@ -778,7 +784,7 @@ impl super::App {
                     ));
                     return;
                 }
-                let Some(tx) = self.survey_reply_tx.clone() else {
+                let Some(tx) = self.research.survey_reply_tx.clone() else {
                     self.stop_research();
                     self.push_status(
                         "survey reply channel unavailable — research stopped".to_string(),
@@ -822,7 +828,8 @@ impl super::App {
             }
             ResearchUpdate::PlanReady { questions, rework } => {
                 let topic = self
-                    .research_running
+                    .research
+                    .running
                     .as_ref()
                     .map(|(_, t)| t.clone())
                     .unwrap_or_default();
@@ -836,14 +843,14 @@ impl super::App {
 
                 // As with survey prompts, normal jobs persist before arming;
                 // incognito jobs retain the actionable row only in the gate.
-                if !self.research_incognito
+                if !self.research.incognito
                     && let Err(e) = self.db.add_research_plan_message(&session_id, &content)
                 {
                     self.stop_research();
                     self.push_status(format!("couldn't persist the plan — research stopped: {e}"));
                     return;
                 }
-                let Some(tx) = self.survey_reply_tx.clone() else {
+                let Some(tx) = self.research.survey_reply_tx.clone() else {
                     self.stop_research();
                     self.push_status(
                         "plan approval channel unavailable — research stopped".to_string(),
@@ -934,7 +941,8 @@ impl super::App {
                     None,
                 );
                 let topic = self
-                    .research_running
+                    .research
+                    .running
                     .as_ref()
                     .map(|(_, t)| t.clone())
                     .unwrap_or_default();
@@ -979,7 +987,7 @@ impl super::App {
                     ));
                 } else {
                     self.unread.insert(session_id);
-                    if let Some((_, topic)) = &self.research_running {
+                    if let Some((_, topic)) = &self.research.running {
                         self.push_status(format!("✓ research ready: {topic}"));
                     }
                 }
@@ -1038,7 +1046,7 @@ impl super::App {
         // plan files incorporate survey replies, so even a job stopped
         // before its report must not leak user details. The mode is the one
         // captured when the job started, not a mid-job toggle.
-        if self.research_incognito {
+        if self.research.incognito {
             return Ok(None);
         }
         let dir = self.space.files_dir(space_name);

@@ -60,6 +60,11 @@ mod connectors;
 mod skills_popup;
 mod snapshot;
 mod spaces;
+mod state;
+pub use state::{
+    ApprovalState, CompactionState, ContextMeter, IndexState, ListCaches, LocalRuntimeState,
+    ResearchState, SearchConfig, SwarmState, UiRepairState, UserCommandState,
+};
 mod subagents;
 mod swarm;
 #[cfg(test)]
@@ -1099,34 +1104,12 @@ pub struct App {
     /// App-local prompt-cache epoch. Changes that alter the serialized prefix
     /// advance it so a provider gets a fresh cache lane.
     pub(crate) cache_epoch: u64,
-    /// Whether the local prompt-budget warning has fired in this cache epoch.
-    pub(crate) context_warned: bool,
     /// Timestamp captured for the current prompt-cache epoch. Keeping the
     /// `{{datetime}}` expansion stable prevents a clock tick from invalidating
     /// the entire serialized prefix on every request.
     pub(crate) prompt_datetime: String,
-    /// Embedding model for semantic file search, chosen automatically (local
-    /// `EmbeddingGemma` 2 when Ollama has it, else the backend's default, else
-    /// empty = keyword search only). Runtime state, not a setting.
-    pub embedding_model: String,
-    /// Probed runtime shared with file search; never contains cloud credentials in its identity.
-    pub embedding_backend: Option<crate::provider::embedding::Embedder>,
-    /// Runtime health and indexing progress for frontends.
-    pub embedding_status: String,
-    embedding_chunks: Vec<(String, String)>,
-    embedding_chat_job: Option<chats::ChatEmbedJob>,
-    next_chat_index: std::time::Instant,
-    /// Device-local conversation indexing progress for the files popup.
-    pub chat_index_status: String,
-    embedding_discovery:
-        Option<std::sync::Arc<std::sync::OnceLock<(String, crate::provider::embedding::Embedder)>>>,
-    /// Base URL of a `SearXNG` instance for the web-search tool, or empty to
-    /// disable it. Configured in-app (`/config`), not a config file.
-    pub searxng_url: String,
-    /// `LangSearch` API key (free tier), or empty to disable it.
-    pub langsearch_key: String,
-    /// Which web-search backend to prefer: "auto"/"langsearch"/"searxng"/"duckduckgo".
-    pub search_provider: String,
+    pub index: IndexState,
+    pub search: SearchConfig,
     /// Bundled base system prompt with unresolved runtime placeholders.
     pub base_system_prompt: String,
     /// App-level user additions from `system_prompt.md`, editable via `$EDITOR`.
@@ -1136,57 +1119,17 @@ pub struct App {
     pub interactive_ui: bool,
     /// Whether a frontend can ask the user for workspace permissions.
     pub interactive_approvals: bool,
-    /// Shared interactive channel for panel mutations, independent of work mode.
-    pub panel_approver: Option<Arc<dyn Approver>>,
-    /// Eval permissions survive toolbox refreshes without interactive prompts.
-    pub eval_approver: Option<Arc<dyn Approver>>,
-    /// Unattended job gate, retained across toolbox refreshes.
-    pub job_approver: Option<Arc<crate::jobs::JobApprover>>,
-    /// Reply channel for the currently displayed approval request.
-    pub pending_approval: Option<oneshot::Sender<Decision>>,
-    /// The action waiting for a response from the interactive frontend.
-    pub pending_approval_request: Option<ApprovalRequest>,
-    /// Requests waiting behind the displayed one, oldest first: concurrent
-    /// tool calls can each ask at once.
-    pub approval_queue: VecDeque<(ApprovalRequest, oneshot::Sender<Decision>)>,
-    /// Counts requests that reached the display, so a view can tell two
-    /// identical requests in a row apart.
-    pub approval_shown: u64,
-    /// Requests from the current interactive toolbox (agent edits and commands,
-    /// or a chat-mode `request_workspace`).
-    pub approval_rx: Option<mpsc::UnboundedReceiver<(ApprovalRequest, oneshot::Sender<Decision>)>>,
-    /// A `propose_command` (`!<cmd>`) the view moves into an empty composer.
-    pub proposed_command: Option<String>,
+    pub approvals: ApprovalState,
     /// Session-local canvas focus and deck edit notifications, shared with tools.
     pub deck_link: Arc<std::sync::Mutex<crate::deck::link::Context>>,
     /// An approved `request_workspace` root, applied when its chat task finishes.
     pub(crate) queued_workspace: Option<(ChatTaskId, String)>,
-    /// The running captured `!` command's result, at most one at a time.
-    user_command_rx: Option<mpsc::UnboundedReceiver<chat::UserCommandRun>>,
-    /// The user's terminal directory; never used by agent tools.
-    pub user_command_dir: Option<std::path::PathBuf>,
-    /// Lazy shell setup, shared by command execution and composer completion.
-    pub user_shell: Arc<tokio::sync::OnceCell<crate::usershell::UserShell>>,
-    user_shell_warning_shown: bool,
-    user_command_context: Option<chat::UserCommandContext>,
-    user_command_epoch: u64,
+    pub user_command: UserCommandState,
     /// Answer-length preference woven into the system prompt: "normal",
     /// "concise" (default), or "caveman".
     pub verbosity: String,
-    /// Finished UI repairs share a channel so switching sessions cannot lose a result.
-    ui_repair_tx: mpsc::UnboundedSender<chat::UiRepairResult>,
-    ui_repair_rx: mpsc::UnboundedReceiver<chat::UiRepairResult>,
-    /// Session -> reply message id; a new turn disarms that session's repair.
-    ui_repair_messages: HashMap<String, String>,
-    ui_feedback_seen: std::collections::HashSet<String>,
-    /// Background compaction result: (session id, digest, messages-covered, pre-compaction %).
-    pub compact_rx: Option<mpsc::UnboundedReceiver<(String, String, i64, u64)>>,
-    /// Session currently being compacted. Kept separately from `compact_rx` so
-    /// the TUI can mark the right row while the job is still in flight.
-    pub compacting_session_id: Option<String>,
-    /// Why the last compaction request failed, filled by its background task
-    /// before it drops the result channel, so the status names the cause.
-    pub(crate) compact_error: Arc<std::sync::Mutex<Option<String>>>,
+    pub ui_repair: UiRepairState,
+    pub compaction: CompactionState,
 
     /// Discovered skills (name/description only — bodies are read from disk on
     /// invocation, so this list is cheap and reloaded whenever it changes).
@@ -1214,29 +1157,7 @@ pub struct App {
     pub incognito: bool,
     /// Temp directory for incognito image files, cleaned up on toggle.
     pub incognito_img_dir: Option<std::path::PathBuf>,
-    /// A parked conversation's chat-reply gate (clarifying questions or an
-    /// approval) — armed only while a reply is actually pending, so a gate
-    /// in another session can never swallow typing.
-    pub survey_gate: Option<SurveyGate>,
-    /// Sender half of the reply channel into a parked gate. Created at the
-    /// owning job's start; the gate itself arms/disarms as pending-section
-    /// updates arrive.
-    pub survey_reply_tx: Option<mpsc::UnboundedSender<String>>,
-    /// Every `/steer` queued during the current job, as `(queue position,
-    /// text)` — position 1-based, assigned in queue order. Entries are
-    /// dropped once the pipeline acknowledges them (`research_steer_acked`),
-    /// and the whole log is cleared when the job stops or its channel
-    /// closes, so retained steer text stays bounded per job.
-    pub research_steer_log: Vec<(usize, String)>,
-    /// Steer positions (`steer #N`) the pipeline has drained and persisted —
-    /// parsed from `Stage` updates in `on_research_done`, so the live popup
-    /// knows what's picked up even when opened from another session, and the
-    /// retained log can drop acknowledged entries.
-    pub research_steer_acked: std::collections::HashSet<usize>,
-    /// The running job's stage rows (`label: detail` content strings), kept
-    /// in sync by `mirror_stage` regardless of which session is viewed — the
-    /// live popup renders from here instead of re-reading the db per frame.
-    pub research_stage_rows: Vec<String>,
+    pub research: ResearchState,
     /// `task` sub-agent runs of this process, live and recent (see `subagents`).
     pub subagent_runs: Vec<SubagentRun>,
     /// What each chat task's sub-agents have cost so far, added to its reply.
@@ -1244,17 +1165,6 @@ pub struct App {
     /// Each chat task's own requests so far — every tool-loop round, not
     /// just the last — totalled into its reply's tokens and cost.
     pub turn_usage: HashMap<ChatTaskId, TurnTally>,
-    /// Incognito mode captured when the job started: artifact persistence
-    /// (plan files, and the plan message itself, which folds in survey
-    /// replies) is decided by this, never by toggling `incognito` mid-job.
-    pub research_incognito: bool,
-    /// Queues `/steer` instructions into the currently running research job's
-    /// round-boundary check. `None` when no research job is running.
-    pub research_steer_tx: Option<mpsc::UnboundedSender<String>>,
-    /// In-progress `/research` (no args) topic distillation from recent chat.
-    pub research_topic_rx: Option<mpsc::UnboundedReceiver<Result<String, String>>>,
-    /// Composer buffer for the live research-activity view's steer input.
-    pub research_live_input: String,
     pub toolbox: std::sync::Arc<dyn crate::tools::ToolExecutor>,
     image_fetcher: Arc<crate::remote_image::Fetcher>,
     /// Background commands survive session switches, but not app exit.
@@ -1262,54 +1172,14 @@ pub struct App {
     /// Local static server for model-created apps (None if it failed to bind).
     pub app_server: Option<crate::appserver::AppServer>,
     pub skills_rx: Option<mpsc::UnboundedReceiver<Result<String, String>>>,
-    /// Background converter updates: (`space_id`, file name, progress or final result).
-    pub ocr_rx: Option<mpsc::UnboundedReceiver<(String, String, files::OcrUpdate)>>,
-    /// One in-flight file/chat embedding job, or embedder capability probe.
-    pub embed_rx: Option<mpsc::UnboundedReceiver<EmbedMsg>>,
-    /// Local provider servers Nexus started with `/local start`. Owning them
-    /// is what lets `/local stop` and the exit path reclaim their memory;
-    /// servers started outside Nexus are detected but never stopped.
-    pub local_servers: crate::provider::serve::ManagedServers,
-    /// Last local-server survey, cached for the `/local` picker. Domain state
-    /// that only a display reads, kept here like the files/scripts caches
-    /// because every frontend shows it.
-    pub local_status: Vec<crate::provider::serve::RuntimeStatus>,
-    pub local_status_rx:
-        Option<mpsc::UnboundedReceiver<Vec<crate::provider::serve::RuntimeStatus>>>,
-    /// The in-flight survey was asked for by the user, so its result should
-    /// report a line rather than only refresh the picker.
-    pub local_status_announce: bool,
-    /// A running `/research` job's channel and cancellation handle.
-    pub research_rx: Option<mpsc::UnboundedReceiver<ResearchMsg>>,
-    pub research_abort: Option<tokio::task::AbortHandle>,
+    pub local: LocalRuntimeState,
     pub login_rx: Option<mpsc::UnboundedReceiver<LoginMsg>>,
     /// Startup update check result (newest published version, or `None` on failure).
     pub update_rx: Option<mpsc::UnboundedReceiver<Option<String>>>,
     /// Startup Codex refresh result, handled internally so tokens never enter events.
     codex_refresh_rx: Option<mpsc::UnboundedReceiver<Result<config::CodexCredentials, String>>>,
-    /// A running `/swarm` discussion's channel, cancellation handle, and
-    /// origin session id (used for targeting the correct progress row).
-    pub swarm_rx: Option<mpsc::UnboundedReceiver<swarm::SwarmMsg>>,
-    pub swarm_abort: Option<tokio::task::AbortHandle>,
-    pub swarm_session: Option<String>,
-    /// The active session's `/swarm` roster, cached for the popup (kept in
-    /// sync by `on_swarm_update` while a turn runs; the view owns the cursor).
-    pub swarm_cache: Vec<crate::db::Persona>,
-    /// (session id, topic) of the `/research` job currently running, if any —
-    /// cleared when its channel closes.
-    pub research_running: Option<(String, String)>,
-
-    /// The active space's imported files (refreshed by `rescan_files`).
-    pub files_cache: Vec<crate::db::FileRow>,
-    /// The space's apps (`/apps` popup).
-    pub apps_cache: Vec<String>,
-    /// The space's images (`/image` popup).
-    pub images_cache: Vec<ImageMeta>,
-
-    /// The space's scripts (`/script` popup).
-    pub scripts_cache: Vec<ScriptMeta>,
-    /// The space's standing research watches (`/watch` picker).
-    pub watches_cache: Vec<crate::db::Watch>,
+    pub swarm: SwarmState,
+    pub caches: ListCaches,
     /// Time window the `/usage` dashboard aggregates (`24h/7d/30d/all`) — a
     /// persisted preference, applied by `apply_setting` on load.
     pub usage_range: crate::db::UsageRange,
@@ -1346,22 +1216,7 @@ pub struct App {
     pub(crate) pending_events: VecDeque<AppEvent>,
     /// Sessions holding a response that finished while the user was elsewhere.
     pub unread: std::collections::HashSet<String>,
-    /// Exact conversation token total from the last completed response.
-    pub context_total: Option<u64>,
-    /// The latest exact count and the estimator's view of the conversation
-    /// at that moment, so the bar estimates only what was added since
-    /// rather than re-estimating the whole conversation (which saw-toothed).
-    pub(crate) context_basis: Option<ContextBasis>,
-    /// Exact tokens per estimated token, learned from the last exact count;
-    /// scales estimates made with no basis (after a session or epoch switch).
-    pub(crate) context_ratio: Option<f64>,
-    /// Cache accounting for the turn in progress, summed across every API
-    /// request it makes (a tool loop is many). Shown next to the context
-    /// window. Transient — the per-request numbers live in `usage_log`.
-    pub turn_cache: CacheTally,
-    /// Cache hit rate of the single most recent completed request (0..=1) —
-    /// the per-request view, shown in the context breakdown popup.
-    pub last_cache_rate: Option<f64>,
+    pub meter: ContextMeter,
 
     pub settings: Settings,
     /// What a confirmed model-picker selection is currently for (the active
@@ -1372,7 +1227,6 @@ pub struct App {
     pub thinking_idx: usize,
     pub spinner_color: SpinnerColor,
 
-    pub sessions_cache: Vec<Session>,
     /// Background topic-generation result channel.
     pub(crate) title_rx: Option<mpsc::UnboundedReceiver<(String, String, String)>>,
 }
@@ -1407,7 +1261,6 @@ impl App {
         let skill_dirs = crate::skills::app_skill_roots(&space.root);
         let skills = crate::skills::load_skills_from_dirs(&skill_dirs);
         let (chat_event_tx, chat_event_rx) = mpsc::unbounded_channel();
-        let (ui_repair_tx, ui_repair_rx) = mpsc::unbounded_channel();
         let (decider_status_tx, decider_status_rx) = mpsc::unbounded_channel();
         let (connector_notes_tx, connector_notes_rx) = mpsc::unbounded_channel();
         // Built with search disabled; `load_settings()` below reads the
@@ -1446,9 +1299,7 @@ impl App {
             import_paths: None,
             connector_notes_tx,
             connector_notes_rx,
-            searxng_url: String::new(),
-            langsearch_key: String::new(),
-            search_provider: "auto".to_string(),
+            search: SearchConfig::new(),
             forced_skill: None,
             work_mode: WorkMode::Chat,
             auto_sandbox_available: crate::workspace::shell::write_confinement_available(),
@@ -1458,44 +1309,21 @@ impl App {
             workspace: None,
             incognito: false,
             incognito_img_dir: None,
-            survey_gate: None,
-            survey_reply_tx: None,
-            research_steer_log: Vec::new(),
-            research_steer_acked: std::collections::HashSet::new(),
-            research_stage_rows: Vec::new(),
+            research: ResearchState::default(),
             subagent_runs: Vec::new(),
             subagent_turn_cost: HashMap::new(),
             turn_usage: HashMap::new(),
-            research_incognito: false,
-            research_steer_tx: None,
-            research_topic_rx: None,
-            research_live_input: String::new(),
             toolbox,
             image_fetcher,
             procs: Arc::default(),
             app_server: None,
             skills_rx: None,
-            ocr_rx: None,
-            embed_rx: None,
-            local_servers: crate::provider::serve::ManagedServers::default(),
-            local_status: Vec::new(),
-            local_status_rx: None,
-            local_status_announce: false,
-            research_rx: None,
-            research_abort: None,
+            local: LocalRuntimeState::default(),
             login_rx: None,
             update_rx: None,
             codex_refresh_rx: None,
-            swarm_rx: None,
-            swarm_abort: None,
-            swarm_session: None,
-            swarm_cache: Vec::new(),
-            research_running: None,
-            files_cache: Vec::new(),
-            apps_cache: Vec::new(),
-            watches_cache: Vec::new(),
-            images_cache: Vec::new(),
-            scripts_cache: Vec::new(),
+            swarm: SwarmState::default(),
+            caches: ListCaches::default(),
             usage_range: crate::db::UsageRange::default(),
             harness: None,
             active_space,
@@ -1503,45 +1331,19 @@ impl App {
             memory_docs: Vec::new(),
             memory_tidy_due: 0,
             cache_epoch: 0,
-            context_warned: false,
             prompt_datetime: Utc::now().format("%Y-%m-%d %H:%M UTC, %A").to_string(),
-            embedding_model: String::new(),
-            embedding_backend: None,
-            embedding_status: String::new(),
-            embedding_chunks: Vec::new(),
-            embedding_chat_job: None,
-            next_chat_index: std::time::Instant::now() + std::time::Duration::from_secs(5),
-            chat_index_status: String::new(),
-            embedding_discovery: None,
+            index: IndexState::new(),
             base_system_prompt: config::BASE_SYSTEM_PROMPT.to_string(),
             system_prompt_overlay: String::new(),
             interactive_ui: false,
             interactive_approvals: false,
-            panel_approver: None,
-            eval_approver: None,
-            job_approver: None,
-            pending_approval: None,
-            pending_approval_request: None,
-            approval_queue: VecDeque::new(),
-            approval_shown: 0,
-            approval_rx: None,
-            proposed_command: None,
+            approvals: ApprovalState::default(),
             deck_link: Arc::default(),
             queued_workspace: None,
-            user_command_rx: None,
-            user_command_dir: None,
-            user_shell: Arc::new(tokio::sync::OnceCell::new()),
-            user_shell_warning_shown: false,
-            user_command_context: None,
-            user_command_epoch: 0,
+            user_command: UserCommandState::default(),
             verbosity: "concise".to_string(),
-            ui_repair_tx,
-            ui_repair_rx,
-            ui_repair_messages: HashMap::new(),
-            ui_feedback_seen: std::collections::HashSet::new(),
-            compact_rx: None,
-            compact_error: Arc::default(),
-            compacting_session_id: None,
+            ui_repair: UiRepairState::new(),
+            compaction: CompactionState::default(),
             models: Vec::new(),
             current_model: None,
             router_note_shown: false,
@@ -1559,21 +1361,16 @@ impl App {
             notifications: VecDeque::new(),
             pending_events: VecDeque::new(),
             unread: std::collections::HashSet::new(),
-            context_total: None,
-            context_basis: None,
-            context_ratio: None,
-            turn_cache: CacheTally::default(),
-            last_cache_rate: None,
+            meter: ContextMeter::default(),
             settings: Settings::default(),
             model_pick_target: ModelPickTarget::Session,
             spinner_frame: 0,
             thinking_idx: 0,
             spinner_color: SpinnerColor::Green,
-            sessions_cache: Vec::new(),
             title_rx: None,
         };
         app.rebuild_all_backends();
-        app.embedding_model = app
+        app.index.embedding_model = app
             .backends
             .configured_tags()
             .first()
@@ -1653,7 +1450,7 @@ impl App {
         self.reset_user_command_dir();
         self.workspace = Some(Arc::new(workspace));
         self.work_mode = mode;
-        self.job_approver = Some(approver);
+        self.approvals.job_approver = Some(approver);
         self.refresh_toolbox();
         Ok(())
     }
@@ -1728,8 +1525,8 @@ impl App {
         self.reset_user_command_dir();
         self.workspace = Some(Arc::new(workspace));
         self.work_mode = WorkMode::Agent;
-        if self.eval_approver.is_none() {
-            self.eval_approver = Some(Arc::new(EvalApprover::default()));
+        if self.approvals.eval_approver.is_none() {
+            self.approvals.eval_approver = Some(Arc::new(EvalApprover::default()));
         }
         self.refresh_toolbox();
         self.bump_cache_epoch();
@@ -1975,7 +1772,7 @@ impl App {
                     self.settings.compact_threshold = t;
                 }
             }
-            "searxng_url" => self.searxng_url = v.to_string(),
+            "searxng_url" => self.search.searxng_url = v.to_string(),
             "column_width" if settings::valid_column_width(v) => {
                 self.settings.column_width = v.trim().to_string();
             }
@@ -1997,9 +1794,9 @@ impl App {
                     self.bump_cache_epoch();
                 }
             }
-            "langsearch_key" => self.langsearch_key = v.to_string(),
+            "langsearch_key" => self.search.langsearch_key = v.to_string(),
             "search_provider" if SEARCH_PROVIDERS.contains(&v) => {
-                self.search_provider = v.to_string();
+                self.search.provider = v.to_string();
             }
             _ => {}
         }
@@ -2063,10 +1860,10 @@ impl App {
 
     #[allow(clippy::too_many_lines)] // Keep the toolbox's capability wiring together.
     fn rebuild_toolbox(&mut self) {
-        let url =
-            (!self.searxng_url.trim().is_empty()).then(|| self.searxng_url.trim().to_string());
-        let key = (!self.langsearch_key.trim().is_empty())
-            .then(|| self.langsearch_key.trim().to_string());
+        let url = (!self.search.searxng_url.trim().is_empty())
+            .then(|| self.search.searxng_url.trim().to_string());
+        let key = (!self.search.langsearch_key.trim().is_empty())
+            .then(|| self.search.langsearch_key.trim().to_string());
         // The toolbox sits behind the `ToolExecutor` seam. It writes only
         // to the app-managed root but reads the full Agent Skills search path.
         let skills_dir = crate::skills::skills_dir(&self.space.root);
@@ -2076,10 +1873,11 @@ impl App {
             skills_dir.clone(),
             url,
             key,
-            self.search_provider.clone(),
+            self.search.provider.clone(),
             self.blocked_domains(),
             Some(
-                self.eval_approver
+                self.approvals
+                    .eval_approver
                     .as_ref()
                     .and(self.workspace.as_ref())
                     .map_or_else(
@@ -2130,16 +1928,18 @@ impl App {
         toolbox.image_gen_backend = self.generation_backend(OpenRouter::default_image_gen_model);
         toolbox.video_gen_backend = self.generation_backend(OpenRouter::default_video_gen_model);
         toolbox.space_files_dir = self.space.files_dir(&self.active_space.name);
-        toolbox.memory =
-            (!self.incognito && self.eval_approver.is_none()).then(|| crate::tools::MemoryCtx {
+        toolbox.memory = (!self.incognito && self.approvals.eval_approver.is_none()).then(|| {
+            crate::tools::MemoryCtx {
                 db_path: self.space.db_path(),
                 space_id: self.active_space.id.clone(),
-            });
+            }
+        });
         toolbox.space_apps_dir = self.space.apps_dir(&self.active_space.name);
         toolbox.space_scripts_dir = self.space.scripts_dir(&self.active_space.name);
         toolbox.supports_images = self.current_model_supports_images();
         // Evals run in a hermetic workspace: no outside services.
         toolbox.connectors = self
+            .approvals
             .eval_approver
             .is_none()
             .then(|| self.connectors.clone());
@@ -2148,28 +1948,28 @@ impl App {
         toolbox.remote_images = Some(Arc::clone(&self.image_fetcher));
         toolbox.interactive_ui = self.interactive_ui;
         toolbox.deck_link = Arc::clone(&self.deck_link);
-        self.pending_approval = None;
-        self.pending_approval_request = None;
-        self.approval_queue.clear();
-        self.approval_rx = None;
-        self.panel_approver = None;
-        if let Some(approver) = &self.job_approver {
+        self.approvals.pending = None;
+        self.approvals.pending_request = None;
+        self.approvals.queue.clear();
+        self.approvals.rx = None;
+        self.approvals.panel_approver = None;
+        if let Some(approver) = &self.approvals.job_approver {
             toolbox.approver = Some(approver.clone());
-        } else if let Some(approver) = &self.eval_approver {
+        } else if let Some(approver) = &self.approvals.eval_approver {
             toolbox.approver = Some(approver.clone());
         } else if self.interactive_approvals {
             let (sender, receiver) = mpsc::unbounded_channel();
             let approver: Arc<dyn Approver> = Arc::new(ChannelApprover::new(sender));
             toolbox.approver = Some(Arc::clone(&approver));
-            self.panel_approver = Some(approver);
-            self.approval_rx = Some(receiver);
+            self.approvals.panel_approver = Some(approver);
+            self.approvals.rx = Some(receiver);
         }
         toolbox.workspace = self
             .workspace
             .as_ref()
             .filter(|_| self.work_mode.is_agent())
             .cloned();
-        if self.eval_approver.is_some() || self.job_approver.is_some() {
+        if self.approvals.eval_approver.is_some() || self.approvals.job_approver.is_some() {
             toolbox.confine_shell_writes =
                 toolbox.workspace.as_ref().map(|w| w.root().to_path_buf());
         }
@@ -2180,7 +1980,7 @@ impl App {
             .as_ref()
             .map(|s| s.id.clone())
             .unwrap_or_default();
-        self.toolbox = if let Some(approver) = &self.job_approver {
+        self.toolbox = if let Some(approver) = &self.approvals.job_approver {
             Arc::new(crate::jobs::JobExecutor {
                 inner: Arc::new(toolbox),
                 approver: Arc::clone(approver),
@@ -2366,7 +2166,8 @@ impl App {
     /// stream, or otherwise invalidates the rendered conversation.
     pub fn push_viewport_reset(&mut self) {
         if self
-            .user_command_context
+            .user_command
+            .context
             .as_ref()
             .is_some_and(|context| *context != self.user_command_context())
         {
@@ -2478,12 +2279,12 @@ impl App {
             return ev;
         }
         tokio::select! {
-            () = tokio::time::sleep_until(self.next_chat_index.into()), if self.embed_rx.is_none() => {
+            () = tokio::time::sleep_until(self.index.next_chat_index.into()), if self.index.embed_rx.is_none() => {
                 self.start_embedding();
-                AppEvent::Status(self.embedding_status.clone())
+                AppEvent::Status(self.index.embedding_status.clone())
             },
             request = async {
-                match self.approval_rx.as_mut() {
+                match self.approvals.rx.as_mut() {
                     Some(receiver) => receiver.recv().await,
                     None => std::future::pending().await,
                 }
@@ -2493,38 +2294,38 @@ impl App {
                         return AppEvent::Status("approval cancelled".to_string());
                     }
                     let status = format!("approval needed · {} {}", request.tool, request.action);
-                    self.approval_queue.push_back((request, reply));
+                    self.approvals.queue.push_back((request, reply));
                     self.show_next_approval();
                     AppEvent::Status(status)
                 } else {
-                    self.approval_rx = None;
+                    self.approvals.rx = None;
                     AppEvent::Status(String::new())
                 }
             },
             () = async {
-                match self.pending_approval.as_mut() {
+                match self.approvals.pending.as_mut() {
                     Some(reply) => reply.closed().await,
                     None => std::future::pending().await,
                 }
             } => {
-                self.pending_approval = None;
-                self.pending_approval_request = None;
+                self.approvals.pending = None;
+                self.approvals.pending_request = None;
                 self.show_next_approval();
                 AppEvent::Status("approval cancelled".to_string())
             },
             Some(status) = self.decider_status_rx.recv() => AppEvent::Status(status),
             Some(note) = self.connector_notes_rx.recv() => AppEvent::Status(note),
-            Some(repair) = self.ui_repair_rx.recv() => self.on_ui_repair_result(repair),
+            Some(repair) = self.ui_repair.rx.recv() => self.on_ui_repair_result(repair),
             ev = self.chat_event_rx.recv() => {
                 AppEvent::Stream(ev.map(|event| (event.task_id, event.event)))
             },
             run = async {
-                match self.user_command_rx.as_mut() {
+                match self.user_command.rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
             } => {
-                self.user_command_rx = None;
+                self.user_command.rx = None;
                 if let Some(run) = run
                     && let Err(error) = self.finish_user_command(&run)
                 {
@@ -2545,7 +2346,7 @@ impl App {
                 }
             } => AppEvent::Title(t),
             c = async {
-                match self.compact_rx.as_mut() {
+                match self.compaction.rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
@@ -2557,25 +2358,25 @@ impl App {
                 }
             } => AppEvent::SkillInstall(r),
             r = async {
-                match self.ocr_rx.as_mut() {
+                match self.index.convert_rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
             } => AppEvent::Ocr(r),
             r = async {
-                match self.embed_rx.as_mut() {
+                match self.index.embed_rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
             } => AppEvent::Embed(r),
             r = async {
-                match self.local_status_rx.as_mut() {
+                match self.local.status_rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
             } => AppEvent::LocalServers(r),
             r = async {
-                match self.research_rx.as_mut() {
+                match self.research.rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
@@ -2586,7 +2387,7 @@ impl App {
                 AppEvent::Research(r)
             },
             r = async {
-                match self.research_topic_rx.as_mut() {
+                match self.research.topic_rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
@@ -2627,7 +2428,7 @@ impl App {
                 self.pending_events.pop_front().unwrap_or_else(|| AppEvent::Status(String::new()))
             },
             r = async {
-                match self.swarm_rx.as_mut() {
+                match self.swarm.rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
@@ -2686,25 +2487,25 @@ impl App {
             task.abort.abort();
         }
         self.chat_tasks.clear();
-        self.pending_approval = None;
-        self.pending_approval_request = None;
-        self.approval_queue.clear();
+        self.approvals.pending = None;
+        self.approvals.pending_request = None;
+        self.approvals.queue.clear();
     }
 
     /// Display the oldest queued approval once nothing is displayed,
     /// skipping requests whose tool call has gone away. Returns whether one
     /// was shown.
     pub fn show_next_approval(&mut self) -> bool {
-        if self.pending_approval.is_some() {
+        if self.approvals.pending.is_some() {
             return false;
         }
-        while let Some((request, reply)) = self.approval_queue.pop_front() {
+        while let Some((request, reply)) = self.approvals.queue.pop_front() {
             if reply.is_closed() {
                 continue;
             }
-            self.pending_approval = Some(reply);
-            self.pending_approval_request = Some(request);
-            self.approval_shown += 1;
+            self.approvals.pending = Some(reply);
+            self.approvals.pending_request = Some(request);
+            self.approvals.shown += 1;
             return true;
         }
         false
@@ -2713,9 +2514,10 @@ impl App {
     /// Requests awaiting an answer: the displayed one and the live queued ones.
     #[must_use]
     pub fn approval_count(&self) -> usize {
-        usize::from(self.pending_approval.is_some())
+        usize::from(self.approvals.pending.is_some())
             + self
-                .approval_queue
+                .approvals
+                .queue
                 .iter()
                 .filter(|(_, reply)| !reply.is_closed())
                 .count()
@@ -2725,7 +2527,7 @@ impl App {
     /// the session also allows every waiting request of the same kind, so
     /// they are never shown.
     pub(crate) fn answer_approval(&mut self, decision: Decision) {
-        let request = self.pending_approval_request.take();
+        let request = self.approvals.pending_request.take();
         let connector = request.as_ref().is_some_and(|request| {
             request.class.as_deref() == Some(crate::connectors::exec::CLASS)
         });
@@ -2742,19 +2544,19 @@ impl App {
             }
             other => other,
         };
-        if let Some(sender) = self.pending_approval.take() {
+        if let Some(sender) = self.approvals.pending.take() {
             let _ = sender.send(decision);
         }
         if decision == Decision::AllowForSession
             && let Some(request) = request.filter(|request| request.tool != "wave")
             && !connector
         {
-            if let Some(receiver) = self.approval_rx.as_mut() {
+            if let Some(receiver) = self.approvals.rx.as_mut() {
                 while let Ok(item) = receiver.try_recv() {
-                    self.approval_queue.push_back(item);
+                    self.approvals.queue.push_back(item);
                 }
             }
-            for (queued, reply) in std::mem::take(&mut self.approval_queue) {
+            for (queued, reply) in std::mem::take(&mut self.approvals.queue) {
                 if queued.tool == request.tool
                     && queued.action == request.action
                     && queued.allow_session
@@ -2762,7 +2564,7 @@ impl App {
                 {
                     let _ = reply.send(Decision::Allow);
                 } else {
-                    self.approval_queue.push_back((queued, reply));
+                    self.approvals.queue.push_back((queued, reply));
                 }
             }
         }
@@ -3164,7 +2966,7 @@ mod eval_tests {
             Space { root: data.clone() },
         );
         app.execute(AppCommand::Incognito { on: true }).unwrap();
-        app.eval_approver = Some(Arc::new(EvalApprover {
+        app.approvals.eval_approver = Some(Arc::new(EvalApprover {
             allow_shell: vec!["printf ok".into()],
         }));
         let session = app

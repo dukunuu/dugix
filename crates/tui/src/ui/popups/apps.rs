@@ -16,7 +16,8 @@ fn render_prompt(f: &mut Frame, app: &AppView, area: ratatui::layout::Rect) -> b
     let (label, hint) = match app.apps_mode {
         AppsMode::EditFile => {
             let name = app
-                .apps_cache
+                .caches
+                .apps
                 .get(app.apps_selected)
                 .cloned()
                 .unwrap_or_default();
@@ -63,7 +64,7 @@ fn rows(app: &AppView, content_w: usize) -> Vec<ListItem<'static>> {
             dim,
         )))];
     }
-    let web = app.apps_cache.iter().map(|name| {
+    let web = app.caches.apps.iter().map(|name| {
         let n = app.app_file_count(name);
         let url = app
             .app_url(name)
@@ -95,7 +96,8 @@ pub fn render(f: &mut Frame, app: &AppView) {
             let question = app.selected_pinned().map_or_else(
                 || {
                     let name = app
-                        .apps_cache
+                        .caches
+                        .apps
                         .get(app.apps_selected)
                         .cloned()
                         .unwrap_or_default();

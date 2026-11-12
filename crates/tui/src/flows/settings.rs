@@ -35,8 +35,8 @@ impl AppView {
                 .map(|v| v.to_string())
                 .unwrap_or_default(),
             self.core.settings.compact_threshold.to_string(),
-            self.core.searxng_url.clone(),
-            self.core.langsearch_key.clone(),
+            self.core.search.searxng_url.clone(),
+            self.core.search.langsearch_key.clone(),
             std::fs::read_to_string(
                 self.core
                     .space
@@ -147,9 +147,9 @@ impl AppView {
                 SettingsField::SearchProvider => {
                     let i = SEARCH_PROVIDERS
                         .iter()
-                        .position(|&p| p == self.core.search_provider)
+                        .position(|&p| p == self.core.search.provider)
                         .unwrap_or(0);
-                    self.core.search_provider =
+                    self.core.search.provider =
                         SEARCH_PROVIDERS[(i + 1) % SEARCH_PROVIDERS.len()].to_string();
                 }
                 SettingsField::ColumnWidth => {
@@ -231,11 +231,11 @@ impl AppView {
             self.settings_inputs[3].trim().parse().unwrap_or(0).min(100);
 
         let flag = |on: bool| if on { "1" } else { "0" }.to_string();
-        self.core.searxng_url = self.settings_inputs[4]
+        self.core.search.searxng_url = self.settings_inputs[4]
             .trim()
             .trim_end_matches('/')
             .to_string();
-        self.core.langsearch_key = self.settings_inputs[5].trim().to_string();
+        self.core.search.langsearch_key = self.settings_inputs[5].trim().to_string();
 
         // Write only what changed: every write bumps the row's sync version,
         // so rewriting untouched settings would make this device win LWW
@@ -251,10 +251,10 @@ impl AppView {
                 "compact_threshold",
                 self.core.settings.compact_threshold.to_string(),
             ),
-            ("searxng_url", self.core.searxng_url.clone()),
+            ("searxng_url", self.core.search.searxng_url.clone()),
             ("verbosity", self.core.verbosity.clone()),
-            ("langsearch_key", self.core.langsearch_key.clone()),
-            ("search_provider", self.core.search_provider.clone()),
+            ("langsearch_key", self.core.search.langsearch_key.clone()),
+            ("search_provider", self.core.search.provider.clone()),
         ];
         let stored: std::collections::HashMap<String, String> =
             self.core.db.load_settings()?.into_iter().collect();
@@ -330,7 +330,7 @@ mod tests {
         }
         a.save_settings().unwrap();
 
-        assert_eq!(a.core.searxng_url, "http://localhost:8080"); // trailing slash trimmed
+        assert_eq!(a.core.search.searxng_url, "http://localhost:8080"); // trailing slash trimmed
         // The toolbox sits behind the `ToolExecutor` seam — the URL wiring
         // itself is covered by tools::tests::new_wires_searxng_url_and_langsearch_key.
         assert!(!a.skills.iter().any(|s| s.name == "web-search")); // retired bundled skill
@@ -347,7 +347,7 @@ mod tests {
         // Re-apply persisted settings the way `App::new` would (load_settings is
         // private domain plumbing; the public path is a fresh App over the db).
         b.core.refresh_toolbox();
-        assert_eq!(b.core.searxng_url, "http://localhost:8080");
+        assert_eq!(b.core.search.searxng_url, "http://localhost:8080");
     }
 
     #[test]

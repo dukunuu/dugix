@@ -34,9 +34,10 @@ impl App {
             return;
         };
         let messages = ui_repair_history(&blocks);
-        self.ui_repair_messages
+        self.ui_repair
+            .messages
             .insert(target.session_id.clone(), target.message_id.clone());
-        let tx = self.ui_repair_tx.clone();
+        let tx = self.ui_repair.tx.clone();
         self.push_status("fixing the UI…");
         tokio::spawn(async move {
             let completion = provider
@@ -81,10 +82,10 @@ impl App {
                 "ui repair",
             );
         }
-        if self.ui_repair_messages.get(&target.session_id) != Some(&target.message_id) {
+        if self.ui_repair.messages.get(&target.session_id) != Some(&target.message_id) {
             return super::AppEvent::Status(String::new());
         }
-        self.ui_repair_messages.remove(&target.session_id);
+        self.ui_repair.messages.remove(&target.session_id);
         let viewing = self
             .session
             .as_ref()

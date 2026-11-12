@@ -35,14 +35,14 @@ async fn dead_endpoint() -> String {
 async fn drain(app: &mut App) -> Vec<String> {
     let mut seen = Vec::new();
     for _ in 0..50 {
-        let Some(rx) = app.embed_rx.as_mut() else {
+        let Some(rx) = app.index.embed_rx.as_mut() else {
             return seen;
         };
         let message = tokio::time::timeout(Duration::from_secs(20), rx.recv())
             .await
             .expect("embedding job stalled");
         app.on_embed_done(message);
-        seen.push(app.embedding_status.clone());
+        seen.push(app.index.embedding_status.clone());
     }
     panic!("embedding pipeline did not settle");
 }
@@ -103,15 +103,19 @@ async fn local_model_embeds_text_and_images_directly_and_queues_no_ocr() {
     let mut app = app_with_key();
     point_at(&mut app, &mock.endpoint);
     space_with_files(&app);
-    app.embedding_model = "local:embeddinggemma-2".to_string();
+    app.index.embedding_model = "local:embeddinggemma-2".to_string();
 
     app.rescan_files();
     let seen = drain(&mut app).await;
     assert!(seen.iter().any(|s| s.contains("indexing")), "{seen:?}");
 
-    assert!(app.ocr_rx.is_none(), "no OCR or caption job for the image");
+    assert!(
+        app.index.convert_rx.is_none(),
+        "no OCR or caption job for the image"
+    );
     let beach = app
-        .files_cache
+        .caches
+        .files
         .iter()
         .find(|f| f.name == "beach.png")
         .unwrap();
@@ -136,7 +140,7 @@ async fn local_model_embeds_text_and_images_directly_and_queues_no_ocr() {
     assert_eq!(identity["revision"], "sha256:one");
     assert_eq!(rows[0].2, rows[1].2);
     assert_eq!(
-        app.embedding_status,
+        app.index.embedding_status,
         "embeddings: local · embeddinggemma-2 · 768d · images"
     );
 }
@@ -176,14 +180,14 @@ async fn scanned_pdf_embedding_uses_pages_only_with_image_support() {
         let dir = app.space.files_dir(&app.active_space.name);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("scan.PDF"), &pdf).unwrap();
-        app.embedding_model = "local:embeddinggemma-2".to_string();
+        app.index.embedding_model = "local:embeddinggemma-2".to_string();
 
         app.rescan_files();
         drain(&mut app).await;
 
-        assert!(app.ocr_rx.is_none());
+        assert!(app.index.convert_rx.is_none());
         assert_eq!(
-            app.files_cache[0].status,
+            app.caches.files[0].status,
             "ok · scanned pdf (no text layer)"
         );
         let rows = stored(&app);
@@ -235,15 +239,15 @@ async fn scanned_pdf_embedding_reuses_cached_pages_and_stops_at_thirty() {
             .save(dir.join(format!("scan/page-{page}.png")))
             .unwrap();
     }
-    app.embedding_model.clear();
+    app.index.embedding_model.clear();
     app.rescan_files();
     app.db
         .set_file_status(
-            &app.files_cache[0].id,
+            &app.caches.files[0].id,
             "embedding… · ok · scanned pdf (no text layer)",
         )
         .unwrap();
-    app.embedding_model = "local:embeddinggemma-2".to_string();
+    app.index.embedding_model = "local:embeddinggemma-2".to_string();
     app.start_embedding();
     drain(&mut app).await;
 
@@ -254,7 +258,7 @@ async fn scanned_pdf_embedding_reuses_cached_pages_and_stops_at_thirty() {
     assert_eq!(image_inputs(&mock), 31, "one probe plus thirty pages");
     assert!(documents(&mock).is_empty());
     assert_eq!(
-        app.files_cache[0].status,
+        app.caches.files[0].status,
         "ok · scanned pdf (no text layer)"
     );
     let cached = image::open(dir.join("scan/page-1.png")).unwrap();
@@ -267,7 +271,7 @@ async fn same_identity_is_not_reembedded_but_a_new_digest_is() {
     let mut app = app_with_key();
     point_at(&mut app, &mock.endpoint);
     space_with_files(&app);
-    app.embedding_model = "local:embeddinggemma-2:270m".to_string();
+    app.index.embedding_model = "local:embeddinggemma-2:270m".to_string();
 
     app.rescan_files();
     drain(&mut app).await;
@@ -300,10 +304,11 @@ async fn discovering_the_local_model_replaces_old_vectors_lazily() {
     let mut app = app_with_key();
     point_at(&mut app, &mock.endpoint);
     space_with_files(&app);
-    app.embedding_model.clear();
+    app.index.embedding_model.clear();
     app.rescan_files();
     let id = app
-        .files_cache
+        .caches
+        .files
         .iter()
         .find(|f| f.name == "notes.txt")
         .unwrap()
@@ -321,9 +326,9 @@ async fn discovering_the_local_model_replaces_old_vectors_lazily() {
     // Ollama gaining the model is the only way the embedder changes now.
     app.discover_embeddings();
     // Nothing blocks: the switch only started a background probe.
-    assert!(app.embed_rx.is_some());
+    assert!(app.index.embed_rx.is_some());
     drain(&mut app).await;
-    assert_eq!(app.embedding_model, "local:embeddinggemma-2:270m");
+    assert_eq!(app.index.embedding_model, "local:embeddinggemma-2:270m");
     let rows = stored(&app);
     assert!(!rows.is_empty());
     assert!(rows.iter().all(|row| row.2 != "old-identity"), "{rows:?}");
@@ -334,10 +339,10 @@ async fn default_is_local_only_when_reachable() {
     let mock = MockOllama::start(false).await;
     let mut app = app_with_key();
     point_at(&mut app, &mock.endpoint);
-    assert_eq!(app.embedding_model, "google/gemini-embedding-2");
+    assert_eq!(app.index.embedding_model, "google/gemini-embedding-2");
     app.discover_embeddings();
     drain(&mut app).await;
-    assert_eq!(app.embedding_model, "local:embeddinggemma-2:270m");
+    assert_eq!(app.index.embedding_model, "local:embeddinggemma-2:270m");
     assert!(
         app.db
             .load_settings()
@@ -357,11 +362,11 @@ async fn default_is_local_only_when_reachable() {
             .unwrap();
         stale.discover_embeddings();
         assert!(
-            stale.embed_rx.is_some(),
+            stale.index.embed_rx.is_some(),
             "a stored {stored_choice:?} must not block discovery"
         );
         drain(&mut stale).await;
-        assert_eq!(stale.embedding_model, "local:embeddinggemma-2:270m");
+        assert_eq!(stale.index.embedding_model, "local:embeddinggemma-2:270m");
     }
 
     // Nothing reachable: behave as before.
@@ -370,7 +375,10 @@ async fn default_is_local_only_when_reachable() {
     point_at(&mut unreachable, &dead);
     unreachable.discover_embeddings();
     drain(&mut unreachable).await;
-    assert_eq!(unreachable.embedding_model, "google/gemini-embedding-2");
+    assert_eq!(
+        unreachable.index.embedding_model,
+        "google/gemini-embedding-2"
+    );
 
     // Reachable server without the model installed: behave as before.
     mock.state.lock().unwrap().installed = false;
@@ -378,7 +386,7 @@ async fn default_is_local_only_when_reachable() {
     point_at(&mut missing, &mock.endpoint);
     missing.discover_embeddings();
     drain(&mut missing).await;
-    assert_eq!(missing.embedding_model, "google/gemini-embedding-2");
+    assert_eq!(missing.index.embedding_model, "google/gemini-embedding-2");
 }
 
 #[tokio::test]
@@ -387,7 +395,7 @@ async fn choosing_local_never_falls_back_to_a_cloud_embedder() {
     let dead = dead_endpoint().await;
     point_at(&mut app, &dead);
     space_with_files(&app);
-    app.embedding_model = "local:embeddinggemma-2:270m".to_string();
+    app.index.embedding_model = "local:embeddinggemma-2:270m".to_string();
 
     let embedder = app.file_embedder().unwrap();
     assert!(embedder.is_ollama());
@@ -401,7 +409,7 @@ async fn choosing_local_never_falls_back_to_a_cloud_embedder() {
     app.rescan_files();
     drain(&mut app).await;
     assert_eq!(
-        app.embedding_status,
+        app.index.embedding_status,
         "embeddings: not reachable — is `ollama serve` running?"
     );
     assert!(stored(&app).is_empty());
@@ -418,7 +426,7 @@ async fn a_corrupt_image_stays_findable_by_name_and_does_not_stall_the_queue() {
     point_at(&mut app, &mock.endpoint);
     let dir = space_with_files(&app);
     std::fs::write(dir.join("broken.png"), b"\x89PNG\r\n\x1a\ntruncated").unwrap();
-    app.embedding_model = "local:embeddinggemma-2".to_string();
+    app.index.embedding_model = "local:embeddinggemma-2".to_string();
     app.rescan_files();
     drain(&mut app).await;
     let rows = stored(&app);

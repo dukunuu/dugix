@@ -15,7 +15,7 @@ fn with_creds_configures_all_backends_and_announces_loading_once() {
     );
     assert_eq!(app.saved.openai_key.as_deref(), Some("sk-openai-test"));
     assert_eq!(app.saved.mistral_key.as_deref(), Some("mistral-test"));
-    assert_eq!(app.embedding_model, "openai:text-embedding-3-small");
+    assert_eq!(app.index.embedding_model, "openai:text-embedding-3-small");
     let mut loading = 0;
     while let Some(event) = app.pop_pending_event() {
         if let AppEvent::Status(status) = event
@@ -205,7 +205,7 @@ async fn installed_approver_round_trip_writes_only_after_the_approval_command() 
         .unwrap();
     assert!(matches!(event, AppEvent::Status(status) if status == "approval needed · fs write"));
     assert_eq!(
-        app.pending_approval_request.as_ref().unwrap(),
+        app.approvals.pending_request.as_ref().unwrap(),
         &ApprovalRequest {
             tool: "fs".into(),
             class: Some("write in workspace".into()),
@@ -215,14 +215,14 @@ async fn installed_approver_round_trip_writes_only_after_the_approval_command() 
             allow_session: true,
         }
     );
-    assert!(app.pending_approval.is_some());
+    assert!(app.approvals.pending.is_some());
     assert!(!path.exists());
     app.execute(AppCommand::Approve {
         decision: Decision::Allow,
     })
     .unwrap();
-    assert!(app.pending_approval.is_none());
-    assert!(app.pending_approval_request.is_none());
+    assert!(app.approvals.pending.is_none());
+    assert!(app.approvals.pending_request.is_none());
     let (result, status) = call.await.unwrap();
     assert!(result.starts_with("wrote approved"), "{result}");
     assert_ne!(status, "blocked");
@@ -288,7 +288,7 @@ async fn installed_session_grants_reset_on_refresh_and_mode_switches() {
         assert!(workspace.join("first").exists());
         if reset_mode {
             app.run_command("chat").unwrap();
-            assert!(app.approval_rx.is_some());
+            assert!(app.approvals.rx.is_some());
             app.run_command(&format!("agent {}", workspace.display()))
                 .unwrap();
             while app.pop_pending_event().is_some() {}
@@ -366,8 +366,8 @@ async fn dropped_tool_call_clears_the_pending_approval_in_next_event() {
         .await
         .unwrap();
     assert!(matches!(event, AppEvent::Status(status) if status == "approval cancelled"));
-    assert!(app.pending_approval.is_none());
-    assert!(app.pending_approval_request.is_none());
+    assert!(app.approvals.pending.is_none());
+    assert!(app.approvals.pending_request.is_none());
     assert!(!workspace.join("cancelled").exists());
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
@@ -428,8 +428,8 @@ async fn finishing_or_cancelling_chat_clears_its_pending_approval() {
             app.on_chat_event(1, StreamEvent::Done).unwrap();
             assert_eq!(call.await.unwrap().1, "blocked");
         }
-        assert!(app.pending_approval.is_none());
-        assert!(app.pending_approval_request.is_none());
+        assert!(app.approvals.pending.is_none());
+        assert!(app.approvals.pending_request.is_none());
         assert!(!workspace.join("cancelled").exists());
         drop(app);
         std::fs::remove_dir_all(root).unwrap();
@@ -500,10 +500,10 @@ async fn approval_command_answers_a_pending_channel_request() {
         let (decision, ()) = tokio::join!(approver.request(request.clone()), async {
             let (shown, reply) = receiver.recv().await.unwrap();
             assert_eq!(shown, request);
-            app.pending_approval = Some(reply);
+            app.approvals.pending = Some(reply);
             app.execute(AppCommand::Approve { decision: answer })
                 .unwrap();
-            assert!(app.pending_approval.is_none());
+            assert!(app.approvals.pending.is_none());
         });
         assert_eq!(decision, answer);
     }
@@ -931,7 +931,7 @@ fn local_survey_reports_liveness_and_warns_without_stopping_anything() {
     // A survey the user asked for reports a line per runtime, and warns about
     // the one over budget. (Boot queues a "no API key" line first.)
     let _ = drain(&mut app);
-    app.local_status_announce = true;
+    app.local.status_announce = true;
     app.on_local_status(Some(statuses(true)));
     let lines = drain(&mut app);
     assert!(lines[0].contains("edge0 ●4.2 GB ⚠"), "{lines:?}");
@@ -940,14 +940,14 @@ fn local_survey_reports_liveness_and_warns_without_stopping_anything() {
     assert!(warning.contains("over the 2.9 GB budget"), "{warning}");
     assert!(warning.contains("/local stop edge0"), "{warning}");
     // Advisory only: warning about a server does not stop it.
-    assert!(!app.local_servers.manages(LocalRuntime::Edge0));
-    assert_eq!(app.local_status.len(), 2);
+    assert!(!app.local.servers.manages(LocalRuntime::Edge0));
+    assert_eq!(app.local.status.len(), 2);
 
     // A background refresh (the picker opening) caches without announcing;
     // nothing is over budget, so it says nothing at all.
     app.on_local_status(Some(statuses(false)));
     assert!(drain(&mut app).is_empty());
-    assert!(app.local_status_rx.is_none());
+    assert!(app.local.status_rx.is_none());
 }
 
 #[test]
@@ -972,7 +972,7 @@ fn stopping_a_server_nexus_did_not_start_is_refused() {
     app.manage_local_server("start", "");
     let status = last_status(&mut app);
     assert!(status.contains("local inference is off"), "{status}");
-    assert!(!app.local_servers.manages(LocalRuntime::Edge0));
+    assert!(!app.local.servers.manages(LocalRuntime::Edge0));
 }
 
 #[test]
@@ -2031,7 +2031,7 @@ async fn opencode_split_usage_merges_cost_into_one_row() {
     assert_eq!(rows[0].completion_tokens, 20);
     assert_eq!(rows[0].cache_read_tokens, 60);
     assert_eq!(rows[0].cost, Some(0.0042));
-    assert!(a.last_cache_rate.is_some());
+    assert!(a.meter.last_cache_rate.is_some());
 }
 
 #[tokio::test]
@@ -2080,7 +2080,7 @@ async fn cost_only_usage_event_is_logged_with_zero_tokens() {
     .unwrap();
     let session = a.session.as_ref().unwrap().id.clone();
     let task = a.chat_task_for_session(&session).map(|t| t.id).unwrap();
-    a.last_cache_rate = Some(0.5);
+    a.meter.last_cache_rate = Some(0.5);
 
     a.on_chat_event(
         task,
@@ -2101,7 +2101,7 @@ async fn cost_only_usage_event_is_logged_with_zero_tokens() {
     assert_eq!(rows[0].prompt_tokens, 0);
     assert_eq!(rows[0].cost, Some(0.0));
     assert_eq!(
-        a.last_cache_rate,
+        a.meter.last_cache_rate,
         Some(0.5),
         "cost-only events must not clear the cache rate"
     );
@@ -2516,7 +2516,7 @@ fn context_bar_adds_only_what_changed_since_the_last_exact_count() {
 
     a.messages.push(context_row("assistant", "y".repeat(400)));
     // 400 chars ≈ 100 estimated tokens, scaled by the learned ratio.
-    let ratio = a.context_ratio.unwrap();
+    let ratio = a.meter.ratio.unwrap();
     assert_eq!(a.context_used(), 30_000 + (100.0 * ratio).round() as u64);
     assert!(
         a.context_used() < 31_000,
@@ -2532,12 +2532,12 @@ fn smaller_count_inside_a_turn_is_a_sub_agent_and_does_not_move_the_bar() {
     a.messages.push(context_row("user", "x".repeat(4_000)));
     a.observe_context(7, 50_000);
     a.observe_context(7, 3_000); // a `task` sub-agent's own request
-    assert_eq!(a.context_total, Some(50_000));
+    assert_eq!(a.meter.total, Some(50_000));
     a.observe_context(7, 51_000);
-    assert_eq!(a.context_total, Some(51_000));
+    assert_eq!(a.meter.total, Some(51_000));
     // A new turn's first count is always taken, even if smaller (/retry).
     a.observe_context(8, 45_000);
-    assert_eq!(a.context_total, Some(45_000));
+    assert_eq!(a.meter.total, Some(45_000));
 }
 
 #[test]
@@ -2549,7 +2549,7 @@ fn estimate_without_an_exact_count_uses_the_learned_ratio() {
     a.observe_context(1, 1_500);
     assert_eq!(a.context_used(), 1_500);
     // A prompt-cache epoch boundary drops the exact count.
-    a.context_total = None;
+    a.meter.total = None;
     assert_eq!(a.context_used(), 1_500, "no jump back to the raw estimate");
 }
 
@@ -2558,7 +2558,7 @@ async fn streaming_context_estimate_does_not_shrink_below_last_exact_total() {
     let mut a = app_with_key();
     a.base_system_prompt.clear();
     a.skills.clear();
-    a.context_total = Some(10_000);
+    a.meter.total = Some(10_000);
     let task = tokio::spawn(async {});
     let abort = task.abort_handle();
     let _ = task.await;
@@ -2631,7 +2631,7 @@ fn on_compact_result_persists_and_clears_stale_total() {
     let s = a.db.create_session("t", "a/one", &space, "chat").unwrap();
     let sid = s.id.clone();
     a.session = Some(s);
-    a.context_total = Some(999); // stale exact usage from before compaction
+    a.meter.total = Some(999); // stale exact usage from before compaction
 
     a.on_compact_result(Some((sid.clone(), "digest".into(), 3, 61)));
 
@@ -2640,7 +2640,7 @@ fn on_compact_result_persists_and_clears_stale_total() {
         Some("digest")
     );
     assert_eq!(a.session.as_ref().unwrap().compact_through, 3);
-    assert!(a.context_total.is_none()); // stale total dropped
+    assert!(a.meter.total.is_none()); // stale total dropped
     let (_, status) = a.drain_ui_events();
     assert!(status.contains("compacted: 61%"));
     // Persisted to the db too.
@@ -2655,12 +2655,12 @@ fn maybe_compact_noop_when_disabled_or_under_threshold() {
     a.current_model = Some("a/one".into());
     a.settings.compact_threshold = 0; // disabled
     a.maybe_compact();
-    assert!(a.compact_rx.is_none());
+    assert!(a.compaction.rx.is_none());
 
     a.settings.compact_threshold = 60;
     // No session / far under threshold — should still no-op.
     a.maybe_compact();
-    assert!(a.compact_rx.is_none());
+    assert!(a.compaction.rx.is_none());
 }
 
 #[tokio::test]
@@ -2670,7 +2670,7 @@ async fn force_compact_reports_why_it_no_ops() {
 
     // No active session yet.
     a.force_compact();
-    assert!(a.compact_rx.is_none());
+    assert!(a.compaction.rx.is_none());
     let (_, status) = a.drain_ui_events();
     assert!(status.contains("no active session"));
 
@@ -2680,7 +2680,7 @@ async fn force_compact_reports_why_it_no_ops() {
     s.compact_through = 0;
     a.session = Some(s);
     a.force_compact();
-    assert!(a.compact_rx.is_none());
+    assert!(a.compaction.rx.is_none());
     let (_, status) = a.drain_ui_events();
     assert!(status.contains("nothing new"));
 
@@ -2698,7 +2698,7 @@ async fn force_compact_reports_why_it_no_ops() {
         created_at: None,
     });
     a.force_compact();
-    assert!(a.compact_rx.is_some());
+    assert!(a.compaction.rx.is_some());
 }
 
 #[test]
@@ -2803,7 +2803,7 @@ fn embedding_default_is_prefixed_for_non_openrouter_bootstrap_backend() {
     let db = Db::open_in_memory().unwrap();
     let a = App::new(db, Some("sk-openai-test-key"), test_space());
 
-    assert_eq!(a.embedding_model, "openai:text-embedding-3-small");
+    assert_eq!(a.index.embedding_model, "openai:text-embedding-3-small");
 }
 
 #[tokio::test]
@@ -3502,7 +3502,7 @@ async fn history_carries_markdown_images_as_data_urls_for_vision_models() {
 #[tokio::test]
 async fn space_images_are_chosen_by_content_not_extension() {
     let mut a = app_with_key();
-    a.embedding_model.clear();
+    a.index.embedding_model.clear();
     let dir = a.space.files_dir(&a.active_space.name);
     std::fs::create_dir_all(&dir).unwrap();
     let png = crate::app::transcribe::encode_png(1, 1, &[0, 0, 0, 255]).unwrap();
@@ -4302,7 +4302,7 @@ async fn gate_in_another_session_never_swallows_typing_and_the_event_carries_its
     assert_eq!(msg.role, "user");
     assert_eq!(msg.content, "hello B");
     // The gate survives, still parked on A.
-    assert_eq!(a.survey_gate.as_ref().unwrap().session_id, s_a.id);
+    assert_eq!(a.research.survey_gate.as_ref().unwrap().session_id, s_a.id);
 }
 
 #[test]
@@ -4429,7 +4429,8 @@ fn user_command_app() -> App {
     // `!` commands are an agent-mode feature.
     app.work_mode = WorkMode::Agent;
     // Captured-command tests never read the developer's real shell startup.
-    app.user_shell
+    app.user_command
+        .shell
         .set(crate::usershell::UserShell {
             shell: "/bin/sh".into(),
             snapshot: None,
@@ -4615,7 +4616,7 @@ async fn user_command_directory_resets_on_work_mode_workspace_and_space_changes(
         root: None,
     })
     .unwrap();
-    assert!(app.user_command_dir.is_none());
+    assert!(app.user_command.dir.is_none());
     app.execute(AppCommand::SetWorkMode {
         mode: WorkMode::Agent,
         root: Some(workspace.to_string_lossy().into_owned()),
@@ -4628,7 +4629,7 @@ async fn user_command_directory_resets_on_work_mode_workspace_and_space_changes(
         name: "other".into(),
     })
     .unwrap();
-    assert!(app.user_command_dir.is_none());
+    assert!(app.user_command.dir.is_none());
     assert_eq!(
         app.user_command_cwd(),
         app.space.space_dir("other").canonicalize().unwrap()
@@ -4657,8 +4658,9 @@ async fn a_finished_command_cannot_change_a_different_sessions_directory() {
 async fn shell_setup_failure_is_reported_only_once_and_commands_still_run() {
     let mut app = user_command_app();
     let root = app.space.root.clone();
-    app.user_shell = std::sync::Arc::new(tokio::sync::OnceCell::new());
-    app.user_shell
+    app.user_command.shell = std::sync::Arc::new(tokio::sync::OnceCell::new());
+    app.user_command
+        .shell
         .set(crate::usershell::UserShell {
             shell: "/bin/sh".into(),
             snapshot: None,
@@ -4695,7 +4697,7 @@ fn terminal_programs_are_not_started_or_recorded() {
             format!("!{word} needs a terminal · run it outside nexus")
         );
         assert!(app.session.is_none());
-        assert!(app.user_command_rx.is_none());
+        assert!(app.user_command.rx.is_none());
     }
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
@@ -4735,7 +4737,7 @@ async fn user_commands_are_refused_headless_and_while_a_reply_streams() {
         assert_eq!(app.last_status(), "!commands run only in the terminal UI");
     }
     assert!(app.session.is_none());
-    assert!(app.user_command_rx.is_none());
+    assert!(app.user_command.rx.is_none());
     app.interactive_ui = true;
     let session = app
         .db
@@ -4748,7 +4750,7 @@ async fn user_commands_are_refused_headless_and_while_a_reply_streams() {
     let (sets, status) = app.drain_ui_events();
     assert_eq!(status, "wait — response still streaming");
     assert_eq!(sets, vec!["!ls".to_string()]);
-    assert!(app.user_command_rx.is_none());
+    assert!(app.user_command.rx.is_none());
     assert!(app.messages.is_empty());
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
@@ -4848,7 +4850,10 @@ async fn propose_command_tool_call_sets_the_proposal_and_its_reason() {
         },
     )
     .unwrap();
-    assert_eq!(app.proposed_command.as_deref(), Some("!sudo make install"));
+    assert_eq!(
+        app.approvals.proposed_command.as_deref(),
+        Some("!sudo make install")
+    );
     assert_eq!(app.last_status(), "installs into /usr/local");
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
@@ -4892,7 +4897,7 @@ async fn request_workspace_switches_to_agent_mode_only_after_an_approved_turn() 
             matches!(event, AppEvent::Status(status) if status == "approval needed · request_workspace agent")
         );
         assert_eq!(
-            app.pending_approval_request.as_ref().unwrap().summary,
+            app.approvals.pending_request.as_ref().unwrap().summary,
             format!(
                 "switch this session to agent mode in {}\nto run the tests",
                 workspace.display()
@@ -4999,11 +5004,11 @@ async fn concurrent_approvals_queue_and_are_answered_in_order() {
     let mut app = app_with_key();
     let root = app.space.root.clone();
     let (sender, receiver) = mpsc::unbounded_channel();
-    app.approval_rx = Some(receiver);
+    app.approvals.rx = Some(receiver);
     let (first, mut first_answer) = queued_request(&sender, "write", "write a");
     let (second, mut second_answer) = queued_request(&sender, "write", "write b");
     receive_approvals(&mut app, 2).await;
-    assert_eq!(app.pending_approval_request.as_ref(), Some(&first));
+    assert_eq!(app.approvals.pending_request.as_ref(), Some(&first));
     assert_eq!(app.approval_count(), 2);
     app.execute(AppCommand::Approve {
         decision: Decision::Allow,
@@ -5011,15 +5016,15 @@ async fn concurrent_approvals_queue_and_are_answered_in_order() {
     .unwrap();
     assert_eq!(first_answer.try_recv().unwrap(), Decision::Allow);
     assert!(second_answer.try_recv().is_err());
-    assert_eq!(app.pending_approval_request.as_ref(), Some(&second));
+    assert_eq!(app.approvals.pending_request.as_ref(), Some(&second));
     assert_eq!(app.approval_count(), 1);
     app.execute(AppCommand::Approve {
         decision: Decision::Deny,
     })
     .unwrap();
     assert_eq!(second_answer.try_recv().unwrap(), Decision::Deny);
-    assert!(app.pending_approval.is_none());
-    assert!(app.pending_approval_request.is_none());
+    assert!(app.approvals.pending.is_none());
+    assert!(app.approvals.pending_request.is_none());
     assert_eq!(app.approval_count(), 0);
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
@@ -5030,14 +5035,14 @@ async fn allow_for_session_answers_waiting_requests_of_the_same_kind_unseen() {
     let mut app = app_with_key();
     let root = app.space.root.clone();
     let (sender, receiver) = mpsc::unbounded_channel();
-    app.approval_rx = Some(receiver);
+    app.approvals.rx = Some(receiver);
     let (_, mut edit_answer) = queued_request(&sender, "edit", "edit a");
     let (delete, mut delete_answer) = queued_request(&sender, "delete", "delete b");
     let (_, mut queued_edit_answer) = queued_request(&sender, "edit", "edit c");
     receive_approvals(&mut app, 3).await;
     // Still in the channel when the grant lands: answered all the same.
     let (_, mut unreceived_edit_answer) = queued_request(&sender, "edit", "edit d");
-    let shown = app.approval_shown;
+    let shown = app.approvals.shown;
     app.execute(AppCommand::Approve {
         decision: Decision::AllowForSession,
     })
@@ -5045,8 +5050,8 @@ async fn allow_for_session_answers_waiting_requests_of_the_same_kind_unseen() {
     assert_eq!(edit_answer.try_recv().unwrap(), Decision::AllowForSession);
     assert_eq!(queued_edit_answer.try_recv().unwrap(), Decision::Allow);
     assert_eq!(unreceived_edit_answer.try_recv().unwrap(), Decision::Allow);
-    assert_eq!(app.pending_approval_request.as_ref(), Some(&delete));
-    assert_eq!(app.approval_shown, shown + 1);
+    assert_eq!(app.approvals.pending_request.as_ref(), Some(&delete));
+    assert_eq!(app.approvals.shown, shown + 1);
     assert_eq!(app.approval_count(), 1);
     assert!(delete_answer.try_recv().is_err());
     app.execute(AppCommand::Approve {
@@ -5054,7 +5059,7 @@ async fn allow_for_session_answers_waiting_requests_of_the_same_kind_unseen() {
     })
     .unwrap();
     assert_eq!(delete_answer.try_recv().unwrap(), Decision::Deny);
-    assert!(app.pending_approval.is_none());
+    assert!(app.approvals.pending.is_none());
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -5198,20 +5203,20 @@ fn remembering_shell_permission_keeps_queued_unparseable_commands_for_individual
     let shell = wave_requests().pop().unwrap();
     let (first, mut first_answer) = oneshot::channel();
     let (second, mut second_answer) = oneshot::channel();
-    app.pending_approval = Some(first);
-    app.pending_approval_request = Some(shell.clone());
+    app.approvals.pending = Some(first);
+    app.approvals.pending_request = Some(shell.clone());
     let unparseable = ApprovalRequest {
         summary: "could not parse safely: computed command word\n$ \"$COMMAND\"".into(),
         ..shell
     };
-    app.approval_queue.push_back((unparseable.clone(), second));
+    app.approvals.queue.push_back((unparseable.clone(), second));
     app.execute(AppCommand::Approve {
         decision: Decision::AllowForSession,
     })
     .unwrap();
     assert_eq!(first_answer.try_recv().unwrap(), Decision::AllowForSession);
     assert!(second_answer.try_recv().is_err());
-    assert_eq!(app.pending_approval_request.as_ref(), Some(&unparseable));
+    assert_eq!(app.approvals.pending_request.as_ref(), Some(&unparseable));
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -5252,9 +5257,9 @@ fn allowing_a_wave_for_the_session_never_allows_an_unrelated_queued_wave_by_coun
     };
     let (first, mut first_answer) = oneshot::channel();
     let (second, mut second_answer) = oneshot::channel();
-    app.pending_approval = Some(first);
-    app.pending_approval_request = Some(request.clone());
-    app.approval_queue.push_back((
+    app.approvals.pending = Some(first);
+    app.approvals.pending_request = Some(request.clone());
+    app.approvals.queue.push_back((
         ApprovalRequest {
             summary: "2 deletes".into(),
             ..request
@@ -5268,7 +5273,7 @@ fn allowing_a_wave_for_the_session_never_allows_an_unrelated_queued_wave_by_coun
     assert_eq!(first_answer.try_recv().unwrap(), Decision::AllowForSession);
     assert!(second_answer.try_recv().is_err());
     assert_eq!(
-        app.pending_approval_request.as_ref().unwrap().summary,
+        app.approvals.pending_request.as_ref().unwrap().summary,
         "2 deletes"
     );
     drop(app);
@@ -5280,7 +5285,7 @@ async fn approvals_whose_tool_call_went_away_are_skipped() {
     let mut app = app_with_key();
     let root = app.space.root.clone();
     let (sender, receiver) = mpsc::unbounded_channel();
-    app.approval_rx = Some(receiver);
+    app.approvals.rx = Some(receiver);
     let (_, mut first_answer) = queued_request(&sender, "write", "write a");
     let (_, dropped_answer) = queued_request(&sender, "write", "write b");
     let (third, third_answer) = queued_request(&sender, "write", "write c");
@@ -5292,16 +5297,16 @@ async fn approvals_whose_tool_call_went_away_are_skipped() {
     })
     .unwrap();
     assert_eq!(first_answer.try_recv().unwrap(), Decision::Allow);
-    assert_eq!(app.pending_approval_request.as_ref(), Some(&third));
-    assert!(app.approval_queue.is_empty());
+    assert_eq!(app.approvals.pending_request.as_ref(), Some(&third));
+    assert!(app.approvals.queue.is_empty());
     // The displayed request going away shows nothing further.
     drop(third_answer);
     let event = tokio::time::timeout(std::time::Duration::from_secs(5), app.next_event())
         .await
         .unwrap();
     assert!(matches!(event, AppEvent::Status(status) if status == "approval cancelled"));
-    assert!(app.pending_approval.is_none());
-    assert!(app.pending_approval_request.is_none());
+    assert!(app.approvals.pending.is_none());
+    assert!(app.approvals.pending_request.is_none());
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -5489,7 +5494,7 @@ async fn ui_repair_is_skipped_for_valid_disabled_open_or_unviewed_blocks() {
         }
         finish_ui_reply(&mut app, content);
         assert!(!app.last_status().contains("fixing"));
-        assert!(app.ui_repair_messages.is_empty());
+        assert!(app.ui_repair.messages.is_empty());
         assert!(app.db.usage_recent(10, None).unwrap().is_empty());
         server.abort();
         drop(app);
@@ -5838,7 +5843,7 @@ async fn connector_approvals_keep_grants_in_the_registry_not_in_the_approver() {
     let mut app = app_with_key();
     let root = app.space.root.clone();
     let (sender, receiver) = mpsc::unbounded_channel();
-    app.approval_rx = Some(receiver);
+    app.approvals.rx = Some(receiver);
     let approver = Arc::new(ChannelApprover::new(sender));
     let ask_with = |class: Option<&'static str>| {
         let approver = Arc::clone(&approver);
@@ -5862,7 +5867,7 @@ async fn connector_approvals_keep_grants_in_the_registry_not_in_the_approver() {
         let ask = ask_with(Some("connector"));
         receive_approvals(&mut app, 1).await;
         assert!(
-            app.pending_approval_request.is_some(),
+            app.approvals.pending_request.is_some(),
             "round {round} prompted"
         );
         app.answer_approval(Decision::AllowForSession);
@@ -5972,7 +5977,7 @@ async fn chat_toolbox_connector_writes_reach_the_existing_app_approval_channel()
             .await
     });
     receive_approvals(&mut app, 1).await;
-    let request = app.pending_approval_request.as_ref().unwrap();
+    let request = app.approvals.pending_request.as_ref().unwrap();
     assert_eq!(request.class.as_deref(), Some("connector"));
     assert_eq!(request.tool, "chat-fixture");
     assert!(request.summary.contains("a note"));
@@ -6061,14 +6066,14 @@ fn removed_model_settings_are_ignored_on_read_and_rejected_on_set() {
         ("video_gen_model", "x/vid"),
     ];
     let mut a = app_with_key();
-    let embedding_before = a.embedding_model.clone();
+    let embedding_before = a.index.embedding_model.clone();
     for (key, value) in removed {
         a.db.set_setting(key, value).unwrap();
     }
     // Reading them (including a legacy blank embedding_model) must not crash
     // or change anything.
     a.load_settings();
-    assert_eq!(a.embedding_model, embedding_before);
+    assert_eq!(a.index.embedding_model, embedding_before);
     let stored = a.db.load_settings().unwrap();
     for (key, value) in removed {
         assert!(

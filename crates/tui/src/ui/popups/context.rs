@@ -182,9 +182,9 @@ fn cache_lines(app: &AppView) -> Vec<Line<'static>> {
     let dim = Style::default().fg(app.theme.fg_dim);
     // Cache detail lives here, where the two figures can be labelled apart:
     // the status line shows the turn, this shows the request behind it.
-    let turn = app.turn_cache;
+    let turn = app.meter.turn_cache;
     let mut lines = Vec::new();
-    if turn.rate().is_some() || app.last_cache_rate.is_some() {
+    if turn.rate().is_some() || app.meter.last_cache_rate.is_some() {
         lines.push(Line::from(""));
         let pct = |rate: Option<f64>| {
             rate.map_or_else(|| "—".to_string(), |r| format!("{:.0}%", r * 100.0))
@@ -200,7 +200,10 @@ fn cache_lines(app: &AppView) -> Vec<Line<'static>> {
                 format!("{} this turn", pct(turn.rate())),
                 Style::default().fg(app.theme.success),
             ),
-            Span::styled(format!(" · {} last request", pct(app.last_cache_rate)), dim),
+            Span::styled(
+                format!(" · {} last request", pct(app.meter.last_cache_rate)),
+                dim,
+            ),
         ]));
         if turn.is_partial() {
             lines.push(Line::from(Span::styled(

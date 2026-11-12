@@ -381,7 +381,7 @@ async fn generated_apps_are_sandboxed_from_host_browser_storage() {
 #[tokio::test]
 async fn web_build_and_workspace_routes_are_hermetic() {
     let mut app = test_app();
-    app.embedding_model.clear();
+    app.index.embedding_model.clear();
     let root = app.space.root.clone();
     let web = root.join("web");
     std::fs::create_dir_all(web.join("assets")).unwrap();
@@ -669,7 +669,7 @@ async fn host_sse_and_http_blob_transfer_are_hermetic() {
     let mut app = test_app();
     // The upload path rescans and starts semantic backfill; keep this
     // transport-only test independent of the fake provider key.
-    app.embedding_model.clear();
+    app.index.embedding_model.clear();
     let space_id = app.active_space.id.clone();
     let name = "remote.txt";
     let bytes = b"blob over http";

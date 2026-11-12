@@ -17,7 +17,7 @@ impl AppView {
     pub fn move_images_selection(&mut self, delta: i32) {
         self.images_selected = nexus_core::app::clamp_cursor(
             self.images_selected,
-            self.core.images_cache.len(),
+            self.core.caches.images.len(),
             delta,
         );
     }
@@ -25,7 +25,7 @@ impl AppView {
     /// Enter in Browse: open the image in the viewer (terminal first, the
     /// system viewer as the fallback).
     pub fn open_selected_image(&mut self) {
-        let Some(img) = self.core.images_cache.get(self.images_selected).cloned() else {
+        let Some(img) = self.core.caches.images.get(self.images_selected).cloned() else {
             return;
         };
         let path = self
@@ -45,7 +45,7 @@ impl AppView {
 
     /// Ctrl+D confirm: delete the image file from disk and refresh.
     pub fn confirm_images_delete(&mut self) -> Result<()> {
-        if let Some(img) = self.core.images_cache.get(self.images_selected).cloned() {
+        if let Some(img) = self.core.caches.images.get(self.images_selected).cloned() {
             self.core.delete_image_file(&img.name)?;
         }
         self.images_mode = ImagesMode::Browse;

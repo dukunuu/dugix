@@ -35,8 +35,8 @@ pub(super) fn redact_wire_event(event: WireEvent, app: &App, host_token: &str) -
             .codex
             .as_ref()
             .map_or("", |credentials| credentials.refresh.as_str()),
-        app.langsearch_key.as_str(),
-        app.searxng_url.as_str(),
+        app.search.langsearch_key.as_str(),
+        app.search.searxng_url.as_str(),
     ];
     secrets.retain(|secret| !secret.is_empty());
     let Ok(mut value) = serde_json::to_value(event.clone()) else {
@@ -527,16 +527,16 @@ fn clear_closed_source(app: &mut App, event: &AppEvent) {
     match event {
         AppEvent::Models(None) => app.models_rx = None,
         AppEvent::Title(None) => app.title_rx = None,
-        AppEvent::Compact(None) => app.compact_rx = None,
+        AppEvent::Compact(None) => app.compaction.rx = None,
         AppEvent::SkillInstall(None) => app.skills_rx = None,
-        AppEvent::Ocr(None) => app.ocr_rx = None,
-        AppEvent::Embed(None) => app.embed_rx = None,
-        AppEvent::Research(None) => app.research_rx = None,
-        AppEvent::ResearchTopic(None) => app.research_topic_rx = None,
+        AppEvent::Ocr(None) => app.index.convert_rx = None,
+        AppEvent::Embed(None) => app.index.embed_rx = None,
+        AppEvent::Research(None) => app.research.rx = None,
+        AppEvent::ResearchTopic(None) => app.research.topic_rx = None,
         AppEvent::Login(None) => app.login_rx = None,
-        AppEvent::Swarm(None) => app.swarm_rx = None,
+        AppEvent::Swarm(None) => app.swarm.rx = None,
         AppEvent::UpdateCheck(None) => app.update_rx = None,
-        AppEvent::LocalServers(None) => app.local_status_rx = None,
+        AppEvent::LocalServers(None) => app.local.status_rx = None,
         _ => {}
     }
 }

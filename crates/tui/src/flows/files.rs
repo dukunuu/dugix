@@ -142,7 +142,7 @@ impl AppView {
     /// Ctrl+O in /files: throw away the selected file's extracted text (and
     /// vectors) and re-index it from disk without re-importing.
     pub fn reextract_selected_file(&mut self) {
-        let Some(f) = self.core.files_cache.get(self.files_selected).cloned() else {
+        let Some(f) = self.core.caches.files.get(self.files_selected).cloned() else {
             return;
         };
         self.core.reextract_file(&f.name);
@@ -150,7 +150,7 @@ impl AppView {
 
     /// Delete the highlighted file: disk copy and index rows both go.
     pub fn confirm_files_delete(&mut self) -> Result<()> {
-        if let Some(f) = self.core.files_cache.get(self.files_selected).cloned() {
+        if let Some(f) = self.core.caches.files.get(self.files_selected).cloned() {
             self.core.delete_file(&f.name)?;
         }
         self.files_mode = FilesMode::Browse;
@@ -176,7 +176,7 @@ impl AppView {
 
     pub fn move_files_selection(&mut self, delta: i32) {
         self.files_selected =
-            nexus_core::app::clamp_cursor(self.files_selected, self.core.files_cache.len(), delta);
+            nexus_core::app::clamp_cursor(self.files_selected, self.core.caches.files.len(), delta);
     }
 
     pub fn start_files_add(&mut self) {
@@ -205,7 +205,7 @@ impl AppView {
 
     /// Ctrl+R in Browse: pre-fill the edit line with the current name.
     pub fn start_files_rename(&mut self) {
-        if let Some(f) = self.core.files_cache.get(self.files_selected) {
+        if let Some(f) = self.core.caches.files.get(self.files_selected) {
             self.files_edit = f.name.clone();
             self.files_mode = FilesMode::Rename;
         }
@@ -216,7 +216,7 @@ impl AppView {
     pub fn confirm_files_rename(&mut self) {
         let new = self.files_edit.trim().to_string();
         self.files_mode = FilesMode::Browse;
-        let Some(f) = self.core.files_cache.get(self.files_selected).cloned() else {
+        let Some(f) = self.core.caches.files.get(self.files_selected).cloned() else {
             return;
         };
         if new.is_empty() || new == f.name {
@@ -229,7 +229,8 @@ impl AppView {
         // Re-point the cursor at the renamed row (the rescan reordered).
         self.files_selected = self
             .core
-            .files_cache
+            .caches
+            .files
             .iter()
             .position(|f| f.name == new)
             .unwrap_or(self.files_selected);
@@ -237,7 +238,7 @@ impl AppView {
 
     /// Open the highlighted file in the system viewer (Enter in Browse).
     pub fn open_selected_file(&mut self) {
-        let Some(f) = self.core.files_cache.get(self.files_selected).cloned() else {
+        let Some(f) = self.core.caches.files.get(self.files_selected).cloned() else {
             return;
         };
         let path = self
@@ -295,7 +296,7 @@ mod tests {
         std::fs::write(dir.join("seen.txt"), "content").unwrap();
         a.run_command("files").unwrap();
         assert_eq!(a.popup, nexus_core::app::Popup::Files);
-        assert_eq!(a.core.files_cache.len(), 1);
+        assert_eq!(a.core.caches.files.len(), 1);
         assert!(a.files_mode == nexus_core::app::FilesMode::Browse);
     }
     /// A picker whose home is a temp folder holding `files`.
@@ -334,7 +335,13 @@ mod tests {
 
         a.picker_enter();
         assert!(a.files_mode == FilesMode::Browse);
-        assert!(a.core.files_cache.iter().any(|f| f.name == "q3 report.txt"));
+        assert!(
+            a.core
+                .caches
+                .files
+                .iter()
+                .any(|f| f.name == "q3 report.txt")
+        );
         std::fs::remove_dir_all(home).unwrap();
     }
 
@@ -363,7 +370,7 @@ mod tests {
         let picked = a.picker_home.join("a.txt");
         a.dialogs = Box::new(Scripted::new([Some(picked)]));
         a.import_files();
-        assert!(a.core.files_cache.iter().any(|f| f.name == "a.txt"));
+        assert!(a.core.caches.files.iter().any(|f| f.name == "a.txt"));
         assert!(a.files_mode == FilesMode::Browse);
 
         a.dialogs = Box::new(Scripted::unavailable());
@@ -378,7 +385,13 @@ mod tests {
         a.open_files_popup(FilesTab::Files);
         let root = a.picker_home.display().to_string();
         a.paste(&format!("{root}/My\\ File.pdf '{root}/notes.md'"));
-        let names: Vec<&str> = a.core.files_cache.iter().map(|f| f.name.as_str()).collect();
+        let names: Vec<&str> = a
+            .core
+            .caches
+            .files
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
         assert!(
             names.contains(&"My File.pdf") && names.contains(&"notes.md"),
             "{names:?}"

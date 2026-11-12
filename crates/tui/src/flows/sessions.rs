@@ -6,8 +6,8 @@ use crate::app_view::AppView;
 
 impl AppView {
     pub fn open_session_picker(&mut self) -> Result<()> {
-        self.core.sessions_cache = self.core.db.list_sessions(&self.core.active_space.id)?;
-        if self.core.sessions_cache.is_empty() {
+        self.core.caches.sessions = self.core.db.list_sessions(&self.core.active_space.id)?;
+        if self.core.caches.sessions.is_empty() {
             self.push_status("no sessions yet — send a message to start one".to_string());
             return Ok(());
         }
@@ -23,9 +23,9 @@ impl AppView {
     pub fn filtered_sessions(&self) -> Vec<&nexus_core::db::Session> {
         let needle = self.session_filter.trim();
         if needle.is_empty() {
-            return self.core.sessions_cache.iter().collect();
+            return self.core.caches.sessions.iter().collect();
         }
-        nexus_core::app::fuzzy_filter_sorted(&self.core.sessions_cache, |s| {
+        nexus_core::app::fuzzy_filter_sorted(&self.core.caches.sessions, |s| {
             nexus_core::app::session_score(s, needle)
         })
     }
@@ -68,7 +68,7 @@ impl AppView {
         let title = self.session_edit.trim().to_string();
         if let (false, Some(s)) = (title.is_empty(), self.selected_session()) {
             self.core.db.set_session_title(&s.id, &title, None)?;
-            if let Some(cached) = self.core.sessions_cache.iter_mut().find(|c| c.id == s.id) {
+            if let Some(cached) = self.core.caches.sessions.iter_mut().find(|c| c.id == s.id) {
                 cached.title.clone_from(&title);
             }
             if let Some(cur) = self.core.session.as_mut().filter(|c| c.id == s.id) {
@@ -87,11 +87,11 @@ impl AppView {
             self.core.discard_chat_task(&s.id);
             self.core.unread.remove(&s.id);
             self.core.notifications.retain(|n| n.session_id != s.id);
-            self.core.sessions_cache.retain(|c| c.id != s.id);
+            self.core.caches.sessions.retain(|c| c.id != s.id);
             if self.core.session.as_ref().is_some_and(|c| c.id == s.id) {
                 self.core.session = None;
                 self.core.messages.clear();
-                self.core.context_total = None;
+                self.core.meter.total = None;
                 self.push_viewport_reset();
                 self.core.cleanup_incognito_images();
             }
@@ -100,7 +100,7 @@ impl AppView {
         self.session_mode = SessionMode::Browse;
         let len = self.filtered_sessions().len();
         self.session_selected = self.session_selected.min(len.saturating_sub(1));
-        if self.core.sessions_cache.is_empty() {
+        if self.core.caches.sessions.is_empty() {
             self.popup = Popup::None;
         }
         Ok(())
@@ -146,7 +146,7 @@ mod tests {
             .create_session("streaming", "a/one", &space, "chat")
             .unwrap();
         a.core.session = Some(s.clone());
-        a.core.sessions_cache = a.core.db.list_sessions(&space).unwrap();
+        a.core.caches.sessions = a.core.db.list_sessions(&space).unwrap();
         a.session_selected = 0;
         // A live (streaming) chat task for that session, as if a response was
         // mid-flight when the user deleted it from the picker.
@@ -191,7 +191,7 @@ mod tests {
             .db
             .create_session("doomed", "a/b", &space, "chat")
             .unwrap();
-        a.core.sessions_cache = a.core.db.list_sessions(&space).unwrap();
+        a.core.caches.sessions = a.core.db.list_sessions(&space).unwrap();
         a.core.session = Some(s.clone());
         a.core.messages.push(Message {
             role: "user".into(),
@@ -207,7 +207,7 @@ mod tests {
         });
         a.session_selected = 0;
         a.confirm_delete().unwrap();
-        assert!(a.core.sessions_cache.is_empty());
+        assert!(a.core.caches.sessions.is_empty());
         assert!(a.session.is_none());
         assert!(a.messages.is_empty());
         assert!(a.core.db.list_sessions(&space).unwrap().is_empty());
@@ -232,7 +232,7 @@ mod tests {
             .db
             .set_session_title(&s1.id, "Rust async runtimes", Some("rust-async"))
             .unwrap();
-        a.core.sessions_cache = a.core.db.list_sessions(&space).unwrap();
+        a.core.caches.sessions = a.core.db.list_sessions(&space).unwrap();
 
         a.session_filter = "rust".into();
         let hits = a.filtered_sessions();

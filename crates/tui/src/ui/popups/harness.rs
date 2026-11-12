@@ -230,7 +230,7 @@ mod tests {
 
         app.popup = Popup::Harness;
         app.harness_selected = 0;
-        app.sessions_cache.push(first.clone());
+        app.caches.sessions.push(first.clone());
         app.db.delete_session(&first.id).unwrap();
         handle_key(&mut app, KeyCode::Enter.into()).unwrap();
         assert_eq!(app.popup, Popup::Harness);

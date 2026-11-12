@@ -75,7 +75,7 @@ impl App {
         let Some(session) = self.session.clone() else {
             return;
         };
-        if self.swarm_rx.is_some() {
+        if self.swarm.rx.is_some() {
             self.push_status("a swarm turn is already running".to_string());
             return;
         }
@@ -102,7 +102,7 @@ impl App {
         let base_history = self.build_history();
 
         let (tx, rx) = mpsc::unbounded_channel();
-        self.swarm_rx = Some(rx);
+        self.swarm.rx = Some(rx);
         self.push_status("swarm: starting…".to_string());
 
         let swarm_session_id = session.id.clone();
@@ -130,16 +130,16 @@ impl App {
             session_id: session.id,
             tx,
         }));
-        self.swarm_abort = Some(task.abort_handle());
-        self.swarm_session = Some(swarm_session_id);
+        self.swarm.abort = Some(task.abort_handle());
+        self.swarm.session = Some(swarm_session_id);
     }
 
     /// Drop blank roster rows and persist.
     pub fn save_swarm_roster(&mut self) -> Result<()> {
-        self.swarm_cache.retain(|p| !p.name.trim().is_empty());
+        self.swarm.cache.retain(|p| !p.name.trim().is_empty());
         if let Some(session) = &self.session {
             self.db
-                .save_swarm_personas(&session.id, &self.swarm_cache)?;
+                .save_swarm_personas(&session.id, &self.swarm.cache)?;
         }
         Ok(())
     }
@@ -147,11 +147,11 @@ impl App {
     /// Stop the running swarm immediately. Persona model/tool streams are
     /// children of the aborted orchestration task and are dropped with it.
     pub fn stop_swarm(&mut self) {
-        if let Some(abort) = self.swarm_abort.take() {
+        if let Some(abort) = self.swarm.abort.take() {
             abort.abort();
         }
-        if self.swarm_rx.take().is_some() {
-            if let Some(id) = self.swarm_session.take() {
+        if self.swarm.rx.take().is_some() {
+            if let Some(id) = self.swarm.session.take() {
                 let _ = self
                     .db
                     .upsert_research_stage_message(&id, "swarm", "stopped by user");
@@ -169,9 +169,9 @@ impl App {
     #[allow(clippy::too_many_lines)]
     pub fn on_swarm_update(&mut self, r: Option<SwarmMsg>) {
         let Some((session_id, update)) = r else {
-            self.swarm_rx = None;
-            self.swarm_abort = None;
-            self.swarm_session = None;
+            self.swarm.rx = None;
+            self.swarm.abort = None;
+            self.swarm.session = None;
             return;
         };
         let viewing = self.session.as_ref().is_some_and(|s| s.id == session_id);
@@ -179,7 +179,7 @@ impl App {
             SwarmUpdate::RosterSuggested(personas) => {
                 let _ = self.db.save_swarm_personas(&session_id, &personas);
                 if viewing {
-                    self.swarm_cache = personas;
+                    self.swarm.cache = personas;
                     self.push_status(
                         "swarm: roster suggested — starting the conversation…".to_string(),
                     );
@@ -246,8 +246,8 @@ impl App {
                     let _ = self.db.save_swarm_personas(&session_id, &roster);
                 }
                 if viewing {
-                    if !self.swarm_cache.iter().any(|p| p.name == persona.name) {
-                        self.swarm_cache.push(persona.clone());
+                    if !self.swarm.cache.iter().any(|p| p.name == persona.name) {
+                        self.swarm.cache.push(persona.clone());
                     }
                     self.push_status(format!("swarm: {} joined the conversation", persona.name));
                 }

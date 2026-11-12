@@ -68,16 +68,16 @@ impl App {
     /// boundary such as a memory or prompt refresh.
     pub(crate) fn bump_cache_epoch(&mut self) {
         self.cache_epoch = self.cache_epoch.wrapping_add(1);
-        self.context_warned = false;
+        self.meter.warned = false;
         self.prompt_datetime = chrono::Utc::now()
             .format("%Y-%m-%d %H:%M UTC, %A")
             .to_string();
         // The exact total belongs to the previous serialized prompt/model
         // lane. Let the next request establish a fresh value rather than
         // pinning the context bar to an unrelated boundary.
-        self.context_total = None;
-        self.last_cache_rate = None;
-        self.turn_cache = super::CacheTally::default();
+        self.meter.total = None;
+        self.meter.last_cache_rate = None;
+        self.meter.turn_cache = super::CacheTally::default();
     }
 
     /// Build a non-sensitive cache-lane key for one session and epoch.

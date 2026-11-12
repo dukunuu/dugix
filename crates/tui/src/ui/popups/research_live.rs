@@ -23,7 +23,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
     // which session is viewed — no db read (and no silent fallback) inside
     // rendering, and opening the popup from another session still shows the
     // job's searchers and steers.
-    let rows = &app.research_stage_rows;
+    let rows = &app.research.stage_rows;
     let mut items: Vec<ListItem> = Vec::new();
     // Steers queued but not yet drained at a round boundary stay visible
     // here. The pipeline acknowledges drained steers as `steer #N`
@@ -33,9 +33,10 @@ pub fn render(f: &mut Frame, app: &AppView) {
     // picked up iff k is in the ack set. The retained log drops acked
     // entries, so it holds exactly the still-queued steers.
     let pending: Vec<&(usize, String)> = app
-        .research_steer_log
+        .research
+        .steer_log
         .iter()
-        .filter(|(pos, _)| !app.research_steer_acked.contains(pos))
+        .filter(|(pos, _)| !app.research.steer_acked.contains(pos))
         .collect();
     let has_pending = !pending.is_empty();
     if has_pending {
@@ -102,7 +103,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
         chrome::input_title(
             app,
             "research agents · steer",
-            &app.research_live_input,
+            &app.research.live_input,
             "type instruction · Enter send · Ctrl+X stop · Esc close",
         ),
         &app.theme,
@@ -124,15 +125,15 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
         }
         KeyCode::Esc => app.popup = nexus_core::app::Popup::None,
         KeyCode::Enter => {
-            let text = app.research_live_input.trim().to_string();
-            app.research_live_input.clear();
+            let text = app.research.live_input.trim().to_string();
+            app.research.live_input.clear();
             app.steer_research(&text);
         }
         KeyCode::Backspace => {
-            app.research_live_input.pop();
+            app.research.live_input.pop();
         }
         // Unbound Ctrl/Alt chords must not type their letter into the steer.
-        KeyCode::Char(c) if !super::is_chord(key) => app.research_live_input.push(c),
+        KeyCode::Char(c) if !super::is_chord(key) => app.research.live_input.push(c),
         _ => {}
     }
 }

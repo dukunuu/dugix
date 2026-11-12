@@ -116,7 +116,7 @@ pub(crate) fn tick(app: &mut AppView) {
             }
         };
         let executor = Arc::clone(&app.toolbox);
-        let approver = app.panel_approver.clone();
+        let approver = app.approvals.panel_approver.clone();
         let scrubber = app.core.panel_scrubber();
         let (sender, receiver) = oneshot::channel();
         let work = call.clone();
