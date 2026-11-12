@@ -32,6 +32,16 @@ impl Document for crate::doc::Doc {
     }
 }
 
+impl Document for crate::sheet::Sheet {
+    const MAX_HISTORY_SOURCE: usize = crate::sheet::validate::MAX_SOURCE;
+    fn check_history(source: &str) -> Option<Self> {
+        Self::check(source).ok()
+    }
+    fn history_revision(&self) -> String {
+        self.revision()
+    }
+}
+
 pub const KEEP: usize = 50;
 
 /// Who made the write that replaced a kept version.

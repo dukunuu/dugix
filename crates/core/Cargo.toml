@@ -28,10 +28,12 @@ anyhow = { workspace = true }
 arboard = { workspace = true }  # device-code login copies the URL to the OS clipboard (config.rs)
 base64 = { workspace = true }
 chrono = { workspace = true }
+csv = { workspace = true }  # spreadsheet CSV interchange (sheet/)
 directories = { workspace = true }
 futures-util = { workspace = true }
 image = { workspace = true }
 ignore = { workspace = true }
+ironcalc = { workspace = true }  # spreadsheet engine: formulas and xlsx (sheet/)
 keyring = { workspace = true }  # connector secrets: OS keychain (connectors/secrets.rs)
 krilla = { workspace = true }  # vector PDF export for docs and decks (doc/export/pdf.rs)
 krilla-svg = { workspace = true }
@@ -71,3 +73,6 @@ tree-sitter-typescript = { workspace = true }
 tree-sitter-yaml = { workspace = true }
 uuid = { workspace = true }
 zip = { workspace = true }
+
+[dev-dependencies]
+ironcalc = { workspace = true, features = ["mock_time"] }
