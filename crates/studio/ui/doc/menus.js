@@ -7,6 +7,9 @@ import { partElement, readRuns, renderRuns, setCaret } from './dom.js';
 import { deleteRange, plainText } from './inline.js';
 import { glyph } from './glyphs.js';
 import { TONE_LABELS } from './blocks.js';
+import { placePopup } from '../popup.js';
+
+export { placePopup };
 
 const el = (tag, className, text) => {
   const node = document.createElement(tag);
@@ -15,19 +18,6 @@ const el = (tag, className, text) => {
   return node;
 };
 const TURN_TARGETS = { text: 'text', title: 'title', h1: 'h1', h2: 'h2', h3: 'h3', quote: 'quote', code: 'code', bullets: 'bullets', numbers: 'numbers', checklist: 'checklist', callout: 'callout:info' };
-
-/** Keep a popup inside the window, below or above its anchor. */
-export function placePopup(node, rect, { prefer = 'below', align = 'left' } = {}) {
-  node.style.left = '0px'; node.style.top = '0px';
-  const { width, height } = node.getBoundingClientRect();
-  const margin = 8, W = innerWidth, H = innerHeight;
-  let top = prefer === 'above' ? rect.top - height - 6 : rect.bottom + 6;
-  if (top + height > H - margin) top = Math.max(margin, rect.top - height - 6);
-  if (top < margin) top = Math.min(margin, H - height - margin);
-  let left = align === 'center' ? rect.left + rect.width / 2 - width / 2 : align === 'right' ? rect.right - width : rect.left;
-  left = Math.max(margin, Math.min(left, W - width - margin));
-  node.style.left = `${Math.round(left)}px`; node.style.top = `${Math.round(top)}px`;
-}
 
 export function menusController(api) {
   const { state, surface, overlay } = api;
