@@ -1,5 +1,5 @@
 //! Long-term memory for a space, organized like a book: chapters of short facts
-//! behind a generated table of contents (`docs/memory.md`).
+//! behind a generated table of contents.
 
 pub mod book;
 pub mod recall;

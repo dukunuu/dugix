@@ -1,6 +1,6 @@
 # Design: web slide and document editors, and a secure way for the web to control the host
 
-Status: design. The implementation follows the agent-mode run (after phase 16b).
+Status: design, not yet built.
 
 ## Goal
 

@@ -201,8 +201,8 @@ search and are skipped. Exa has no recency filter: when requested, the result he
 it was not applied. HTML scrapers remain last-resort fallbacks and may return
 bot challenges.
 
-Background jobs (titles, compaction, the approval judge, `/memory tidy`)
-run on the session's own model.
+Background jobs (titles, compaction, the approval judge) run on the session's
+own model.
 
 ## Local inference (experimental)
 
@@ -448,7 +448,7 @@ Chat search is available in chat and agent mode, never in research searcher tool
   are listed in full, and matching chapters and docs are named on the message
   they relate to. `/memory` edits it in `$EDITOR`, `/memory tidy` asks the chat
   model to review and clean the memory with its own tool, in the conversation.
-  It lives in `nexus.db` and syncs; see `docs/memory.md`
+  It lives in `nexus.db` and syncs
 - **Skills**: Agent Skills-compatible instruction packs (`SKILL.md`) with
   progressive disclosure, project/user/global discovery, bundled resources,
   sandboxed Python virtualenvs, and chat installation
@@ -575,8 +575,7 @@ yet it opens the library. A doc opens as a
 calm writing page: an outline on the left, comments in the margin, formatting
 over selected text, `/` for blocks, tracked-change suggestions from the model,
 a page preview and an export menu. Older `deck` tool calls remain supported as
-an alias. See [the canvas design](docs/docs-canvas.md) and
-[studio](docs/studio.md).
+an alias.
 
 Find your decks and docs in the **Library**: studio opens on it when it starts
 with no file (and from the **Library** button or Cmd/Ctrl+O), as a grid of cards
@@ -619,7 +618,7 @@ Type `/` in the composer for autocomplete. Aliases in parentheses.
 | `/files` (`images`, `scripts`, …) | browse space files / images / scripts; `Ctrl+N` imports through the system Open panel, `/` finds files on this machine (Spotlight on macOS, `~/` for a path), and files dropped on it import at once |
 | `/apps` (`webapps`) | view web apps and pinned interactive panels |
 | `/pin-panel [name]` (`pin`) | keep the focused panel as a reusable mini-app |
-| `/studio [file]` (`deck`, `slides`) | open the last doc or deck (or the named one) in the studio window linked to this conversation; with none yet, open the library (see `docs/studio.md`) |
+| `/studio [file]` (`deck`, `slides`) | open the last doc or deck (or the named one) in the studio window linked to this conversation; with none yet, open the library |
 | `/agents` (`subagents`) | this conversation's `task` sub-agents: status, model, steps, tokens and cost; Enter opens a run's transcript (prompt, reasoning, tool calls, answer, review diff), live while it runs (`t` tool bodies, `r` reasoning, ←→ other runs). Ctrl+↑ opens it while the chat has sub-agents. The reply's cost includes its sub-agents |
 | `/library` (`decks`, `lib`) | list the space's decks and docs: Enter opens in studio, `e` exports through the Save dialog, `d` deletes (to `.trash/`) |
 | `/skills` | manage skills (app + project/user/global Agent Skills) |
@@ -764,11 +763,6 @@ the release binary). Release notes are generated from the conventional commits
 since the last tag (`scripts/release-notes.sh`), so the GitHub release always
 shows what changed. Manual `v*` tag pushes publish the same way. Details in
 `.github/workflows/`.
-
-## Roadmap
-
-Multi-device (web + mobile) via a sync mesh, no 24/7 backend — see
-[`docs/roadmap.md`](docs/roadmap.md).
 
 ## Known limitations
 
