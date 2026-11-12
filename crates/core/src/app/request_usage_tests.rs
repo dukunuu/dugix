@@ -306,6 +306,7 @@ async fn chat_usage_records_only_called_tool_names_and_merges_cost_event() {
                     result: "SECRET_RESULT".into(),
                     reasoning: None,
                     assistant_content: None,
+                    step_start: name == "fs",
                 },
             )
             .unwrap();
@@ -386,6 +387,7 @@ async fn a_reply_counts_every_round_of_its_tool_loop() {
             result: "found".into(),
             reasoning: None,
             assistant_content: None,
+            step_start: true,
         },
     )
     .unwrap();

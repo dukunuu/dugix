@@ -764,6 +764,7 @@ mod tests {
                     id: "call_0".into(),
                     reasoning: None,
                     assistant_content: None,
+                    step_start: true,
                     name: "python".into(),
                     arguments: "print(1)".into(),
                     result: "1".into(),

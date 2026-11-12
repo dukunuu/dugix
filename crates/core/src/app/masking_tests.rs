@@ -29,6 +29,16 @@ fn tool(id: &str, name: &str, result: &str) -> Message {
     )
 }
 
+/// A later call of the same step: the live loop attaches the step's reasoning
+/// and visible text to its first call only.
+fn tool_in_step(id: &str, name: &str, result: &str) -> Message {
+    message(
+        "tool_call",
+        &serde_json::json!({ "id": id, "name": name, "arguments": ARGS, "result": result })
+            .to_string(),
+    )
+}
+
 fn app(db: Db, root: std::path::PathBuf) -> App {
     let mut app = App::new(db, None, Space { root });
     app.settings.compact_threshold = 0;
@@ -67,11 +77,12 @@ fn add_round(app: &mut App, round: usize, result_chars: usize) {
     app.messages
         .push(message("user", &format!("question {round}")));
     for call in 0..2 {
-        app.messages.push(tool(
-            &format!("c{round}-{call}"),
-            "fs",
-            &"x".repeat(result_chars),
-        ));
+        let (id, result) = (format!("c{round}-{call}"), "x".repeat(result_chars));
+        app.messages.push(if call == 0 {
+            tool(&id, "fs", &result)
+        } else {
+            tool_in_step(&id, "fs", &result)
+        });
     }
     app.messages.push(message("assistant", "answer"));
 }
@@ -409,7 +420,7 @@ fn tool_images_follow_every_result_of_their_step() {
             "browser__browser_take_screenshot",
             "![page](image.png)",
         ),
-        tool("read", "fs", "text"),
+        tool_in_step("read", "fs", "text"),
     ];
     let roles: Vec<_> = app
         .build_history()
@@ -636,5 +647,106 @@ fn zero_retained_rounds_masks_all_old_observations() {
                     .starts_with(crate::tools::TOOL_RESULT_MASKED_PREFIX)
             })
     );
+    discard(app);
+}
+
+#[test]
+fn replay_keeps_one_assistant_message_per_tool_step() {
+    let mut app = fixture(0, 0);
+    let row = |id: &str, extra: serde_json::Value| {
+        let mut v = serde_json::json!({ "id": id, "name": "fs", "arguments": ARGS, "result": id });
+        v.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        message("tool_call", &v.to_string())
+    };
+    let shape = |app: &mut App| -> Vec<(String, Vec<String>)> {
+        app.build_history()
+            .into_iter()
+            .filter(|m| m.role != "system")
+            .map(|m| {
+                let ids = m.tool_calls.map_or_else(
+                    || m.tool_call_id.into_iter().collect(),
+                    |calls| calls.into_iter().map(|c| c.id).collect(),
+                );
+                (m.role, ids)
+            })
+            .collect()
+    };
+    let step = |ids: &[&str]| {
+        (
+            "assistant".to_string(),
+            ids.iter().map(|s| (*s).to_string()).collect(),
+        )
+    };
+    let result = |id: &str| ("tool".to_string(), vec![id.to_string()]);
+    // Flagged rows without any reasoning (a non-reasoning model): two steps.
+    app.messages = vec![
+        row("a1", serde_json::json!({ "step_start": true })),
+        row("a2", serde_json::json!({ "step_start": false })),
+        row("b1", serde_json::json!({ "step_start": true })),
+    ];
+    assert_eq!(
+        shape(&mut app),
+        [
+            step(&["a1", "a2"]),
+            result("a1"),
+            result("a2"),
+            step(&["b1"]),
+            result("b1")
+        ]
+    );
+    // Rows written before the flag: each step's reasoning rides on its first call.
+    app.messages = vec![
+        row("a1", serde_json::json!({ "reasoning_content": "first" })),
+        row("a2", serde_json::json!({})),
+        row("b1", serde_json::json!({ "reasoning_content": "second" })),
+    ];
+    assert_eq!(
+        shape(&mut app),
+        [
+            step(&["a1", "a2"]),
+            result("a1"),
+            result("a2"),
+            step(&["b1"]),
+            result("b1")
+        ]
+    );
+    // Old rows with no reasoning at all keep the previous single-message shape.
+    app.messages = vec![
+        row("a1", serde_json::json!({})),
+        row("b1", serde_json::json!({})),
+    ];
+    assert_eq!(
+        shape(&mut app),
+        [step(&["a1", "b1"]), result("a1"), result("b1")]
+    );
+    discard(app);
+}
+
+#[test]
+fn a_live_tool_step_persists_its_step_start() {
+    let mut app = fixture(0, 0);
+    for (id, step_start) in [("s1", true), ("s2", false)] {
+        app.on_stream_event(crate::provider::StreamEvent::ToolCall {
+            id: id.into(),
+            reasoning: None,
+            assistant_content: None,
+            step_start,
+            name: "fs".into(),
+            arguments: ARGS.into(),
+            result: "ok".into(),
+        })
+        .unwrap();
+    }
+    let flags: Vec<_> = app
+        .messages
+        .iter()
+        .filter(|m| m.role == "tool_call")
+        .map(|m| {
+            serde_json::from_str::<serde_json::Value>(&m.content).unwrap()["step_start"].clone()
+        })
+        .collect();
+    assert_eq!(flags, [serde_json::json!(true), serde_json::json!(false)]);
     discard(app);
 }

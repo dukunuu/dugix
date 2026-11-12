@@ -412,6 +412,9 @@ pub enum StreamEvent {
         reasoning: Option<String>,
         /// Any visible assistant content sent alongside the tool-call batch.
         assistant_content: Option<String>,
+        /// The first call of its assistant step. Replay starts a new assistant
+        /// message here, so the next turn's prefix matches what was sent live.
+        step_start: bool,
         name: String,
         arguments: String,
         result: String,
