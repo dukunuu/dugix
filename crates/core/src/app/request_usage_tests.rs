@@ -173,8 +173,10 @@ async fn background_calls_log_their_kind_and_captured_session_except_incognito()
                 "choices":[{"message":{"content":text}}],
                 "usage":{"prompt_tokens":100,"completion_tokens":10,"cost":0.012}
             });
+            // The JSON mock refuses compaction's streamed replay; the fallback is logged.
+            let requests = if kind == "compaction" { 2 } else { 1 };
             let (provider, server) =
-                decider_mock::server(200, body.to_string(), Duration::ZERO, 1).await;
+                decider_mock::server(200, body.to_string(), Duration::ZERO, requests).await;
             app.backends.set(BackendTag::OpenRouter, provider);
             app.incognito = incognito;
             match kind {

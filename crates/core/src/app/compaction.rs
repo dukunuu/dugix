@@ -10,7 +10,13 @@ use tokio::sync::mpsc;
 use super::{App, ContextBreakdown};
 use crate::db::Message;
 use crate::prompts;
-use crate::provider::{ChatMessage, ChatParams};
+use crate::provider::{ChatMessage, ChatParams, ToolDef};
+
+/// A cache-hitting replay of the chat turn when possible, and the flattened fallback.
+struct CompactionRequest {
+    flat: (Vec<ChatMessage>, ChatParams),
+    replay: Option<(Vec<ChatMessage>, ChatParams, Vec<ToolDef>)>,
+}
 
 impl App {
     /// Exclude UI-only, contextless, and duplicate rows from requests and compaction.
@@ -124,6 +130,7 @@ impl App {
         if tail.trim().is_empty() {
             return;
         }
+        let new_through = end as i64;
 
         let Some(session_model) = self.current_model.clone() else {
             self.push_status("pick a model first with /model".to_string());
@@ -135,13 +142,7 @@ impl App {
             ));
             return;
         };
-        let new_through = end as i64;
-        let prompt = compaction_prompt(
-            prior_summary.as_deref(),
-            &tail,
-            self.experiments.compaction_itemized,
-        );
-        let prompt_cache_key = format!("compaction:{}", self.prompt_cache_key_for(&session_id));
+        let request = self.compaction_request(&session_id, end, &tail, prior_summary.as_deref());
         let (tx, rx) = mpsc::unbounded_channel();
         self.compaction.rx = Some(rx);
         self.compaction.session_id = Some(session_id.clone());
@@ -149,12 +150,24 @@ impl App {
         *error_slot.lock().expect("compaction error slot") = None;
         let usage_log = self.usage_log();
         tokio::spawn(async move {
-            let msgs = vec![ChatMessage::text("user", prompt)];
-            let params = ChatParams {
-                prompt_cache_key: Some(prompt_cache_key),
-                ..ChatParams::default()
-            };
             let provider = provider.logged(usage_log, "compaction");
+            // A tool call or a refused replay falls back to the flattened prompt.
+            let mut replay_error = None;
+            if let Some((msgs, params, tools)) = &request.replay {
+                match provider
+                    .complete_like_chat(&raw_model, msgs, params, tools)
+                    .await
+                {
+                    Ok(completion) if !completion.text.trim().is_empty() => {
+                        let summary = completion.text.trim().to_string();
+                        let _ = tx.send((session_id, summary, new_through, before_pct));
+                        return;
+                    }
+                    Ok(_) => {}
+                    Err(error) => replay_error = Some(error),
+                }
+            }
+            let (msgs, params) = request.flat;
             let error = match provider
                 .complete_with_params(&raw_model, msgs, &params)
                 .await
@@ -165,10 +178,62 @@ impl App {
                     return;
                 }
                 Ok(_) => format!("{raw_model}: empty digest"),
-                Err(error) => format!("{raw_model}: {}", first_line(&error.to_string())),
+                Err(error) => format!(
+                    "{raw_model}: {}",
+                    first_line(&replay_error.unwrap_or(error).to_string())
+                ),
             };
             *error_slot.lock().expect("compaction error slot") = Some(error);
         });
+    }
+
+    /// With no reserved tail, also replay the exact wire history with the chat
+    /// turn's tools and parameters, so the frozen prefix is a provider cache hit.
+    fn compaction_request(
+        &mut self,
+        session_id: &str,
+        end: usize,
+        tail: &str,
+        prior_summary: Option<&str>,
+    ) -> CompactionRequest {
+        let flat = (
+            vec![ChatMessage::text(
+                "user",
+                compaction_prompt(prior_summary, tail, self.experiments.compaction_itemized),
+            )],
+            ChatParams {
+                prompt_cache_key: Some(format!(
+                    "compaction:{}",
+                    self.prompt_cache_key_for(session_id)
+                )),
+                ..ChatParams::default()
+            },
+        );
+        let hot = self.experiments.compaction_tail_turns == 0 && end == self.messages.len();
+        let replay = hot.then(|| {
+            let mut history = self.build_history();
+            history.push(ChatMessage::text(
+                "user",
+                prompts::render(
+                    if self.experiments.compaction_itemized {
+                        prompts::COMPACTION_ITEMIZED
+                    } else {
+                        prompts::COMPACTION
+                    },
+                    &[],
+                ),
+            ));
+            // Tools and reasoning effort are part of the cached prefix.
+            let effort = self.current_model.clone().and_then(|model| {
+                let effort = self.reasoning.get(&model).cloned()?;
+                self.effort_accepted(&model, &effort).then_some(effort)
+            });
+            let tools = self
+                .active_prefix()
+                .map_or_else(|| self.chat_tool_defs(), |prefix| prefix.tools.clone());
+            (history, self.turn_params(effort), tools)
+        });
+        CompactionRequest { flat, replay }
     }
 
     fn report_compaction_failure(&mut self) {
@@ -863,6 +928,73 @@ mod tests {
         let last_compacted = stored.iter().find(|m| m.content == "u1").unwrap();
         assert_eq!(digest.created_at, last_compacted.created_at);
         assert!(a.last_status().contains("compacted"), "{}", a.last_status());
+    }
+
+    #[test]
+    fn default_compaction_replays_wire_history_on_the_session_cache_lane() {
+        let (mut a, sid) = app_with_session(3);
+        let end = a.messages.len();
+        let tail = compaction_tail(&a.messages[..end], 0);
+        let request = a.compaction_request(&sid, end, &tail, None);
+        let (msgs, params, tools) = request.replay.expect("a replay");
+        assert_eq!(
+            params.prompt_cache_key.as_deref(),
+            Some(a.prompt_cache_key_for(&sid).as_str())
+        );
+        let chat_tools = a
+            .active_prefix()
+            .map_or_else(|| a.chat_tool_defs(), |prefix| prefix.tools.clone());
+        assert!(!chat_tools.is_empty());
+        assert_eq!(
+            serde_json::to_vec(&tools).unwrap(),
+            serde_json::to_vec(&chat_tools).unwrap()
+        );
+        let chat = a.turn_params(None);
+        assert_eq!(params.reasoning_effort, chat.reasoning_effort);
+        assert_eq!(params.parallel_tool_calls, chat.parallel_tool_calls);
+        assert_eq!(
+            params.max_tokens, a.settings.max_tokens,
+            "no extra output cap"
+        );
+        assert!(
+            request
+                .flat
+                .1
+                .prompt_cache_key
+                .unwrap()
+                .starts_with("compaction:")
+        );
+        let history = a.build_history();
+        // Same frozen prefix and conversation, plus the digest instruction last.
+        assert_eq!(msgs.len(), history.len() + 1);
+        for (sent, built) in msgs.iter().zip(history.iter()) {
+            assert_eq!(
+                serde_json::to_vec(sent).unwrap(),
+                serde_json::to_vec(built).unwrap()
+            );
+        }
+        let last = msgs.last().unwrap();
+        assert_eq!(last.role, "user");
+        assert!(last.content.contains("ultra-dense technical digest"));
+        discard(a);
+    }
+
+    #[test]
+    fn reserved_tail_falls_back_to_the_flattened_lane() {
+        let (mut a, sid) = app_with_session(5);
+        a.experiments.compaction_tail_turns = 2;
+        let end = compaction_end(&a.messages, 0, 2);
+        assert!(end < a.messages.len());
+        let tail = compaction_tail(&a.messages[..end], 0);
+        let request = a.compaction_request(&sid, end, &tail, None);
+        assert!(request.replay.is_none());
+        let (msgs, params) = request.flat;
+        assert!(params.prompt_cache_key.unwrap().starts_with("compaction:"));
+        assert_eq!(params.max_tokens, None);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].role, "user");
+        assert!(msgs[0].content.contains("New messages since that summary:"));
+        discard(a);
     }
 
     #[test]

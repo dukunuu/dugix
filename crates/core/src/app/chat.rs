@@ -285,10 +285,7 @@ impl App {
         self.push_status(reasoning_warning.unwrap_or_default());
         self.warn_stale_prefix();
         self.note_turn_lane();
-        let profile = self.model_profile();
-        let mut params = self.chat_params(reasoning_effort, provider.backend_tag());
-        params.parallel_tool_calls = (!profile.parallel_calls).then_some(false);
-        params.tool_result_cap = profile.result_cap;
+        let params = self.chat_params(reasoning_effort, provider.backend_tag());
         let tools = self
             .active_prefix()
             .map_or_else(|| self.chat_tool_defs(), |prefix| prefix.tools.clone());
@@ -386,12 +383,10 @@ impl App {
         }
     }
 
-    pub(super) fn chat_params(
-        &mut self,
-        reasoning_effort: Option<String>,
-        backend: crate::provider::BackendTag,
-    ) -> ChatParams {
-        let mut params = ChatParams {
+    /// A chat turn's request parameters; compaction sends the same to reuse its cache.
+    pub(super) fn turn_params(&self, reasoning_effort: Option<String>) -> ChatParams {
+        let profile = self.model_profile();
+        ChatParams {
             reasoning_effort,
             prompt_cache_key: self
                 .session
@@ -402,8 +397,18 @@ impl App {
             temperature: self.settings.temperature,
             top_p: self.settings.top_p,
             max_tokens: self.settings.max_tokens,
+            parallel_tool_calls: (!profile.parallel_calls).then_some(false),
+            tool_result_cap: profile.result_cap,
             ..ChatParams::default()
-        };
+        }
+    }
+
+    pub(super) fn chat_params(
+        &mut self,
+        reasoning_effort: Option<String>,
+        backend: crate::provider::BackendTag,
+    ) -> ChatParams {
+        let mut params = self.turn_params(reasoning_effort);
         if self.training_enabled()
             && let Some(session_id) = self.session.as_ref().map(|session| session.id.clone())
             && let Some(store) = self.open_trace_store()

@@ -1265,6 +1265,40 @@ impl OpenRouter {
             .await
     }
 
+    /// One request shaped like a chat turn (same tools and parameters) so it
+    /// hits the conversation's cache. No tool runs: a tool-call answer has empty text.
+    pub async fn complete_like_chat(
+        &self,
+        model: &str,
+        messages: &[ChatMessage],
+        params: &ChatParams,
+        tools: &[ToolDef],
+    ) -> Result<Completion> {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let finish = self
+            .run_stream(model, messages, params, tools, false, &tx)
+            .await?;
+        match finish {
+            Finish::Done(output) => Ok(Completion {
+                text: output.content,
+                usage: output.usage,
+            }),
+            Finish::ToolCalls(_, output) => Ok(Completion {
+                text: String::new(),
+                usage: output.usage,
+            }),
+            Finish::Errored => {
+                let mut reason = "the request failed".to_string();
+                while let Ok(event) = rx.try_recv() {
+                    if let StreamEvent::Error(message) = event {
+                        reason = message;
+                    }
+                }
+                anyhow::bail!(reason)
+            }
+        }
+    }
+
     /// One-shot completion with request parameters and usage accounting.
     pub async fn complete_with_params(
         &self,

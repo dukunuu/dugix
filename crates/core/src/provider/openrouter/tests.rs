@@ -2576,7 +2576,8 @@ fn opencode_names_the_session_in_a_header_and_other_backends_do_not() {
 
 #[test]
 fn mistral_names_the_cache_lane_in_x_affinity_and_other_backends_do_not() {
-    let body = serde_json::json!({"model": "mistral-large-latest", "prompt_cache_key": "session-1:0"});
+    let body =
+        serde_json::json!({"model": "mistral-large-latest", "prompt_cache_key": "session-1:0"});
     assert_eq!(
         mistral_affinity(BackendTag::Mistral, &body),
         Some("session-1:0")
@@ -2602,4 +2603,53 @@ fn mistral_names_the_cache_lane_in_x_affinity_and_other_backends_do_not() {
         .unwrap();
     assert_eq!(request.headers()["x-opencode-session"], "session-1:0");
     assert!(!request.headers().contains_key("x-affinity"));
+}
+
+#[tokio::test]
+async fn a_chat_shaped_completion_sends_the_tools_and_runs_none() {
+    let tools = [ToolDef {
+        name: "read".into(),
+        description: "Read.".into(),
+        parameters: serde_json::json!({"type": "object", "properties": {}}),
+    }];
+    let text = fake_chat_frames(&[
+        serde_json::json!({"choices": [{"delta": {"content": "A digest."}}]}),
+        serde_json::json!({"choices": [], "usage": {
+            "prompt_tokens": 100, "completion_tokens": 3, "total_tokens": 103,
+            "prompt_tokens_details": {"cached_tokens": 96}
+        }}),
+    ]);
+    let call = fake_chat_frames(&[serde_json::json!({"choices": [{"delta": {"tool_calls": [
+        {"index": 0, "id": "call_1", "function": {"name": "read", "arguments": "{}"}}
+    ]}, "finish_reason": "tool_calls"}]})]);
+    let (mock, server) = fake_chat_server(vec![text, call]).await;
+    let mut provider = OpenRouter::mistral("mock-mistral-key".into());
+    provider.endpoint = mock.endpoint;
+    let params = ChatParams {
+        prompt_cache_key: Some("session:0".into()),
+        ..ChatParams::default()
+    };
+    let messages = [ChatMessage::text("user", "Summarize.")];
+    let done = provider
+        .complete_like_chat(MISTRAL_VIBE_MODEL, &messages, &params, &tools)
+        .await
+        .unwrap();
+    assert_eq!(done.text, "A digest.");
+    assert_eq!(done.usage.unwrap().cache_read_tokens, 96);
+    let called = provider
+        .complete_like_chat(MISTRAL_VIBE_MODEL, &messages, &params, &tools)
+        .await
+        .unwrap();
+    assert!(called.text.is_empty());
+    let requests = server.await.unwrap();
+    assert_eq!(requests.len(), 2);
+    for request in &requests {
+        assert_eq!(request["tools"][0]["function"]["name"], "read");
+        assert_eq!(request["prompt_cache_key"], "session:0");
+        assert!(
+            request
+                .get("tool_choice")
+                .is_none_or(|choice| choice == "auto")
+        );
+    }
 }

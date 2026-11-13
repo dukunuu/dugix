@@ -661,7 +661,7 @@ impl Default for Settings {
             temperature: None,
             top_p: None,
             max_tokens: None,
-            compact_threshold: 60,
+            compact_threshold: 40,
             column_width: "auto".into(),
             popup_sizes: String::new(),
         }
