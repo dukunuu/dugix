@@ -108,7 +108,7 @@
   let measureCtx = null;
   function measureText(text, bold) {
     measureCtx ||= document.createElement('canvas').getContext('2d');
-    measureCtx.font = `${bold ? '700 ' : '400 '}14px system-ui, -apple-system, "Segoe UI", sans-serif`;
+    measureCtx.font = `${bold ? '700 ' : '400 '}13px system-ui, -apple-system, "Segoe UI", sans-serif`;
     return measureCtx.measureText(text).width;
   }
   /** Greedy word wrap into `width`; overlong words break anywhere, as in the core. */
@@ -138,9 +138,10 @@
         if (!a || tab.rows?.[a.row] !== undefined) continue;
         const display = valueOf(tab, a1).display;
         if (!display) continue;
-        const width = Math.max(1, (tab.cols?.[M.colName(a.col)] ?? 100) - 10);
-        const height = wrappedLines(display, width) * 17 + 4;
-        if (height > 24) heights[a.row] = Math.max(heights[a.row] || 0, height);
+        const width = Math.max(1, (tab.cols?.[M.colName(a.col)] ?? 100) - 12);
+        const lines = wrappedLines(display, width);
+        const height = lines * 19 + 8;
+        if (lines > 1 && height > 24) heights[a.row] = Math.max(heights[a.row] || 0, height);
       }
       out[tab.id] = heights;
     }

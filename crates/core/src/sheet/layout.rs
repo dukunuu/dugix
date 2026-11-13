@@ -13,11 +13,13 @@ use super::{
 use crate::deck::text::{Face, Typesetter};
 use std::collections::BTreeMap;
 
-/// The font size `render.rs` draws cell text at, with its line height and padding.
-pub const FONT_SIZE: f64 = 14.0;
-pub const LINE_HEIGHT: f64 = 17.0;
-pub const PAD_X: f64 = 5.0;
-pub const PAD_Y: f64 = 2.0;
+/// The font size cell text is drawn at, with its line height and padding. Studio's
+/// grid (`ui/sheet/sheet.css`, `.sg-text`) uses the same numbers, so rows sized here
+/// fit the lines the grid wraps; change them together.
+pub const FONT_SIZE: f64 = 13.0;
+pub const LINE_HEIGHT: f64 = 19.0;
+pub const PAD_X: f64 = 6.0;
+pub const PAD_Y: f64 = 4.0;
 /// The height of a row nobody resized.
 pub const DEFAULT_ROW: f64 = 24.0;
 /// The width of a column nobody resized, and the limits of a fitted one.
@@ -185,6 +187,10 @@ pub fn auto_row_heights(sheet: &Sheet, workbook: &Workbook, tab: &Tab) -> BTreeM
         }
         let width = text_width(tab, &merges, address) - 2.0 * PAD_X;
         let lines = measure.lines(&value.display, width, fmt.bold).len();
+        // One line already fits a default row; only several lines grow it.
+        if lines < 2 {
+            continue;
+        }
         let height = lines as f64 * LINE_HEIGHT + 2.0 * PAD_Y;
         if height > DEFAULT_ROW {
             let entry = heights.entry(address.row).or_insert(height);

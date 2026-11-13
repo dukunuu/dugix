@@ -250,6 +250,31 @@ fn every_sheet_module_is_embedded_and_every_import_resolves() {
 }
 
 #[test]
+fn the_grid_draws_cell_text_with_the_metrics_the_core_sizes_rows_with() {
+    // Wrapped rows are as tall as core's layout says; if the grid's line height,
+    // padding or font size drift from it, wrapped text is cut off or cramped.
+    use nexus_core::sheet::layout::{FONT_SIZE, LINE_HEIGHT, PAD_X, PAD_Y};
+    let (_, css) = embedded("/sheet/sheet.css").unwrap();
+    let text = css
+        .lines()
+        .find(|line| line.starts_with(".sg-text {"))
+        .expect("the cell text rule");
+    assert!(
+        text.contains(&format!("line-height:{LINE_HEIGHT}px")),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("padding:0 {PAD_X}px {PAD_Y}px")),
+        "{text}"
+    );
+    assert!(css.contains(&format!("font:{FONT_SIZE}px/1 var(--s-font")));
+    let mock =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("ui-dev/sheet-mock.js"))
+            .unwrap();
+    assert!(mock.contains(&format!("lines * {LINE_HEIGHT} + {}", 2.0 * PAD_Y)));
+}
+
+#[test]
 fn the_sheet_ui_builds_the_page_without_markup_injection() {
     // Cell text, comments and pasted content only ever become text nodes.
     let mut files: Vec<PathBuf> = std::fs::read_dir(ui_dir().join("sheet"))
