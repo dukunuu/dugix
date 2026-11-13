@@ -431,7 +431,8 @@ export function mount(shared) {
     set('--s-line', M.cssColor(state.sheet.theme, 'border') || mix(fg, bg, 16));
     set('--s-head', M.cssColor(state.sheet.theme, 'surface') || mix(fg, bg, 6));
     // Cells use the sheet's body font, which the backend also measures to size wrapped rows.
-    ensureDeckFonts(state.sheet.theme);
+    // A sheet on the default theme has no `theme` in its JSON at all.
+    ensureDeckFonts(state.sheet.theme || {});
     const body = state.sheet.theme?.fonts?.body;
     if (body) set('--s-font', fontStack(body)); else app.style.removeProperty('--s-font');
   }

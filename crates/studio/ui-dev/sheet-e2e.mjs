@@ -79,6 +79,14 @@ const rowCount = page => page.evaluate(() => new Set([...document.querySelectorA
 const tabsBar = page => page.locator('#sheet-app .sg-tab');
 
 const tests = {
+  async defaultThemeSheetOpens() {
+    // A sheet on the default theme serializes without `theme`; it must still draw.
+    const sheet = structuredClone(sample.sheet);
+    delete sheet.theme;
+    const page = await open('light', undefined, { fixture: { sheet, threads: [] } });
+    assert.equal(await shown(page, 'A1'), 'Category');
+    await page.close();
+  },
   async charts() {
     const fixture = { sheet: { ...structuredClone(sample.sheet), tabs: [{ id: 't1', name: 'Budget', cells: { A1: { input: 'Month' }, B1: { input: 'Sales' }, A2: { input: 'Jan' }, B2: { input: '10' }, A3: { input: 'Feb' }, B3: { input: '20' }, A4: { input: 'Mar' }, B4: { input: '15' } } }] }, threads: [] };
     const page = await open('light', { width: 1440, height: 1000 }, { fixture });
