@@ -7,8 +7,9 @@ use ratatui::widgets::{ListItem, ListState};
 
 use crate::app_view::AppView;
 
-use super::chrome;
+use super::chrome::{self, PopupFrame, ctrl, hint, keys};
 
+#[allow(clippy::too_many_lines)] // rows + browse / edit / confirm chrome
 pub fn render(f: &mut Frame, app: &AppView) {
     use nexus_core::app::SpaceMode;
     use nexus_core::db::DEFAULT_SPACE;
@@ -46,40 +47,41 @@ pub fn render(f: &mut Frame, app: &AppView) {
         })
         .collect();
 
-    let title = match app.space_mode {
-        SpaceMode::Create => chrome::input_title(
-            app,
-            "new space",
-            &app.space_edit,
-            "Enter create · Esc cancel",
-        ),
-        SpaceMode::Rename => chrome::input_title(
-            app,
-            "rename space",
-            &app.space_edit,
-            "Enter save · Esc cancel",
-        ),
-        SpaceMode::ConfirmDelete => {
-            let name = app.selected_space().map(|s| s.name).unwrap_or_default();
-            chrome::danger_title(
-                app,
-                format!("delete \"{name}\"? sessions move to default."),
-                "Ctrl+D confirm · Esc cancel",
-            )
-        }
-        SpaceMode::Browse => chrome::filter_title(app, "spaces", &app.space_filter),
+    let filtering = !app.space_filter.is_empty();
+    let count = if app.space_mode != SpaceMode::Browse {
+        String::new()
+    } else if filtering {
+        format!("{} of {}", spaces.len(), app.spaces_cache.len())
+    } else {
+        format!(
+            "{} space{}",
+            spaces.len(),
+            if spaces.len() == 1 { "" } else { "s" }
+        )
     };
-
-    let hint = match app.space_mode {
-        SpaceMode::Create => "Enter create · Esc cancel".to_string(),
-        SpaceMode::Rename => "Enter save · Esc cancel".to_string(),
-        SpaceMode::ConfirmDelete => "Ctrl+D confirm · Esc cancel".to_string(),
-        SpaceMode::Browse if spaces.is_empty() => {
-            "no spaces match — type to clear the filter".to_string()
-        }
-        SpaceMode::Browse => format!(
-            "{}↑↓ · Enter open · Ctrl+N new · Ctrl+R rename · Ctrl+D delete · Ctrl+E docs · Ctrl+K memory",
-            chrome::count_hint(spaces.len(), "space")
+    let (title, hints) = match app.space_mode {
+        SpaceMode::Create => (
+            "New space",
+            vec![hint(keys::ENTER, "create"), hint(keys::ESC, "cancel")],
+        ),
+        SpaceMode::Rename => (
+            "Rename space",
+            vec![hint(keys::ENTER, "save"), hint(keys::ESC, "cancel")],
+        ),
+        SpaceMode::ConfirmDelete => (
+            "Delete space?",
+            vec![hint(ctrl('d'), "delete"), hint(keys::ESC, "cancel")],
+        ),
+        SpaceMode::Browse => (
+            "Spaces",
+            vec![
+                hint(keys::MOVE, ""),
+                hint(keys::ENTER, "switch"),
+                hint(ctrl('n'), "new"),
+                hint(ctrl('r'), "rename"),
+                hint(ctrl('d'), "delete"),
+                hint(keys::ESC, if filtering { "clear" } else { "close" }),
+            ],
         ),
     };
     let tone = if app.space_mode == SpaceMode::ConfirmDelete {
@@ -87,13 +89,57 @@ pub fn render(f: &mut Frame, app: &AppView) {
     } else {
         chrome::Tone::Normal
     };
-    let inner = chrome::render_hinted(f, area, title, &hint, app, true, tone);
+    let mut inner = chrome::render_popup(
+        f,
+        area,
+        &PopupFrame {
+            title,
+            count: &count,
+            hints: &hints,
+            tone,
+            focused: true,
+        },
+        app,
+    );
+    if app.space_mode == SpaceMode::ConfirmDelete {
+        let name = app.selected_space().map(|s| s.name).unwrap_or_default();
+        let detail = format!("“{name}” will be deleted. Its chats move to the default space.");
+        let (list_area, detail_area) = chrome::split_with_detail(inner, &detail);
+        chrome::render_detail(f, detail_area, &detail, &app.theme);
+        inner = list_area;
+    } else {
+        let editing = app.space_mode != SpaceMode::Browse;
+        inner = chrome::render_field(
+            f,
+            inner,
+            if editing { "✎" } else { "⌕" },
+            if editing {
+                &app.space_edit
+            } else {
+                &app.space_filter
+            },
+            "Type to filter",
+            editing,
+            &app.theme,
+        );
+    }
     let list = chrome::standard_list(items, &app.theme);
     let mut state = ListState::default();
     if !spaces.is_empty() {
         state.select(Some(app.space_selected.min(spaces.len() - 1)));
     }
     chrome::render_list(f, list, &mut state, inner, spaces.len(), 1, app);
+    if spaces.is_empty() {
+        chrome::render_empty(
+            f,
+            inner,
+            &format!(
+                "No space matches “{}”. Esc clears the filter.",
+                &*app.space_filter
+            ),
+            &app.theme,
+        );
+    }
 }
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
@@ -126,11 +172,20 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
                 app.confirm_space();
                 return Ok(());
             }
-            if app.space_filter.key(key, &mut app.clipboard) {
+            if !matches!(key.code, KeyCode::Home | KeyCode::End)
+                && app.space_filter.key(key, &mut app.clipboard)
+            {
                 return Ok(());
             }
             match classify_browse_key(key, true, true) {
-                Some(super::BrowseAction::Close) => app.popup = nexus_core::app::Popup::None,
+                Some(super::BrowseAction::Close) => {
+                    if app.space_filter.is_empty() {
+                        app.popup = nexus_core::app::Popup::None;
+                    } else {
+                        app.space_filter.clear();
+                        app.space_selected = 0;
+                    }
+                }
                 Some(super::BrowseAction::MoveUp) => app.move_space_selection(-1),
                 Some(super::BrowseAction::MoveDown) => app.move_space_selection(1),
                 Some(

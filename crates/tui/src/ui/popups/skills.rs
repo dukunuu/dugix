@@ -1,4 +1,4 @@
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -6,86 +6,106 @@ use ratatui::widgets::{ListItem, ListState};
 
 use crate::app_view::AppView;
 
-use super::chrome;
+use super::chrome::{self, PopupFrame, ctrl, hint, keys};
 
+#[allow(clippy::too_many_lines)] // rows + browse / install / confirm chrome
 pub fn render(f: &mut Frame, app: &AppView) {
     use nexus_core::app::SkillsMode;
     let area = chrome::popup_area(app, f.area(), "skills", chrome::STANDARD);
 
-    let items: Vec<ListItem> = if app.skills.is_empty() {
-        vec![chrome::empty_placeholder(
-            "no skills yet — Ctrl+N installs one from GitHub",
-            &app.theme,
-        )]
-    } else {
-        let width = area.width.saturating_sub(5 + 2 * chrome::PAD) as usize;
-        app.skills
-            .iter()
-            .map(|s| {
-                // App-managed skills are removable; an agent tool's are read-only.
-                let source = if app.skill_is_app_managed(s) {
-                    "nexus".to_string()
-                } else {
-                    skill_source(&s.dir)
-                };
-                let name = chrome::truncate(
-                    &s.name,
-                    width.saturating_sub(crate::ui::style::width(&source) + 2),
-                );
-                let gap = width.saturating_sub(
-                    crate::ui::style::width(&name) + crate::ui::style::width(&source),
-                );
-                ListItem::new(Line::from(vec![
-                    Span::styled(name, Style::default().fg(app.theme.fg)),
-                    Span::raw(" ".repeat(gap)),
-                    Span::styled(source, Style::default().fg(app.theme.fg_dim)),
-                ]))
-            })
-            .collect()
-    };
+    let width = area.width.saturating_sub(5 + 2 * chrome::PAD) as usize;
+    let items: Vec<ListItem> = app
+        .skills
+        .iter()
+        .map(|s| {
+            // App-managed skills are removable; an agent tool's are read-only.
+            let source = if app.skill_is_app_managed(s) {
+                "nexus".to_string()
+            } else {
+                skill_source(&s.dir)
+            };
+            let name = chrome::truncate(
+                &s.name,
+                width.saturating_sub(crate::ui::style::width(&source) + 2),
+            );
+            let gap = width
+                .saturating_sub(crate::ui::style::width(&name) + crate::ui::style::width(&source));
+            ListItem::new(Line::from(vec![
+                Span::styled(name, Style::default().fg(app.theme.fg)),
+                Span::raw(" ".repeat(gap)),
+                Span::styled(source, Style::default().fg(app.theme.fg_dim)),
+            ]))
+        })
+        .collect();
 
-    let title = match app.skills_mode {
-        SkillsMode::Install => chrome::input_title(
-            app,
-            "install",
-            &app.skills_edit,
-            "owner/repo/path · Enter install · Esc cancel",
-        ),
-        SkillsMode::ConfirmRemove => {
-            let name = app
-                .skills
-                .get(app.skills_selected)
-                .map_or("", |s| s.name.as_str());
-            chrome::danger_title(
-                app,
-                format!("remove \"{name}\"?"),
-                "Ctrl+D confirm · Esc cancel",
-            )
-        }
-        SkillsMode::Browse => chrome::popup_title(app, "skills"),
+    let count = if app.skills_mode == SkillsMode::Browse {
+        format!(
+            "{} skill{}",
+            app.skills.len(),
+            if app.skills.len() == 1 { "" } else { "s" }
+        )
+    } else {
+        String::new()
     };
-    let hint = match app.skills_mode {
-        SkillsMode::Browse if app.skills.is_empty() => {
-            "no skills yet — Ctrl+N installs one from GitHub".to_string()
-        }
-        SkillsMode::Browse => format!(
-            "{}↑↓ · Enter arm · Ctrl+N install · Ctrl+D remove · Ctrl+E edit",
-            chrome::count_hint(app.skills.len(), "skill")
+    let (title, hints) = match app.skills_mode {
+        SkillsMode::Install => (
+            "Install skill",
+            vec![hint(keys::ENTER, "install"), hint(keys::ESC, "cancel")],
         ),
-        SkillsMode::Install => "owner/repo/path · Enter install · Esc cancel".to_string(),
-        SkillsMode::ConfirmRemove => "Ctrl+D confirm · Esc cancel".to_string(),
+        SkillsMode::ConfirmRemove => (
+            "Remove skill?",
+            vec![hint(ctrl('d'), "remove"), hint(keys::ESC, "cancel")],
+        ),
+        SkillsMode::Browse => (
+            "Skills",
+            vec![
+                hint(keys::MOVE, ""),
+                hint(keys::ENTER, "arm"),
+                hint(ctrl('n'), "install"),
+                hint(ctrl('d'), "remove"),
+                hint(keys::ESC, "close"),
+            ],
+        ),
     };
     let tone = if app.skills_mode == SkillsMode::ConfirmRemove {
         chrome::Tone::Danger
     } else {
         chrome::Tone::Normal
     };
-    let inner = chrome::render_hinted(f, area, title, &hint, app, true, tone);
+    let mut inner = chrome::render_popup(
+        f,
+        area,
+        &PopupFrame {
+            title,
+            count: &count,
+            hints: &hints,
+            tone,
+            focused: true,
+        },
+        app,
+    );
+    if app.skills_mode == SkillsMode::Install {
+        inner = chrome::render_field(
+            f,
+            inner,
+            "✎",
+            &app.skills_edit,
+            "owner/repo/path",
+            false,
+            &app.theme,
+        );
+    }
     let desc = app
         .skills
         .get(app.skills_selected)
-        .map_or("", |s| s.description.as_str());
-    let (list_area, detail_area) = chrome::split_with_detail(inner, desc);
+        .map_or_else(String::new, |skill| {
+            if app.skills_mode == SkillsMode::ConfirmRemove {
+                format!("“{}” will be removed.", skill.name)
+            } else {
+                skill.description.clone()
+            }
+        });
+    let (list_area, detail_area) = chrome::split_with_detail(inner, &desc);
 
     let list = chrome::standard_list(items, &app.theme);
     let mut state = ListState::default();
@@ -93,7 +113,15 @@ pub fn render(f: &mut Frame, app: &AppView) {
         state.select(Some(app.skills_selected.min(app.skills.len() - 1)));
     }
     chrome::render_list(f, list, &mut state, list_area, app.skills.len(), 1, app);
-    chrome::render_detail(f, detail_area, desc, &app.theme);
+    chrome::render_detail(f, detail_area, &desc, &app.theme);
+    if app.skills.is_empty() {
+        chrome::render_empty(
+            f,
+            list_area,
+            "No skills installed. ^N installs one.",
+            &app.theme,
+        );
+    }
 }
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) {
@@ -128,6 +156,12 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
                     app.push_status(format!("error: {e:#}"));
                 }
             }
+        }
+        SkillsMode::Browse if !super::is_chord(key) && key.code == KeyCode::Char('k') => {
+            app.move_skills_selection(-1);
+        }
+        SkillsMode::Browse if !super::is_chord(key) && key.code == KeyCode::Char('j') => {
+            app.move_skills_selection(1);
         }
         SkillsMode::Browse => match classify_browse_key(key, true, false) {
             Some(super::BrowseAction::Close) => app.popup = nexus_core::app::Popup::None,

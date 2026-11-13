@@ -715,23 +715,6 @@ fn titled_line(app: &AppView, text: impl Into<String>, color: Color, hint: &str)
     Line::from(spans)
 }
 
-/// Browse-mode title for a filterable list popup: `label`, or `label: <filter>▏`
-/// while typing.
-pub fn filter_title(app: &AppView, label: impl Into<String>, filter: &str) -> Line<'static> {
-    if filter.is_empty() {
-        return Line::from(crate::ui::style::title(&app.theme, label));
-    }
-    Line::from(vec![
-        Span::styled(
-            format!(" {}: ", label.into()),
-            Style::default()
-                .fg(app.theme.accent)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(format!("{filter}▏ "), Style::default().fg(app.theme.fg)),
-    ])
-}
-
 /// The standard popup title: the bold accent name.
 pub fn popup_title(app: &AppView, name: impl Into<String>) -> Line<'static> {
     Line::from(crate::ui::style::title(&app.theme, name))

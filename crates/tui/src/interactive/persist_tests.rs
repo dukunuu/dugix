@@ -231,7 +231,7 @@ fn a_pinned_app_opens_full_size_with_its_state_and_keeps_changes() {
     let rendered = apps_screen(&app);
     assert!(rendered.contains("counter"), "{rendered}");
     assert!(rendered.contains("panel · Weekly Counter"), "{rendered}");
-    assert!(rendered.contains("Ctrl+R rename"), "{rendered}");
+    assert!(rendered.contains("^R rename"), "{rendered}");
     assert_eq!(app.apps_selected, 0);
     crate::ui::popups::apps::handle_key(
         &mut app,
@@ -297,7 +297,7 @@ fn the_apps_popup_renames_and_unpins_panels() {
 
     handle(&mut app, ctrl('r')).unwrap();
     assert!(app.apps_mode == AppsMode::RenamePanel);
-    assert!(apps_screen(&app).contains("rename counter to"));
+    assert!(apps_screen(&app).contains("Rename panel"));
     for _ in 0.."counter".len() {
         handle(&mut app, plain(KeyCode::Backspace)).unwrap();
     }
@@ -318,7 +318,8 @@ fn the_apps_popup_renames_and_unpins_panels() {
 
     handle(&mut app, ctrl('d')).unwrap();
     assert!(app.apps_mode == AppsMode::ConfirmDelete);
-    assert!(apps_screen(&app).contains("unpin panel app \"tally\""));
+    assert!(apps_screen(&app).contains("Unpin panel?"));
+    assert!(apps_screen(&app).contains("Panel app “tally” will be unpinned."));
     handle(&mut app, ctrl('d')).unwrap();
     assert!(app.core.pinned_panels().unwrap().is_empty());
     assert!(app.pinned_apps.is_empty());

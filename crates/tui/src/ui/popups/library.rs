@@ -18,7 +18,7 @@ use ratatui::widgets::{ListItem, ListState};
 use crate::app_view::AppView;
 use crate::ui::style::SEP;
 
-use super::chrome;
+use super::chrome::{self, PopupFrame, ctrl, hint, keys};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Mode {
@@ -33,9 +33,10 @@ pub struct LibraryPopup {
     pub entries: Vec<Entry>,
     pub selected: usize,
     pub mode: Mode,
+    pub filter: String,
 }
 
-/// The formats `e` offers, as `(key, word, label)`.
+/// The formats `^E` offers, as `(key, word, label)`.
 const DECK_FORMATS: &[(char, &str, &str)] = &[
     ('p', "pptx", "pptx"),
     ('f', "pdf", "pdf"),
@@ -70,6 +71,7 @@ pub fn open(app: &mut AppView) {
         app.push_status("library isn't available in incognito mode");
         return;
     }
+    app.library.filter.clear();
     refresh(app);
     app.library.selected = 0;
     app.library.mode = Mode::Browse;
@@ -81,25 +83,25 @@ fn refresh(app: &mut AppView) {
     app.library.selected = app
         .library
         .selected
-        .min(app.library.entries.len().saturating_sub(1));
+        .min(filtered_entries(app).count().saturating_sub(1));
+}
+
+fn filtered_entries(app: &AppView) -> impl Iterator<Item = &Entry> {
+    let filter = app.library.filter.to_lowercase();
+    app.library
+        .entries
+        .iter()
+        .filter(move |entry| entry.title.to_lowercase().contains(&filter))
 }
 
 fn selected(app: &AppView) -> Option<&Entry> {
-    app.library.entries.get(app.library.selected)
+    filtered_entries(app).nth(app.library.selected)
 }
 
 fn rows(app: &AppView, width: usize) -> Vec<ListItem<'static>> {
     let dim = Style::default().fg(app.theme.fg_dim);
-    if app.library.entries.is_empty() {
-        return vec![chrome::empty_placeholder(
-            "no decks or docs yet — ask the model to draft one",
-            &app.theme,
-        )];
-    }
     let now = Utc::now();
-    app.library
-        .entries
-        .iter()
+    filtered_entries(app)
         .map(|entry| {
             let tag = match entry.kind {
                 Kind::Deck => "deck ",
@@ -130,58 +132,95 @@ fn rows(app: &AppView, width: usize) -> Vec<ListItem<'static>> {
         .collect()
 }
 
+#[allow(clippy::too_many_lines)] // browse / export / confirm chrome
 pub fn render(f: &mut Frame, app: &AppView) {
     let area = chrome::popup_area(app, f.area(), "library", chrome::WIDE);
     let content_w = usize::from(area.width.saturating_sub(5 + 2 * chrome::PAD));
-    let total = app.library.entries.len();
-    let (title, hint, tone) = match (app.library.mode, selected(app)) {
-        (Mode::ConfirmDelete, Some(entry)) => (
-            chrome::danger_title(
-                app,
-                format!(
-                    "move \"{}\" to the trash folder?",
-                    chrome::truncate(&entry.title, 32)
-                ),
-                "y confirm · esc cancel",
-            ),
-            "y confirm · esc cancel".to_string(),
+    let total = filtered_entries(app).count();
+    let filtering = !app.library.filter.is_empty();
+    let count = if app.library.mode != Mode::Browse {
+        String::new()
+    } else if filtering {
+        format!("{total} of {}", app.library.entries.len())
+    } else {
+        format!("{total} document{}", if total == 1 { "" } else { "s" })
+    };
+    let (title, hints, tone) = match (app.library.mode, selected(app)) {
+        (Mode::ConfirmDelete, Some(_)) => (
+            "Delete document?".to_string(),
+            vec![hint(ctrl('d'), "delete"), hint(keys::ESC, "cancel")],
             chrome::Tone::Danger,
         ),
         (Mode::ExportAs, Some(entry)) => {
-            let choices = formats(entry.kind)
+            let mut hints: Vec<_> = formats(entry.kind)
                 .iter()
-                .map(|(key, _, label)| format!("{key} {label}"))
-                .collect::<Vec<_>>()
-                .join(SEP);
+                .map(|(key, word, _)| hint(key.to_string(), *word))
+                .collect();
+            hints.push(hint(keys::ESC, "back"));
             (
-                chrome::popup_title(
-                    app,
-                    format!("export \"{}\" as", chrome::truncate(&entry.title, 28)),
-                ),
-                format!("{choices} · esc back"),
+                format!("Export “{}”", entry.title),
+                hints,
                 chrome::Tone::Normal,
             )
         }
         _ => (
-            chrome::popup_title(app, "library"),
-            if total == 0 {
-                "esc close".to_string()
-            } else {
-                format!(
-                    "{}↑↓ · enter open in studio · e export · d delete",
-                    chrome::count_hint(total, "file")
-                )
-            },
+            "Library".to_string(),
+            vec![
+                hint(keys::MOVE, ""),
+                hint(keys::ENTER, "open"),
+                hint(ctrl('e'), "export"),
+                hint(ctrl('d'), "delete"),
+                hint(keys::ESC, if filtering { "clear" } else { "close" }),
+            ],
             chrome::Tone::Normal,
         ),
     };
-    let inner = chrome::render_hinted(f, area, title, &hint, app, true, tone);
+    let mut inner = chrome::render_popup(
+        f,
+        area,
+        &PopupFrame {
+            title: &title,
+            count: &count,
+            hints: &hints,
+            tone,
+            focused: true,
+        },
+        app,
+    );
+    if app.library.mode == Mode::Browse {
+        inner = chrome::render_field(
+            f,
+            inner,
+            "⌕",
+            &app.library.filter,
+            "Type to filter",
+            false,
+            &app.theme,
+        );
+    } else if app.library.mode == Mode::ConfirmDelete {
+        let name = selected(app).map_or_else(String::new, |entry| entry.relative.clone());
+        let detail = format!("“{name}” will be moved to the trash folder.");
+        let (list_area, detail_area) = chrome::split_with_detail(inner, &detail);
+        chrome::render_detail(f, detail_area, &detail, &app.theme);
+        inner = list_area;
+    }
     let list = chrome::standard_list(rows(app, content_w), &app.theme);
     let mut state = ListState::default();
     if total > 0 {
         state.select(Some(app.library.selected.min(total - 1)));
     }
     chrome::render_list(f, list, &mut state, inner, total, 3, app);
+    if total == 0 {
+        let message = if filtering {
+            format!(
+                "No document matches “{}”. Esc clears the filter.",
+                app.library.filter
+            )
+        } else {
+            "No decks or docs yet. Ask the model to draft one.".to_string()
+        };
+        chrome::render_empty(f, inner, &message, &app.theme);
+    }
 }
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) {
@@ -193,14 +232,22 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
 }
 
 fn browse_key(app: &mut AppView, key: KeyEvent) {
-    let total = app.library.entries.len();
+    let total = filtered_entries(app).count();
     let page = 10;
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
-        KeyCode::Esc => app.popup = Popup::None,
-        KeyCode::Up | KeyCode::Char('k') => {
+        KeyCode::Esc => {
+            if app.library.filter.is_empty() {
+                app.popup = Popup::None;
+            } else {
+                app.library.filter.clear();
+                app.library.selected = 0;
+            }
+        }
+        KeyCode::Up => {
             app.library.selected = clamp_cursor(app.library.selected, total, -1);
         }
-        KeyCode::Down | KeyCode::Char('j') => {
+        KeyCode::Down => {
             app.library.selected = clamp_cursor(app.library.selected, total, 1);
         }
         KeyCode::PageUp => app.library.selected = clamp_cursor(app.library.selected, total, -page),
@@ -208,8 +255,18 @@ fn browse_key(app: &mut AppView, key: KeyEvent) {
         KeyCode::Home => app.library.selected = 0,
         KeyCode::End => app.library.selected = total.saturating_sub(1),
         KeyCode::Enter => open_selected(app),
-        KeyCode::Char('e') if selected(app).is_some() => app.library.mode = Mode::ExportAs,
-        KeyCode::Char('d') if selected(app).is_some() => app.library.mode = Mode::ConfirmDelete,
+        KeyCode::Char('e') if ctrl && selected(app).is_some() => app.library.mode = Mode::ExportAs,
+        KeyCode::Char('d') if ctrl && selected(app).is_some() => {
+            app.library.mode = Mode::ConfirmDelete;
+        }
+        KeyCode::Backspace => {
+            app.library.filter.pop();
+            app.library.selected = 0;
+        }
+        KeyCode::Char(c) if !super::is_chord(key) => {
+            app.library.filter.push(c);
+            app.library.selected = 0;
+        }
         _ => {}
     }
 }
@@ -226,11 +283,9 @@ fn open_selected(app: &mut AppView) {
 }
 
 fn confirm_key(app: &mut AppView, key: KeyEvent) {
-    let ctrl_d = key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL);
-    match key.code {
-        KeyCode::Char('y' | 'Y') => delete_selected(app),
-        _ if ctrl_d => delete_selected(app),
-        KeyCode::Esc | KeyCode::Char('n') => app.library.mode = Mode::Browse,
+    match super::classify_confirm_delete_key(key) {
+        Some(super::ConfirmDeleteAction::Yes) => delete_selected(app),
+        Some(super::ConfirmDeleteAction::No) => app.library.mode = Mode::Browse,
         _ => {}
     }
 }

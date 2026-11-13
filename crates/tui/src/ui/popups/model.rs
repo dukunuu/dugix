@@ -2,50 +2,111 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, ListItem, ListState};
+use ratatui::widgets::{Block, Borders, ListItem, ListState, Paragraph};
 
 use crate::app_view::AppView;
-use crate::ui::popups::chrome;
+use crate::ui::popups::chrome::{self, PopupFrame, ctrl, hint, keys};
 use crate::ui::style::glyph;
 use nexus_core::app::{ModelPanel, Popup};
 use nexus_core::provider::Model;
 
+#[allow(clippy::too_many_lines)] // shared frame + two model columns
 pub fn render(f: &mut Frame, app: &mut AppView) {
+    let area = chrome::popup_area(app, f.area(), "model", MODEL_SIZE);
     let (fav_outer, avail_outer) = model_popup_areas(app, f.area());
-    // The two columns resize as one popup: record the combined rect.
-    chrome::popup_area(app, f.area(), "model", MODEL_SIZE);
-
-    let fav_focused = app.model_focus == ModelPanel::Favorites;
     let picking = match app.model_pick_target {
-        nexus_core::app::ModelPickTarget::Session => "picking chat model",
-        nexus_core::app::ModelPickTarget::SwarmPersona(_) => "picking persona model",
+        nexus_core::app::ModelPickTarget::Session => "chat model",
+        nexus_core::app::ModelPickTarget::SwarmPersona(_) => "persona model",
     };
-    let fav_title = chrome::popup_title(app, "favorites");
-    let fav_hint = if app.favorite_models().is_empty() {
-        "no favorites yet — Ctrl+S in the available list".to_string()
-    } else {
-        format!(
-            "{}↑↓ · Ctrl+S unfav · Ctrl+T reason",
-            chrome::count_hint(app.favorite_models().len(), "favorite")
-        )
-    };
-
-    let theme = app.theme;
-    let fav_inner = chrome::render_hinted(
+    let mut count = format!("{} · {picking}", app.model_backend_filter_label());
+    if let Some(efforts) = app.focused_reasoning_hint() {
+        count = format!("{count} · {efforts}");
+    }
+    let hints = [
+        hint(keys::MOVE, ""),
+        hint(keys::ENTER, "pick"),
+        hint(keys::TAB, "pane"),
+        hint(ctrl('s'), "star"),
+        hint(ctrl('t'), "effort"),
+        hint(ctrl('p'), "backend"),
+        hint(
+            keys::ESC,
+            if app.model_filter.is_empty() {
+                "close"
+            } else {
+                "clear"
+            },
+        ),
+    ];
+    let inner = chrome::render_popup(
         f,
-        fav_outer,
-        fav_title,
-        &fav_hint,
+        area,
+        &PopupFrame {
+            title: "Models",
+            count: &count,
+            hints: &hints,
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
         app,
-        fav_focused,
-        chrome::Tone::Normal,
     );
+    let theme = app.theme;
+    chrome::render_field(
+        f,
+        inner,
+        "⌕",
+        &app.model_filter,
+        "Type to filter",
+        false,
+        &theme,
+    );
+    let avail_total = app.available_models().len();
+    let unfiltered_total = app
+        .models
+        .iter()
+        .filter(|model| {
+            app.model_backend_filter
+                .is_none_or(|backend| model.backend == backend)
+                && !app
+                    .favorites
+                    .contains(&nexus_core::app::composite_id(model))
+        })
+        .count();
+    for (area, panel, label) in [
+        (fav_outer, ModelPanel::Favorites, "Favorites".to_string()),
+        (
+            avail_outer,
+            ModelPanel::Available,
+            format!("Available · {avail_total} of {unfiltered_total}"),
+        ),
+    ] {
+        let style = if app.model_focus == panel {
+            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.fg_dim)
+        };
+        f.render_widget(
+            Paragraph::new(format!("{} {label}", glyph::SECTION)).style(style),
+            Rect {
+                height: area.height.min(1),
+                ..area
+            },
+        );
+    }
+    f.render_widget(
+        Paragraph::new(vec![Line::from("│"); usize::from(fav_outer.height)])
+            .style(Style::default().fg(theme.border_dim)),
+        Rect::new(fav_outer.right(), fav_outer.y, 1, fav_outer.height),
+    );
+    let fav_inner = list_inner(fav_outer);
     let fav_items = model_items(app, &app.favorite_models(), row_width(fav_inner), true);
     let fav_total = app.favorite_models().len();
     let mut fav_state = ListState::default();
-    fav_state.select(Some(app.fav_selected));
+    if fav_total > 0 {
+        fav_state.select(Some(app.fav_selected));
+    }
     chrome::render_list(
         f,
         chrome::standard_list(fav_items, &theme),
@@ -57,40 +118,15 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
     );
     // Stash the scroll offset, which is render state, for click mapping.
     app.fav_offset = fav_state.offset();
-
-    let backend = app.model_backend_filter_label();
-    // Show which effort values the focused model accepts, so the Ctrl+T cycle
-    // is predictable before pressing it.
-    let hint = match app.focused_reasoning_hint() {
-        Some(accepts) => accepts.clone(),
-        None => String::new(),
-    };
-    let avail_hint = if app.available_models().is_empty() {
-        "no models match — type to clear the filter, Ctrl+P to switch backend".to_string()
-    } else {
-        format!(
-            "{}type to search · Ctrl+P backend · Ctrl+S fav · Ctrl+T reason · {hint}",
-            chrome::count_hint(app.available_models().len(), "model")
-        )
-    };
-    let avail_title = chrome::filter_title(
-        app,
-        format!("available [{backend}] · {picking}"),
-        &app.model_filter,
-    );
-    let avail_inner = chrome::render_hinted(
-        f,
-        avail_outer,
-        avail_title,
-        &avail_hint,
-        app,
-        !fav_focused,
-        chrome::Tone::Normal,
-    );
+    if fav_total == 0 {
+        chrome::render_empty(f, fav_inner, "No favorites yet. ^S stars a model.", &theme);
+    }
+    let avail_inner = list_inner(avail_outer);
     let avail_items = model_items(app, &app.available_models(), row_width(avail_inner), false);
-    let avail_total = app.available_models().len();
     let mut avail_state = ListState::default();
-    avail_state.select(Some(app.avail_selected));
+    if avail_total > 0 {
+        avail_state.select(Some(app.avail_selected));
+    }
     chrome::render_list(
         f,
         chrome::standard_list(avail_items, &theme),
@@ -101,6 +137,17 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
         app,
     );
     app.avail_offset = avail_state.offset();
+    if avail_total == 0 {
+        chrome::render_empty(
+            f,
+            avail_inner,
+            &format!(
+                "No model matches “{}”. Esc clears the filter, ^P switches backend.",
+                &*app.model_filter
+            ),
+            &theme,
+        );
+    }
 }
 
 /// Row text width inside a panel: the inner rect minus the scrollbar gutter, the
@@ -172,23 +219,33 @@ fn model_items(
 }
 
 /// The model picker's default size, in percent of the screen.
-const MODEL_SIZE: (u16, u16) = (82, 74);
+const MODEL_SIZE: (u16, u16) = chrome::WIDE;
 
-/// Outer rects of the model picker's two columns, shared by the renderer and the
-/// mouse hit-tester so they always agree.
+/// Column rects below the filter, shared by the renderer and the mouse
+/// hit-tester so they always agree.
 pub fn model_popup_areas(app: &AppView, screen: Rect) -> (Rect, Rect) {
     let outer = chrome::popup_rect(app, screen, "model", MODEL_SIZE);
-    let cols =
-        Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).split(outer);
+    let mut inner = Block::default()
+        .borders(Borders::ALL)
+        .padding(ratatui::widgets::Padding::horizontal(chrome::PAD))
+        .inner(outer);
+    if inner.height >= 4 {
+        inner.y += 2;
+        inner.height -= 2;
+    }
+    let cols = Layout::horizontal([Constraint::Ratio(2, 5), Constraint::Ratio(3, 5)])
+        .spacing(1)
+        .split(inner);
     (cols[0], cols[1])
 }
 
-/// The clickable list area inside a bordered popup column.
+/// The clickable list area below a column's heading.
 pub fn list_inner(outer: Rect) -> Rect {
-    Block::default()
-        .borders(Borders::ALL)
-        .padding(ratatui::widgets::Padding::horizontal(chrome::PAD))
-        .inner(outer)
+    Rect {
+        y: outer.y + outer.height.min(1),
+        height: outer.height.saturating_sub(1),
+        ..outer
+    }
 }
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
@@ -198,20 +255,29 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
         KeyCode::Char('s') if ctrl => app.toggle_favorite_focused()?,
         KeyCode::Char('t') if ctrl => app.cycle_reasoning_focused()?,
         KeyCode::Esc => {
-            app.popup = match app.model_pick_target {
-                nexus_core::app::ModelPickTarget::SwarmPersona(_) => Popup::Swarm,
-                nexus_core::app::ModelPickTarget::Session => Popup::None,
-            };
+            if app.model_filter.is_empty() {
+                app.popup = match app.model_pick_target {
+                    nexus_core::app::ModelPickTarget::SwarmPersona(_) => Popup::Swarm,
+                    nexus_core::app::ModelPickTarget::Session => Popup::None,
+                };
+            } else {
+                app.model_filter.clear();
+                app.reset_model_selection();
+            }
         }
         KeyCode::Enter => app.confirm_model()?,
         KeyCode::Tab => app.toggle_model_focus(),
         KeyCode::Up => app.move_model_selection(-1),
         KeyCode::Down => app.move_model_selection(1),
+        KeyCode::PageUp => app.move_model_selection(-10),
+        KeyCode::PageDown => app.move_model_selection(10),
+        KeyCode::Home => app.move_model_selection(i32::MIN / 2),
+        KeyCode::End => app.move_model_selection(i32::MAX / 2),
         KeyCode::Backspace => {
             app.model_filter.backspace();
             app.reset_model_selection();
         }
-        KeyCode::Char(c) if !ctrl => {
+        KeyCode::Char(c) if !super::is_chord(key) => {
             app.model_filter.insert_char(c);
             app.reset_model_selection();
         }

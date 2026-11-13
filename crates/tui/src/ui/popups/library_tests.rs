@@ -85,6 +85,13 @@ impl Fixture {
         self.key(KeyCode::Char(c));
     }
 
+    fn ctrl(&mut self, c: char) {
+        crate::ui::popups::library::handle_key(
+            &mut self.app,
+            KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL),
+        );
+    }
+
     fn screen(&self, width: u16, height: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
@@ -161,20 +168,27 @@ fn the_popup_lists_kind_title_count_and_time_newest_first() {
     f.open();
     let screen = f.screen(100, 22);
     println!("{screen}");
-    assert!(screen.contains(" library "), "{screen}");
+    assert!(screen.contains(" Library "), "{screen}");
     assert_eq!(
         body(&screen),
         [
-            "▸ deck   Launch review",
-            "1 slide · 3 hours ago",
-            "doc    Q3 memo",
-            "3 blocks · yesterday · nexus",
-            "deck   Roadmap 2027",
-            "1 slide · 5 days ago",
+            "⌕ Type to filter".to_string(),
+            "─".repeat(74),
+            "▸ deck   Launch review".to_string(),
+            "1 slide · 3 hours ago".to_string(),
+            "doc    Q3 memo".to_string(),
+            "3 blocks · yesterday · nexus".to_string(),
+            "deck   Roadmap 2027".to_string(),
+            "1 slide · 5 days ago".to_string(),
         ]
     );
     assert!(
-        screen.contains("3 files · ↑↓ · enter open in studio · e export · d delete"),
+        screen
+            .lines()
+            .find(|line| line.contains('╭'))
+            .unwrap()
+            .contains("3 documents")
+            && screen.contains("↑↓ · Enter open · ^E export · ^D delete · Esc close"),
         "{screen}"
     );
 }
@@ -185,12 +199,12 @@ fn an_empty_library_says_so() {
     f.open();
     let screen = f.screen(100, 12);
     assert!(
-        screen.contains("no decks or docs yet — ask the model to draft one"),
+        screen.contains("No decks or docs yet. Ask the model to draft one."),
         "{screen}"
     );
-    assert!(screen.contains("esc close"), "{screen}");
-    f.press('e');
-    f.press('d');
+    assert!(screen.contains("Esc close"), "{screen}");
+    f.ctrl('e');
+    f.ctrl('d');
     f.key(KeyCode::Enter);
     assert_eq!(f.app.library.mode, crate::ui::popups::library::Mode::Browse);
 }
@@ -203,11 +217,11 @@ fn the_cursor_moves_and_clamps() {
     f.key(KeyCode::Up);
     assert_eq!(f.app.library.selected, 0);
     f.key(KeyCode::Down);
-    f.press('j');
+    f.key(KeyCode::Down);
     assert_eq!(f.app.library.selected, 2);
     f.key(KeyCode::Down);
     assert_eq!(f.app.library.selected, 2, "the end clamps");
-    f.press('k');
+    f.key(KeyCode::Up);
     assert_eq!(f.app.library.selected, 1);
     f.key(KeyCode::Home);
     assert_eq!(f.app.library.selected, 0);
@@ -260,11 +274,11 @@ fn e_asks_for_a_format_then_exports_through_the_save_dialog() {
     let dialogs = Scripted::new([Some(out.join("review.pptx")), Some(out.join("memo"))]);
     f.app.dialogs = Box::new(dialogs.clone());
     f.open();
-    f.press('e');
+    f.ctrl('e');
     let screen = f.screen(100, 22);
-    assert!(screen.contains("export \"Launch review\" as"), "{screen}");
+    assert!(screen.contains("Export “Launch review”"), "{screen}");
     assert!(
-        screen.contains("p pptx · f pdf · g png zip · h html · j json · esc back"),
+        screen.contains("p pptx · f pdf · g png · h html · j json · Esc back"),
         "{screen}"
     );
     f.press('z');
@@ -276,7 +290,7 @@ fn e_asks_for_a_format_then_exports_through_the_save_dialog() {
     assert_eq!(f.app.library.mode, crate::ui::popups::library::Mode::Browse);
     assert_eq!(f.app.popup, Popup::Library, "Escape went back, not out");
 
-    f.press('e');
+    f.ctrl('e');
     f.press('p');
     assert_eq!(&std::fs::read(out.join("review.pptx")).unwrap()[..2], b"PK");
     assert!(f.status().starts_with("exported to "), "{}", f.status());
@@ -287,10 +301,10 @@ fn e_asks_for_a_format_then_exports_through_the_save_dialog() {
     assert!(asked[0].start.is_none());
 
     f.key(KeyCode::Down);
-    f.press('e');
+    f.ctrl('e');
     let screen = f.screen(100, 22);
     assert!(
-        screen.contains("w docx · f pdf · m md · h html · esc back"),
+        screen.contains("w docx · f pdf · m md · h html · Esc back"),
         "{screen}"
     );
     f.press('w');
@@ -307,7 +321,7 @@ fn a_cancelled_dialog_exports_nothing() {
     f.library();
     f.app.dialogs = Box::new(Scripted::new([None]));
     f.open();
-    f.press('e');
+    f.ctrl('e');
     f.press('p');
     assert_eq!(f.status(), "export cancelled");
     assert!(!f.files().join("exports").exists());
@@ -320,7 +334,7 @@ fn without_a_desktop_session_the_export_goes_to_the_exports_folder() {
     let dialogs = Scripted::unavailable();
     f.app.dialogs = Box::new(dialogs.clone());
     f.open();
-    f.press('e');
+    f.ctrl('e');
     f.press('f');
     assert!(dialogs.requests().is_empty(), "no dialog was asked for");
     let exported = f.files().join("exports/launch-review.pdf");
@@ -338,13 +352,14 @@ fn d_confirms_before_moving_the_file_to_the_trash() {
     f.library();
     f.open();
     f.key(KeyCode::Down);
-    f.press('d');
+    f.ctrl('d');
     let screen = f.screen(100, 22);
+    assert!(screen.contains("Delete document?"), "{screen}");
     assert!(
-        screen.contains("move \"Q3 memo\" to the trash folder?"),
+        screen.contains("“docs/memo.doc.json” will be moved to the trash folder."),
         "{screen}"
     );
-    assert!(screen.contains("y confirm · esc cancel"), "{screen}");
+    assert!(screen.contains("^D delete · Esc cancel"), "{screen}");
     f.press('x');
     assert_eq!(
         f.app.library.mode,
@@ -353,11 +368,16 @@ fn d_confirms_before_moving_the_file_to_the_trash() {
     f.key(KeyCode::Esc);
     assert_eq!(f.app.library.mode, crate::ui::popups::library::Mode::Browse);
     assert!(f.files().join("docs/memo.doc.json").is_file());
-    f.press('d');
+    f.ctrl('d');
     f.press('n');
     assert!(f.files().join("docs/memo.doc.json").is_file());
-    f.press('d');
+    assert_eq!(
+        f.app.library.mode,
+        crate::ui::popups::library::Mode::ConfirmDelete
+    );
     f.press('y');
+    assert!(f.files().join("docs/memo.doc.json").is_file());
+    f.ctrl('d');
     assert!(!f.files().join("docs/memo.doc.json").exists());
     assert!(
         f.status()
@@ -368,7 +388,7 @@ fn d_confirms_before_moving_the_file_to_the_trash() {
     assert_eq!(f.app.library.entries.len(), 2);
     assert_eq!(f.app.library.selected, 1);
     assert!(std::fs::read_dir(f.files().join(".trash")).unwrap().count() == 1);
-    f.press('d');
+    f.ctrl('d');
     crate::ui::popups::library::handle_key(
         &mut f.app,
         KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),

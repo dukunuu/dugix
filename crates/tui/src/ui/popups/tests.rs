@@ -1756,7 +1756,7 @@ fn find_picker_rows_show_the_name_then_its_folder_from_home() {
         },
     ];
     let out = render_to_string(80, 20, |f| super::files::render(f, &app));
-    assert!(out.contains("find"), "{out}");
+    assert!(out.contains("Find a file to import"), "{out}");
     assert!(out.contains("q3 report.pdf  ~/work"), "{out}");
     assert!(out.contains("reports/  ~"), "{out}");
     assert!(out.contains("Tab complete"), "{out}");
@@ -2201,7 +2201,15 @@ fn files_popup_title_shows_every_tab() {
     ] {
         app.files_tab = tab;
         let screen = render_to_string(100, 30, |f| super::files::render(f, &app));
-        assert!(screen.contains("files · images · scripts"), "{screen}");
+        assert!(screen.contains("Files   Images   Scripts"), "{screen}");
+        assert!(
+            screen
+                .lines()
+                .find(|line| line.contains('╭'))
+                .unwrap()
+                .contains(" Files "),
+            "{screen}"
+        );
     }
 }
 
@@ -2450,9 +2458,15 @@ fn the_model_popup_hit_test_follows_its_resized_rect() {
     let mut app = picker_app(&ids);
     app.core.set_setting("popup_sizes", "model:60x50").unwrap();
     let (fav, avail) = super::model::model_popup_areas(&app, screen_rect);
-    let outer = fav.union(avail);
-    assert_eq!(outer, crate::ui::centered(screen_rect, 60, 50));
-    assert_ne!(outer, crate::ui::centered(screen_rect, 82, 74));
+    let outer = crate::ui::centered(screen_rect, 60, 50);
+    assert_eq!(
+        fav.union(avail),
+        ratatui::layout::Rect::new(outer.x + 2, outer.y + 3, outer.width - 4, outer.height - 4)
+    );
+    assert_ne!(
+        outer,
+        crate::ui::centered(screen_rect, super::chrome::WIDE.0, super::chrome::WIDE.1)
+    );
 
     let screen = render_to_string(150, 40, |f| super::model::render(f, &mut app));
     assert_eq!(app.popup_hit.get().map(|hit| hit.rect), Some(outer));
