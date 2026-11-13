@@ -13,7 +13,7 @@ use std::borrow::Cow;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap,
@@ -364,39 +364,6 @@ pub fn hinted_block<'a>(
     block
 }
 
-/// Clear a popup area and render its rounded frame, returning the inner rect.
-pub fn render_frame<'a>(
-    f: &mut Frame,
-    area: Rect,
-    title: impl Into<Line<'a>>,
-    theme: &Theme,
-    focused: bool,
-    tone: Tone,
-) -> Rect {
-    f.render_widget(Clear, area);
-    let block = popup_block_focused(title, theme, focused, tone);
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-    inner
-}
-
-/// Like [`render_frame`] but with the standard bottom hint bar.
-pub fn render_hinted<'a>(
-    f: &mut Frame,
-    area: Rect,
-    title: impl Into<Line<'a>>,
-    hint: &str,
-    app: &AppView,
-    focused: bool,
-    tone: Tone,
-) -> Rect {
-    f.render_widget(Clear, area);
-    let block = hinted_block(title, hint, app, focused, tone, area.width);
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-    inner
-}
-
 /// One keyboard-labelled action card.
 pub struct Button<'a, A> {
     /// Opaque caller-owned action returned by hit-testing.
@@ -709,82 +676,6 @@ pub fn render_list(
                 .track_style(Style::default().fg(theme.border_dim));
         f.render_stateful_widget(sb, gutter, &mut sb_state);
     }
-}
-
-/// A dim italic placeholder row for empty lists.
-pub fn empty_placeholder(message: &str, theme: &Theme) -> ListItem<'static> {
-    ListItem::new(Line::from(Span::styled(
-        message.to_string(),
-        Style::default()
-            .fg(theme.fg_dim)
-            .add_modifier(Modifier::ITALIC),
-    )))
-}
-
-/// `"12 items · "`-style prefix for footer hints (singular-aware).
-pub fn count_hint(n: usize, label: &str) -> String {
-    format!("{n} {label}{} · ", if n == 1 { "" } else { "s" })
-}
-
-fn titled_line(app: &AppView, text: impl Into<String>, color: Color, hint: &str) -> Line<'static> {
-    let text = text.into();
-    let mut spans = vec![Span::styled(
-        format!(" {text} "),
-        Style::default().fg(color).add_modifier(Modifier::BOLD),
-    )];
-    if !app.settings.hide_hints && !hint.trim().is_empty() {
-        spans.push(Span::styled(
-            format!("— {hint} "),
-            Style::default().fg(app.theme.fg_dim),
-        ));
-    }
-    Line::from(spans)
-}
-
-/// The standard popup title: the bold accent name.
-pub fn popup_title(app: &AppView, name: impl Into<String>) -> Line<'static> {
-    Line::from(crate::ui::style::title(&app.theme, name))
-}
-
-/// A title for text-entry popups: label + live value + trailing cursor.
-pub fn input_title(
-    app: &AppView,
-    label: impl Into<String>,
-    value: impl AsRef<str>,
-    hint: &str,
-) -> Line<'static> {
-    let label = label.into();
-    let mut spans = vec![Span::styled(
-        format!(" {label}: "),
-        Style::default()
-            .fg(app.theme.accent)
-            .add_modifier(Modifier::BOLD),
-    )];
-    spans.push(Span::styled(
-        format!("{}▏", value.as_ref()),
-        Style::default().fg(app.theme.fg),
-    ));
-    if !app.settings.hide_hints && !hint.trim().is_empty() {
-        spans.push(Span::styled(
-            format!("  ({hint}) "),
-            Style::default().fg(app.theme.fg_dim),
-        ));
-    }
-    Line::from(spans)
-}
-
-fn confirmish_title(
-    app: &AppView,
-    text: impl Into<String>,
-    color: Color,
-    hint: &str,
-) -> Line<'static> {
-    titled_line(app, text, color, hint)
-}
-
-/// Destructive prompt title (error color).
-pub fn danger_title(app: &AppView, text: impl Into<String>, hint: &str) -> Line<'static> {
-    confirmish_title(app, text, app.theme.error, hint)
 }
 
 /// Max rows the detail strip will grow to before truncating.

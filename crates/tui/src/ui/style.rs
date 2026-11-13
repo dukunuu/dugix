@@ -212,16 +212,6 @@ pub fn highlighted_lines(
     lines
 }
 
-/// A popup or panel title: the name in bold accent.
-pub fn title(theme: &Theme, name: impl Into<String>) -> Span<'static> {
-    Span::styled(
-        format!(" {} ", name.into()),
-        Style::default()
-            .fg(theme.accent)
-            .add_modifier(Modifier::BOLD),
-    )
-}
-
 /// `▍title ─────` — the one section header, ruled out to `width`.
 pub fn section(theme: &Theme, name: &str, width: usize) -> Line<'static> {
     let head = format!("{} {name} ", glyph::SECTION);
