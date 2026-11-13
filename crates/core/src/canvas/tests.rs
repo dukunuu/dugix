@@ -168,8 +168,15 @@ fn thumbnails_are_cached_by_revision_and_rendered_lazily() {
 
     let deck_thumb2 = ensure_thumbnail(&space.0, deck2).unwrap();
     assert_eq!(Some(deck_thumb2), deck2.thumbnail.clone());
-    assert!(!deck_thumb.exists());
-    assert!(ensure_thumbnail(&space.0, deck).is_err());
+    assert!(
+        deck_thumb.is_file(),
+        "a superseded render stays while conversations may still replay it"
+    );
+    assert_eq!(
+        ensure_thumbnail(&space.0, deck).unwrap(),
+        deck_thumb,
+        "a stale entry still has its own revision's thumbnail"
+    );
 }
 
 #[test]

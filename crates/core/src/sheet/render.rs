@@ -48,23 +48,16 @@ pub fn view(
         !output.is_symlink(),
         "render cache must not contain symlinks"
     );
-    if !output.is_file() {
+    if output.is_file() {
+        crate::deck::render::touch_render(&output);
+    } else {
         let assets = path.parent().context("sheet folder")?.join("assets");
         let bytes = png(sheet, tab, rect, Some(&assets))?;
         crate::deck::write_atomic(&output, &bytes)?;
     }
-    for entry in std::fs::read_dir(&directory)? {
-        let entry = entry?;
-        let old = entry.file_name().to_string_lossy().into_owned();
-        if old.starts_with("range-")
-            && Path::new(&old)
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("png"))
-            && !old.starts_with(&format!("range-{}-", &revision[..8]))
-        {
-            std::fs::remove_file(entry.path())?;
-        }
-    }
+    crate::deck::render::prune_superseded(&directory, |old| {
+        old.starts_with("range-") && !old.starts_with(&format!("range-{}-", &revision[..8]))
+    });
     let note = if rect == requested {
         String::new()
     } else {

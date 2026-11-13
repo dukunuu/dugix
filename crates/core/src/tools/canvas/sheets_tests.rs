@@ -280,7 +280,10 @@ async fn sheets_view_cache_png_aspect_and_clipping() {
     edit(&f, json!([{"op":"set_title","title":"New revision"}])).await;
     let next = call(&f, "view", json!({"path":PATH})).await;
     assert_eq!(f.images(&next).len(), 1);
-    assert!(!images[0].exists(), "stale revisions are removed");
+    assert!(
+        images[0].is_file(),
+        "an earlier view's render stays while the conversation may replay it"
+    );
 }
 
 #[tokio::test]

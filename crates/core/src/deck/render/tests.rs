@@ -350,7 +350,7 @@ fn imported_deck_fonts_are_registered_under_their_family() {
 }
 
 #[test]
-fn cache_names_by_revision_prunes_old_ones_and_keeps_snapshots() {
+fn cache_names_by_revision_prunes_stale_old_ones_and_keeps_snapshots() {
     let root = std::env::temp_dir().join(format!("nexus-render-{}", uuid::Uuid::new_v4()));
     let files = root.join("files");
     let path = files.join("decks/a.deck.json");
@@ -366,7 +366,25 @@ fn cache_names_by_revision_prunes_old_ones_and_keeps_snapshots() {
     deck.title = "Changed".into();
     let second = render_cached(&deck, &path, &files, &["s1".into()], false).unwrap();
     assert_ne!(first, second);
-    assert!(!files.join(&first).exists(), "old revision is pruned");
+    assert!(
+        files.join(&first).is_file(),
+        "a superseded render stays while conversations may still replay it"
+    );
+    assert!(files.join(&second).is_file());
+    let directory = files.join(&second).parent().unwrap().to_path_buf();
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(3 * 24 * 60 * 60);
+    let second_name = Path::new(&second)
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    prune_superseded_at(&directory, later, |old| {
+        !old.starts_with("snap-") && old != second_name
+    });
+    assert!(
+        !files.join(&first).exists(),
+        "a stale old revision is pruned"
+    );
     assert!(files.join(&second).is_file());
     assert!(files.join(&snapshot).is_file(), "snapshots are durable");
     let sheet = render_cached(&deck, &path, &files, &["s1".into(), "s2".into()], true).unwrap();

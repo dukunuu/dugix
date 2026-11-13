@@ -604,7 +604,7 @@ fn relative(files: &Path, output: &Path) -> Result<String> {
 }
 
 /// Write a render (or contact sheet) and return its path relative to `files`,
-/// ready for a `![alt](path)` reference; older revisions are removed.
+/// ready for a `![alt](path)` reference; older revisions are removed once stale.
 pub fn render_cached(
     deck: &Deck,
     deck_path: &Path,
@@ -621,7 +621,9 @@ pub fn render_cached(
     });
     let name = format!("{key}-{}.png", &deck.revision()[..8]);
     let output = directory.join(&name);
-    if !output.is_file() {
+    if output.is_file() {
+        touch_render(&output);
+    } else {
         let assets = deck_path.parent().context("deck folder")?.join("assets");
         let bytes = if sheet {
             sheet_at(deck, ids, 3, Some(&assets))?
@@ -630,16 +632,57 @@ pub fn render_cached(
         };
         super::write_atomic(&output, &bytes)?;
     }
-    for entry in std::fs::read_dir(&directory)?.flatten() {
-        let old = entry.file_name().to_string_lossy().into_owned();
-        if old.starts_with(&format!("{key}-"))
-            && Path::new(&old).extension().is_some_and(|ext| ext == "png")
-            && old != name
-        {
+    prune_superseded(&directory, |old| {
+        old.starts_with(&format!("{key}-")) && old != name
+    });
+    relative(files, &output)
+}
+
+/// How long a superseded render stays on disk. A conversation replays the image
+/// behind every earlier `view` result, so deleting it sooner changes the
+/// replayed history and misses the provider's prompt cache from there on.
+const SUPERSEDED_RENDER_TTL: std::time::Duration = std::time::Duration::from_hours(48);
+
+/// Mark a long-lived render that is shown again as just used, so its age
+/// counts from the latest view. Young renders are left alone.
+pub(crate) fn touch_render(output: &Path) {
+    let now = std::time::SystemTime::now();
+    let aging = std::fs::metadata(output)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|modified| now.duration_since(modified).ok())
+        .is_some_and(|age| age >= SUPERSEDED_RENDER_TTL / 2);
+    if aging && let Ok(file) = std::fs::File::options().write(true).open(output) {
+        let _ = file.set_modified(now);
+    }
+}
+
+/// Remove the PNGs in `directory` that `superseded` names, once they are older
+/// than every provider's cache lifetime.
+pub(crate) fn prune_superseded(directory: &Path, superseded: impl Fn(&str) -> bool) {
+    prune_superseded_at(directory, std::time::SystemTime::now(), superseded);
+}
+
+pub(crate) fn prune_superseded_at(
+    directory: &Path,
+    now: std::time::SystemTime,
+    superseded: impl Fn(&str) -> bool,
+) {
+    for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let png = Path::new(&name)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("png"));
+        let expired = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age >= SUPERSEDED_RENDER_TTL);
+        if png && expired && superseded(&name) {
             let _ = std::fs::remove_file(entry.path());
         }
     }
-    relative(files, &output)
 }
 
 /// Forget one revision's cached renders, for when a referenced image has arrived.
