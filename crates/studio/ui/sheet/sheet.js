@@ -158,6 +158,28 @@ export function mount(shared) {
     },
   };
   api.grid = gridController(api);
+  // Zoom is a view setting kept between sessions; it never touches the file.
+  const ZOOM = { min: .5, max: 2, key: 'nexus-sheet-zoom' };
+  const clampZoom = value => Math.max(ZOOM.min, Math.min(ZOOM.max, value));
+  function setZoom(value, { step = .05, point = null, quiet = false } = {}) {
+    // Whole percents: 1.2, not 1.2000000000000002.
+    const z = clampZoom(Math.round(Math.round(value / step) * step * 100) / 100);
+    if (z === api.grid.geometry.z) return;
+    api.grid.setZoom(z, point); api.editor.place();
+    try { localStorage.setItem(ZOOM.key, String(z)); } catch { /* storage may be unavailable */ }
+    if (!quiet) toast(`Zoom ${Math.round(z * 100)}%`);
+  }
+  try { const stored = Number(localStorage.getItem(ZOOM.key)); if (stored >= ZOOM.min && stored <= ZOOM.max) api.grid.setZoom(stored); } catch { /* storage may be unavailable */ }
+  // A pinch is many small control-wheels: keep its unrounded zoom so they add up.
+  let pinch = null, pinchTimer = 0;
+  api.grid.scroll.addEventListener('wheel', e => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    pinch = clampZoom((pinch ?? api.grid.geometry.z) * Math.exp(-e.deltaY * (e.deltaMode === 1 ? 16 : 1) * .01));
+    setZoom(pinch, { step: .01, point: { x: e.clientX, y: e.clientY }, quiet: true });
+    clearTimeout(pinchTimer);
+    pinchTimer = setTimeout(() => { pinch = null; toast(`Zoom ${Math.round(api.grid.geometry.z * 100)}%`); }, 250);
+  }, { passive: false, signal: lifetime.signal });
   api.editor = editorController(api);
   api.menus = menusController(api);
   api.clipboard = clipboardController(api);
@@ -593,6 +615,7 @@ export function mount(shared) {
   document.addEventListener('keydown', e => {
     if (document.querySelector('dialog[open]') || !document.querySelector('#library')?.hidden) return;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); toast('Every change is saved to the sheet file as you make it.'); return; }
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && ['=', '+', '-', '0'].includes(e.key)) { e.preventDefault(); setZoom(e.key === '0' ? 1 : api.grid.geometry.z + (e.key === '-' ? -.1 : .1)); return; }
     if (api.charts.key(e)) return;
     if (!state.sel || (e.target !== api.grid.scroll && e.target !== document.body)) return;
     const act = keyAction(e, {});

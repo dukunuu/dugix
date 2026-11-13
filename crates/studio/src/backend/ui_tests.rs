@@ -259,14 +259,16 @@ fn the_grid_draws_cell_text_with_the_metrics_the_core_sizes_rows_with() {
         .lines()
         .find(|line| line.starts_with(".sg-text {"))
         .expect("the cell text rule");
+    let zoomed = |px: f64| format!("calc({px}px * var(--sg-z, 1))");
     assert!(
-        text.contains(&format!("line-height:{LINE_HEIGHT}px")),
+        text.contains(&format!("line-height:{}", zoomed(LINE_HEIGHT))),
         "{text}"
     );
     assert!(
-        text.contains(&format!("padding:0 {PAD_X}px {PAD_Y}px")),
+        text.contains(&format!("padding:0 {} {}", zoomed(PAD_X), zoomed(PAD_Y))),
         "{text}"
     );
+    assert!(css.contains(&format!("font-size:{};", zoomed(FONT_SIZE))));
     assert!(css.contains(&format!("font:{FONT_SIZE}px/1 var(--s-font")));
     let mock =
         std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("ui-dev/sheet-mock.js"))

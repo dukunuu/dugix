@@ -56,7 +56,7 @@ export function interactController(api) {
     if (d.kind === 'fill' && d.target) {
       api.apply([M.op.fill(api.tabName(), M.rectStr(d.src), M.rectStr(d.target))]);
       api.select(cellsSel(d.target));
-    } else if (d.kind === 'resize' && d.size && d.size !== d.start) api.resize(d.axis, d.index, d.size);
+    } else if (d.kind === 'resize' && d.size && d.size !== d.start) api.resize(d.axis, d.index, Math.max(1, Math.round(d.size / grid.geometry.z)));
   }
 
   scroll.addEventListener('pointerdown', e => {

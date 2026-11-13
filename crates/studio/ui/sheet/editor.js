@@ -40,10 +40,10 @@ export function editorController(api) {
   function place() {
     if (!edit) return;
     const r = api.grid.screenRect(edit.row, edit.col), host = api.grid.root.getBoundingClientRect();
-    const lines = cell.value.split('\n'), widest = Math.max(...lines.map(l => api.grid.measure(l, false)));
+    const z = api.grid.geometry.z, lines = cell.value.split('\n'), widest = Math.max(...lines.map(l => api.grid.measure(l, false))) * z;
     const left = r.left - host.left, top = r.top - host.top;
     const width = Math.min(Math.max(r.width, widest + 18), Math.max(r.width, host.width - left - 12));
-    Object.assign(cell.style, { left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${Math.max(r.height, lines.length * 17 + 7)}px` });
+    Object.assign(cell.style, { left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${Math.max(r.height, lines.length * 17 * z + 7)}px` });
   }
   const mirror = from => { const other = from === cell ? text : cell; if (other.value !== from.value) other.value = from.value; };
   cell.addEventListener('input', () => { mirror(cell); if (edit) edit.point = null; hidePoint(); place(); });

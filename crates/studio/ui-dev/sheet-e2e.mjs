@@ -472,6 +472,40 @@ const tests = {
     assert.deepEqual((await lastApply(page)).ops[0], { op: 'fill', tab: 'Budget', from: 'F2', to: 'F2:F10' });
     await page.close();
   },
+  async zooming() {
+    const page = await open('dark');
+    const before = await A(page, 'B2').boundingBox();
+    await click(page, 'B2');
+    await page.keyboard.press(`${MOD}+=`); await page.keyboard.press(`${MOD}+=`); await settle(page);
+    const big = await A(page, 'B2').boundingBox();
+    assert.ok(Math.abs(big.width / before.width - 1.2) < .02 && Math.abs(big.height / before.height - 1.2) < .06, 'cells grow with the zoom');
+    assert.equal(await A(page, 'B2').evaluate(n => getComputedStyle(n).fontSize), '15.6px', 'text grows with them');
+    assert.equal(await page.evaluate(() => localStorage.getItem('nexus-sheet-zoom')), '1.2', 'the zoom is remembered');
+    // A dragged border stores the unzoomed width.
+    await click(page, 'C3');
+    assert.equal(await page.locator('#sheet-app .sg-addr').inputValue(), 'C3');
+    const c = await page.locator('#sheet-app .sg-ch', { hasText: /^C$/ }).boundingBox();
+    const start = (await tabOf(page)).cols?.C ?? 100;
+    await page.mouse.move(c.x + c.width - 1, c.y + c.height / 2); await page.mouse.down();
+    await page.mouse.move(c.x + c.width + 59, c.y + c.height / 2, { steps: 4 }); await page.mouse.up(); await settle(page);
+    assert.equal((await lastApply(page)).ops[0].width, start + 50, '60 screen pixels at 120% are 50 sheet pixels');
+    await page.keyboard.press(`${MOD}+-`); await settle(page);
+    assert.equal(await page.evaluate(() => localStorage.getItem('nexus-sheet-zoom')), '1.1');
+    await page.keyboard.press(`${MOD}+0`); await settle(page);
+    assert.equal(Math.round((await A(page, 'B2').boundingBox()).width), Math.round(before.width), 'Mod+0 goes back to 100%');
+    // A pinch is many small control-wheels; they add up.
+    const under = await A(page, 'D6').boundingBox(), spot = { x: under.x + under.width / 2, y: under.y + under.height / 2 };
+    await page.mouse.move(spot.x, spot.y);
+    await page.keyboard.down('Control');
+    for (let i = 0; i < 20; i++) await page.mouse.wheel(0, -1);
+    await page.keyboard.up('Control'); await settle(page);
+    const pinched = Number(await page.evaluate(() => localStorage.getItem('nexus-sheet-zoom')));
+    assert.ok(pinched > 1.15 && pinched < 1.3, `twenty small pinch steps add up (${pinched})`);
+    const after = await A(page, 'D6').boundingBox();
+    assert.ok(spot.x >= after.x && spot.x <= after.x + after.width && spot.y >= after.y && spot.y <= after.y + after.height, 'the cell under the pointer stays under it');
+    await page.evaluate(() => localStorage.removeItem('nexus-sheet-zoom'));
+    await page.close();
+  },
   async resizing() {
     const page = await open('dark');
     // Drag the border between C and D.

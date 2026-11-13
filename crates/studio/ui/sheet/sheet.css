@@ -79,12 +79,12 @@ body.sheet-mode { overflow:hidden; background:var(--canvas); }
 .sg-main { position:absolute; }
 .sg-cell.fz-b, .sg-rh.fz-b { border-bottom:2px solid color-mix(in srgb, var(--s-fg) 35%, var(--sg-line)); }
 .sg-cell.fz-r, .sg-ch.fz-r { border-right:2px solid color-mix(in srgb, var(--s-fg) 35%, var(--sg-line)); }
-.sg-cell { position:absolute; box-sizing:border-box; display:flex; align-items:flex-end; overflow:hidden; background:var(--s-bg); border-right:1px solid var(--sg-line); border-bottom:1px solid var(--sg-line); }
+.sg-cell { position:absolute; box-sizing:border-box; display:flex; font-size:calc(13px * var(--sg-z, 1)); align-items:flex-end; overflow:hidden; background:var(--s-bg); border-right:1px solid var(--sg-line); border-bottom:1px solid var(--sg-line); }
 /* Padding and line height match core sheet/layout.rs (PAD_X 6, PAD_Y 4, LINE_HEIGHT 19), which sizes wrapped rows. */
-.sg-text { display:block; box-sizing:border-box; max-width:100%; padding:0 6px 4px; overflow:hidden; white-space:pre; text-overflow:clip; line-height:19px; }
+.sg-text { display:block; box-sizing:border-box; max-width:100%; padding:0 calc(6px * var(--sg-z, 1)) calc(4px * var(--sg-z, 1)); overflow:hidden; white-space:pre; text-overflow:clip; line-height:calc(19px * var(--sg-z, 1)); }
 .sg-cell.al-left { justify-content:flex-start; } .sg-cell.al-right { justify-content:flex-end; } .sg-cell.al-center { justify-content:center; }
 .sg-cell.va-top { align-items:flex-start; } .sg-cell.va-middle { align-items:center; }
-.sg-cell.va-top .sg-text { padding-top:4px; padding-bottom:0; } .sg-cell.va-middle .sg-text { padding-top:0; padding-bottom:0; }
+.sg-cell.va-top .sg-text { padding-top:calc(4px * var(--sg-z, 1)); padding-bottom:0; } .sg-cell.va-middle .sg-text { padding-top:0; padding-bottom:0; }
 /* Overflowing text spills over the empty cells beside it and clips at the first full one. */
 .sg-cell.ov { overflow:visible; z-index:1; }
 .sg-cell.ov .sg-text { max-width:none; flex:none; pointer-events:none; }
@@ -134,7 +134,7 @@ body.sheet-mode { overflow:hidden; background:var(--canvas); }
 .sg-fill { border:2px dashed var(--accent); background:color-mix(in srgb, var(--accent) 8%, transparent); }
 .sg-resize { background:var(--accent); z-index:6; }
 .sg-handle { pointer-events:auto; z-index:5; width:9px; height:9px; background:var(--accent); border:1px solid var(--s-bg); cursor:crosshair; }
-.sg-cell-editor { position:absolute; z-index:8; box-sizing:border-box; resize:none; overflow:hidden; white-space:pre; border:2px solid var(--accent); border-radius:0; background:var(--s-bg); color:var(--s-fg); padding:2px 4px; font:13px/19px var(--s-font, system-ui, -apple-system, "Segoe UI", sans-serif); box-shadow:var(--shadow-sm); }
+.sg-cell-editor { position:absolute; z-index:8; box-sizing:border-box; resize:none; overflow:hidden; white-space:pre; border:2px solid var(--accent); border-radius:0; background:var(--s-bg); color:var(--s-fg); padding:2px 4px; font:calc(13px * var(--sg-z, 1))/calc(19px * var(--sg-z, 1)) var(--s-font, system-ui, -apple-system, "Segoe UI", sans-serif); box-shadow:var(--shadow-sm); }
 .sg-cell-editor:focus { outline:none; }
 .sg-overlay { position:fixed; inset:0; pointer-events:none; z-index:40; }
 .sg-overlay > * { pointer-events:auto; }

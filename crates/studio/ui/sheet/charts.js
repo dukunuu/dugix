@@ -21,7 +21,7 @@ export function chartsController(api) {
   let selected = null, inserting = null, drag = null, nudgeTimer = 0, nudgeId = null;
   const chartOf = id => api.tab()?.charts?.find(c => c.id === id);
   const showing = id => ({ ...chartOf(id), ...previews.get(id) });
-  const axes = () => api.grid.geometry.axes;
+  const axes = () => api.grid.geometry.base, zoom = () => api.grid.geometry.z;
   const send = (id, patch) => {
     if (!chartOf(id)) return;
     if (!rollback.has(id)) rollback.set(id, structuredClone(chartOf(id)));
@@ -52,8 +52,8 @@ export function chartsController(api) {
         menu.addEventListener('click', e => { e.stopPropagation(); select(chart.id); menuFor(chart.id, menu.getBoundingClientRect()); });
         entry = { node, image, svg: null }; nodes.set(chart.id, entry); layer.append(node);
       }
-      const box = M.chartBox(showing(chart.id), axes());
-      Object.assign(entry.node.style, { left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px` });
+      const box = M.chartBox(showing(chart.id), axes()), z = zoom();
+      Object.assign(entry.node.style, { left: `${box.left * z}px`, top: `${box.top * z}px`, width: `${box.width * z}px`, height: `${box.height * z}px` });
       entry.node.classList.toggle('selected', selected === chart.id);
       const svg = api.state.charts[api.state.tabId]?.find(c => c.id === chart.id)?.svg || '';
       if (svg !== entry.svg) {
@@ -147,7 +147,7 @@ export function chartsController(api) {
   function move(e) {
     if (!drag) return;
     const { box: b, side } = drag, scroll = api.grid.position;
-    const dx = e.clientX - drag.x + scroll.left - drag.scroll.left, dy = e.clientY - drag.y + scroll.top - drag.scroll.top;
+    const dx = (e.clientX - drag.x + scroll.left - drag.scroll.left) / zoom(), dy = (e.clientY - drag.y + scroll.top - drag.scroll.top) / zoom();
     let { left, top, width, height } = b;
     if (!side) { left = Math.max(0, left + dx); top = Math.max(0, top + dy); }
     else {

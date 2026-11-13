@@ -84,6 +84,15 @@ export function makeAxis(def, overrides, count) {
   };
   return { pos, size, at, total, count, def };
 }
+/** Axes as the screen shows them at a zoom: whole-pixel positions, the same indices. */
+export function scaleAxes(axes, z) {
+  if (z === 1) return axes;
+  const scale = a => {
+    const pos = i => Math.round(a.pos(i) * z);
+    return { pos, size: i => pos(i + 1) - pos(i), at: offset => a.at(offset / z), total: pos(a.count + 1), count: a.count, def: a.def * z };
+  };
+  return { cols: scale(axes.cols), rows: scale(axes.rows) };
+}
 /** The axes of a tab: column widths are stored by letters, row heights by number.
  *  `auto` holds the derived heights of wrapped rows; a user-set height wins. */
 export function axesOf(tab, extent, auto = null) {

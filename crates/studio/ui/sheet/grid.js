@@ -34,7 +34,8 @@ export function gridController(api) {
   for (const name of ['copy', 'remote', 'point', 'fill', 'resize', 'handle']) { boxes[name] = el('div', `sg-box sg-${name}`); boxes[name].hidden = true; overlay.append(boxes[name]); }
   boxes.handle.setAttribute('aria-label', 'Fill handle');
 
-  const g = { tab: null, axes: null, extent: { rows: 100, cols: 26 }, headerW: 46, fr: 0, fc: 0, fw: 0, fh: 0, merges: [], sig: '' };
+  // `axes` are screen pixels at zoom `z`; `base` are the sheet's stored sizes.
+  const g = { tab: null, axes: null, base: null, z: 1, extent: { rows: 100, cols: 26 }, headerW: 46, fr: 0, fc: 0, fw: 0, fh: 0, merges: [], sig: '' };
   const cells = new Map(), heads = new Map();
   let shown = null, frame = 0, pins = new Map(), flash = new Set(), measureCtx = null;
 
@@ -48,12 +49,13 @@ export function gridController(api) {
     if (!tab) return;
     g.extent = api.extent();
     const auto = api.autoRows();
-    g.axes = M.axesOf(tab, g.extent, auto);
+    g.base = M.axesOf(tab, g.extent, auto);
+    g.axes = M.scaleAxes(g.base, g.z);
     g.headerW = headerWidth(g.extent.rows);
     g.fr = tab.frozen?.rows || 0; g.fc = tab.frozen?.cols || 0;
     g.fw = g.axes.cols.pos(g.fc + 1); g.fh = g.axes.rows.pos(g.fr + 1);
     g.merges = M.mergesOf(tab);
-    const sig = JSON.stringify([tab.id, g.extent, tab.cols, tab.rows, auto, g.fr, g.fc, tab.merges, g.headerW]);
+    const sig = JSON.stringify([tab.id, g.extent, tab.cols, tab.rows, auto, g.fr, g.fc, tab.merges, g.headerW, g.z]);
     if (sig !== g.sig) {
       g.sig = sig;
       for (const { node } of cells.values()) node.remove();
@@ -61,6 +63,7 @@ export function gridController(api) {
       cells.clear(); heads.clear(); shown = null;
     }
     const w = g.headerW, style = scroll.style;
+    root.style.setProperty('--sg-z', String(g.z));
     style.setProperty('--sg-hw', `${w}px`); style.setProperty('--sg-hh', `${HEADER_H}px`);
     inner.style.width = `${w + g.axes.cols.total + 24}px`; inner.style.height = `${HEADER_H + g.axes.rows.total}px`;
     colbar.style.width = inner.style.width;
@@ -313,8 +316,19 @@ export function gridController(api) {
     }
   }
   /** Rows the viewport holds, for Page Up and Page Down. */
-  const pageRows = () => Math.max(1, Math.floor((scroll.clientHeight - HEADER_H) / M.DEFAULT_ROW) - 1);
-  /** Width in pixels of the widest text in a column among the cells loaded, for double-click-to-fit. */
+  const pageRows = () => Math.max(1, Math.floor((scroll.clientHeight - HEADER_H) / (M.DEFAULT_ROW * g.z)) - 1);
+  /** Change the zoom, keeping what is under `point` (or the first unfrozen cell) in place. */
+  function setZoom(z, point = null) {
+    if (z === g.z) return;
+    if (!g.axes) { g.z = z; return; }
+    const b = scroll.getBoundingClientRect();
+    const px = point ? Math.max(g.fw, point.x - b.left - g.headerW) : g.fw, py = point ? Math.max(g.fh, point.y - b.top - HEADER_H) : g.fh;
+    const sx = (scroll.scrollLeft + px) / g.z, sy = (scroll.scrollTop + py) / g.z;
+    g.z = z;
+    renderAll();
+    scroll.scrollLeft = sx * z - (point ? px : g.fw); scroll.scrollTop = sy * z - (point ? py : g.fh);
+  }
+  /** Width in unzoomed pixels of the widest text in a column among the cells loaded, for double-click-to-fit. */
   function measure(text, bold) {
     measureCtx ||= document.createElement('canvas').getContext('2d');
     measureCtx.font = `${bold ? '700 ' : ''}13px ${getComputedStyle(scroll).fontFamily}`;
@@ -322,7 +336,7 @@ export function gridController(api) {
   }
 
   return {
-    root, scroll, overlay, layout, render, renderAll, paintSelection, paintBoxes, cellAt, edgeAt, screenRect, reveal, pageRows, measure, box,
+    root, scroll, overlay, layout, render, renderAll, paintSelection, paintBoxes, cellAt, edgeAt, screenRect, reveal, pageRows, measure, box, setZoom,
     geometry: g, resizeGuide: boxes.resize,
     setPins(map) { pins = map; },
     setFlash(set) { flash = set; },
