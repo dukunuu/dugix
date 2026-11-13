@@ -36,6 +36,10 @@
       return next;
     }
     if (op.op === 'apply_design') return next;
+    if (op.op === 'set_style') {
+      next.theme.text_styles = { ...next.theme.text_styles, [op.style]: { ...next.theme.text_styles?.[op.style], ...op.patch } };
+      return next;
+    }
     return model.applyOps(next, [op]);
   }
   function apply(ops) {

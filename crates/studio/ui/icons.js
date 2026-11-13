@@ -48,6 +48,7 @@ const paths = {
   'align-left': 'M3 5h18M3 10h12M3 15h18M3 20h12',
   'align-center': 'M3 5h18M6 10h12M3 15h18M6 20h12',
   'align-right': 'M3 5h18M9 10h12M3 15h18M9 20h12',
+  'align-justify': 'M3 5h18M3 10h18M3 15h18M3 20h12',
   bold: 'M6 3h8a4 4 0 0 1 0 8H6Zm0 8h9a5 5 0 0 1 0 10H6Z',
   italic: 'M10 3h10M4 21h10M15 3 9 21', chevron: 'm8 4 8 8-8 8',
   send: 'm12 20 0-16m-6 6 6-6 6 6', check: 'm4 12 5 5L20 5', x: 'm5 5 14 14M5 19 19 5',

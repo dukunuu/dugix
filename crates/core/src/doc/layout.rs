@@ -117,7 +117,6 @@ impl Composer<'_, '_> {
     fn font(&self, name: &str) -> ResolvedFont {
         self.ts.theme.resolve_font(name, &Font::default())
     }
-    #[allow(clippy::too_many_lines)]
     /// Lines of `source` in `style`; `code` colors literal text by language
     /// syntax.
     fn text(
@@ -127,6 +126,19 @@ impl Composer<'_, '_> {
         x: f64,
         width: f64,
         code: Option<&str>,
+    ) -> Vec<Line> {
+        self.text_lines(source, style, x, width, code, true)
+    }
+    /// `justify: false` keeps a ragged edge whatever the style says, as table cells do.
+    #[allow(clippy::too_many_lines)]
+    fn text_lines(
+        &mut self,
+        source: &str,
+        style: &str,
+        x: f64,
+        width: f64,
+        code: Option<&str>,
+        justify: bool,
     ) -> Vec<Line> {
         let font = self.font(style);
         let syntax = code.map_or_else(Vec::new, |lang| crate::highlight::highlight(source, lang));
@@ -145,6 +157,8 @@ impl Composer<'_, '_> {
             height: font.size * font.line_height,
         }];
         let mut used = 0.0;
+        // Lines that end at an explicit newline; justification leaves them ragged.
+        let mut hard = Vec::new();
         for mut run in runs {
             if let Some(id) = &run.footnote {
                 let number = self
@@ -230,6 +244,7 @@ impl Composer<'_, '_> {
                     piece_at += text.len();
                 }
                 if newline {
+                    hard.push(lines.len() - 1);
                     lines.push(Line {
                         items: Vec::new(),
                         height: font.size * font.line_height,
@@ -238,18 +253,63 @@ impl Composer<'_, '_> {
                 }
             }
         }
-        for line in &mut lines {
+        let count = lines.len();
+        for (index, line) in lines.iter_mut().enumerate() {
             let used = line.items.last().map_or(0.0, |i| i.x + i.w - x);
             let offset = match font.align {
-                Align::Left => 0.0,
+                Align::Left | Align::Justify => 0.0,
                 Align::Center => (width - used) / 2.0,
                 Align::Right => width - used,
             };
             for item in &mut line.items {
                 item.x += offset;
             }
+            if justify
+                && font.align == Align::Justify
+                && index + 1 < count
+                && !hard.contains(&index)
+            {
+                self.justify(line, x, width, font.letter_spacing * font.size);
+            }
         }
         lines
+    }
+    /// Spread a line's slack over its word gaps so it ends flush right.
+    fn justify(&mut self, line: &mut Line, x: f64, width: f64, spacing: f64) {
+        let ends_in_space =
+            |item: &Item| matches!(&item.paint, Paint::Run(run) if run.text.ends_with(' '));
+        let Some(last) = line.items.last() else {
+            return;
+        };
+        // The trailing space hangs past the edge, as in the browser.
+        let end = match &last.paint {
+            Paint::Run(run) if run.text.ends_with(' ') => {
+                let face = Face {
+                    family: run.family.clone(),
+                    weight: run.weight,
+                    italic: run.italic,
+                    spacing,
+                };
+                last.x + self.ts.advance(&face, run.size, run.text.trim_end())
+            }
+            _ => last.x + last.w,
+        };
+        let count = line.items.len();
+        let gaps = line.items[..count - 1]
+            .iter()
+            .filter(|item| ends_in_space(item))
+            .count();
+        if gaps == 0 {
+            return;
+        }
+        let spread = ((x + width - end) / gaps as f64).max(0.0);
+        let mut shift = 0.0;
+        for index in 0..count {
+            line.items[index].x += shift;
+            if index + 1 < count && ends_in_space(&line.items[index]) {
+                shift += spread;
+            }
+        }
     }
     fn flow(block: &Block) -> Flow {
         Flow {
@@ -312,18 +372,19 @@ impl Composer<'_, '_> {
         let cell_width = self.width / cells.len().max(1) as f64;
         let mut columns = Vec::new();
         for (index, text) in cells.iter().enumerate() {
-            let mut lines = self.text(
+            let mut lines = self.text_lines(
                 text,
                 inline::style(block),
                 index as f64 * cell_width + LAYOUT.cell_padding,
                 (cell_width - 2.0 * LAYOUT.cell_padding).max(1.0),
                 None,
+                false,
             );
             for line in &mut lines {
                 let used = line.items.iter().map(|i| i.w).sum::<f64>();
                 let slack = (cell_width - 2.0 * LAYOUT.cell_padding - used).max(0.0);
                 let shift = match align.get(index).copied().unwrap_or(Align::Left) {
-                    Align::Left => 0.0,
+                    Align::Left | Align::Justify => 0.0,
                     Align::Center => slack / 2.0,
                     Align::Right => slack,
                 };

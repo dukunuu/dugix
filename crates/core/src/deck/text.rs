@@ -787,9 +787,19 @@ impl<'a> Typesetter<'a> {
             let total = line.iter().map(|piece| piece.width).sum::<f64>() - hang;
             widest = widest.max(total);
             let offset = match setting.align {
-                Align::Left => 0.0,
+                Align::Left | Align::Justify => 0.0,
                 Align::Center => (width - total) / 2.0,
                 Align::Right => width - total,
+            };
+            // Justified lines but the last spread their slack over the word gaps.
+            let gaps = line[..line.len().saturating_sub(1)]
+                .iter()
+                .filter(|piece| piece.text.ends_with(char::is_whitespace))
+                .count();
+            let spread = if setting.align == Align::Justify && index + 1 < lines.len() && gaps > 0 {
+                ((width - total) / gaps as f64).max(0.0)
+            } else {
+                0.0
             };
             let top = y + index as f64 * line_box;
             let baseline = top + (line_box - (ascent + descent)) / 2.0 + ascent;
@@ -822,6 +832,9 @@ impl<'a> Typesetter<'a> {
                     );
                 }
                 cursor += piece.width;
+                if !last && piece.text.ends_with(char::is_whitespace) {
+                    cursor += spread;
+                }
             }
         }
         (lines.len() as f64 * line_box, starts, widest)

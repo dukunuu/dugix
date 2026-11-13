@@ -222,6 +222,71 @@ fn narrower_boxes_wrap_into_more_lines_using_real_glyph_widths() {
 }
 
 #[test]
+fn justified_deck_text_ends_flush_except_the_last_line() {
+    if !has_fonts() {
+        return;
+    }
+    let theme = Theme::default();
+    let mut text = Typesetter::new(&theme, None);
+    let family = font_stack(&theme, "body");
+    let set = |align| Setting {
+        family: &family,
+        weight: 400,
+        italic: false,
+        em: 30.0,
+        line_height: 1.3,
+        align,
+        spacing: 0.0,
+        transform: Transform::None,
+    };
+    let runs = inline(
+        "Justified slide text spreads the slack of each full line over its gaps so both edges line up.",
+    );
+    let width = 500.0;
+    let lines = text.wrap(&runs, &set(Align::Justify), width);
+    assert!(lines.len() > 2);
+    // (y, x) of every drawn word, grouped by line.
+    let words = |svg: &str| {
+        let mut rows: Vec<(String, Vec<f64>)> = Vec::new();
+        for tag in svg.split("<text ").skip(1) {
+            let attr = |name: &str| {
+                let start = tag.find(&format!("{name}=\"")).unwrap() + name.len() + 2;
+                tag[start..start + tag[start..].find('"').unwrap()].to_string()
+            };
+            let (x, y) = (attr("x").parse::<f64>().unwrap(), attr("y"));
+            match rows.last_mut() {
+                Some((row, xs)) if *row == y => xs.push(x),
+                _ => rows.push((y, vec![x])),
+            }
+        }
+        rows
+    };
+    let draw = |text: &mut Typesetter<'_>, align| {
+        let mut svg = String::new();
+        text.paragraph(&mut svg, &runs, (0.0, 0.0, width), &set(align), "#000");
+        words(&svg)
+    };
+    let (left, justified) = (
+        draw(&mut text, Align::Left),
+        draw(&mut text, Align::Justify),
+    );
+    assert_eq!(left.len(), lines.len());
+    for (index, ((_, a), (_, b))) in left.iter().zip(&justified).enumerate() {
+        assert!(
+            a[0].abs() < 1e-9 && b[0].abs() < 1e-9,
+            "line {index} starts flush left"
+        );
+        let last = lines[index].last().unwrap();
+        let end = b.last().unwrap() + last.fit;
+        if index + 1 < lines.len() {
+            assert!((end - width).abs() < 0.01, "line {index} ends at {end}");
+        } else {
+            assert_eq!(a, b, "the last line stays ragged");
+        }
+    }
+}
+
+#[test]
 fn overflow_stays_visible_below_a_fixed_box() {
     if !has_fonts() {
         return;

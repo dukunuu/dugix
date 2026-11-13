@@ -200,7 +200,7 @@ fn paragraphs(
             Row::Numbered(text) => (text, "<a:buAutoNum type=\"arabicPeriod\"/>", LAYOUT.list_item_padding),
             Row::Paragraph(text) => (text, "<a:buNone/>", if font.line_height < LAYOUT.tight_line_height { 0.0 } else { LAYOUT.paragraph_gap }),
         };
-        let align = match font.align { Align::Left => "l", Align::Center => "ctr", Align::Right => "r" };
+        let align = match font.align { Align::Left => "l", Align::Center => "ctr", Align::Right => "r", Align::Justify => "just" };
         let indent = if matches!(row, Row::Bullet(_) | Row::Numbered(_)) { format!(" marL=\"{}\" indent=\"{}\"", integer(font.size * LAYOUT.list_indent * WIDTH / theme.size.w), -integer(font.size * 0.6 * WIDTH / theme.size.w)) } else { String::new() };
         let runs = if markdown { inline(text).iter().map(|r| run(theme, &font, &r.text, r.mark, opacity)).collect::<String>() } else { run(theme, &font, text, Mark::Plain, opacity) };
         let list = matches!(row, Row::Bullet(_) | Row::Numbered(_));

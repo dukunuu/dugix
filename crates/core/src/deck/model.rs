@@ -299,6 +299,8 @@ pub enum Align {
     Left,
     Center,
     Right,
+    /// Flush to both edges; a paragraph's last line stays left.
+    Justify,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

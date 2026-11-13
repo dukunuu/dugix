@@ -465,6 +465,48 @@ fn entry_and_file_limits_are_enforced_before_import() {
 }
 
 #[test]
+fn word_paragraph_justification_imports_and_exports() {
+    let mut parts = package::open(DOTX).unwrap();
+    let source = package::text(&parts, "word/styles.xml").unwrap().replace(
+        "<w:name w:val=\"Normal\"/>",
+        "<w:name w:val=\"Normal\"/><w:pPr><w:jc w:val=\"both\"/></w:pPr>",
+    );
+    let source = source.replace(
+        "<w:name w:val=\"Title\"/>",
+        "<w:name w:val=\"Title\"/><w:pPr><w:jc w:val=\"center\"/></w:pPr>",
+    );
+    parts.insert("word/styles.xml".into(), source.into_bytes());
+    let bytes = deck::export::zip(parts.into_iter().collect()).unwrap();
+    let temp = Temp::new();
+    let imported = import_bytes(&temp.0, Path::new("thesis.dotx"), &bytes, None).unwrap();
+    let styles = &imported.design.doc.text_styles;
+    assert_eq!(styles["body"].align, Some(deck::Align::Justify));
+    assert_eq!(styles["title"].align, Some(deck::Align::Center));
+    assert!(
+        !imported
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("Normal:") && w.contains("omitted")),
+        "alignment is mapped, not omitted: {:?}",
+        imported.warnings
+    );
+    let doc = Doc::check(&serde_json::json!({"version":1,"title":"Thesis","theme":doc::model::Theme::from_design(&imported.design),"blocks":[{"id":"b1","kind":"paragraph","text":"Body"}]}).to_string()).unwrap();
+    let docx = doc::export::export(&doc, None, &[], doc::export::Format::Docx).unwrap();
+    let styles = package::text(&package::open(&docx.bytes).unwrap(), "word/styles.xml")
+        .unwrap()
+        .to_string();
+    let normal = &styles[styles.find("w:styleId=\"Normal\"").unwrap()..];
+    let normal = &normal[..normal.find("</w:style>").unwrap()];
+    assert!(normal.contains("<w:jc w:val=\"both\"/>"), "{normal}");
+    let html = doc::export::export(&doc, None, &[], doc::export::Format::Html).unwrap();
+    assert!(
+        String::from_utf8(html.bytes)
+            .unwrap()
+            .contains("text-align:justify")
+    );
+}
+
+#[test]
 fn word_spacing_and_art_degrade_with_warnings_and_external_images_are_not_followed() {
     let mut parts = package::open(DOTX).unwrap();
     let source = package::text(&parts, "word/styles.xml").unwrap().replace(

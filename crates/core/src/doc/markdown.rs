@@ -375,7 +375,7 @@ pub fn render_block(block: &Block) -> String {
             out.push('\n');
             let separators = (0..rows[0].len())
                 .map(|i| match align.get(i).unwrap_or(&Align::Left) {
-                    Align::Left => ":---".into(),
+                    Align::Left | Align::Justify => ":---".into(),
                     Align::Center => ":---:".into(),
                     Align::Right => "---:".into(),
                 })

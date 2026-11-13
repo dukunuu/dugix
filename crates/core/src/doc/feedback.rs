@@ -111,6 +111,7 @@ impl Edit {
                 }
                 Op::InsertBlocks { .. } | Op::InsertMarkdown { .. } => keys.push("@order".into()),
                 Op::SetPage { .. } => keys.push("@page".into()),
+                Op::SetStyle { .. } => keys.push("@theme".into()),
                 Op::SetTitle { .. } => keys.push("@title".into()),
                 Op::ApplyDesign { .. } => {
                     keys.push("@theme".into());

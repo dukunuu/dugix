@@ -1033,7 +1033,7 @@ fn text_node(
         // Unwrapped text may run past its box; leave it room on the open side.
         let slack = inner.w * 0.25;
         match t.font.align.unwrap_or_default() {
-            crate::deck::Align::Left => inner.w += slack,
+            crate::deck::Align::Left | crate::deck::Align::Justify => inner.w += slack,
             crate::deck::Align::Right => {
                 inner.x -= slack;
                 inner.w += slack;

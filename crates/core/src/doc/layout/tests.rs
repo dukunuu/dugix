@@ -189,3 +189,62 @@ fn code_runs_take_design_syntax_colors_without_changing_line_breaks() {
     );
     assert_eq!(color_of("done"), crate::deck::text::color(&theme, "muted"));
 }
+#[test]
+fn justified_lines_end_flush_except_last_lines_hard_breaks_and_cells() {
+    let sentence = "Justified text spreads the slack of every full line over its word gaps so both edges line up";
+    let blocks = json!([
+        {"id":"p","kind":"paragraph","text":format!("{sentence}  \n{sentence}")},
+        {"id":"t","kind":"table","header":false,"rows":[[sentence, "x"]]}
+    ]);
+    let set = |align: &str| {
+        let mut doc = doc(blocks.clone(), 2000.0);
+        doc.theme.text_styles.get_mut("body").unwrap().align =
+            Some(serde_json::from_value(json!(align)).unwrap());
+        paginate(&doc, None).remove(0)
+    };
+    let (left, justified) = (set("left"), set("justify"));
+    // Run items of a block grouped by line, top to bottom.
+    let rows = |page: &Page, block: &str| {
+        let mut rows: BTreeMap<u64, Vec<(f64, f64)>> = BTreeMap::new();
+        for item in page.items.iter().filter(|i| i.block == block) {
+            if matches!(item.paint, Paint::Run(_)) {
+                rows.entry(item.y.to_bits())
+                    .or_default()
+                    .push((item.x, item.w));
+            }
+        }
+        rows.into_values().collect::<Vec<_>>()
+    };
+    let (ragged, flush) = (rows(&left, "p"), rows(&justified, "p"));
+    assert_eq!(ragged.len(), flush.len(), "justifying never rewraps");
+    let right = 280.0;
+    let mut stretched = 0;
+    for (index, (a, b)) in ragged.iter().zip(&flush).enumerate() {
+        assert!(
+            (a[0].0 - b[0].0).abs() < 1e-9,
+            "line {index} starts at the left edge"
+        );
+        let (end_a, end_b) = (a.last().unwrap(), b.last().unwrap());
+        if (end_b.0 - end_a.0).abs() > 1e-9 {
+            stretched += 1;
+            assert!(
+                end_b.0 + end_b.1 >= right - 0.01,
+                "line {index} reaches the right edge"
+            );
+            assert!(end_b.0 < right, "the last word starts inside the column");
+        }
+    }
+    // Two wrapped sentences: every line but the one before the break and the last stretches.
+    assert_eq!(stretched, flush.len() - 2, "{flush:?}");
+    let before_break = ragged.len() / 2 - 1;
+    assert_eq!(
+        ragged[before_break], flush[before_break],
+        "a hard break stays ragged"
+    );
+    assert_eq!(ragged.last(), flush.last(), "the last line stays ragged");
+    assert_eq!(
+        rows(&left, "t"),
+        rows(&justified, "t"),
+        "table cells stay ragged"
+    );
+}

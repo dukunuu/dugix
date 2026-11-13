@@ -120,6 +120,14 @@ pub fn import_bytes(
     })
 }
 
+/// A Word file's own look (theme fonts and colors, text styles, alignment) as a
+/// checked design, without storing it. A doc imported from Word keeps its styles.
+pub(crate) fn word_design(bytes: &[u8]) -> Result<Design> {
+    let (mut design, _) = word::extract(bytes)?;
+    derive_surfaces(&mut design);
+    Design::check(&serde_json::to_string(&design)?).map_err(|errors| anyhow::anyhow!("{errors:?}"))
+}
+
 fn derive_surfaces(design: &mut Design) {
     for (role, foreground) in [("surface", 0.04), ("border", 0.2)] {
         let channel = |key: &str, offset| {

@@ -110,3 +110,40 @@ fn dotx_and_relative_markdown_images_use_content_addressed_assets() {
         "Template text"
     );
 }
+#[test]
+fn a_word_round_trip_keeps_the_documents_own_styles() {
+    let mut doc = crate::doc::ops::apply(
+        &crate::doc::Doc::from_design("Thesis", &crate::design::Design::default()),
+        &serde_json::from_value::<Vec<crate::doc::Op>>(serde_json::json!([
+            {"op":"insert_markdown","markdown":"# Introduction\n\nA justified paragraph of the thesis body."},
+            {"op":"set_style","style":"body","patch":{"align":"justify","size":12,"family":"Times New Roman"}},
+            {"op":"set_style","style":"title","patch":{"align":"center"}}
+        ]))
+        .unwrap(),
+    )
+    .unwrap();
+    doc.page.header = "Department of Economics".into();
+    let bytes = crate::doc::export::export(&doc, None, &[], crate::doc::export::Format::Docx)
+        .unwrap()
+        .bytes;
+    let temp = Temp::new();
+    let imported = import(&bytes, &temp.0.join("assets")).unwrap();
+    let styles = &imported.doc.theme.text_styles;
+    assert_eq!(styles["body"].align, Some(crate::deck::Align::Justify));
+    assert_eq!(styles["body"].size, Some(12.0));
+    assert_eq!(styles["body"].family.as_deref(), Some("Times New Roman"));
+    assert_eq!(styles["title"].align, Some(crate::deck::Align::Center));
+    assert_eq!(imported.doc.page.header, "Department of Economics");
+    assert!(
+        imported
+            .doc
+            .blocks
+            .iter()
+            .any(|b| b.text() == Some("A justified paragraph of the thesis body."))
+    );
+    assert!(
+        !imported.warnings.iter().any(|w| w.contains("Word styles")),
+        "{:?}",
+        imported.warnings
+    );
+}

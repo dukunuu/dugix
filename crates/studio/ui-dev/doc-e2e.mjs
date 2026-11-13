@@ -535,6 +535,15 @@ Object.assign(tests, {
     await page.locator('.block-menu').getByRole('menuitem', { name: 'Duplicate' }).click();
     await settle(page);
     assert.equal((await mockDoc(page)).blocks.filter(x => x.text === 'Methodology notes live in the shared drive.').length, 2);
+    // Justify comes from the block's text style, so every body paragraph follows.
+    await page.mouse.move(b.x + 60, b.y + 8);
+    await handle.click();
+    await page.locator('.block-menu').getByRole('menuitem', { name: 'Justify' }).click();
+    await settle(page);
+    const applied = await page.evaluate(() => window.__mock.commands.filter(c => c.command === 'DocApply').at(-1).ops[0]);
+    assert.deepEqual(applied, { op: 'set_style', style: 'body', patch: { align: 'justify' } });
+    assert.equal((await mockDoc(page)).theme.text_styles.body.align, 'justify');
+    assert.equal(await part(page, 'b20').evaluate(n => getComputedStyle(n).textAlign), 'justify', 'the editor shows the justified style');
     await page.close();
   },
   async tableControls() {

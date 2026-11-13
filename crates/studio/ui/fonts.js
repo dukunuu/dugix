@@ -106,7 +106,7 @@ export function fontController(api, field, nodes) {
       for (const [value, glyph, title] of options) { const control = button(glyph, title, () => font({ [key]:value })); control.setAttribute('aria-pressed', String(values(key).every(v => v === value))); group.append(control); }
       return group;
     };
-    container.append(pair(segments('align', 'Text alignment', [['left','align-left','Text align left'],['center','align-center','Text align center'],['right','align-right','Text align right']]), segments('valign', 'Vertical alignment', [['top','object-top','Text align top'],['middle','object-v-center','Text align middle'],['bottom','object-bottom','Text align bottom']])));
+    container.append(pair(segments('align', 'Text alignment', [['left','align-left','Text align left'],['center','align-center','Text align center'],['right','align-right','Text align right'],['justify','align-justify','Text justify']]), segments('valign', 'Vertical alignment', [['top','object-top','Text align top'],['middle','object-v-center','Text align middle'],['bottom','object-bottom','Text align bottom']])));
     const toggles = element('div', 'type-toggles');
     for (const [value, title] of [['uppercase','Uppercase'],['lowercase','Lowercase'],['capitalize','Capitalize']]) {
       const active = values('transform').every(v => v === value), control = button(`case-${value === 'uppercase' ? 'upper' : value === 'lowercase' ? 'lower' : 'capitalize'}`, title, () => font({ transform:active ? 'none' : value })); control.setAttribute('aria-pressed', String(active)); toggles.append(control);

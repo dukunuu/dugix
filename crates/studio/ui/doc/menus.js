@@ -133,6 +133,11 @@ export function menusController(api) {
       const isOn = target => target === current || (b.kind === 'list' && (target === 'numbers' ? b.ordered : target === 'bullets' ? !b.ordered && !b.items.some(i => i.checked != null) : b.items.some(i => i.checked != null) && target === 'checklist')) || (b.kind === 'callout' && target.startsWith('callout'));
       group('Turn into', kinds.map(([label, target]) => [label, () => api.editor.perform(E.turnInto(state.doc, id, target)), isOn(target)]), true);
     }
+    // Alignment belongs to the text style, so it changes every block set in it.
+    if (M.TEXT_KINDS.has(b.kind) || b.kind === 'list') {
+      const style = M.blockStyle(b), align = state.doc.theme?.text_styles?.[style]?.align || 'left';
+      group(`Align all ${style} text`, [['Left', 'left'], ['Center', 'center'], ['Right', 'right'], ['Justify', 'justify']].map(([label, side]) => [label, () => api.apply([{ op: 'set_style', style, patch: { align: side } }]), align === side, `align-${side}`]), true);
+    }
     if (b.kind === 'callout') group('Tone', Object.entries(TONE_LABELS).map(([tone, label]) => [label, () => api.apply([{ op: 'update_block', id, patch: { tone } }]), b.tone === tone, tone]));
     if (b.kind === 'image') group('Width', ['inline', 'wide', 'full'].map(w => [w[0].toUpperCase() + w.slice(1), () => api.apply([{ op: 'update_block', id, patch: { width: w } }]), (b.width || 'full') === w]));
     const index = M.indexOf(state.doc, id);

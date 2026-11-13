@@ -109,6 +109,7 @@ pub(super) fn para_props(el: &El, theme: &Theme) -> ParaProps {
     let align = el.attr("algn").map(|a| match a {
         "ctr" => Align::Center,
         "r" => Align::Right,
+        "just" | "dist" | "justLow" | "thaiDist" => Align::Justify,
         _ => Align::Left,
     });
     let line = el.kid("lnSpc").and_then(|spacing| {

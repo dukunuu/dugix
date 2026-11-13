@@ -109,14 +109,16 @@ body.doc-mode { overflow:hidden; background:var(--canvas); }
 .surface { outline:none; caret-color:var(--d-accent); min-height:3em; white-space:normal; }
 .surface ::selection { background:color-mix(in srgb, var(--accent) 32%, transparent); }
 .surface .part { white-space:pre-wrap; overflow-wrap:break-word; outline:none; margin:0; font:inherit; min-width:1px; }
-.surface .part[data-ts="title"] { font:var(--ts-title-style) var(--ts-title-weight) calc(var(--ts-title-size) * var(--z)) / var(--ts-title-lh) var(--ts-title-family); color:var(--ts-title-color); letter-spacing:var(--ts-title-ls); }
-.surface .part[data-ts="h1"] { font:var(--ts-h1-style) var(--ts-h1-weight) calc(var(--ts-h1-size) * var(--z)) / var(--ts-h1-lh) var(--ts-h1-family); color:var(--ts-h1-color); letter-spacing:var(--ts-h1-ls); }
-.surface .part[data-ts="h2"] { font:var(--ts-h2-style) var(--ts-h2-weight) calc(var(--ts-h2-size) * var(--z)) / var(--ts-h2-lh) var(--ts-h2-family); color:var(--ts-h2-color); letter-spacing:var(--ts-h2-ls); }
-.surface .part[data-ts="h3"] { font:var(--ts-h3-style) var(--ts-h3-weight) calc(var(--ts-h3-size) * var(--z)) / var(--ts-h3-lh) var(--ts-h3-family); color:var(--ts-h3-color); letter-spacing:var(--ts-h3-ls); }
-.surface .part[data-ts="body"] { font:var(--ts-body-style) var(--ts-body-weight) calc(var(--ts-body-size) * var(--z)) / var(--ts-body-lh) var(--ts-body-family); color:var(--ts-body-color); }
-.surface .part[data-ts="quote"] { font:var(--ts-quote-style) var(--ts-quote-weight) calc(var(--ts-quote-size) * var(--z)) / var(--ts-quote-lh) var(--ts-quote-family); color:var(--ts-quote-color); }
-.surface .part[data-ts="caption"] { font:var(--ts-caption-style) var(--ts-caption-weight) calc(var(--ts-caption-size) * var(--z)) / var(--ts-caption-lh) var(--ts-caption-family); color:var(--ts-caption-color); }
-.surface .part[data-ts="code"] { font:var(--ts-code-style) var(--ts-code-weight) calc(var(--ts-code-size) * var(--z)) / var(--ts-code-lh) var(--ts-code-family); color:var(--ts-code-color); }
+.surface .part[data-ts="title"] { font:var(--ts-title-style) var(--ts-title-weight) calc(var(--ts-title-size) * var(--z)) / var(--ts-title-lh) var(--ts-title-family); color:var(--ts-title-color); letter-spacing:var(--ts-title-ls); text-align:var(--ts-title-align, left); }
+.surface .part[data-ts="h1"] { font:var(--ts-h1-style) var(--ts-h1-weight) calc(var(--ts-h1-size) * var(--z)) / var(--ts-h1-lh) var(--ts-h1-family); color:var(--ts-h1-color); letter-spacing:var(--ts-h1-ls); text-align:var(--ts-h1-align, left); }
+.surface .part[data-ts="h2"] { font:var(--ts-h2-style) var(--ts-h2-weight) calc(var(--ts-h2-size) * var(--z)) / var(--ts-h2-lh) var(--ts-h2-family); color:var(--ts-h2-color); letter-spacing:var(--ts-h2-ls); text-align:var(--ts-h2-align, left); }
+.surface .part[data-ts="h3"] { font:var(--ts-h3-style) var(--ts-h3-weight) calc(var(--ts-h3-size) * var(--z)) / var(--ts-h3-lh) var(--ts-h3-family); color:var(--ts-h3-color); letter-spacing:var(--ts-h3-ls); text-align:var(--ts-h3-align, left); }
+.surface .part[data-ts="body"] { font:var(--ts-body-style) var(--ts-body-weight) calc(var(--ts-body-size) * var(--z)) / var(--ts-body-lh) var(--ts-body-family); color:var(--ts-body-color); text-align:var(--ts-body-align, left); }
+.surface .part[data-ts="quote"] { font:var(--ts-quote-style) var(--ts-quote-weight) calc(var(--ts-quote-size) * var(--z)) / var(--ts-quote-lh) var(--ts-quote-family); color:var(--ts-quote-color); text-align:var(--ts-quote-align, left); }
+.surface .part[data-ts="caption"] { font:var(--ts-caption-style) var(--ts-caption-weight) calc(var(--ts-caption-size) * var(--z)) / var(--ts-caption-lh) var(--ts-caption-family); color:var(--ts-caption-color); text-align:var(--ts-caption-align, left); }
+.surface .part[data-ts="code"] { font:var(--ts-code-style) var(--ts-code-weight) calc(var(--ts-code-size) * var(--z)) / var(--ts-code-lh) var(--ts-code-family); color:var(--ts-code-color); text-align:var(--ts-code-align, left); }
+/* Cells keep their column alignment (the td's), never the style's justification. */
+.blk-table .part[data-ts] { text-align:inherit; }
 .blk { margin:0 0 calc(var(--l-block-gap) * var(--z)); position:relative; border-radius:3px; }
 .blk-title { margin-bottom:calc(var(--l-block-gap) * 2 * var(--z)); }
 .blk-heading { margin-top:calc(var(--l-heading-above) * var(--z)); margin-bottom:calc(var(--l-heading-below) * var(--z)); }

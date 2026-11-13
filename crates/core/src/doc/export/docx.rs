@@ -348,8 +348,14 @@ fn styles(doc: &Doc) -> String {
                 ),
                 _ => String::new(),
             };
+            let jc = match font.align {
+                crate::deck::Align::Left => "",
+                crate::deck::Align::Center => "<w:jc w:val=\"center\"/>",
+                crate::deck::Align::Right => "<w:jc w:val=\"right\"/>",
+                crate::deck::Align::Justify => "<w:jc w:val=\"both\"/>",
+            };
             format!(
-                "<w:pPr>{}{frame}<w:spacing w:before=\"{}\" w:after=\"{}\"/>{}</w:pPr>",
+                "<w:pPr>{}{frame}<w:spacing w:before=\"{}\" w:after=\"{}\"/>{jc}{}</w:pPr>",
                 if heading { "<w:keepNext/>" } else { "" },
                 (before * 20.0) as u64,
                 (after * 20.0) as u64,

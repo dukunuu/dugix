@@ -121,12 +121,18 @@ pub fn export(doc: &Doc, assets: Option<&Path>, warnings: &mut Vec<String>) -> R
         let stack = crate::deck::text::font_stack(&theme, &font.family).replace(['<', '>'], "");
         let _ = write!(
             css,
-            "{selector}{{font-family:{stack};font-size:{}pt;font-weight:{};font-style:{};line-height:{};color:{}}}",
+            "{selector}{{font-family:{stack};font-size:{}pt;font-weight:{};font-style:{};line-height:{};color:{};text-align:{}}}",
             font.size,
             font.weight,
             if font.italic { "italic" } else { "normal" },
             font.line_height,
-            crate::deck::text::color(&theme, &font.color)
+            crate::deck::text::color(&theme, &font.color),
+            match font.align {
+                crate::deck::Align::Left => "left",
+                crate::deck::Align::Center => "center",
+                crate::deck::Align::Right => "right",
+                crate::deck::Align::Justify => "justify",
+            }
         );
     }
     let c = |role| crate::deck::text::color(&theme, role);

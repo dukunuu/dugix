@@ -364,6 +364,7 @@ export function mount(shared) {
       set(`--ts-${name}-color`, color(font.color, { colors }));
       set(`--ts-${name}-style`, font.italic ? 'italic' : 'normal');
       set(`--ts-${name}-ls`, `${font.letter_spacing || 0}em`);
+      set(`--ts-${name}-align`, font.align || 'left');
       set(`--ts-${name}-family`, role ? `var(--d-font-${role})` : fontStack(theme.fonts?.[font.family] || font.family));
     }
     ensureDeckFonts(theme, state.assets);

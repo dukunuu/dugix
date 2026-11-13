@@ -144,10 +144,19 @@ fn every_operation_applies_in_order_and_keeps_the_original() {
             {"op":"delete_blocks","ids":["b2"]},
             {"op":"insert_markdown","after":"b4","markdown":"## Next\n\nA paragraph [^n].\n\n[^n]: Note"},
             {"op":"set_page","patch":{"footer":"{page} / {pages}"}},
+            {"op":"set_style","style":"body","patch":{"align":"justify"}},
+            {"op":"set_style","style":"lead","patch":{"size":14,"align":"center"}},
             {"op":"set_title","title":"New plan"}
         ]),
     );
     assert_eq!(base.revision(), revision);
+    let body = &doc.theme.text_styles["body"];
+    assert_eq!(body.align, Some(crate::deck::Align::Justify));
+    assert_eq!(
+        body.size, base.theme.text_styles["body"].size,
+        "a style patch merges into the existing style"
+    );
+    assert_eq!(doc.theme.text_styles["lead"].size, Some(14.0));
     assert_eq!(doc.title, "New plan");
     assert_eq!(doc.blocks[1].id, "b5");
     assert!(doc.block("b2").is_none());
@@ -215,6 +224,19 @@ fn bad_operations_have_located_fix_hints_and_are_atomic() {
             "margins_pt",
         ),
         (json!({"op":"apply_design","design":"missing"}), "design"),
+        (
+            json!({"op":"set_style","style":"body","patch":{"align":"both"}}),
+            "patch",
+        ),
+        (
+            json!({"op":"set_style","style":"body","patch":{"spacing":2}}),
+            "patch",
+        ),
+        (json!({"op":"set_style","style":" ","patch":{}}), "style"),
+        (
+            json!({"op":"set_style","style":"bdoy","patch":{"align":"left"}}),
+            "style",
+        ),
         (json!({"op":"set_title","title":2}), "ops[0]"),
     ] {
         error(&doc, op, path);

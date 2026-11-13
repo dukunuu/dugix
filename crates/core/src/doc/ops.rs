@@ -41,6 +41,11 @@ pub enum Op {
     SetPage {
         patch: Value,
     },
+    /// Merge-patch one text style of this doc's copied theme (`align: justify`).
+    SetStyle {
+        style: String,
+        patch: Value,
+    },
     SetTitle {
         title: String,
     },
@@ -248,6 +253,34 @@ fn step(doc: &mut Doc, op: &Op, resolver: Option<&Resolver<'_>>) -> Result<()> {
             merge_patch(&mut value, patch);
             doc.page = serde_json::from_value(value)
                 .map_err(|e| anyhow!("patch: {e}; fix: use size, margins_pt, header or footer"))?;
+        }
+        Op::SetStyle { style, patch } => {
+            ensure!(
+                !style.trim().is_empty(),
+                "style: empty; fix: name a text style such as body or h1"
+            );
+            ensure!(
+                patch.is_object(),
+                "patch: expected object; fix: supply style fields to merge"
+            );
+            ensure!(
+                doc.theme.text_styles.contains_key(style),
+                "style: no text style {style:?}; fix: use one of {}",
+                doc.theme
+                    .text_styles
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            let mut value = serde_json::to_value(doc.theme.text_styles.get(style))?;
+            merge_patch(&mut value, patch);
+            let font: crate::deck::Font = serde_json::from_value(value).map_err(|e| {
+                anyhow!(
+                    "patch: {e}; fix: use family, size, weight, italic, line_height, letter_spacing, color or align"
+                )
+            })?;
+            doc.theme.text_styles.insert(style.clone(), font);
         }
         Op::SetTitle { title } => doc.title.clone_from(title),
         Op::ApplyDesign { design } => {
