@@ -2573,3 +2573,33 @@ fn opencode_names_the_session_in_a_header_and_other_backends_do_not() {
         .unwrap();
     assert_eq!(request.headers()["x-opencode-session"], "session-1:0");
 }
+
+#[test]
+fn mistral_names_the_cache_lane_in_x_affinity_and_other_backends_do_not() {
+    let body = serde_json::json!({"model": "mistral-large-latest", "prompt_cache_key": "session-1:0"});
+    assert_eq!(
+        mistral_affinity(BackendTag::Mistral, &body),
+        Some("session-1:0")
+    );
+    assert_eq!(mistral_affinity(BackendTag::OpencodeGo, &body), None);
+    assert_eq!(
+        mistral_affinity(BackendTag::Mistral, &serde_json::json!({"model": "m"})),
+        None
+    );
+    let provider = OpenRouter::mistral("mock-key".into());
+    let request = provider
+        .chat_request("http://127.0.0.1:9/chat/completions".into(), &body)
+        .build()
+        .unwrap();
+    assert_eq!(request.headers()["x-affinity"], "session-1:0");
+    // The body still carries the key for backends that read it there.
+    assert_eq!(body["prompt_cache_key"], "session-1:0");
+    // OpenCode keeps its own header and never gets x-affinity.
+    let opencode = OpenRouter::opencode_go("mock-key".into());
+    let request = opencode
+        .chat_request("http://127.0.0.1:9/chat/completions".into(), &body)
+        .build()
+        .unwrap();
+    assert_eq!(request.headers()["x-opencode-session"], "session-1:0");
+    assert!(!request.headers().contains_key("x-affinity"));
+}

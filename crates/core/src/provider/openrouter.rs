@@ -764,11 +764,17 @@ impl OpenRouter {
 
     /// Authenticate and, on `OpenCode`, name the conversation in the
     /// `x-opencode-session` header its routing and prompt caching key on.
+    /// `Mistral` gets the same lane as an `x-affinity` header, the mechanism
+    /// Vibe uses for prompt-cache routing; the body still carries
+    /// `prompt_cache_key`.
     fn chat_request(&self, url: String, body: &serde_json::Value) -> reqwest::RequestBuilder {
         let request = self.authenticate(self.client.post(url));
         match opencode_session(self.tag, body) {
             Some(session) => request.header("x-opencode-session", session),
-            None => request,
+            None => match mistral_affinity(self.tag, body) {
+                Some(affinity) => request.header("x-affinity", affinity),
+                None => request,
+            },
         }
         .json(body)
     }
@@ -2396,6 +2402,14 @@ fn route_harmony(
 /// cache-lane key the body carries as `prompt_cache_key`.
 fn opencode_session(tag: BackendTag, body: &serde_json::Value) -> Option<&str> {
     (tag == BackendTag::OpencodeGo)
+        .then(|| body.get("prompt_cache_key")?.as_str())
+        .flatten()
+}
+
+/// The cache-lane key `Mistral` asks for in the `x-affinity` header, matching
+/// what Mistral Vibe sends; sticky routing to the node holding the warm prefix.
+fn mistral_affinity(tag: BackendTag, body: &serde_json::Value) -> Option<&str> {
+    (tag == BackendTag::Mistral)
         .then(|| body.get("prompt_cache_key")?.as_str())
         .flatten()
 }
