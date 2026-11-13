@@ -861,7 +861,7 @@ fn local_popup_lists_runtimes_with_discovery_and_endpoint() {
     app.open_local_popup();
     let screen = render_to_string(80, 24, |f| super::local::render(f, &app));
 
-    assert!(screen.contains("local runtime"), "{screen}");
+    assert!(screen.contains("Local models"), "{screen}");
     assert!(screen.contains("ollama list"), "{screen}");
     assert!(screen.contains("http://localhost:8080/v1"), "{screen}");
     assert!(screen.contains("✓ active"), "{screen}");
@@ -880,17 +880,26 @@ fn local_popup_lists_runtimes_with_discovery_and_endpoint() {
     app.local_selected = 2;
     let screen = render_to_string(80, 24, |f| super::local::render(f, &app));
     assert!(screen.contains("mlx-serve list"), "{screen}");
-    assert!(screen.contains("http://localhost:11234/v1"), "{screen}");
+    assert!(
+        screen.contains("○ stopped http://localhost:11234/…"),
+        "{screen}"
+    );
 
     app.local_selected = 4;
     let screen = render_to_string(80, 24, |f| super::local::render(f, &app));
     assert!(screen.contains("edge0 models"), "{screen}");
-    assert!(screen.contains("● 4.2 GB · ⚠ over budget"), "{screen}");
-    assert!(screen.contains("○ http://localhost:1234/v1"), "{screen}");
-    assert!(screen.contains("s start"), "{screen}");
+    assert!(
+        screen.contains("● running 4.2 GB · ⚠ over budget"),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("○ stopped http://localhost:1234/v1"),
+        "{screen}"
+    );
+    assert!(screen.contains("r refresh · Esc close"), "{screen}");
     let wide = render_to_string(120, 30, |f| super::local::render(f, &app));
     assert!(
-        wide.contains("● 4.2 GB · ⚠ over budget · started here · http://localhos…"),
+        wide.contains("● running 4.2 GB · ⚠ over budget · started here · http://…"),
         "{wide}"
     );
 
@@ -1466,15 +1475,15 @@ mod stop_closes_popup_tests {
     }
 
     #[test]
-    fn swarm_ctrl_x_closes_the_popup() {
+    fn swarm_x_stops_the_turn_and_closes_the_popup() {
         let db = Db::open_in_memory().unwrap();
         let mut a = AppView::new(App::new(db, Some("k"), test_space()));
-        // The Ctrl+X arm is gated on a running turn; hand it a live channel.
+        // The x arm is gated on a running turn; hand it a live channel.
         let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
         a.core.swarm.rx = Some(rx);
         a.popup = Popup::Swarm;
 
-        crate::ui::popups::swarm::handle_key(&mut a, ctrl_x()).unwrap();
+        crate::ui::popups::swarm::handle_key(&mut a, KeyCode::Char('x').into()).unwrap();
 
         assert_eq!(a.popup, Popup::None);
         assert!(a.core.swarm.rx.is_none()); // the turn was stopped
@@ -2669,7 +2678,7 @@ fn connectors_list_shows_status_dots_tool_counts_and_the_selected_detail() {
         .unwrap();
     assert_eq!(app.popup, nexus_core::app::Popup::Connectors);
     let screen = render_to_string(120, 30, |f| super::connectors::render(f, &app));
-    assert!(screen.contains(" connectors "), "{screen}");
+    assert!(screen.contains(" Connectors "), "{screen}");
     assert_eq!(
         body_lines(&screen),
         [
@@ -2683,10 +2692,7 @@ fn connectors_list_shows_status_dots_tool_counts_and_the_selected_detail() {
             "error: tools/list failed: timed out after 20s",
         ]
     );
-    assert!(
-        screen.contains("5 connectors · ⏎ tools · a add"),
-        "{screen}"
-    );
+    assert!(screen.contains("5 connectors · 4 tools"), "{screen}");
     conn_press(&mut app, crossterm::event::KeyCode::Down);
     let screen = render_to_string(120, 30, |f| super::connectors::render(f, &app));
     assert!(
@@ -2704,7 +2710,7 @@ fn connectors_empty_state_points_at_add_and_import() {
     app.settings.hide_hints = false;
     super::connectors::open(&mut app);
     let screen = render_to_string(120, 24, |f| super::connectors::render(f, &app));
-    assert!(screen.contains("no connectors yet"), "{screen}");
+    assert!(screen.contains("No connectors yet."), "{screen}");
     assert!(screen.contains("a adds one, i imports"), "{screen}");
     for code in [
         crossterm::event::KeyCode::Enter,
@@ -2738,7 +2744,7 @@ fn connectors_enter_opens_tools_with_badges_and_keys_set_the_policy() {
         ]
         .map(String::from)
     );
-    assert!(screen.contains("connectors · linear"), "{screen}");
+    assert!(screen.contains("linear tools"), "{screen}");
     assert!(
         screen.contains("the model sees it as linear__create_issue"),
         "{screen}"
@@ -2824,7 +2830,7 @@ fn connectors_add_flow_masks_the_token_and_stores_it_in_the_keychain() {
     conn_press(&mut app, KeyCode::Enter);
     assert_eq!(app.connectors_popup.add.name, "acme-tools");
     let screen = render_to_string(100, 24, |f| super::connectors::render(f, &app));
-    assert!(screen.contains("name: acme-tools"), "{screen}");
+    assert!(screen.contains("✎ acme-tools▏"), "{screen}");
     conn_press(&mut app, KeyCode::Enter);
     assert_eq!(
         app.connectors_popup.add.step,
@@ -2835,7 +2841,7 @@ fn connectors_add_flow_masks_the_token_and_stores_it_in_the_keychain() {
     conn_press(&mut app, KeyCode::Enter);
     type_text(&mut app, "sk-live-TOP-SECRET");
     let screen = render_to_string(100, 24, |f| super::connectors::render(f, &app));
-    assert!(screen.contains("token: ******************"), "{screen}");
+    assert!(screen.contains("✎ ******************▏"), "{screen}");
     assert!(!screen.contains("TOP-SECRET"), "{screen}");
     super::connectors::paste(&mut app, "-pasted\n");
     assert!(app.connectors_popup.add.token.ends_with("-pasted"));
@@ -2914,15 +2920,22 @@ fn connectors_remove_asks_first_and_deletes_the_keychain_entries() {
     super::connectors::open(&mut app);
     conn_press(&mut app, KeyCode::Down);
     conn_press(&mut app, KeyCode::Down);
-    conn_press(&mut app, KeyCode::Char('d'));
+    super::connectors::handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+    );
     let screen = render_to_string(120, 24, |f| super::connectors::render(f, &app));
+    assert!(screen.contains("Remove connector?"), "{screen}");
     assert!(
-        screen.contains("remove \"linear\" and its keychain entries?"),
+        screen.contains("“linear” and its keychain entries will be removed."),
         "{screen}"
     );
     conn_press(&mut app, KeyCode::Esc);
     assert_eq!(app.connectors.infos().len(), 5);
-    conn_press(&mut app, KeyCode::Char('d'));
+    super::connectors::handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+    );
     super::connectors::handle_key(
         &mut app,
         KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
@@ -2974,7 +2987,8 @@ fn connectors_import_lists_found_servers_with_checkboxes() {
         ]
         .map(String::from)
     );
-    assert!(screen.contains("import · 1 selected"), "{screen}");
+    assert!(screen.contains("Import connectors"), "{screen}");
+    assert!(screen.contains("1 selected"), "{screen}");
     assert!(
         screen.contains("1 secret will move to your keychain"),
         "{screen}"
