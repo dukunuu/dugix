@@ -2553,3 +2553,23 @@ async fn a_400_naming_a_lifetime_field_is_retried_once_without_it_for_good() {
         "announced once"
     );
 }
+
+#[test]
+fn opencode_names_the_session_in_a_header_and_other_backends_do_not() {
+    let body = serde_json::json!({"model": "m", "prompt_cache_key": "session-1:0"});
+    assert_eq!(
+        opencode_session(BackendTag::OpencodeGo, &body),
+        Some("session-1:0")
+    );
+    assert_eq!(opencode_session(BackendTag::Mistral, &body), None);
+    assert_eq!(
+        opencode_session(BackendTag::OpencodeGo, &serde_json::json!({"model": "m"})),
+        None
+    );
+    let provider = OpenRouter::opencode_go("mock-key".into());
+    let request = provider
+        .chat_request("http://127.0.0.1:9/chat/completions".into(), &body)
+        .build()
+        .unwrap();
+    assert_eq!(request.headers()["x-opencode-session"], "session-1:0");
+}

@@ -762,6 +762,17 @@ impl OpenRouter {
         }
     }
 
+    /// Authenticate and, on `OpenCode`, name the conversation in the
+    /// `x-opencode-session` header its routing and prompt caching key on.
+    fn chat_request(&self, url: String, body: &serde_json::Value) -> reqwest::RequestBuilder {
+        let request = self.authenticate(self.client.post(url));
+        match opencode_session(self.tag, body) {
+            Some(session) => request.header("x-opencode-session", session),
+            None => request,
+        }
+        .json(body)
+    }
+
     pub fn opencode_go(key: String) -> Self {
         Self::with_key(BackendTag::OpencodeGo, key)
     }
@@ -1355,8 +1366,7 @@ impl OpenRouter {
             self.api_base()
         };
         let v = self
-            .authenticate(self.client.post(format!("{base}/chat/completions")))
-            .json(&body)
+            .chat_request(format!("{base}/chat/completions"), &body)
             .send()
             .await
             .context("completion request")?
@@ -1982,9 +1992,7 @@ impl OpenRouter {
         }
         let (base, model) = self.opencode_route(model);
         let body = self.chat_completions_body(&model, messages, params, tools, disable_tool_choice);
-        let request = self
-            .authenticate(self.client.post(format!("{base}/chat/completions")))
-            .json(&body);
+        let request = self.chat_request(format!("{base}/chat/completions"), &body);
 
         let mut es = EventSource::new(request).context("opening SSE stream")?;
         let mut tool_calls: BTreeMap<usize, ToolCall> = BTreeMap::new();
@@ -2382,6 +2390,14 @@ fn route_harmony(
             }
         }
     }
+}
+
+/// The conversation key `OpenCode` asks for in `x-opencode-session`: the same
+/// cache-lane key the body carries as `prompt_cache_key`.
+fn opencode_session(tag: BackendTag, body: &serde_json::Value) -> Option<&str> {
+    (tag == BackendTag::OpencodeGo)
+        .then(|| body.get("prompt_cache_key")?.as_str())
+        .flatten()
 }
 
 /// Load `![...](file)` image references from a tool result as data URLs,
