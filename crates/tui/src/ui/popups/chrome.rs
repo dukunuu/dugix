@@ -9,6 +9,8 @@
     clippy::cast_precision_loss,
     clippy::cast_sign_loss
 )]
+use std::borrow::Cow;
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -19,7 +21,7 @@ use ratatui::widgets::{
 
 use crate::app_view::AppView;
 use crate::theme::Theme;
-use crate::ui::style::width;
+use crate::ui::style::{SEP, width};
 
 /// Canonical popup sizes, so the whole family reads as one design.
 pub const SMALL: (u16, u16) = (56, 40);
@@ -75,6 +77,219 @@ pub const PAD: u16 = 1;
 pub enum Tone {
     Normal,
     Danger,
+}
+
+/// Canonical spellings for popup keyboard hints.
+#[allow(dead_code)] // Shared vocabulary for the remaining popup conversions.
+pub mod keys {
+    pub const MOVE: &str = "↑↓";
+    pub const SIDE: &str = "←→";
+    pub const ENTER: &str = "Enter";
+    pub const ESC: &str = "Esc";
+    pub const TAB: &str = "Tab";
+    pub const SPACE: &str = "Space";
+}
+
+/// A keyboard shortcut and its optional one-word action.
+pub struct Hint {
+    pub key: Cow<'static, str>,
+    pub verb: Cow<'static, str>,
+}
+
+/// Build a hint; an empty verb displays just the key.
+#[must_use]
+pub fn hint(key: impl Into<Cow<'static, str>>, verb: impl Into<Cow<'static, str>>) -> Hint {
+    Hint {
+        key: key.into(),
+        verb: verb.into(),
+    }
+}
+
+/// Format a Ctrl shortcut in caret notation.
+#[must_use]
+pub fn ctrl(letter: char) -> String {
+    format!("^{}", letter.to_uppercase())
+}
+
+/// Drop whole hints until they fit, preserving the last hint even at tiny widths.
+#[must_use]
+pub fn fit_hints(hints: &[Hint], max: usize) -> Vec<&Hint> {
+    let mut fitted: Vec<_> = hints.iter().collect();
+    while fitted.len() > 1 {
+        let used = fitted
+            .iter()
+            .map(|hint| {
+                width(&hint.key)
+                    + if hint.verb.is_empty() {
+                        0
+                    } else {
+                        1 + width(&hint.verb)
+                    }
+            })
+            .sum::<usize>()
+            + (fitted.len() - 1) * width(SEP);
+        if used <= max {
+            break;
+        }
+        let drop = if fitted.len() > 3 {
+            fitted.len() - 3
+        } else {
+            fitted.len() - 2
+        };
+        fitted.remove(drop);
+    }
+    fitted
+}
+
+/// The title, status and actions around a popup's content.
+pub struct PopupFrame<'a> {
+    pub title: &'a str,
+    pub count: &'a str,
+    pub hints: &'a [Hint],
+    pub tone: Tone,
+    pub focused: bool,
+}
+
+/// Clear and draw the shared popup frame, returning its padded content area.
+pub fn render_popup(f: &mut Frame, area: Rect, frame: &PopupFrame<'_>, app: &AppView) -> Rect {
+    let theme = &app.theme;
+    let title = format!(" {} ", frame.title);
+    let color = if frame.tone == Tone::Danger {
+        theme.error
+    } else {
+        theme.accent
+    };
+    let mut block = popup_block_focused(
+        Line::from(Span::styled(
+            title.clone(),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ))
+        .left_aligned(),
+        theme,
+        frame.focused,
+        frame.tone,
+    );
+    if !frame.count.is_empty()
+        && width(&title) + width(frame.count) + 4 <= usize::from(area.width.saturating_sub(2))
+    {
+        block = block.title_top(
+            Line::from(Span::styled(
+                format!(" {} ", frame.count),
+                Style::default().fg(theme.fg_dim),
+            ))
+            .right_aligned(),
+        );
+    }
+    if !app.settings.hide_hints && !frame.hints.is_empty() {
+        let fitted = fit_hints(frame.hints, usize::from(area.width.saturating_sub(4)));
+        let dim = Style::default().fg(theme.fg_dim);
+        let mut spans = vec![Span::raw(" ")];
+        for (i, hint) in fitted.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(SEP, dim));
+            }
+            spans.push(Span::styled(
+                hint.key.clone(),
+                Style::default().fg(theme.fg),
+            ));
+            if !hint.verb.is_empty() {
+                spans.push(Span::styled(format!(" {}", hint.verb), dim));
+            }
+        }
+        spans.push(Span::raw(" "));
+        block = block.title_bottom(Line::from(spans).right_aligned());
+    }
+    f.render_widget(Clear, area);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    inner
+}
+
+/// Draw a field and divider above content when there is room for both.
+pub fn render_field(
+    f: &mut Frame,
+    area: Rect,
+    icon: &str,
+    text: &str,
+    placeholder: &str,
+    editing: bool,
+    theme: &Theme,
+) -> Rect {
+    if area.height < 4 {
+        return area;
+    }
+    let dim = Style::default().fg(theme.fg_dim);
+    let mut spans = vec![Span::styled(format!("{icon} "), dim)];
+    if editing || !text.is_empty() {
+        spans.push(Span::styled(text, Style::default().fg(theme.fg)));
+        spans.push(Span::styled("▏", Style::default().fg(theme.accent)));
+    } else {
+        spans.push(Span::styled(placeholder, dim));
+    }
+    f.render_widget(
+        Paragraph::new(Line::from(spans)),
+        Rect { height: 1, ..area },
+    );
+    f.render_widget(
+        Paragraph::new("─".repeat(usize::from(area.width)))
+            .style(Style::default().fg(theme.border_dim)),
+        Rect::new(area.x, area.y + 1, area.width, 1),
+    );
+    Rect {
+        y: area.y + 2,
+        height: area.height - 2,
+        ..area
+    }
+}
+
+/// Draw a tab strip and divider above content when there is room for both.
+#[allow(dead_code)] // Used by the tabbed popup conversions that follow Sessions.
+pub fn render_tabs(f: &mut Frame, area: Rect, tabs: &[&str], active: usize, theme: &Theme) -> Rect {
+    if area.height < 4 {
+        return area;
+    }
+    let mut spans = Vec::new();
+    for (i, name) in tabs.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("   "));
+        }
+        let style = if i == active {
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.fg_dim)
+        };
+        spans.push(Span::styled(*name, style));
+    }
+    f.render_widget(
+        Paragraph::new(Line::from(spans)),
+        Rect { height: 1, ..area },
+    );
+    f.render_widget(
+        Paragraph::new("─".repeat(usize::from(area.width)))
+            .style(Style::default().fg(theme.border_dim)),
+        Rect::new(area.x, area.y + 1, area.width, 1),
+    );
+    Rect {
+        y: area.y + 2,
+        height: area.height - 2,
+        ..area
+    }
+}
+
+/// Draw a wrapped, dim italic empty-state sentence at the top of the list area.
+pub fn render_empty(f: &mut Frame, area: Rect, message: &str, theme: &Theme) {
+    f.render_widget(
+        Paragraph::new(message)
+            .style(
+                Style::default()
+                    .fg(theme.fg_dim)
+                    .add_modifier(Modifier::ITALIC),
+            )
+            .wrap(Wrap { trim: true }),
+        area,
+    );
 }
 
 /// The rounded border + title style shared by every popup.

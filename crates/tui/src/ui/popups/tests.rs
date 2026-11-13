@@ -6,14 +6,18 @@ use nexus_core::app::{App, ChatNotification, CopyOption, SettingsField, Settings
 use nexus_core::db::Db;
 use nexus_core::space::Space;
 
-fn test_app() -> AppView {
+pub(super) fn test_app() -> AppView {
     let db = Db::open_in_memory().unwrap();
     let root = std::env::temp_dir().join(format!("nexus-popup-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("spaces")).unwrap();
     AppView::new(App::new(db, Some("k"), Space { root }))
 }
 
-fn render_to_string(width: u16, height: u16, render: impl FnOnce(&mut ratatui::Frame)) -> String {
+pub(super) fn render_to_string(
+    width: u16,
+    height: u16,
+    render: impl FnOnce(&mut ratatui::Frame),
+) -> String {
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal.draw(render).unwrap();
@@ -1774,6 +1778,356 @@ fn truncation_measures_cjk_in_display_columns() {
     );
     let fitted = super::chrome::fit_line(Line::from(vec![Span::raw("ab"), Span::raw("日本語")]), 6);
     assert_eq!(fitted.to_string(), "ab日…");
+}
+
+#[test]
+fn fit_hints_drops_whole_actions_in_priority_order_and_keeps_escape() {
+    use super::chrome::{ctrl, fit_hints, hint, keys};
+    use crate::ui::style::width;
+
+    let hints = [
+        hint(keys::MOVE, ""),
+        hint(keys::ENTER, "open"),
+        hint(ctrl('n'), "new"),
+        hint(ctrl('r'), "rename"),
+        hint(ctrl('d'), "delete"),
+        hint(keys::ESC, "close"),
+    ];
+    let kept = |max| {
+        fit_hints(&hints, max)
+            .into_iter()
+            .map(|hint| hint.key.as_ref())
+            .collect::<Vec<_>>()
+    };
+    let full_width = width("↑↓ · Enter open · ^N new · ^R rename · ^D delete · Esc close");
+    assert_eq!(kept(full_width), ["↑↓", "Enter", "^N", "^R", "^D", "Esc"]);
+    assert_eq!(kept(full_width - 1), ["↑↓", "Enter", "^N", "^D", "Esc"]);
+    assert_eq!(
+        kept(width("↑↓ · ^D delete · Esc close")),
+        ["↑↓", "^D", "Esc"]
+    );
+    assert_eq!(kept(width("↑↓ · Esc close")), ["↑↓", "Esc"]);
+    assert_eq!(kept(0), ["Esc"]);
+    assert!(fit_hints(&[], 0).is_empty());
+
+    let three = [
+        hint(keys::MOVE, ""),
+        hint("界", "開く"),
+        hint(keys::ESC, "close"),
+    ];
+    let full_width = width("↑↓ · 界 開く · Esc close");
+    assert_eq!(fit_hints(&three, full_width).len(), 3);
+    let fitted = fit_hints(&three, full_width - 1);
+    assert_eq!(
+        fitted
+            .iter()
+            .map(|hint| hint.key.as_ref())
+            .collect::<Vec<_>>(),
+        ["↑↓", "Esc"]
+    );
+    assert_eq!(ctrl('d'), "^D");
+}
+
+#[test]
+fn popup_frame_places_title_count_and_ordered_hints_on_the_borders() {
+    use super::chrome::{PopupFrame, Tone, ctrl, hint, keys, render_popup};
+    use crate::ui::style::width;
+
+    let mut app = test_app();
+    let root = app.space.root.clone();
+    app.settings.hide_hints = false;
+    let hints = [
+        hint(keys::MOVE, ""),
+        hint(keys::ENTER, "open"),
+        hint(ctrl('d'), "delete"),
+        hint(keys::ESC, "close"),
+    ];
+    let frame = PopupFrame {
+        title: "Sessions",
+        count: "2 chats",
+        hints: &hints,
+        tone: Tone::Normal,
+        focused: true,
+    };
+    let screen = render_to_string(60, 8, |f| {
+        let inner = render_popup(f, f.area(), &frame, &app);
+        assert_eq!(inner, ratatui::layout::Rect::new(2, 1, 56, 6));
+    });
+    assert_eq!(
+        screen.lines().next().unwrap(),
+        format!("╭ Sessions {} 2 chats ╮", "─".repeat(39))
+    );
+    let footer = "↑↓ · Enter open · ^D delete · Esc close";
+    assert_eq!(
+        screen.lines().last().unwrap(),
+        format!("╰{} {footer} ╯", "─".repeat(56 - width(footer)))
+    );
+    app.settings.hide_hints = true;
+    let screen = render_to_string(60, 8, |f| {
+        render_popup(f, f.area(), &frame, &app);
+    });
+    assert_eq!(
+        screen.lines().last().unwrap(),
+        format!("╰{}╯", "─".repeat(58))
+    );
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn popup_frame_only_shows_a_count_with_two_border_cells_to_spare() {
+    use super::chrome::{PopupFrame, Tone, render_popup};
+
+    let app = test_app();
+    let root = app.space.root.clone();
+    let frame = PopupFrame {
+        title: "Sessions",
+        count: "2 chats",
+        hints: &[],
+        tone: Tone::Danger,
+        focused: true,
+    };
+    let screen = render_to_string(23, 6, |f| {
+        render_popup(f, f.area(), &frame, &app);
+    });
+    assert_eq!(screen.lines().next().unwrap(), "╭ Sessions ── 2 chats ╮");
+    let screen = render_to_string(22, 6, |f| {
+        render_popup(f, f.area(), &frame, &app);
+    });
+    assert_eq!(
+        screen.lines().next().unwrap(),
+        format!("╭ Sessions {}╮", "─".repeat(10))
+    );
+    let mut terminal = Terminal::new(TestBackend::new(23, 6)).unwrap();
+    terminal
+        .draw(|f| {
+            render_popup(f, f.area(), &frame, &app);
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer[(2, 0)].fg, app.theme.error);
+    assert!(
+        buffer[(2, 0)]
+            .modifier
+            .contains(ratatui::style::Modifier::BOLD)
+    );
+    assert_eq!(buffer[(0, 1)].fg, app.theme.error);
+    assert_eq!(buffer[(15, 0)].fg, app.theme.fg_dim);
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn popup_fields_and_tabs_use_two_rows_and_leave_short_areas_unchanged() {
+    use super::chrome::{render_field, render_tabs};
+    use ratatui::layout::Rect;
+
+    let app = test_app();
+    let root = app.space.root.clone();
+    let mut rest = Rect::default();
+    for (text, editing, expected) in [
+        ("", false, "⌕ Type to filter"),
+        ("", true, "⌕ ▏"),
+        ("Alpine", false, "⌕ Alpine▏"),
+    ] {
+        let screen = render_to_string(32, 8, |f| {
+            rest = render_field(
+                f,
+                f.area(),
+                "⌕",
+                text,
+                "Type to filter",
+                editing,
+                &app.theme,
+            );
+        });
+        assert_eq!(rest, Rect::new(0, 2, 32, 6));
+        let mut lines = screen.lines();
+        assert_eq!(lines.next().unwrap().trim_end(), expected);
+        assert_eq!(lines.next().unwrap(), "─".repeat(32));
+    }
+    let mut terminal = Terminal::new(TestBackend::new(32, 8)).unwrap();
+    terminal
+        .draw(|f| {
+            rest = render_tabs(f, f.area(), &["Files", "Usage"], 1, &app.theme);
+        })
+        .unwrap();
+    assert_eq!(rest, Rect::new(0, 2, 32, 6));
+    let buffer = terminal.backend().buffer();
+    let tabs: String = (0..13).map(|x| buffer[(x, 0)].symbol()).collect();
+    assert_eq!(tabs, "Files   Usage");
+    assert_eq!(buffer[(0, 0)].fg, app.theme.fg_dim);
+    assert_eq!(buffer[(8, 0)].fg, app.theme.accent);
+    assert!(
+        buffer[(8, 0)]
+            .modifier
+            .contains(ratatui::style::Modifier::BOLD)
+    );
+    assert_eq!(buffer[(0, 1)].symbol(), "─");
+    assert_eq!(buffer[(0, 1)].fg, app.theme.border_dim);
+    let screen = render_to_string(32, 3, |f| {
+        let area = f.area();
+        f.render_widget(ratatui::widgets::Paragraph::new("untouched"), area);
+        assert_eq!(
+            render_field(f, area, "✎", "name", "", true, &app.theme),
+            area
+        );
+        assert_eq!(render_tabs(f, area, &["Files"], 0, &app.theme), area);
+    });
+    assert_eq!(screen.lines().next().unwrap().trim_end(), "untouched");
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn sessions_browse_puts_the_filter_in_a_field_and_the_count_in_the_border() {
+    let mut app = test_app();
+    let root = app.space.root.clone();
+    app.settings.hide_hints = false;
+    let space = app.active_space.id.clone();
+    for title in ["Alpine notes", "Dinner plans"] {
+        app.db
+            .create_session(title, "a/one", &space, "chat")
+            .unwrap();
+    }
+    app.open_session_picker().unwrap();
+    let screen = render_to_string(100, 40, |f| super::session::render(f, &mut app));
+    let top = screen.lines().find(|line| line.contains('╭')).unwrap();
+    assert!(top.contains(" Sessions "), "{screen}");
+    assert!(top.contains(" 2 chats "), "{screen}");
+    assert!(screen.contains("⌕ Type to filter"), "{screen}");
+    let footer = screen.lines().find(|line| line.contains('╰')).unwrap();
+    assert!(footer.trim_end().ends_with("Esc close ╯"), "{screen}");
+    assert!(
+        footer.contains("↑↓ · Enter open · ^R rename · ^D delete · Esc close"),
+        "{screen}"
+    );
+
+    for c in "Alpine".chars() {
+        app.session_filter_push(c);
+    }
+    let screen = render_to_string(100, 40, |f| super::session::render(f, &mut app));
+    let top = screen.lines().find(|line| line.contains('╭')).unwrap();
+    assert!(top.contains(" Sessions "), "{screen}");
+    assert!(top.contains(" 1 of 2 "), "{screen}");
+    assert!(!top.contains("Alpine"), "{screen}");
+    assert!(screen.contains("⌕ Alpine▏"), "{screen}");
+    let footer = screen.lines().find(|line| line.contains('╰')).unwrap();
+    assert!(footer.trim_end().ends_with("Esc clear ╯"), "{screen}");
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn sessions_confirm_delete_names_the_chat_in_the_detail_instead_of_the_preview() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = test_app();
+    let root = app.space.root.clone();
+    app.settings.hide_hints = false;
+    let space = app.active_space.id.clone();
+    let chat = app
+        .db
+        .create_session("Alpine notes", "a/one", &space, "chat")
+        .unwrap();
+    app.open_session_picker().unwrap();
+    app.session_preview = Some((chat.id, "Previous exchange".into()));
+    super::session::handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+    )
+    .unwrap();
+    let screen = render_to_string(120, 40, |f| super::session::render(f, &mut app));
+    let top = screen.lines().find(|line| line.contains('╭')).unwrap();
+    assert!(top.contains(" Delete chat? "), "{screen}");
+    assert!(!top.contains("1 chat"), "{screen}");
+    assert!(
+        screen.contains("“Alpine notes” and its messages will be deleted."),
+        "{screen}"
+    );
+    assert!(!screen.contains("Previous exchange"), "{screen}");
+    assert!(screen.contains("⌕ Type to filter"), "{screen}");
+    let footer = screen.lines().find(|line| line.contains('╰')).unwrap();
+    assert_eq!(
+        footer.trim_matches(|c| matches!(c, ' ' | '─' | '╰' | '╯')),
+        "^D delete · Esc cancel"
+    );
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn sessions_rename_keeps_the_list_below_the_edit_field() {
+    let mut app = test_app();
+    let root = app.space.root.clone();
+    app.settings.hide_hints = false;
+    let space = app.active_space.id.clone();
+    app.db
+        .create_session("Alpine notes", "a/one", &space, "chat")
+        .unwrap();
+    app.open_session_picker().unwrap();
+    app.start_rename();
+    app.session_edit = "New name".into();
+    let screen = render_to_string(100, 40, |f| super::session::render(f, &mut app));
+    let top = screen.lines().find(|line| line.contains('╭')).unwrap();
+    assert!(top.contains(" Rename chat "), "{screen}");
+    assert!(!top.contains("1 chat"), "{screen}");
+    assert!(screen.contains("✎ New name▏"), "{screen}");
+    assert!(screen.contains("▸ Alpine notes"), "{screen}");
+    let footer = screen.lines().find(|line| line.contains('╰')).unwrap();
+    assert_eq!(
+        footer.trim_matches(|c| matches!(c, ' ' | '─' | '╰' | '╯')),
+        "Enter save · Esc cancel"
+    );
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn sessions_empty_states_explain_what_to_do_and_only_hint_escape() {
+    let mut app = test_app();
+    let root = app.space.root.clone();
+    app.settings.hide_hints = false;
+    app.popup = nexus_core::app::Popup::Session;
+    for (filter, message, hint) in [
+        ("", "No chats yet.", "Esc close"),
+        (
+            "missing",
+            "No chat matches “missing”. Esc clears the filter.",
+            "Esc clear",
+        ),
+    ] {
+        app.session_filter.set(filter);
+        let screen = render_to_string(100, 40, |f| super::session::render(f, &mut app));
+        assert!(screen.contains(message), "{screen}");
+        let footer = screen.lines().find(|line| line.contains('╰')).unwrap();
+        assert_eq!(
+            footer.trim_matches(|c| matches!(c, ' ' | '─' | '╰' | '╯')),
+            hint
+        );
+    }
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn sessions_escape_clears_the_filter_before_closing() {
+    use crossterm::event::{KeyCode, KeyEvent};
+    use nexus_core::app::Popup;
+
+    let mut app = test_app();
+    let root = app.space.root.clone();
+    app.popup = Popup::Session;
+    app.session_filter.set("Alpine");
+    app.session_selected = 1;
+    super::session::handle_key(&mut app, KeyEvent::from(KeyCode::Esc)).unwrap();
+    assert!(app.session_filter.is_empty());
+    assert_eq!(app.session_selected, 0);
+    assert!(app.popup == Popup::Session);
+    super::session::handle_key(&mut app, KeyEvent::from(KeyCode::Esc)).unwrap();
+    assert!(app.popup == Popup::None);
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

@@ -7,7 +7,7 @@ use ratatui::widgets::{ListItem, ListState};
 
 use crate::app_view::AppView;
 
-use super::chrome;
+use super::chrome::{self, PopupFrame, ctrl, hint, keys};
 use crate::ui::style::glyph;
 
 #[allow(clippy::too_many_lines)] // row design + preview strip
@@ -101,44 +101,98 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
         })
         .collect();
 
-    // The title bar doubles as the search box / rename field / delete prompt.
-    let title = match app.session_mode {
-        SessionMode::Rename => chrome::input_title(app, "rename session", &app.session_edit, ""),
-        SessionMode::ConfirmDelete => {
-            let name = app.selected_session().map(|s| s.title).unwrap_or_default();
-            chrome::danger_title(
-                app,
-                format!("delete \"{}\"?", chrome::truncate(&name, 30)),
-                "",
-            )
-        }
-        SessionMode::Browse => chrome::filter_title(app, "sessions", &app.session_filter),
+    let filtering = !app.session_filter.is_empty();
+    let count = if app.session_mode != SessionMode::Browse {
+        String::new()
+    } else if filtering {
+        format!("{} of {}", sessions.len(), app.caches.sessions.len())
+    } else {
+        format!(
+            "{} chat{}",
+            sessions.len(),
+            if sessions.len() == 1 { "" } else { "s" }
+        )
     };
-    let hint = match app.session_mode {
-        SessionMode::Rename => "Enter save · Esc cancel".to_string(),
-        SessionMode::ConfirmDelete => "Ctrl+D confirm · Esc cancel".to_string(),
-        SessionMode::Browse if sessions.is_empty() => {
-            "no sessions match — type to clear the filter".to_string()
-        }
-        SessionMode::Browse => format!(
-            "{}↑↓ · Enter open · Ctrl+R rename · Ctrl+D delete",
-            chrome::count_hint(sessions.len(), "session")
+    let (title, hints) = match app.session_mode {
+        SessionMode::Rename => (
+            "Rename chat",
+            vec![hint(keys::ENTER, "save"), hint(keys::ESC, "cancel")],
         ),
+        SessionMode::ConfirmDelete => (
+            "Delete chat?",
+            vec![hint(ctrl('d'), "delete"), hint(keys::ESC, "cancel")],
+        ),
+        SessionMode::Browse => {
+            let mut hints = if sessions.is_empty() {
+                Vec::new()
+            } else {
+                vec![
+                    hint(keys::MOVE, ""),
+                    hint(keys::ENTER, "open"),
+                    hint(ctrl('r'), "rename"),
+                    hint(ctrl('d'), "delete"),
+                ]
+            };
+            hints.push(hint(keys::ESC, if filtering { "clear" } else { "close" }));
+            ("Sessions", hints)
+        }
     };
     let tone = if app.session_mode == SessionMode::ConfirmDelete {
         chrome::Tone::Danger
     } else {
         chrome::Tone::Normal
     };
-    let inner = chrome::render_hinted(f, area, title, &hint, app, true, tone);
-    let (list_area, detail_area) = chrome::split_with_detail(inner, &preview);
-    chrome::render_detail(f, detail_area, &preview, &app.theme);
+    let inner = chrome::render_popup(
+        f,
+        area,
+        &PopupFrame {
+            title,
+            count: &count,
+            hints: &hints,
+            tone,
+            focused: true,
+        },
+        app,
+    );
+    let renaming = app.session_mode == SessionMode::Rename;
+    let inner = chrome::render_field(
+        f,
+        inner,
+        if renaming { "✎" } else { "⌕" },
+        if renaming {
+            &app.session_edit
+        } else {
+            &app.session_filter
+        },
+        "Type to filter",
+        renaming,
+        &app.theme,
+    );
+    let detail = if app.session_mode == SessionMode::ConfirmDelete {
+        let name = app.selected_session().map(|s| s.title).unwrap_or_default();
+        format!("“{name}” and its messages will be deleted.")
+    } else {
+        preview
+    };
+    let (list_area, detail_area) = chrome::split_with_detail(inner, &detail);
+    chrome::render_detail(f, detail_area, &detail, &app.theme);
     let list = chrome::standard_list(items, &app.theme);
     let mut state = ListState::default();
     if !sessions.is_empty() {
         state.select(Some(app.session_selected.min(sessions.len() - 1)));
     }
     chrome::render_list(f, list, &mut state, list_area, sessions.len(), 3, app);
+    if sessions.is_empty() {
+        let message = if filtering {
+            format!(
+                "No chat matches “{}”. Esc clears the filter.",
+                &*app.session_filter
+            )
+        } else {
+            "No chats yet.".to_string()
+        };
+        chrome::render_empty(f, list_area, &message, &app.theme);
+    }
 }
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
@@ -172,7 +226,14 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
                 return Ok(());
             }
             match classify_browse_key(key, false, true) {
-                Some(super::BrowseAction::Close) => app.popup = nexus_core::app::Popup::None,
+                Some(super::BrowseAction::Close) => {
+                    if app.session_filter.is_empty() {
+                        app.popup = nexus_core::app::Popup::None;
+                    } else {
+                        app.session_filter.clear();
+                        app.session_selected = 0;
+                    }
+                }
                 Some(super::BrowseAction::MoveUp) => app.move_session_selection(-1),
                 Some(super::BrowseAction::MoveDown) => app.move_session_selection(1),
                 Some(

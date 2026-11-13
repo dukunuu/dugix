@@ -27,6 +27,14 @@ pub mod usage;
 #[cfg(test)]
 mod library_tests;
 #[cfg(test)]
+mod pattern_actions_tests;
+#[cfg(test)]
+mod pattern_lists_tests;
+#[cfg(test)]
+mod pattern_runs_tests;
+#[cfg(test)]
+mod pattern_viewers_tests;
+#[cfg(test)]
 mod subagents_tests;
 #[cfg(test)]
 mod tests;
