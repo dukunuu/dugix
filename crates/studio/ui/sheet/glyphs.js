@@ -2,6 +2,12 @@
 import { glyph as base } from '../doc/glyphs.js';
 
 const paths = {
+  'chart-column': 'M3 3v18h18M7 17v-6h3v6Zm6 0V6h3v11Zm6 0v-9h2v9Z',
+  'chart-bar': 'M3 3v18h18M7 5h12v3H7Zm0 6h8v3H7Zm0 6h10v3H7Z',
+  'chart-line': 'M3 3v18h18M6 16l4-6 4 3 6-8',
+  'chart-area': 'M3 3v18h18M6 18v-4l4-6 4 3 6-6v13Z',
+  'chart-pie': 'M12 3v9h9A9 9 0 0 0 12 3ZM9 5a8 8 0 1 0 10 10H9Z',
+  'chart-scatter': 'M3 3v18h18M7 14h1m3-7h1m1 9h1m4-6h1',
   underline: 'M7 4v7a5 5 0 0 0 10 0V4M5 20h14',
   merge: 'M3 5h18v14H3ZM3 12h5m8 0h5M8 9l-3 3 3 3m8-6 3 3-3 3',
   'text-color': 'M6 17 12 4l6 13M8.5 12h7M5 21h14',

@@ -5,30 +5,18 @@ use crate::sheet::{
     address::{Address, MAX_COLS, MAX_ROWS, Range, Rect, TabRange, column_index},
 };
 
-pub(super) const SHEET_SCHEMA: &str = "\nsheet schema\n\
-set_cells{tab,at,values:[[input]]}\n\
-clear{tab,range,what:inputs|formats|all}\n\
-format{tab,range,patch:fmt}\n\
-insert_rows{tab,at:row,count}\n\
-delete_rows{tab,at:row,count}\n\
-insert_cols{tab,at:column,count}\n\
-delete_cols{tab,at:column,count}\n\
-sort{tab,range,by:column,desc,header}\n\
-copy{tab,from,to_tab?,to,cut}\n\
-fill{tab,from,to}\n\
-set_col_width{tab,cols:A:C,width}\n\
-fit_cols{tab,cols:A:C}\n\
-set_row_height{tab,rows:1:3,height}\n\
-freeze{tab,rows,cols}\n\
-merge{tab,range}\n\
-unmerge{tab,range}\n\
-add_tab{name,after?}\n\
-rename_tab{tab,name}\n\
-delete_tab{tab}\n\
-move_tab{tab,after?}\n\
-set_title{title}\n\
-apply_design{design?}\n\
-op:name; atomic. fmt: num,bold,italic,underline,align:left|center|right,wrap:overflow|wrap|clip,valign:top|middle|bottom,fill,color(token|#RRGGBB). Range: A1:F20,B:B,2:4; Data! or 'Q3 plan'! prefix (escape ''). Default first tab. Formula: =.\n";
+pub(super) const SHEET_SCHEMA: &str = "\nsheet schema (op:name; atomic)\n\
+set_cells{tab,at,values:[[input]]}; clear{tab,range,what:inputs|formats|all}\n\
+format{tab,range,patch:{num,bold,italic,underline,align,wrap,valign,fill,color}}\n\
+insert_rows/delete_rows/insert_cols/delete_cols{tab,at,count}\n\
+sort{tab,range,by,desc,header}; copy{tab,from,to_tab?,to,cut}; fill{tab,from,to}\n\
+set_col_width{tab,cols,width}; fit_cols{tab,cols}; set_row_height{tab,rows,height}\n\
+freeze{tab,rows,cols}; merge/unmerge{tab,range}\n\
+add_tab{name,after?}; rename_tab{tab,name}; delete_tab{tab}; move_tab{tab,after?}\n\
+set_title{title}; apply_design{design?}\n\
+add_chart{tab,data,...fields}; edit_chart{tab,id,patch}; delete_chart{tab,id}\n\
+fields: kind:column|bar|line|area|pie|scatter,series_in:cols|rows,headers:auto|yes|no,title,stacked,legend:right|bottom|none,x_title,y_title,y_min,y_max,at,dx,dy,w,h\n\
+Range A1:C9,B:B,2:4; Data! prefix. view{chart:id} for chart PNG.\n";
 
 pub(in crate::tools) fn is_sheet(action: &str, v: &Value) -> bool {
     v["path"]
@@ -134,6 +122,9 @@ impl ToolBox {
                 Ok(format!("resolved thread {id} · {relative}\n"))
             }
             "deck_view" => {
+                if let Some(id) = v["chart"].as_str() {
+                    return sheet::render::chart_view(&sheet, &path, &self.space_files_dir, id);
+                }
                 let (tab, range) = selection(&sheet, v)?;
                 sheet::render::view(&sheet, &path, &self.space_files_dir, tab, range)
             }
@@ -402,11 +393,13 @@ impl ToolBox {
             destination.as_deref(),
         )?;
         Ok(format!(
-            "exported {relative} → {}\n",
+            "exported {relative} → {}\n{}",
             written
                 .strip_prefix(self.space_files_dir.canonicalize()?)
                 .unwrap_or(&written)
-                .display()
+                .display(),
+            sheet::chart::export_notice(sheet, &format)
+                .map_or_else(String::new, |s| format!("{s}\n"))
         ))
     }
 }

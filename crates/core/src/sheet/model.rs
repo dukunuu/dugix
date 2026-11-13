@@ -102,6 +102,8 @@ pub struct Tab {
     pub frozen: Frozen,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub merges: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub charts: Vec<Chart>,
 }
 
 impl Tab {
@@ -116,6 +118,7 @@ impl Tab {
             rows: BTreeMap::new(),
             frozen: Frozen::default(),
             merges: Vec::new(),
+            charts: Vec::new(),
         }
     }
 
@@ -144,6 +147,100 @@ impl Tab {
                     },
                 ))
             })
+    }
+}
+
+/// The six range-backed chart geometries.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChartKind {
+    #[default]
+    Column,
+    Bar,
+    Line,
+    Area,
+    Pie,
+    Scatter,
+}
+
+/// The direction in which numeric series run.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SeriesIn {
+    #[default]
+    Cols,
+    Rows,
+}
+
+/// Whether the leading row (or column) names the series.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Headers {
+    #[default]
+    Auto,
+    Yes,
+    No,
+}
+
+/// Placement of the chart's legend.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Legend {
+    #[default]
+    Right,
+    Bottom,
+    None,
+}
+
+/// A floating chart. `#REF!` is the empty data marker after source deletion.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Chart {
+    pub id: String,
+    pub kind: ChartKind,
+    pub data: String,
+    pub series_in: SeriesIn,
+    pub headers: Headers,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub stacked: bool,
+    pub legend: Legend,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub x_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub y_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub y_min: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub y_max: Option<f64>,
+    pub at: String,
+    pub dx: f64,
+    pub dy: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+impl Default for Chart {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            kind: ChartKind::default(),
+            data: String::new(),
+            series_in: SeriesIn::default(),
+            headers: Headers::default(),
+            title: None,
+            stacked: false,
+            legend: Legend::default(),
+            x_title: None,
+            y_title: None,
+            y_min: None,
+            y_max: None,
+            at: "A1".into(),
+            dx: 0.0,
+            dy: 0.0,
+            w: 480.0,
+            h: 296.0,
+        }
     }
 }
 

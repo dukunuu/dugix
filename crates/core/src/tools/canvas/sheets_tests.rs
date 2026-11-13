@@ -338,6 +338,52 @@ async fn sheets_history_export_and_unavailable_actions() {
     assert!(error.contains("not available for sheets yet"), "{error}");
 }
 
+#[tokio::test]
+async fn canvas_sheet_charts_are_editable_readable_and_visible() {
+    let f = Fixture::new();
+    create(&f).await;
+    let result = edit(&f, json!([
+        {"op":"set_cells","tab":"Sheet1","at":"A1","values":[["Label","N"],["A","3"],["B","8"]]},
+        {"op":"add_chart","tab":"Sheet1","data":"A1:B3","at":"C2","title":"Numbers"}
+    ])).await;
+    assert!(result.starts_with("edited sheet"), "{result}");
+    let read = call(&f, "read", json!({"path":PATH})).await;
+    assert!(
+        read.contains("chart c1 column A1:B3 at C2 480×296 \"Numbers\""),
+        "{read}"
+    );
+    for word in ["add_chart", "edit_chart", "delete_chart"] {
+        assert!(super::sheets::SHEET_SCHEMA.contains(word));
+    }
+    let chart = call(&f, "view", json!({"path":PATH,"chart":"c1"})).await;
+    let range = call(&f, "view", json!({"path":PATH,"range":"A1:J20"})).await;
+    for output in [&chart, &range] {
+        let relative = output
+            .split("](")
+            .nth(1)
+            .unwrap()
+            .split(')')
+            .next()
+            .unwrap();
+        assert!(
+            std::fs::read(f.file(relative))
+                .unwrap()
+                .starts_with(b"\x89PNG")
+        );
+    }
+    let bytes = |text: &str| {
+        std::fs::read(f.file(text.split("](").nth(1).unwrap().split(')').next().unwrap())).unwrap()
+    };
+    let before = bytes(&range);
+    edit(&f, json!([{"op":"delete_chart","tab":"Sheet1","id":"c1"}])).await;
+    let after = call(&f, "view", json!({"path":PATH,"range":"A1:J20"})).await;
+    assert_ne!(
+        before,
+        bytes(&after),
+        "overlapping chart is drawn into the range image"
+    );
+}
+
 #[test]
 fn sheet_schema_names_fit_cols_wrap_and_valign() {
     for word in ["fit_cols", "wrap", "valign"] {

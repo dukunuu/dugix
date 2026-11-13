@@ -367,6 +367,41 @@ export function dragOrder(names, from, to) {
 /** Which header-menu edit goes where: `at` for rows and columns above/left or below/right of the selection. */
 export const insertAt = (r, axis, after) => (axis === 'row' ? (after ? r.r2 + 1 : r.r1) : (after ? r.c2 + 1 : r.c1));
 
+// -- charts ----------------------------------------------------------------------------------------------
+
+/** Expand a single cell to its connected data block; a multi-cell selection stays exact. */
+export function chartDataBlock(tab, range) {
+  if (!isCell(range)) return range;
+  const filled = new Set(Object.entries(tab.cells).filter(([, c]) => c.input !== undefined && c.input !== '').map(([key]) => key));
+  const first = addr(range.r1, range.c1);
+  if (!filled.has(first)) return range;
+  const seen = new Set([first]), queue = [parseAddr(first)];
+  let out = { ...range };
+  for (let i = 0; i < queue.length; i++) {
+    const { row, col } = queue[i];
+    out = { r1: Math.min(out.r1, row), c1: Math.min(out.c1, col), r2: Math.max(out.r2, row), c2: Math.max(out.c2, col) };
+    for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const r = row + dr, c = col + dc, key = addr(r, c);
+      if (r < 1 || c < 1 || !filled.has(key) || seen.has(key)) continue;
+      seen.add(key); queue.push({ row: r, col: c });
+    }
+  }
+  return out;
+}
+export const addChartOp = (tab, data, fields = {}) => ({ op: 'add_chart', tab, data, ...fields });
+export const editChartOp = (tab, id, patch) => ({ op: 'edit_chart', tab, id, patch });
+export const deleteChartOp = (tab, id) => ({ op: 'delete_chart', tab, id });
+/** Chart coordinates in the grid's scrolling content, without header bands. */
+export function chartBox(chart, axes) {
+  const at = parseAddr(chart.at);
+  return { left: axes.cols.pos(at.col) + (chart.dx || 0), top: axes.rows.pos(at.row) + (chart.dy || 0), width: chart.w || 480, height: chart.h || 296 };
+}
+/** A dragged top-left corner becomes the cell under it and the pixel remainder. */
+export function chartPlacement(left, top, axes) {
+  const x = Math.max(0, left), y = Math.max(0, top), col = axes.cols.at(x), row = axes.rows.at(y);
+  return { at: addr(row, col), dx: x - axes.cols.pos(col), dy: y - axes.rows.pos(row) };
+}
+
 // -- applying ops to the page's copy at once ------------------------------------------------------------------
 
 /**
@@ -416,6 +451,10 @@ export function applyLocal(sheet, ops) {
         if (Object.keys(fmt).length) cell.fmt = fmt; else delete cell.fmt;
         if (Object.keys(cell).length) tab.cells[key] = cell; else delete tab.cells[key];
       }
+    } else if (o.op === 'edit_chart') {
+      tab.charts = (tab.charts || []).map(c => c.id === o.id ? { ...c, ...o.patch } : c);
+    } else if (o.op === 'delete_chart') {
+      tab.charts = (tab.charts || []).filter(c => c.id !== o.id);
     } else if (o.op === 'set_col_width') {
       const r = parseRange(o.cols);
       if (!r) return null;

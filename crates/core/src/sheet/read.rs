@@ -82,7 +82,22 @@ pub fn outline(sheet: &Sheet, max_chars: usize) -> String {
                 .join(" | ")
         });
         let used = range.map_or_else(|| "empty".into(), |r| r.to_string());
-        let line = format!("{} · {used} · {header}\n", tab.name);
+        let mut line = format!("{} · {used} · {header}\n", tab.name);
+        for chart in &tab.charts {
+            use std::fmt::Write as _;
+            let kind = serde_json::to_value(chart.kind).expect("chart kind");
+            let _ = writeln!(
+                line,
+                "  chart {} {} {} at {} {}×{} {:?}",
+                chart.id,
+                kind.as_str().expect("kind string"),
+                chart.data,
+                chart.at,
+                chart.w,
+                chart.h,
+                chart.title.as_deref().unwrap_or_default()
+            );
+        }
         let more = format!("more: {} tabs\n", sheet.tabs.len() - index);
         let reserve = if index + 1 < sheet.tabs.len() {
             more.chars().count()

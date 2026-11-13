@@ -1,6 +1,8 @@
 //! Local-first spreadsheets: editable JSON, one calculation engine, atomic
 //! edits, bounded read views, history, and byte-oriented interchange.
 pub mod address;
+pub mod chart;
+pub mod chart_svg;
 pub mod engine;
 pub mod feedback;
 pub mod interchange;
@@ -14,7 +16,10 @@ pub mod validate;
 
 pub use crate::deck::history;
 pub use engine::{Value, ValueKind, Workbook};
-pub use model::{Align, Cell, Format, Frozen, Sheet, Tab, VAlign, Wrap};
+pub use model::{
+    Align, Cell, Chart, ChartKind, Format, Frozen, Headers, Legend, SeriesIn, Sheet, Tab, VAlign,
+    Wrap,
+};
 pub use ops::{ClearWhat, Op, apply, apply_with_resolver};
 pub use read::{Show, outline, read_range};
 
@@ -41,6 +46,8 @@ impl Sheet {
     }
 }
 
+#[cfg(test)]
+mod chart_tests;
 #[cfg(test)]
 mod grid_tests;
 #[cfg(test)]

@@ -79,6 +79,59 @@ const rowCount = page => page.evaluate(() => new Set([...document.querySelectorA
 const tabsBar = page => page.locator('#sheet-app .sg-tab');
 
 const tests = {
+  async charts() {
+    const fixture = { sheet: { ...structuredClone(sample.sheet), tabs: [{ id: 't1', name: 'Budget', cells: { A1: { input: 'Month' }, B1: { input: 'Sales' }, A2: { input: 'Jan' }, B2: { input: '10' }, A3: { input: 'Feb' }, B3: { input: '20' }, A4: { input: 'Mar' }, B4: { input: '15' } } }] }, threads: [] };
+    const page = await open('light', { width: 1440, height: 1000 }, { fixture });
+    await click(page, 'A1'); await page.keyboard.down('Shift'); await click(page, 'B4'); await page.keyboard.up('Shift');
+    await page.getByRole('button', { name: 'Insert chart', exact: true }).click(); await settle(page);
+    assert.deepEqual((await lastApply(page)).ops, [{ op: 'add_chart', tab: 'Budget', data: 'A1:B4' }]);
+    const first = page.locator('.sg-chart[data-chart="c1"]');
+    assert.equal(await first.count(), 1); assert.equal(await first.locator('svg').count(), 1);
+    assert.equal(await page.getByRole('complementary', { name: 'Chart editor' }).isVisible(), true);
+    const start = await first.boundingBox(), count = (await applies(page)).length;
+    await page.mouse.move(start.x + 100, start.y + 50); await page.mouse.down();
+    await page.mouse.move(start.x + 200, start.y + 98, { steps: 5 }); await page.mouse.up(); await settle(page);
+    assert.equal((await applies(page)).length, count + 1, 'one drag is one edit');
+    assert.equal((await lastApply(page)).ops[0].patch.at, 'E3');
+    const handle = first.locator('[data-resize="se"]'), h = await centerOf(handle);
+    await page.mouse.move(h.x, h.y); await page.mouse.down(); await page.mouse.move(h.x + 40, h.y + 24, { steps: 4 }); await page.mouse.up(); await settle(page);
+    assert.equal((await lastApply(page)).ops[0].patch.w, 520); assert.equal((await lastApply(page)).ops[0].patch.h, 320);
+    await page.locator('.sg-chart-types [data-kind="line"]').click(); await settle(page);
+    assert.deepEqual((await lastApply(page)).ops[0].patch, { kind: 'line' });
+    await shot(page, 'sheet-chart-editor');
+    await page.getByRole('button', { name: 'Close chart editor', exact: true }).click();
+    await click(page, 'A1', { button: 'right' });
+    await page.getByRole('menuitem', { name: 'Insert chart', exact: true }).click(); await settle(page);
+    assert.equal((await tabOf(page)).charts.length, 2);
+    await page.getByRole('button', { name: 'Close chart editor', exact: true }).click();
+    const second = page.locator('.sg-chart[data-chart="c2"]'), b = await second.boundingBox();
+    await page.mouse.move(b.x + 60, b.y + 30); await page.mouse.down(); await page.mouse.move(b.x + 60, b.y + 438, { steps: 5 }); await page.mouse.up(); await settle(page);
+    assert.equal((await lastApply(page)).ops[0].patch.at, 'D18');
+    await shot(page, 'sheet-chart');
+    const beforeScroll = await first.boundingBox();
+    await page.locator('.sg-scroll').evaluate(n => { n.scrollTop = 100; }); await settle(page);
+    assert.equal(Math.round((await first.boundingBox()).y), Math.round(beforeScroll.y - 100), 'charts scroll with cells');
+    const svg = await first.locator('.sg-chart-image').textContent();
+    await page.evaluate(() => window.__mock.externalEdit([{ op: 'set_cells', tab: 'Budget', at: 'B2', values: [['35']] }])); await settle(page);
+    assert.notEqual(await first.locator('.sg-chart-image').textContent(), svg, 'calculated values replace SVG');
+    await page.locator('.sg-scroll').evaluate(n => { n.scrollTop = 0; }); await settle(page);
+    await first.click({ position: { x: 80, y: 50 } });
+    const nudges = (await applies(page)).length;
+    await page.keyboard.press('ArrowRight'); await page.keyboard.press('ArrowRight'); await page.waitForTimeout(450);
+    assert.equal((await applies(page)).length, nudges + 1, 'arrow burst is debounced');
+    assert.equal((await lastApply(page)).ops[0].patch.dx, 2);
+    const acceptedTop = await first.evaluate(n => n.style.top);
+    await page.evaluate(() => { window.__mock.rejectNext = true; });
+    await page.keyboard.press('ArrowDown'); await page.waitForTimeout(600);
+    assert.equal(await first.evaluate(n => n.style.top), acceptedTop, 'a rejected preview snaps back');
+    await page.getByRole('button', { name: 'Export', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Excel workbook' }).click(); await settle(page);
+    assert.match(await page.locator('.sg-toast').textContent(), /charts aren't included in XLSX exports/);
+    await first.click({ position: { x: 80, y: 50 } });
+    await page.keyboard.press('Delete'); await settle(page);
+    assert.equal(await first.count(), 0); assert.equal((await lastApply(page)).ops[0].op, 'delete_chart');
+    await page.close();
+  },
   async opens() {
     const page = await open('dark');
     assert.equal(await shown(page, 'A1'), 'Category');

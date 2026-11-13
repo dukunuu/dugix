@@ -60,7 +60,8 @@ export function interactController(api) {
   }
 
   scroll.addEventListener('pointerdown', e => {
-    if (e.button !== 0 || e.target === scroll) return;
+    if (e.button !== 0 || e.target === scroll || e.target.closest?.('.sg-chart')) return;
+    api.charts?.deselect();
     const pin = e.target.closest?.('.sg-pin');
     if (pin) { e.preventDefault(); api.comments.openAt(pin.dataset.pin); return; }
     api.menus.close(false);

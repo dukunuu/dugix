@@ -62,6 +62,7 @@ export function toolbarController(api) {
   sep();
   button('merge', 'merge', 'Merge cells', () => api.toggleMerge());
   button('comment', 'comment', 'Comment (⌥⌘M)', () => api.comments.begin());
+  button('chart', 'chart-column', 'Insert chart', () => api.charts.insert());
 
   function numberMenu() {
     const current = api.formatAt().num ?? null;

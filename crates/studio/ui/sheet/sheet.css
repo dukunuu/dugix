@@ -104,6 +104,28 @@ body.sheet-mode { overflow:hidden; background:var(--canvas); }
 .sg-pin { position:absolute; top:0; right:0; width:0; height:0; border-top:10px solid var(--accent2); border-left:10px solid transparent; cursor:pointer; z-index:2; }
 .sg-pin::after { content:''; position:absolute; top:-10px; right:0; width:14px; height:14px; }
 .sg-ovl { position:absolute; inset:0; z-index:4; pointer-events:none; }
+.sg-charts { position:absolute; inset:0; pointer-events:none; }
+.sg-chart { position:absolute; box-sizing:border-box; pointer-events:auto; background:var(--s-bg); border:1px solid var(--s-line); box-shadow:0 2px 8px #0002; cursor:move; touch-action:none; }
+.sg-chart.selected { outline:2px solid var(--accent); z-index:2; }
+.sg-chart-image, .sg-chart-image > svg { width:100%; height:100%; display:block; }
+.sg-chart-menu { position:absolute; right:4px; top:4px; width:24px; height:24px; border:0; border-radius:4px; background:var(--s-bg); color:var(--s-fg); cursor:pointer; opacity:0; }
+.sg-chart:hover .sg-chart-menu, .sg-chart.selected .sg-chart-menu { opacity:1; }
+.sg-chart-handle { display:none; position:absolute; width:8px; height:8px; background:var(--s-bg); border:1px solid var(--accent); box-sizing:border-box; }
+.sg-chart.selected .sg-chart-handle { display:block; }
+.sg-chart-handle.h-nw { left:-5px; top:-5px; cursor:nwse-resize; }
+.sg-chart-handle.h-n { left:calc(50% - 4px); top:-5px; cursor:ns-resize; }
+.sg-chart-handle.h-ne { right:-5px; top:-5px; cursor:nesw-resize; }
+.sg-chart-handle.h-e { right:-5px; top:calc(50% - 4px); cursor:ew-resize; }
+.sg-chart-handle.h-se { right:-5px; bottom:-5px; cursor:nwse-resize; }
+.sg-chart-handle.h-s { left:calc(50% - 4px); bottom:-5px; cursor:ns-resize; }
+.sg-chart-handle.h-sw { left:-5px; bottom:-5px; cursor:nesw-resize; }
+.sg-chart-handle.h-w { left:-5px; top:calc(50% - 4px); cursor:ew-resize; }
+.sg-chart-fields { display:flex; flex-direction:column; gap:14px; padding:16px; overflow:auto; }
+.sg-chart-types { display:flex; flex-wrap:wrap; gap:6px; }
+.sg-chart-types button[aria-pressed="true"] { background:var(--accent-dim); color:var(--accent); }
+.sg-chart-field { display:flex; flex-direction:column; gap:6px; font-size:12px; }
+.sg-chart-field input, .sg-chart-field select { width:100%; box-sizing:border-box; padding:7px; border:1px solid var(--hairline); border-radius:5px; background:var(--bg); color:var(--fg); }
+.sg-chart-check { display:flex; gap:8px; align-items:center; font-size:13px; }
 .sg-box { position:absolute; box-sizing:border-box; pointer-events:none; }
 .sg-copy { border:2px dashed var(--accent); }
 .sg-remote { border:2px solid var(--accent2); background:color-mix(in srgb, var(--accent2) 10%, transparent); animation:sg-pop .25s ease-out; }

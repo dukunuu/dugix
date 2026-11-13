@@ -83,6 +83,35 @@ pub fn view(
     ))
 }
 
+/// Revision-keyed preview of a chart, addressed by its sheet-wide stable id.
+pub fn chart_view(sheet: &Sheet, path: &Path, files: &Path, id: &str) -> Result<String> {
+    let (tab, chart) = sheet
+        .tabs
+        .iter()
+        .find_map(|tab| tab.charts.iter().find(|c| c.id == id).map(|c| (tab, c)))
+        .context("unknown chart")?;
+    let directory = crate::deck::render::render_dir(path, files)?;
+    let revision = sheet.revision();
+    let key = crate::deck::hash(&id);
+    let output = directory.join(format!("chart-{}-{}.png", &revision[..8], &key[..12]));
+    ensure!(
+        !output.is_symlink(),
+        "render cache must not contain symlinks"
+    );
+    if !output.is_file() {
+        let svg = super::chart_svg::svg(sheet, &Workbook::load(sheet)?, tab, chart);
+        let assets = path.parent().context("sheet folder")?.join("assets");
+        crate::deck::write_atomic(&output, &svg_png(sheet, &svg, Some(&assets), 2000.0)?)?;
+    }
+    Ok(format!(
+        "![chart {id}]({})\n",
+        output
+            .strip_prefix(files)?
+            .to_string_lossy()
+            .replace('\\', "/")
+    ))
+}
+
 pub(crate) fn theme(sheet: &Sheet) -> crate::deck::Theme {
     crate::deck::Theme {
         colors: sheet.theme.colors.clone(),
@@ -303,6 +332,7 @@ fn cells_svg(
 }
 
 /// Draw a bounded grid window as PNG, using the workbook's copied theme.
+#[allow(clippy::too_many_lines)]
 pub fn png(sheet: &Sheet, tab: &Tab, rect: Rect, assets: Option<&Path>) -> Result<Vec<u8>> {
     let theme = theme(sheet);
     let workbook = Workbook::load(sheet)?;
@@ -376,13 +406,52 @@ pub fn png(sheet: &Sheet, tab: &Tab, rect: Rect, assets: Option<&Path>) -> Resul
             "<path d=\"M0 {y}H{width}\" stroke=\"#555\" stroke-width=\"3\"/>"
         );
     }
+    for chart in &tab.charts {
+        let at: Address = chart.at.parse()?;
+        let col_pos = |col: u32| {
+            f64::from(col - 1) * DEFAULT_COL
+                + tab
+                    .cols
+                    .iter()
+                    .filter_map(|(name, width)| {
+                        (super::address::column_index(name).ok()? < col)
+                            .then_some(width - DEFAULT_COL)
+                    })
+                    .sum::<f64>()
+        };
+        let row_pos = |row: u32| {
+            f64::from(row - 1) * DEFAULT_ROW
+                + auto
+                    .iter()
+                    .filter(|(r, _)| **r < row && !tab.rows.contains_key(r))
+                    .map(|(_, h)| h - DEFAULT_ROW)
+                    .sum::<f64>()
+                + tab
+                    .rows
+                    .iter()
+                    .filter(|(r, _)| **r < row)
+                    .map(|(_, h)| h - DEFAULT_ROW)
+                    .sum::<f64>()
+        };
+        let x = 44.0 + col_pos(at.col) - col_pos(rect.start.col) + chart.dx;
+        let y = DEFAULT_ROW + row_pos(at.row) - row_pos(rect.start.row) + chart.dy;
+        if x < width && y < height && x + chart.w > 44.0 && y + chart.h > DEFAULT_ROW {
+            let svg = super::chart_svg::svg(sheet, &workbook, tab, chart);
+            let _ = write!(out, "<g transform=\"translate({x} {y})\">{svg}</g>");
+        }
+    }
     out.push_str("</svg>");
+    svg_png(sheet, &out, assets, 1200.0)
+}
+
+fn svg_png(sheet: &Sheet, svg: &str, assets: Option<&Path>, maximum: f32) -> Result<Vec<u8>> {
+    let theme = theme(sheet);
     let options = usvg::Options {
         fontdb: crate::deck::text::deck_fonts(&theme, assets),
         ..Default::default()
     };
-    let tree = usvg::Tree::from_str(&out, &options)?;
-    let scale = (1200.0 / tree.size().width()).min(1.0);
+    let tree = usvg::Tree::from_str(svg, &options)?;
+    let scale = (maximum / tree.size().width()).min(1.0);
     let mut pixmap = tiny_skia::Pixmap::new(
         (tree.size().width() * scale).ceil() as u32,
         (tree.size().height() * scale).ceil() as u32,

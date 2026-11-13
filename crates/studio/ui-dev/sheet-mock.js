@@ -278,6 +278,24 @@
         next.tabs.splice(o.after ? next.tabs.indexOf(tabOf(o.after, next)) + 1 : next.tabs.length, 0, tab);
         break;
       }
+      case 'add_chart': {
+        const { op, tab: name, ...fields } = o;
+        const ref = M.parseRef(o.data);
+        if (!ref) throw new Error('invalid chart data range');
+        const used = M.usedRect(ref.tab ? tabOf(ref.tab, next) : tab);
+        const ids = new Set(next.tabs.flatMap(t => (t.charts || []).map(c => c.id)));
+        let n = 1; while (ids.has(`c${n}`)) n++;
+        const chart = { id: `c${n}`, kind: ref.rect.r2 - ref.rect.r1 > 12 ? 'line' : 'column', at: M.addr(ref.rect.r1, (used?.c2 || ref.rect.c2) + 2), dx: 0, dy: 0, w: 480, h: 296, series_in: 'cols', headers: 'auto', stacked: false, legend: 'right', ...fields };
+        tab.charts = [...(tab.charts || []), chart]; break;
+      }
+      case 'edit_chart': {
+        const chart = tab.charts?.find(c => c.id === o.id);
+        if (!chart) throw new Error('unknown chart');
+        if (o.patch.data && !M.parseRef(o.patch.data)) throw new Error('invalid chart data range');
+        for (const [key, value] of Object.entries(o.patch)) { if (value === null) delete chart[key]; else chart[key] = value; }
+        break;
+      }
+      case 'delete_chart': tab.charts = (tab.charts || []).filter(c => c.id !== o.id); break;
       case 'set_title': next.title = o.title; break;
       default: throw new Error(`mock cannot apply ${o.op}`);
     }
@@ -298,8 +316,27 @@
 
   // -- events ------------------------------------------------------------------------------------------------------
 
+  const xml = text => String(text).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;');
+  function chartSvgs() {
+    return Object.fromEntries(sheet.tabs.map(owner => [owner.id, (owner.charts || []).map(chart => {
+      const ref = M.parseRef(chart.data), tab = ref && (ref.tab ? tabOf(ref.tab) : owner), r = ref?.rect;
+      const ink = sheet.theme.colors.accent || '#4488cc', fg = sheet.theme.colors.fg || '#222', bg = sheet.theme.colors.bg || '#fff';
+      const points = [], marks = [], labels = [];
+      if (r) for (let row = r.r1 + 1; row <= Math.min(r.r2, r.r1 + 2000); row++) {
+        const v = valueOf(tab, M.addr(row, r.c1 + 1)), label = valueOf(tab, M.addr(row, r.c1)).display;
+        if (v.kind !== 'number') continue;
+        const x = 60 + (row - r.r1 - 0.5) * (chart.w - 150) / (r.r2 - r.r1), y = chart.h - 55 - v.n / Math.max(1, ...Object.keys(tab.cells).map(key => valueOf(tab, key).n || 0)) * (chart.h - 110);
+        const title = `<title>${xml(label)}: ${xml(v.display)}</title>`;
+        points.push(`${x},${y}`);
+        marks.push(chart.kind === 'line' ? `<circle cx="${x}" cy="${y}" r="3" fill="${ink}">${title}</circle>` : `<rect x="${x - 12}" y="${y}" width="24" height="${Math.max(0, chart.h - 55 - y)}" fill="${ink}">${title}</rect>`);
+        labels.push(`<text x="${x}" y="${chart.h - 30}" text-anchor="middle">${xml(label)}</text>`);
+      }
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${chart.w}" height="${chart.h}" viewBox="0 0 ${chart.w} ${chart.h}"><rect width="100%" height="100%" fill="${bg}"/><g fill="${fg}" font-family="sans-serif" font-size="12"><text x="20" y="25">${xml(chart.title || chart.kind)}</text><path d="M50 40V${chart.h - 55}H${chart.w - 30}" fill="none" stroke="${fg}"/>${chart.kind === 'line' ? `<polyline points="${points.join(' ')}" fill="none" stroke="${ink}" stroke-width="2"/>` : ''}${marks.join('')}${labels.join('')}</g></svg>`;
+      return { id: chart.id, svg };
+    })]));
+  }
   const current = (extra = {}) => ({
-    event: 'Sheet', sheet, revision: revision(), relative: 'sheets/q3-budget.sheet.json', values: values(sheet.tabs[0].name, 'A1:AZ200'), auto_rows: autoRows(), threads,
+    event: 'Sheet', sheet, revision: revision(), relative: 'sheets/q3-budget.sheet.json', values: values(sheet.tabs[0].name, 'A1:AZ200'), auto_rows: autoRows(), charts: chartSvgs(), threads,
     linked: window.__mock?.linked ?? true, activities, changed: [], notice: null, colors, can_undo: undo.length > 0, can_redo: redo.length > 0, home: false, ...extra,
   });
   const feedback = () => ({ event: 'SheetFeedback', threads, activities, notes: [] });

@@ -266,6 +266,7 @@ pub enum Event {
         relative: String,
         /// Derived row heights for wrapped cells, per tab id; a user-set height wins.
         auto_rows: BTreeMap<String, BTreeMap<u32, f64>>,
+        charts: BTreeMap<String, Vec<sheet::ChartSvg>>,
         values: Vec<sheet::CellValue>,
         threads: Vec<nexus_core::sheet::feedback::Thread>,
         linked: bool,
@@ -1440,6 +1441,7 @@ fn embedded(path: &str) -> Option<(&'static str, &'static str)> {
         ),
         "/sheet/sheet.js" => ("text/javascript", include_str!("../ui/sheet/sheet.js")),
         "/sheet/model.js" => ("text/javascript", include_str!("../ui/sheet/model.js")),
+        "/sheet/charts.js" => ("text/javascript", include_str!("../ui/sheet/charts.js")),
         "/sheet/keys.js" => ("text/javascript", include_str!("../ui/sheet/keys.js")),
         "/sheet/grid.js" => ("text/javascript", include_str!("../ui/sheet/grid.js")),
         "/sheet/interact.js" => ("text/javascript", include_str!("../ui/sheet/interact.js")),

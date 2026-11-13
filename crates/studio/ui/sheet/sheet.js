@@ -12,6 +12,7 @@ import { toolbarController } from './toolbar.js';
 import { tabsController } from './tabs.js';
 import { commentsController } from './comments.js';
 import { interactController } from './interact.js';
+import { chartsController } from './charts.js';
 import { glyph } from './glyphs.js';
 import { placePopup } from '../popup.js';
 import { ensureDeckFonts, fontStack } from '../render.js';
@@ -32,7 +33,7 @@ export function mount(shared) {
 
   const state = {
     sheet: null, revision: '', relative: '', threads: [], activities: {}, linked: false, canUndo: false, canRedo: false,
-    tabId: null, sel: null, sels: {}, extents: {}, scrolls: {}, values: new Map(), generation: 0, clip: null, remote: null, drafts: {}, autoRows: {},
+    tabId: null, sel: null, sels: {}, extents: {}, scrolls: {}, values: new Map(), generation: 0, clip: null, remote: null, drafts: {}, autoRows: {}, charts: {},
   };
   const lifetime = new AbortController();
 
@@ -124,7 +125,13 @@ export function mount(shared) {
     place: (node, rect) => placePopup(node, rect, { prefer: 'below', align: 'left' }),
     extent() {
       const tab = api.tab();
-      return (state.extents[tab.id] = M.extentOf(M.usedRect(tab), state.extents[tab.id], state.sel));
+      let used = M.usedRect(tab);
+      for (const chart of tab.charts || []) {
+        const at = M.parseAddr(chart.at);
+        const end = { r2: at.row + Math.ceil((chart.h + (chart.dy || 0)) / M.DEFAULT_ROW), c2: at.col + Math.ceil((chart.w + (chart.dx || 0)) / M.DEFAULT_COL) };
+        used = { r1: used?.r1 || 1, c1: used?.c1 || 1, r2: Math.max(used?.r2 || 1, end.r2), c2: Math.max(used?.c2 || 1, end.c2) };
+      }
+      return (state.extents[tab.id] = M.extentOf(used, state.extents[tab.id], state.sel));
     },
     /** The raw input of a cell on the tab showing. */
     inputAt: (row, col) => api.tab()?.cells[M.addr(row, col)]?.input ?? '',
@@ -143,6 +150,7 @@ export function mount(shared) {
     apply, select, switchTab, goTo, format, toggle, toggleMerge, resize, fit, contextMenu, openSidebar,
     scrolled() { api.editor.place(); clearTimeout(valuesTimer); valuesTimer = setTimeout(ensureValues, 80); },
     renderLink,
+    closeComments: () => setSidebar(false),
     setCommentCount(n) {
       commentCount.textContent = sideCount.textContent = n ? String(n) : '';
       commentsButton.setAttribute('aria-label', n ? `Comments, ${n} open` : 'Comments');
@@ -157,8 +165,9 @@ export function mount(shared) {
   api.tabs = tabsController(api);
   api.comments = commentsController(api);
   api.interact = interactController(api);
+  api.charts = chartsController(api);
 
-  middle.append(api.grid.root, sidebar);
+  middle.append(api.grid.root, sidebar, api.charts.panel);
   column.append(api.toolbar.bar, api.editor.bar, middle, api.tabs.bar);
   app.append(top, column, overlay, toastNode);
 
@@ -261,6 +270,7 @@ export function mount(shared) {
     focusTimer = setTimeout(() => command({ command: 'SheetFocus', tab: api.tabName(), range }), 300);
   }
   function select(sel, { reveal = true } = {}) {
+    api.charts.deselect();
     const before = state.extents[state.tabId];
     state.sel = state.sels[state.tabId] = sel;
     const after = api.extent();
@@ -272,6 +282,7 @@ export function mount(shared) {
   function switchTab(id) {
     if (id === state.tabId || !state.sheet.tabs.some(t => t.id === id)) return;
     api.editor.commit();
+    api.charts.deselect();
     state.scrolls[state.tabId] = api.grid.position;
     state.tabId = id;
     state.sel = state.sels[id] ||= M.newSel(1, 1);
@@ -348,7 +359,7 @@ export function mount(shared) {
         { rule: true }, comment,
       ];
     } else {
-      items = [comment, { rule: true }, ...insertRows, ...insertCols, { rule: true }, deleteRows, deleteCols, { rule: true }, { label: 'Clear contents', hint: 'Delete', run: () => apply([M.op.clear(name, opRange())]) }];
+      items = [comment, { label: 'Insert chart', run: () => api.charts.insert() }, { rule: true }, ...insertRows, ...insertCols, { rule: true }, deleteRows, deleteCols, { rule: true }, { label: 'Clear contents', hint: 'Delete', run: () => apply([M.op.clear(name, opRange())]) }];
     }
     api.menus.show(items, at, { label: kind === 'cell' ? 'Cell' : kind === 'col' ? 'Column' : 'Row' });
   }
@@ -372,6 +383,7 @@ export function mount(shared) {
   function setSidebar(open, chosen = true) {
     sidebarOpen = open; sideChosen = sideChosen || chosen;
     if (chosen) { try { localStorage.setItem('nexus-sheet-sidebar', open ? 'open' : 'closed'); } catch { /* ignore */ } }
+    if (open) api.charts.close();
     sidebar.hidden = !open;
     commentsButton.setAttribute('aria-pressed', String(open));
     app.classList.toggle('side-open', open);
@@ -449,12 +461,14 @@ export function mount(shared) {
       case 'Exported': {
         const actions = [['Reveal', () => command({ command: 'Reveal', path: event.path })]];
         if (event.warnings?.length) actions.push([`${event.warnings.length} approximations`, () => toast(event.warnings.join(' · '))]);
-        toast(`Exported ${event.path.split(/[\\/]/).pop()}`, actions);
+        const omitted = /\.xlsx$/i.test(event.path) && state.sheet.tabs.some(t => t.charts?.length);
+        toast(`Exported ${event.path.split(/[\\/]/).pop()}${omitted ? " · charts aren't included in XLSX exports" : ''}`, actions);
         break;
       }
       case 'Error':
         shared.library.onEvent(event);
         toast(event.message);
+        api.charts.rejected();
         // A rejected edit may have been shown already: go back to what the backend has.
         if (reply && finished?.cmd?.command === 'SheetApply') { queue.length = 0; command({ command: 'Load' }); }
         break;
@@ -472,6 +486,7 @@ export function mount(shared) {
     state.revision = event.revision;
     state.sheet = event.sheet;
     state.autoRows = event.auto_rows || {};
+    state.charts = event.charts || {};
     const firstTab = state.sheet.tabs[0].id;
     store(firstTab, FIRST_WINDOW, event.values);
     if (conflict) queue.length = 0;
@@ -490,6 +505,7 @@ export function mount(shared) {
     api.comments.updateActivities(event.activities);
     refresh();
     api.comments.render();
+    api.charts.received();
     if (event.notice) toast(event.notice, /reloaded/.test(event.notice) ? [['Undo', api.undo]] : []);
     if (event.changed?.length) flash(event.changed);
     ensureValues();
@@ -566,6 +582,7 @@ export function mount(shared) {
   document.addEventListener('keydown', e => {
     if (document.querySelector('dialog[open]') || !document.querySelector('#library')?.hidden) return;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); toast('Every change is saved to the sheet file as you make it.'); return; }
+    if (api.charts.key(e)) return;
     if (!state.sel || (e.target !== api.grid.scroll && e.target !== document.body)) return;
     const act = keyAction(e, {});
     if (!act) return;
@@ -579,6 +596,7 @@ export function mount(shared) {
   return {
     handle,
     unmount() {
+      api.charts.destroy();
       lifetime.abort();
       for (const t of [toastTimer, flashTimer, remoteTimer, valuesTimer, focusTimer]) clearTimeout(t);
       app.hidden = true;

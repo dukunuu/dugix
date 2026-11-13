@@ -21,6 +21,34 @@ pub enum ClearWhat {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Op {
+    AddChart {
+        tab: String,
+        data: String,
+        kind: Option<super::ChartKind>,
+        at: Option<String>,
+        dx: Option<f64>,
+        dy: Option<f64>,
+        w: Option<f64>,
+        h: Option<f64>,
+        title: Option<String>,
+        series_in: Option<super::SeriesIn>,
+        headers: Option<super::Headers>,
+        stacked: Option<bool>,
+        legend: Option<super::Legend>,
+        x_title: Option<String>,
+        y_title: Option<String>,
+        y_min: Option<f64>,
+        y_max: Option<f64>,
+    },
+    EditChart {
+        tab: String,
+        id: String,
+        patch: Value,
+    },
+    DeleteChart {
+        tab: String,
+        id: String,
+    },
     SetCells {
         tab: String,
         at: String,
@@ -227,6 +255,17 @@ fn format_cells(tab: &mut Tab, rect: Rect, patch: &Value) -> Result<()> {
 #[allow(clippy::too_many_lines)]
 fn step(sheet: &mut Sheet, op: &Op, resolver: Option<&Resolver<'_>>) -> Result<()> {
     match op {
+        Op::AddChart { .. } => super::chart::add(sheet, op)?,
+        Op::EditChart { tab, id, patch } => super::chart::edit(tab_mut(sheet, tab)?, id, patch)?,
+        Op::DeleteChart { tab, id } => {
+            let tab = tab_mut(sheet, tab)?;
+            let index = tab
+                .charts
+                .iter()
+                .position(|c| &c.id == id)
+                .ok_or_else(|| anyhow!("unknown chart"))?;
+            tab.charts.remove(index);
+        }
         Op::SetCells { tab, at, values } => set_cells(tab_mut(sheet, tab)?, at, values)?,
         Op::Clear { tab, range, what } => {
             let rect = range.parse::<Range>()?.bounds();
@@ -257,7 +296,11 @@ fn step(sheet: &mut Sheet, op: &Op, resolver: Option<&Resolver<'_>>) -> Result<(
         | Op::Fill { .. }
         | Op::RenameTab { .. }
         | Op::DeleteTab { .. }
-        | Op::MoveTab { .. } => *sheet = super::engine::transform(sheet, op)?,
+        | Op::MoveTab { .. } => {
+            let before = sheet.clone();
+            *sheet = super::engine::transform(sheet, op)?;
+            super::chart::follow(sheet, &before, op);
+        }
         Op::SetColWidth { tab, cols, width } => {
             ensure!(
                 width.is_finite() && *width >= 0.0,
