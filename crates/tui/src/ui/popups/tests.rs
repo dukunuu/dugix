@@ -71,7 +71,7 @@ fn jobs_popup_two_jobs_and_parked_run_snapshot() {
         updated_at: "2026-01-01T00:01:00Z".into(),
     });
     let screen = render_to_string(120, 30, |frame| super::jobs::render(frame, &app));
-    assert!(screen.contains(" jobs "), "{screen}");
+    assert!(screen.contains(" Jobs "), "{screen}");
     let snapshot: Vec<_> = screen
         .lines()
         .filter_map(|line| {
@@ -86,6 +86,7 @@ fn jobs_popup_two_jobs_and_parked_run_snapshot() {
         [
             "morning · agent · interval · enabled · never run",
             "▸ fix tests · agent · until_done · enabled · parked",
+            "──────────────────────────────────────────────────────────────────────────────────────────",
             "nexus/job/fix/run",
             "parked: needs approval for fs write fixed",
         ]
@@ -125,7 +126,7 @@ async fn procs_popup_two_processes_snapshot() {
         assert!(result.contains(" · ready ·"), "{result}");
     }
     let screen = render_to_string(120, 30, |f| super::procs::render(f, &app));
-    assert!(screen.contains(" procs "), "{screen}");
+    assert!(screen.contains(" Processes "), "{screen}");
     let snapshot: Vec<_> = screen
         .lines()
         .filter_map(|line| {
@@ -146,9 +147,10 @@ async fn procs_popup_two_processes_snapshot() {
     assert_eq!(
         snapshot,
         [
-            "this session first · processes stop when Nexus exits",
             "▸ server · running <uptime> · listening",
             "watcher · running <uptime> · watching",
+            "──────────────────────────────────────────────────────────────────────────────────────────",
+            "Processes stop when nexus exits.",
         ]
     );
     app.procs.shutdown().await;
@@ -208,9 +210,11 @@ fn harness_popup_three_rows_snapshot() {
         .collect(),
     });
     let screen = render_to_string(120, 30, |f| super::harness::render(f, &app));
-    assert!(screen.contains(" harness "), "{screen}");
+    assert!(screen.contains(" Tool health "), "{screen}");
+    let top = screen.lines().find(|line| line.contains('╭')).unwrap();
+    assert!(top.contains("40 calls · 20 failed · 7 days"), "{screen}");
     assert!(
-        screen.contains("↑↓ select · enter open the latest transcript · esc close"),
+        screen.contains("↑↓ · Enter transcript · Esc close"),
         "{screen}"
     );
     let snapshot: Vec<_> = screen
@@ -225,7 +229,6 @@ fn harness_popup_three_rows_snapshot() {
     assert_eq!(
         snapshot,
         [
-            "40 calls · 20 failed (50%) · last 7 days",
             "▸ scripts edit · stale_edit ×14 · 2h ago",
             "shell run · blocked ×4 · 5m ago",
             "fs read · not_found ×2 · 2d ago",
@@ -253,9 +256,9 @@ fn harness_popup_empty_state_snapshots() {
     let mut app = test_app();
     let root = app.space.root.clone();
     for (incognito, calls, expected) in [
-        (false, 0, "no tool failures in the last 7 days"),
-        (true, 0, "nothing recorded in incognito"),
-        (true, 5, "no tool failures in the last 7 days"),
+        (false, 0, "No tool failures in the last 7 days."),
+        (true, 0, "Nothing is recorded in incognito."),
+        (true, 5, "No tool failures in the last 7 days."),
     ] {
         app.incognito = incognito;
         app.harness = Some(HarnessSummary {
@@ -264,6 +267,11 @@ fn harness_popup_empty_state_snapshots() {
             rows: Vec::new(),
         });
         let screen = render_to_string(120, 30, |f| super::harness::render(f, &app));
+        let top = screen.lines().find(|line| line.contains('╭')).unwrap();
+        assert!(
+            top.contains(&format!("{calls} calls · 0 failed · 7 days")),
+            "{screen}"
+        );
         let snapshot: Vec<_> = screen
             .lines()
             .filter_map(|line| {
@@ -273,13 +281,7 @@ fn harness_popup_empty_state_snapshots() {
                 (!body.is_empty()).then_some(body)
             })
             .collect();
-        assert_eq!(
-            snapshot,
-            [
-                format!("{calls} calls · 0 failed (0%) · last 7 days"),
-                expected.to_string(),
-            ]
-        );
+        assert_eq!(snapshot, [expected]);
     }
     drop(app);
     std::fs::remove_dir_all(root).unwrap();

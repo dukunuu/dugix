@@ -14,7 +14,7 @@ use crate::app_view::AppView;
 use crate::theme::Theme;
 use crate::ui::style::{SEP, glyph};
 
-use super::chrome;
+use super::chrome::{self, PopupFrame, hint, keys};
 
 #[derive(Default)]
 pub struct SubagentsPopup {
@@ -32,7 +32,8 @@ pub struct SubagentsPopup {
 /// Open the view for the current conversation, on its newest run.
 pub fn open(app: &mut AppView) {
     let Some(session) = app.session.as_ref().map(|s| s.id.clone()) else {
-        app.push_status("no conversation open".to_string());
+        app.subagents = SubagentsPopup::default();
+        app.popup = Popup::Subagents;
         return;
     };
     let saved = app.db.subagent_runs(&session).unwrap_or_default();
@@ -228,7 +229,7 @@ pub fn transcript(
 }
 
 pub fn render(f: &mut Frame, app: &AppView) {
-    let area = chrome::popup_area(app, f.area(), "agents", (chrome::WIDE.0, chrome::TALL.1));
+    let area = chrome::popup_area(app, f.area(), "agents", chrome::WIDE);
     let runs = runs(app);
     let open = app
         .subagents
@@ -236,16 +237,34 @@ pub fn render(f: &mut Frame, app: &AppView) {
         .as_ref()
         .and_then(|id| runs.iter().find(|run| &run.id == id));
     if let Some(run) = open {
-        let title = chrome::popup_title(
-            app,
-            format!(
-                "sub-agent #{}{SEP}{}",
-                run.number,
-                chrome::truncate(run.title(), 40)
-            ),
+        let count = format!(
+            "{}{SEP}{}{SEP}{:.0}s",
+            if run.writable {
+                "workspace"
+            } else {
+                "read-only"
+            },
+            tokens_label(run.tokens),
+            run.secs,
         );
-        let hint = format!("↑↓ scroll{SEP}t tools{SEP}r reasoning{SEP}←→ runs{SEP}esc back");
-        let inner = chrome::render_hinted(f, area, title, &hint, app, true, chrome::Tone::Normal);
+        let inner = chrome::render_popup(
+            f,
+            area,
+            &PopupFrame {
+                title: &format!("Sub-agent #{}", run.number),
+                count: &count,
+                hints: &[
+                    hint(keys::MOVE, "scroll"),
+                    hint("t", "tools"),
+                    hint("r", "reasoning"),
+                    hint(keys::SIDE, "runs"),
+                    hint(keys::ESC, "back"),
+                ],
+                tone: chrome::Tone::Normal,
+                focused: true,
+            },
+            app,
+        );
         let lines = transcript(
             run,
             &app.subagents,
@@ -265,32 +284,37 @@ pub fn render(f: &mut Frame, app: &AppView) {
     }
     let total = runs.len();
     let spent: Option<f64> = runs.iter().filter_map(|run| run.cost).reduce(|a, b| a + b);
-    let hint = if total == 0 {
-        "esc close".to_string()
-    } else {
-        format!(
-            "{}{}↑↓{SEP}enter open transcript{SEP}esc close",
-            chrome::count_hint(total, "sub-agent"),
-            spent.map_or_else(String::new, |cost| format!("${cost:.4} total{SEP}")),
-        )
-    };
-    let inner = chrome::render_hinted(
+    let count = format!(
+        "{total} run{}{}",
+        if total == 1 { "" } else { "s" },
+        spent.map_or_else(String::new, |cost| format!("{SEP}${cost:.4} total")),
+    );
+    let inner = chrome::render_popup(
         f,
         area,
-        chrome::popup_title(app, "sub-agents"),
-        &hint,
+        &PopupFrame {
+            title: "Sub-agents",
+            count: &count,
+            hints: &[
+                hint(keys::MOVE, ""),
+                hint(keys::ENTER, "transcript"),
+                hint(keys::ESC, "close"),
+            ],
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
         app,
-        true,
-        chrome::Tone::Normal,
     );
     if total == 0 {
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                "No sub-agents in this conversation yet. In agent mode the model starts them with its task tool.",
-                Style::default().fg(app.theme.fg_dim),
-            )))
-            .wrap(ratatui::widgets::Wrap { trim: true }),
+        chrome::render_empty(
+            f,
             inner,
+            if app.session.is_none() {
+                "No conversation open."
+            } else {
+                "No sub-agents in this conversation yet. In agent mode the model starts them with its task tool."
+            },
+            &app.theme,
         );
         return;
     }
@@ -308,7 +332,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
     if view.open.is_some() {
         let page = 10;
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => view.open = None,
+            KeyCode::Esc => view.open = None,
             KeyCode::Up | KeyCode::Char('k') => view.scroll += 1,
             KeyCode::Down | KeyCode::Char('j') => view.scroll = view.scroll.saturating_sub(1),
             KeyCode::PageUp => view.scroll += page,
@@ -335,10 +359,17 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
         return;
     }
     match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => app.popup = Popup::None,
+        KeyCode::Esc => app.popup = Popup::None,
         KeyCode::Up | KeyCode::Char('k') => view.selected = view.selected.saturating_sub(1),
         KeyCode::Down | KeyCode::Char('j') if total > 0 => {
             view.selected = (view.selected + 1).min(total - 1);
+        }
+        KeyCode::PageUp => view.selected = view.selected.saturating_sub(10),
+        KeyCode::PageDown => {
+            view.selected = view
+                .selected
+                .saturating_add(10)
+                .min(total.saturating_sub(1));
         }
         KeyCode::Home => view.selected = 0,
         KeyCode::End => view.selected = total.saturating_sub(1),

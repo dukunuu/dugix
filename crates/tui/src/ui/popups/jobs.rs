@@ -3,14 +3,14 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use nexus_core::app::{AppCommand, Popup, clamp_cursor};
 use nexus_core::jobs::{Job, JobRun, JobSpec};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::{ListItem, ListState, Paragraph};
 
 use crate::app_view::AppView;
 
-use super::chrome;
+use super::chrome::{self, PopupFrame, ctrl, hint, keys};
 
 const LABELS: [&str; 12] = [
     "name",
@@ -32,7 +32,10 @@ pub struct JobsPopup {
     pub jobs: Vec<Job>,
     pub runs: Vec<JobRun>,
     pub selected: usize,
+    pub confirm_delete: bool,
     pub form: Option<JobForm>,
+    pub logs: Option<String>,
+    pub scroll: u16,
 }
 
 pub struct JobForm {
@@ -90,6 +93,9 @@ impl JobForm {
 pub fn open(app: &mut AppView, create: bool) -> Result<()> {
     app.collect_job_notifications()?;
     refresh(app)?;
+    app.jobs_popup.confirm_delete = false;
+    app.jobs_popup.logs = None;
+    app.jobs_popup.scroll = 0;
     app.jobs_popup.form = if create {
         Some(JobForm::new(
             app.workspace
@@ -114,82 +120,109 @@ fn refresh(app: &mut AppView) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)] // list rows + confirmation chrome
 pub fn render(frame: &mut Frame, app: &AppView) {
     let area = chrome::popup_area(app, frame.area(), "jobs", chrome::WIDE);
-    let creating = app.jobs_popup.form.is_some();
-    let inner = chrome::render_hinted(
-        frame,
-        area,
-        chrome::popup_title(app, if creating { "new job" } else { "jobs" }),
-        if creating {
-            "tab/↑↓ field · enter next · ctrl+s save · esc cancel"
-        } else {
-            "↑↓ select · n new · space enable · w daily · r run · d delete · enter logs · esc close"
-        },
-        app,
-        true,
-        chrome::Tone::Normal,
-    );
-    let dim = Style::default().fg(app.theme.fg_dim);
-    if let Some(form) = &app.jobs_popup.form {
-        let mut lines: Vec<Line<'_>> = LABELS
-            .iter()
-            .enumerate()
-            .map(|(index, label)| {
-                Line::styled(
-                    format!(
-                        "{} {label}: {}",
-                        if index == form.field { "▸" } else { " " },
-                        form.values[index].replace('\n', " ")
-                    ),
-                    if index == form.field {
-                        Style::default().fg(app.theme.accent)
-                    } else {
-                        dim
-                    },
-                )
-            })
-            .collect();
-        lines.push(Line::styled(
-            &form.error,
-            Style::default().fg(app.theme.accent),
-        ));
-        frame.render_widget(Paragraph::new(lines), inner);
+    if let Some(logs) = &app.jobs_popup.logs {
+        render_logs(frame, app, area, logs);
         return;
     }
-    let parts = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(inner);
+    if let Some(form) = &app.jobs_popup.form {
+        render_form(frame, app, area, form);
+        return;
+    }
     let device = app.db.device_id().unwrap_or_default();
-    let items: Vec<_> = if app.jobs_popup.jobs.is_empty() {
-        vec![chrome::empty_placeholder(
-            "no jobs · n to create",
-            &app.theme,
-        )]
+    let selected = app.jobs_popup.jobs.get(app.jobs_popup.selected);
+    let confirming = app.jobs_popup.confirm_delete;
+    let total = app.jobs_popup.jobs.len();
+    let parked = app
+        .jobs_popup
+        .runs
+        .iter()
+        .filter(|run| run.status == "parked")
+        .count();
+    let count = format!("{total} job{}", if total == 1 { "" } else { "s" });
+    let count = if parked > 0 {
+        format!("{count} · {parked} parked")
     } else {
-        app.jobs_popup
-            .jobs
-            .iter()
-            .map(|job| {
-                let run = app.jobs_popup.runs.iter().find(|run| run.job_id == job.id);
-                let status = run.map_or("never run", |run| run.status.as_str());
-                ListItem::new(Line::from(format!(
-                    "{} · {} · {} · {} · {status}{}",
-                    job.spec.topic.as_deref().unwrap_or(&job.spec.name),
-                    job.spec.kind,
-                    job.spec.trigger_kind,
-                    if job.enabled == 1 {
-                        "enabled"
-                    } else {
-                        "disabled"
-                    },
-                    if job.device_id == device {
-                        ""
-                    } else {
-                        " · other device (read-only)"
-                    }
-                )))
-            })
-            .collect()
+        count
     };
+    let (title, hints) = if confirming {
+        (
+            "Delete job?",
+            vec![hint(ctrl('d'), "delete"), hint(keys::ESC, "cancel")],
+        )
+    } else {
+        let mut hints = vec![
+            hint(keys::MOVE, ""),
+            hint(keys::ENTER, "logs"),
+            hint("n", "new"),
+        ];
+        if selected.is_some_and(|job| job.device_id == device) {
+            hints.extend([
+                hint(keys::SPACE, "enable"),
+                hint("w", "daily"),
+                hint("r", "run"),
+                hint(ctrl('d'), "delete"),
+            ]);
+        }
+        hints.push(hint(keys::ESC, "close"));
+        ("Jobs", hints)
+    };
+    let inner = chrome::render_popup(
+        frame,
+        area,
+        &PopupFrame {
+            title,
+            count: if confirming { "" } else { &count },
+            hints: &hints,
+            tone: if confirming {
+                chrome::Tone::Danger
+            } else {
+                chrome::Tone::Normal
+            },
+            focused: true,
+        },
+        app,
+    );
+    let detail = selected.map_or_else(String::new, |job| {
+        if confirming {
+            format!("“{}” and its run history will be deleted.", job.spec.name)
+        } else {
+            app.jobs_popup
+                .runs
+                .iter()
+                .find(|run| run.job_id == job.id)
+                .map_or_else(String::new, |run| run_details(job, run))
+        }
+    });
+    let (list_area, detail_area) = chrome::split_with_detail(inner, &detail);
+    chrome::render_detail(frame, detail_area, &detail, &app.theme);
+    let items: Vec<_> = app
+        .jobs_popup
+        .jobs
+        .iter()
+        .map(|job| {
+            let run = app.jobs_popup.runs.iter().find(|run| run.job_id == job.id);
+            let status = run.map_or("never run", |run| run.status.as_str());
+            ListItem::new(Line::from(format!(
+                "{} · {} · {} · {} · {status}{}",
+                job.spec.topic.as_deref().unwrap_or(&job.spec.name),
+                job.spec.kind,
+                job.spec.trigger_kind,
+                if job.enabled == 1 {
+                    "enabled"
+                } else {
+                    "disabled"
+                },
+                if job.device_id == device {
+                    ""
+                } else {
+                    " · other device (read-only)"
+                }
+            )))
+        })
+        .collect();
     let mut state = ListState::default();
     if !app.jobs_popup.jobs.is_empty() {
         state.select(Some(app.jobs_popup.selected));
@@ -198,16 +231,96 @@ pub fn render(frame: &mut Frame, app: &AppView) {
         frame,
         chrome::standard_list(items, &app.theme),
         &mut state,
-        parts[0],
+        list_area,
         app.jobs_popup.jobs.len(),
         1,
         app,
     );
-    if let Some(job) = app.jobs_popup.jobs.get(app.jobs_popup.selected)
-        && let Some(run) = app.jobs_popup.runs.iter().find(|run| run.job_id == job.id)
-    {
-        frame.render_widget(Paragraph::new(run_details(job, run)).style(dim), parts[1]);
+    if app.jobs_popup.jobs.is_empty() {
+        chrome::render_empty(frame, list_area, "No jobs yet. n creates one.", &app.theme);
     }
+}
+
+fn render_form(frame: &mut Frame, app: &AppView, area: Rect, form: &JobForm) {
+    let inner = chrome::render_popup(
+        frame,
+        area,
+        &PopupFrame {
+            title: "New job",
+            count: "",
+            hints: &[
+                hint(keys::TAB, "field"),
+                hint(keys::ENTER, "next"),
+                hint(ctrl('s'), "save"),
+                hint(keys::ESC, "cancel"),
+            ],
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
+        app,
+    );
+    let inner = chrome::render_field(
+        frame,
+        inner,
+        "✎",
+        &form.values[form.field],
+        LABELS[form.field],
+        true,
+        &app.theme,
+    );
+    let dim = Style::default().fg(app.theme.fg_dim);
+    let mut lines: Vec<Line<'_>> = LABELS
+        .iter()
+        .enumerate()
+        .map(|(index, label)| {
+            Line::styled(
+                format!(
+                    "{} {label}: {}",
+                    if index == form.field { "▸" } else { " " },
+                    form.values[index].replace('\n', " ")
+                ),
+                if index == form.field {
+                    Style::default().fg(app.theme.accent)
+                } else {
+                    dim
+                },
+            )
+        })
+        .collect();
+    lines.push(Line::styled(
+        &form.error,
+        Style::default().fg(app.theme.accent),
+    ));
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn render_logs(frame: &mut Frame, app: &AppView, area: Rect, logs: &str) {
+    let name = app
+        .jobs_popup
+        .jobs
+        .get(app.jobs_popup.selected)
+        .map_or("Job", |job| job.spec.name.as_str());
+    let inner = chrome::render_popup(
+        frame,
+        area,
+        &PopupFrame {
+            title: &format!("{name} logs"),
+            count: "",
+            hints: &[hint(keys::MOVE, "scroll"), hint(keys::ESC, "back")],
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
+        app,
+    );
+    let max = logs
+        .lines()
+        .count()
+        .saturating_sub(usize::from(inner.height));
+    let scroll = app
+        .jobs_popup
+        .scroll
+        .min(u16::try_from(max).unwrap_or(u16::MAX));
+    frame.render_widget(Paragraph::new(logs).scroll((scroll, 0)), inner);
 }
 
 fn run_details(job: &Job, run: &JobRun) -> String {
@@ -235,7 +348,25 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
     if app.jobs_popup.form.is_some() {
         return form_key(app, key);
     }
+    if app.jobs_popup.logs.is_some() {
+        logs_key(app, key);
+        return Ok(());
+    }
     let job = app.jobs_popup.jobs.get(app.jobs_popup.selected).cloned();
+    if app.jobs_popup.confirm_delete {
+        match super::classify_confirm_delete_key(key) {
+            Some(super::ConfirmDeleteAction::Yes) => {
+                if let Some(job) = job {
+                    app.core.execute(AppCommand::DeleteJob { id: job.id })?;
+                    refresh(app)?;
+                }
+                app.jobs_popup.confirm_delete = false;
+            }
+            Some(super::ConfirmDeleteAction::No) => app.jobs_popup.confirm_delete = false,
+            None => {}
+        }
+        return Ok(());
+    }
     match key.code {
         KeyCode::Esc => app.popup = Popup::None,
         KeyCode::Up | KeyCode::Char('k') => {
@@ -246,17 +377,35 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
             app.jobs_popup.selected =
                 clamp_cursor(app.jobs_popup.selected, app.jobs_popup.jobs.len(), 1);
         }
+        KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End => {
+            if let Some(action) = super::classify_browse_key(key, false, false) {
+                super::apply_page(
+                    |delta| {
+                        app.jobs_popup.selected =
+                            clamp_cursor(app.jobs_popup.selected, app.jobs_popup.jobs.len(), delta);
+                    },
+                    action,
+                    10,
+                );
+            }
+        }
         KeyCode::Char('n') => return open(app, true),
-        KeyCode::Char(' ' | 'w' | 'r' | 'd') => {
-            if let Some(job) = job {
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if job.is_some_and(|job| job.device_id == app.db.device_id().unwrap_or_default()) {
+                app.jobs_popup.confirm_delete = true;
+            }
+        }
+        KeyCode::Char(' ' | 'w' | 'r') => {
+            if let Some(job) = job
+                && job.device_id == app.db.device_id().unwrap_or_default()
+            {
                 let cmd = match key.code {
                     KeyCode::Char(' ') => AppCommand::SetJobEnabled {
                         id: job.id,
                         on: job.enabled != 1,
                     },
                     KeyCode::Char('w') => AppCommand::ToggleResearchRepeat { id: job.id },
-                    KeyCode::Char('r') => AppCommand::RunJobNow { id: job.id },
-                    _ => AppCommand::DeleteJob { id: job.id },
+                    _ => AppCommand::RunJobNow { id: job.id },
                 };
                 app.core.execute(cmd)?;
                 refresh(app)?;
@@ -266,14 +415,46 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
             if let Some(job) = job
                 && let Some(run) = app.jobs_popup.runs.iter().find(|run| run.job_id == job.id)
             {
-                let id = run.id.clone();
-                app.core.switch_to_session_by_id(&id)?;
-                app.popup = Popup::None;
+                app.jobs_popup.logs = Some(
+                    app.db
+                        .load_messages(&run.id)?
+                        .iter()
+                        .map(|message| format!("{}\n{}", message.role, message.content))
+                        .collect::<Vec<_>>()
+                        .join("\n\n"),
+                );
+                app.jobs_popup.scroll = 0;
             }
         }
         _ => {}
     }
     Ok(())
+}
+
+fn logs_key(app: &mut AppView, key: KeyEvent) {
+    let height = app
+        .popup_hit
+        .get()
+        .map_or(1, |hit| hit.rect.height.saturating_sub(2));
+    let lines = app
+        .jobs_popup
+        .logs
+        .as_ref()
+        .map_or(0, |logs| logs.lines().count());
+    let max = u16::try_from(lines.saturating_sub(usize::from(height))).unwrap_or(u16::MAX);
+    let scroll = app.jobs_popup.scroll.min(max);
+    match key.code {
+        KeyCode::Esc => app.jobs_popup.logs = None,
+        KeyCode::Up | KeyCode::Char('k') => app.jobs_popup.scroll = scroll.saturating_sub(1),
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.jobs_popup.scroll = scroll.saturating_add(1).min(max);
+        }
+        KeyCode::PageUp => app.jobs_popup.scroll = scroll.saturating_sub(10),
+        KeyCode::PageDown => app.jobs_popup.scroll = scroll.saturating_add(10).min(max),
+        KeyCode::Home => app.jobs_popup.scroll = 0,
+        KeyCode::End => app.jobs_popup.scroll = max,
+        _ => {}
+    }
 }
 
 fn form_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
