@@ -220,12 +220,12 @@ pub fn column_fit_width(sheet: &Sheet, workbook: &Workbook, tab: &Tab, col: u32)
         if value.display.is_empty() {
             continue;
         }
-        // A wrapped cell only has to fit its longest word.
-        let width = if cell.fmt.wrap == Some(Wrap::Wrap) {
-            measure.longest_word(&value.display, cell.fmt.bold)
-        } else {
-            measure.width(&value.display, cell.fmt.bold)
-        };
+        // Wrapped or not, the column fits its widest unwrapped line.
+        let width = value
+            .display
+            .split('\n')
+            .map(|line| measure.width(line, cell.fmt.bold))
+            .fold(0.0_f64, f64::max);
         widest = Some(widest.map_or(width, |best: f64| best.max(width)));
     }
     widest.map_or(DEFAULT_COL, |width| {

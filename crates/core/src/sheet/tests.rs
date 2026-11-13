@@ -663,11 +663,58 @@ fn fit_cols_measures_values_bold_and_wrapped_words_within_limits() {
         layout::DEFAULT_COL,
         "a column with no data keeps the default"
     );
-    assert!(
-        width("E") < width("F"),
-        "a wrapped cell only needs its longest word"
+    assert_eq!(
+        width("E"),
+        width("F"),
+        "a wrapped cell fits its whole text unwrapped, so fitting makes it readable"
     );
     assert!((layout::MIN_FIT..layout::MAX_FIT).contains(&width("A")));
+}
+
+#[test]
+fn fit_rows_drops_set_heights_so_wrapped_rows_grow_again() {
+    let wrapped = edits(
+        &blank(),
+        json!([
+            {"op":"set_cells","tab":"Sheet1","at":"A1","values":[["a sentence long enough to need several lines in a narrow cell"],["short"],["x"]]},
+            {"op":"format","tab":"Sheet1","range":"A1:A2","patch":{"wrap":"wrap"}},
+            {"op":"set_row_height","tab":"Sheet1","rows":"1:3","height":30}
+        ]),
+    );
+    let workbook = |sheet: &Sheet| Workbook::load(sheet).unwrap();
+    assert!(
+        layout::auto_row_heights(&wrapped, &workbook(&wrapped), &wrapped.tabs[0]).is_empty(),
+        "a set height wins over wrapping"
+    );
+    let fitted = edits(
+        &wrapped,
+        json!([{"op":"fit_rows","tab":"Sheet1","rows":"1:2"}]),
+    );
+    assert_eq!(
+        fitted.tabs[0].rows.keys().copied().collect::<Vec<_>>(),
+        vec![3],
+        "only the fitted rows lose their set height"
+    );
+    let auto = layout::auto_row_heights(&fitted, &workbook(&fitted), &fitted.tabs[0]);
+    assert!(
+        auto[&1] > layout::DEFAULT_ROW,
+        "the wrapped row grows to its lines"
+    );
+    assert!(
+        !auto.contains_key(&2),
+        "one short line keeps the default height"
+    );
+    assert!(
+        apply(
+            &wrapped,
+            &serde_json::from_value::<Vec<Op>>(
+                json!([{"op":"fit_rows","tab":"Sheet1","rows":"A:B"}])
+            )
+            .unwrap()
+        )
+        .is_err(),
+        "rows must be a row range"
+    );
 }
 
 #[test]

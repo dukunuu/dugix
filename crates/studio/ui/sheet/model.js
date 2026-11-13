@@ -298,6 +298,7 @@ export const op = {
   colWidth: (tab, cols, width) => ({ op: 'set_col_width', tab, cols, width }),
   fitCols: (tab, cols) => ({ op: 'fit_cols', tab, cols }),
   rowHeight: (tab, rows, height) => ({ op: 'set_row_height', tab, rows, height }),
+  fitRows: (tab, rows) => ({ op: 'fit_rows', tab, rows }),
   freeze: (tab, rows, cols) => ({ op: 'freeze', tab, rows, cols }),
   merge: (tab, range) => ({ op: 'merge', tab, range }),
   unmerge: (tab, range) => ({ op: 'unmerge', tab, range }),

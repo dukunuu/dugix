@@ -10,13 +10,13 @@ set_cells{tab,at,values:[[input]]}; clear{tab,range,what:inputs|formats|all}\n\
 format{tab,range,patch:{num,bold,italic,underline,align,wrap,valign,fill,color}}\n\
 insert_rows/delete_rows/insert_cols/delete_cols{tab,at,count}\n\
 sort{tab,range,by,desc,header}; copy{tab,from,to_tab?,to,cut}; fill{tab,from,to}\n\
-set_col_width{tab,cols,width}; fit_cols{tab,cols}; set_row_height{tab,rows,height}\n\
+set_col_width{tab,cols,width}; fit_cols{tab,cols}; set_row_height{tab,rows,height}; fit_rows{tab,rows}\n\
 freeze{tab,rows,cols}; merge/unmerge{tab,range}\n\
 add_tab{name,after?}; rename_tab{tab,name}; delete_tab{tab}; move_tab{tab,after?}\n\
 set_title{title}; apply_design{design?}\n\
 add_chart{tab,data,...fields}; edit_chart{tab,id,patch}; delete_chart{tab,id}\n\
 fields: kind:column|bar|line|area|pie|scatter,series_in:cols|rows,headers:auto|yes|no,title,stacked,legend:right|bottom|none,x_title,y_title,y_min,y_max,at,dx,dy,w,h\n\
-Range A1:C9,B:B,2:4; Data! prefix. view{chart:id} for chart PNG.\n";
+Range A1:C9|B:B|2:4|Data!A1. view{chart:id}: PNG\n";
 
 pub(in crate::tools) fn is_sheet(action: &str, v: &Value) -> bool {
     v["path"]
@@ -457,7 +457,9 @@ fn edited_range(op: &sheet::Op) -> Result<Option<(String, Rect)>> {
         Op::SetColWidth { tab, cols, .. } | Op::FitCols { tab, cols } => {
             (tab, cols.parse::<Range>()?.bounds())
         }
-        Op::SetRowHeight { tab, rows, .. } => (tab, rows.parse::<Range>()?.bounds()),
+        Op::SetRowHeight { tab, rows, .. } | Op::FitRows { tab, rows } => {
+            (tab, rows.parse::<Range>()?.bounds())
+        }
         Op::Freeze { tab, .. } | Op::RenameTab { tab, .. } | Op::MoveTab { tab, .. } => {
             (tab, Range::Rows(1, MAX_ROWS).bounds())
         }

@@ -254,8 +254,8 @@
             if (!a || a.col !== c || M.mergeAt(merges, a.row, a.col)) continue;
             const display = valueOf(tab, a1).display;
             if (!display) continue;
-            const words = display.split(/\s+/).filter(Boolean);
-            const w = cell.fmt?.wrap === 'wrap' ? Math.max(0, ...words.map(word => measureText(word, cell.fmt?.bold))) : measureText(display, cell.fmt?.bold);
+            // Like core: wrapped or not, the widest line unwrapped.
+            const w = Math.max(0, ...display.split('\n').map(line => measureText(line, cell.fmt?.bold)));
             widest = widest === null ? w : Math.max(widest, w);
           }
           tab.cols[M.colName(c)] = widest === null ? 100 : Math.min(480, Math.max(40, widest + 10));
@@ -263,6 +263,7 @@
         break;
       }
       case 'set_row_height': { const r = M.parseRange(o.rows); tab.rows = tab.rows || {}; for (let row = r.r1; row <= r.r2; row++) tab.rows[row] = o.height; break; }
+      case 'fit_rows': { const r = M.parseRange(o.rows); if (tab.rows) for (let row = r.r1; row <= r.r2; row++) delete tab.rows[row]; break; }
       case 'freeze': tab.frozen = { rows: o.rows, cols: o.cols }; break;
       case 'merge': tab.merges = [...(tab.merges || []), o.range]; break;
       case 'unmerge': { const r = M.parseRange(o.range); tab.merges = (tab.merges || []).filter(m => !M.overlaps(M.parseRange(m), r)); break; }

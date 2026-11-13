@@ -321,6 +321,8 @@ test('toolbar: wrapping and vertical alignment, and fitting columns', () => {
   assert.deepEqual(M.toggleWrap('S', 'A1', { wrap: 'clip' }).patch, { wrap: 'wrap' }, 'clip becomes wrap');
   assert.deepEqual(M.op.fitCols('S', 'A:C'), { op: 'fit_cols', tab: 'S', cols: 'A:C' });
   assert.equal(M.applyLocal({ title: 'T', tabs: [{ id: 't1', name: 'Sheet1', cells: {} }] }, [M.op.fitCols('Sheet1', 'A:A')]), null, 'fitting waits for the backend to measure');
+  assert.deepEqual(M.op.fitRows('S', '2:4'), { op: 'fit_rows', tab: 'S', rows: '2:4' });
+  assert.equal(M.applyLocal({ title: 'T', tabs: [{ id: 't1', name: 'Sheet1', cells: {}, rows: { 2: 40 } }] }, [M.op.fitRows('Sheet1', '2:2')]), null, 'row fitting waits for the backend layout');
 });
 test('toolbar: merge toggles with the merges the range touches', () => {
   assert.deepEqual(M.mergeToggle('S', M.parseRange('A1:B2'), []), { op: 'merge', tab: 'S', range: 'A1:B2' });

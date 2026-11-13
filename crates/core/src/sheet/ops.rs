@@ -118,6 +118,11 @@ pub enum Op {
         rows: String,
         height: f64,
     },
+    /// Let rows size themselves: drop their set heights, so wrapped text decides.
+    FitRows {
+        tab: String,
+        rows: String,
+    },
     Freeze {
         tab: String,
         rows: u32,
@@ -347,6 +352,14 @@ fn step(sheet: &mut Sheet, op: &Op, resolver: Option<&Resolver<'_>>) -> Result<(
             for row in first..=last {
                 tab.rows.insert(row, *height);
             }
+        }
+        Op::FitRows { tab, rows } => {
+            let Range::Rows(first, last) = rows.parse()? else {
+                anyhow::bail!("rows must look like 1:3");
+            };
+            tab_mut(sheet, tab)?
+                .rows
+                .retain(|row, _| !(first..=last).contains(row));
         }
         Op::Freeze { tab, rows, cols } => {
             tab_mut(sheet, tab)?.frozen = super::Frozen {

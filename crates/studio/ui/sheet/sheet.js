@@ -243,10 +243,18 @@ export function mount(shared) {
     if (axis === 'row' && ['rows', 'all'].includes(state.sel.kind) && index >= r.r1 && index <= r.r2) { from = r.r1; to = Math.min(r.r2, extent.rows); }
     apply([M.resizeOp(api.tabName(), axis, from, to, size)]);
   }
-  /** Double-click on a column border: fit the column to every value it holds; a row goes
-   *  back to the default height. A border of a selected column fits the whole selection. */
+  /** The rows a fit on row `index` covers: its row selection, else just that row. */
+  function fitRowsRange(index) {
+    const r = M.selRect(state.sel), all = state.sel.kind === 'all';
+    const last = all ? (used()?.r2 || index) : Math.min(r.r2, api.extent().rows);
+    const selected = ['rows', 'all'].includes(state.sel.kind) && index >= r.r1 && index <= last;
+    return selected ? `${all ? 1 : r.r1}:${last}` : `${index}:${index}`;
+  }
+  /** Double-click on a border: a column fits every value it holds; a row drops its set
+   *  height so wrapped text sizes it again. A border of a selected column or row fits the
+   *  whole selection. */
   function fit(axis, index) {
-    if (axis === 'row') { resize('row', index, M.DEFAULT_ROW); return; }
+    if (axis === 'row') { apply([M.op.fitRows(api.tabName(), fitRowsRange(index))]); return; }
     const r = M.selRect(state.sel);
     const last = state.sel.kind === 'all' ? (used()?.c2 || index) : Math.min(r.c2, api.extent().cols);
     const selected = ['cols', 'all'].includes(state.sel.kind) && index >= r.c1 && index <= last;
@@ -354,6 +362,8 @@ export function mount(shared) {
     } else if (kind === 'row') {
       items = [
         ...insertRows, deleteRows, { rule: true },
+        { label: 'Fit to data', run: () => apply([M.op.fitRows(name, fitRowsRange(which))]) },
+        { rule: true },
         { label: `Freeze up to row ${which}`, run: () => apply([M.op.freeze(name, which, tab.frozen?.cols || 0)]) },
         { label: 'Unfreeze', disabled: !tab.frozen?.rows && !tab.frozen?.cols, run: () => apply([M.op.freeze(name, 0, 0)]) },
         { rule: true }, comment,

@@ -501,6 +501,12 @@ const tests = {
     const r = await page.locator('#sheet-app .sg-rh', { hasText: /^3$/ }).boundingBox();
     await page.mouse.move(r.x + r.width / 2, r.y + r.height - 1); await page.mouse.down(); await page.mouse.move(r.x + r.width / 2, r.y + r.height + 15, { steps: 3 }); await page.mouse.up(); await settle(page);
     assert.equal((await lastApply(page)).ops[0].op, 'set_row_height'); assert.equal((await lastApply(page)).ops[0].rows, '3:3');
+    assert.ok((await tabOf(page)).rows?.[3], 'the dragged row has a set height');
+    // Double-clicking the row border hands the height back to its text.
+    const r3 = await page.locator('#sheet-app .sg-rh', { hasText: /^3$/ }).boundingBox();
+    await page.mouse.dblclick(r3.x + r3.width / 2, r3.y + r3.height - 1); await settle(page);
+    assert.deepEqual((await lastApply(page)).ops[0], { op: 'fit_rows', tab: 'Budget', rows: '3:3' }, 'double-clicking a row border fits the row');
+    assert.ok(!(await tabOf(page)).rows?.[3], 'and drops its set height');
     await page.close();
   },
   async wrappingAndFitting() {
@@ -572,6 +578,10 @@ const tests = {
     await page.locator('#sheet-app .sg-ch', { hasText: /^C$/ }).click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'Fit to data' }).click(); await settle(page);
     assert.deepEqual((await lastApply(page)).ops[0], { op: 'fit_cols', tab: 'Budget', cols: 'B:D' }, 'the selected columns fit together');
+    // And rows, from the row header menu.
+    await page.locator('#sheet-app .sg-rh', { hasText: /^4$/ }).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Fit to data' }).click(); await settle(page);
+    assert.deepEqual((await lastApply(page)).ops[0], { op: 'fit_rows', tab: 'Budget', rows: '4:4' });
     await page.close();
   },
   async wrappedRowsVirtualize() {
