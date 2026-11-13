@@ -86,6 +86,16 @@ const tests = {
     const page = await open('light', undefined, { fixture: { sheet, threads: [] } });
     assert.equal(await shown(page, 'A1'), 'Category');
     await page.close();
+    // ...and the library opened from it lists the space's files.
+    const items = [{ kind: 'sheet', relative: 'sheets/q3-budget.sheet.json', title: 'Q3 budget', modified: new Date().toISOString(), count: 57, design: null, thumb: null, current: true }, { kind: 'doc', relative: 'docs/notes.doc.json', title: 'Notes', modified: new Date().toISOString(), count: 3, design: null, thumb: null, current: false }];
+    const lib = await open('light', undefined, { fixture: { sheet, threads: [] }, scripts: [`window.__libraryItems = ${JSON.stringify(items)}; window.__libraryCurrent = 'sheets/q3-budget.sheet.json';`, libraryMock] });
+    // A mode event that throws is reported, and later events (the library's) still arrive.
+    await lib.evaluate(() => window.studioAsyncEvent({ event: 'Sheet', sheet: null }));
+    await lib.locator('.sg-toast', { hasText: 'Studio hit an error' }).waitFor();
+    await lib.locator('#sheet-app .crumb-link').click();
+    await lib.locator('#library .lib-card').first().waitFor();
+    assert.equal(await lib.locator('#library .lib-card').count(), 2);
+    await lib.close();
   },
   async charts() {
     const fixture = { sheet: { ...structuredClone(sample.sheet), tabs: [{ id: 't1', name: 'Budget', cells: { A1: { input: 'Month' }, B1: { input: 'Sales' }, A2: { input: 'Jan' }, B2: { input: '10' }, A3: { input: 'Feb' }, B3: { input: '20' }, A4: { input: 'Mar' }, B4: { input: '15' } } }] }, threads: [] };

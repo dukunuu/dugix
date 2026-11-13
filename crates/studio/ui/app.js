@@ -233,17 +233,27 @@ const DOC_EVENTS = new Set(['Doc', 'DocFeedback', 'DocPreview', 'DocFocus', 'Pag
 const SHEET_EVENTS = new Set(['Sheet', 'SheetValues', 'SheetFeedback', 'SheetFocus']);
 const SHARED_EVENTS = new Set(['Asset', 'Exported', 'Saved', 'Revealed', 'Error', 'Theme', 'Designs', 'TemplateImported', 'Library', 'Idle', 'History', 'HistoryPreview']);
 let docUi = null, sheetUi = null, docQueue = Promise.resolve();
+/** Run mode work in order. A failed step is reported and the queue goes on: a rejected
+ * chain would silently drop every later event, the library's included. */
+function enqueue(job) {
+  docQueue = docQueue.then(job).catch(error => {
+    console.warn(error);
+    const message = `Studio hit an error: ${error?.message || error}`;
+    // The open mode shows it the way it shows a backend error; the deck's status bar is hidden there.
+    try { const ui = docUi || sheetUi; if (ui) ui.handle({ event: 'Error', message }, false); else toast(message); } catch { toast(message); }
+  });
+}
 function leaveDoc() { docUi?.unmount(); docUi = null; document.body.classList.remove('doc-mode'); }
 function leaveSheet() { sheetUi?.unmount(); sheetUi = null; document.body.classList.remove('sheet-mode'); }
 function route(event, reply) {
   if ((docUi || sheetUi) && event.event === 'Deck') {
-    docQueue = docQueue.then(() => { leaveDoc(); leaveSheet(); handleEvent(event, reply); });
+    enqueue(() => { leaveDoc(); leaveSheet(); handleEvent(event, reply); });
     return;
   }
   const isDoc = DOC_EVENTS.has(event.event), isSheet = SHEET_EVENTS.has(event.event);
   if (isDoc || isSheet || ((docUi || sheetUi) && SHARED_EVENTS.has(event.event))) {
     if (reply) pending = null;
-    docQueue = docQueue.then(async () => {
+    enqueue(async () => {
       if (isDoc && sheetUi) leaveSheet();
       if (isSheet && docUi) leaveDoc();
       if (isDoc && !docUi) {
