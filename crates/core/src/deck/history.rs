@@ -209,6 +209,21 @@ pub fn record_before_write_for<D: Document>(
         return Ok(());
     };
     let revision = previous.history_revision();
+    record_known_for(deck_path, &previous, &revision, next_revision, who)
+}
+
+/// `record_before_write_for` for a caller that already holds the file's
+/// current version and its revision.
+///
+/// # Errors
+/// When the history folder cannot be written.
+pub fn record_known_for<D: Document>(
+    deck_path: &Path,
+    previous: &D,
+    revision: &str,
+    next_revision: &str,
+    who: Who,
+) -> Result<()> {
     if revision == next_revision {
         return Ok(());
     }
@@ -224,7 +239,7 @@ pub fn record_before_write_for<D: Document>(
     ensure!(!dir.is_symlink(), "history folder must not be a symlink");
     let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%3f");
     let file = dir.join(format!("{stamp}-{rev8}-{}.json", who.name()));
-    write_atomic(&file, &serde_json::to_vec_pretty(&previous)?)?;
+    write_atomic(&file, &serde_json::to_vec_pretty(previous)?)?;
     let kept = existing.len() + 1;
     if kept > KEEP {
         for old in existing.iter().take(kept - KEEP) {

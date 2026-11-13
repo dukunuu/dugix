@@ -168,7 +168,11 @@ fn area(sheet: u32, rect: Rect) -> Area {
 impl Workbook {
     /// Build all named tabs before setting inputs, then calculate once.
     pub fn load(sheet: &Sheet) -> Result<Self> {
-        let sheet = super::validate::checked(sheet)?;
+        // Callers pass a checked sheet; release builds skip re-validating it.
+        debug_assert!(
+            super::validate::checked(sheet).is_ok_and(|checked| &checked == sheet),
+            "Workbook::load needs a sheet that went through Sheet::check"
+        );
         #[cfg(test)]
         ironcalc::base::mock_time::set_mock_time(1_700_000_000_000);
         let mut model = ic(Model::new_empty("Sheet", "en", "UTC", "en"))?;
@@ -221,7 +225,7 @@ impl Workbook {
         model.evaluate();
         Ok(Self {
             model,
-            source: sheet.tabs,
+            source: sheet.tabs.clone(),
         })
     }
 

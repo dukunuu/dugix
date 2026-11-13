@@ -171,7 +171,12 @@ pub fn apply_with_resolver(
     ops: &[Op],
     resolver: Option<&Resolver<'_>>,
 ) -> Result<Sheet> {
-    let mut working = super::validate::checked(base)?;
+    // Callers pass a checked sheet; release builds skip re-validating it.
+    debug_assert!(
+        super::validate::checked(base).is_ok_and(|checked| &checked == base),
+        "apply needs a sheet that went through Sheet::check"
+    );
+    let mut working = base.clone();
     for (index, op) in ops.iter().enumerate() {
         step(&mut working, op, resolver).map_err(|e| anyhow!("ops[{index}]: {e}"))?;
         working = super::validate::checked(&working).map_err(|e| anyhow!("ops[{index}]: {e}"))?;

@@ -25,7 +25,6 @@ pub mod validate;
 #[cfg(test)]
 mod effects_tests;
 
-use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use anyhow::{Result, anyhow, ensure};
@@ -227,21 +226,38 @@ pub fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
 }
 
 pub(crate) fn hash(value: &impl Serialize) -> String {
-    fn sorted(value: Value) -> Value {
+    /// Compact JSON with object keys in byte order.
+    fn canonical(value: &Value, out: &mut Vec<u8>) {
         match value {
-            Value::Object(map) => Value::Object(
-                map.into_iter()
-                    .collect::<BTreeMap<_, _>>()
-                    .into_iter()
-                    .map(|(k, v)| (k, sorted(v)))
-                    .collect(),
-            ),
-            Value::Array(items) => Value::Array(items.into_iter().map(sorted).collect()),
-            scalar => scalar,
+            Value::Object(map) => {
+                let mut entries: Vec<_> = map.iter().collect();
+                entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
+                out.push(b'{');
+                for (index, (key, item)) in entries.into_iter().enumerate() {
+                    if index > 0 {
+                        out.push(b',');
+                    }
+                    serde_json::to_writer(&mut *out, key).expect("canonical JSON");
+                    out.push(b':');
+                    canonical(item, out);
+                }
+                out.push(b'}');
+            }
+            Value::Array(items) => {
+                out.push(b'[');
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 {
+                        out.push(b',');
+                    }
+                    canonical(item, out);
+                }
+                out.push(b']');
+            }
+            scalar => serde_json::to_writer(&mut *out, scalar).expect("canonical JSON"),
         }
     }
-    let value = sorted(serde_json::to_value(value).expect("deck JSON"));
-    let bytes = serde_json::to_vec(&value).expect("canonical JSON");
+    let mut bytes = Vec::new();
+    canonical(&serde_json::to_value(value).expect("deck JSON"), &mut bytes);
     let mut result = String::with_capacity(64);
     for byte in Sha256::digest(bytes) {
         let _ = write!(result, "{byte:02x}");

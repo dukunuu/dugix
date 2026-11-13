@@ -50,6 +50,8 @@ fn charts(sheet: &Sheet, workbook: &Workbook) -> BTreeMap<String, Vec<ChartSvg>>
 /// The open workbook and whole-sheet undo steps.
 pub struct SheetSession {
     pub sheet: Sheet,
+    /// `sheet.revision()`, cached; `replace` is the only way to change `sheet`.
+    pub revision: String,
     pub workbook: Workbook,
     pub undo: Vec<Sheet>,
     pub redo: Vec<Sheet>,
@@ -110,6 +112,14 @@ fn values(workbook: &Workbook, tab: &str, range: Range) -> Vec<CellValue> {
     values
 }
 
+impl SheetSession {
+    fn replace(&mut self, next: Sheet, revision: String) -> Sheet {
+        debug_assert_eq!(revision, next.revision());
+        self.revision = revision;
+        std::mem::replace(&mut self.sheet, next)
+    }
+}
+
 impl Backend {
     fn sheet_session(&self) -> Result<&SheetSession> {
         self.sheet.as_ref().context("open a sheet first")
@@ -130,7 +140,7 @@ impl Backend {
             .replace('\\', "/");
         Event::Sheet {
             sheet: s.sheet.clone(),
-            revision: s.sheet.revision(),
+            revision: s.revision.clone(),
             relative,
             auto_rows: auto_rows(&s.sheet, &s.workbook),
             charts: charts(&s.sheet, &s.workbook),
@@ -183,9 +193,11 @@ impl Backend {
         self.home.set(false);
         self.path = path;
         self.doc = None;
-        self.known_revision = sheet.revision();
+        let revision = sheet.revision();
+        self.known_revision.clone_from(&revision);
         self.sheet = Some(SheetSession {
             sheet,
+            revision,
             workbook,
             undo: vec![],
             redo: vec![],
@@ -240,13 +252,20 @@ impl Backend {
         self.enter_sheet(path, sheet)
     }
 
-    fn write_sheet(&self, sheet: &Sheet) -> Result<()> {
+    fn write_sheet(&self, sheet: &Sheet, revision: &str) -> Result<()> {
         let bytes = serde_json::to_vec_pretty(sheet)?;
         ensure!(
             bytes.len() <= sheet::validate::MAX_SOURCE,
             "sheet exceeds 32 MiB"
         );
-        let _ = history::record_before_write_for::<Sheet>(&self.path, &sheet.revision(), Who::User);
+        // History is a safety net: failing to keep a version must not block a save.
+        let _ = match &self.sheet {
+            // The file is still the one this window wrote.
+            Some(s) if stamp(&self.path) == self.deck_stamp => {
+                history::record_known_for(&self.path, &s.sheet, &s.revision, revision, Who::User)
+            }
+            _ => history::record_before_write_for::<Sheet>(&self.path, revision, Who::User),
+        };
         atomic_write(&self.path, &bytes)?;
         self.home.set(false);
         Ok(())
@@ -261,9 +280,12 @@ impl Backend {
         let mut threads = s.threads.clone();
         comments::reanchor(&mut threads, &s.sheet, ops);
         comments::reconcile(&mut threads, &next);
-        self.write_sheet(&next)?;
+        let revision = next.revision();
+        self.write_sheet(&next, &revision)?;
+        self.deck_stamp = stamp(&self.path);
         let s = self.sheet_session_mut()?;
-        s.undo.push(std::mem::replace(&mut s.sheet, next));
+        let previous = s.replace(next, revision);
+        s.undo.push(previous);
         s.redo.clear();
         s.redo_threads.clear();
         s.undo_threads
@@ -286,9 +308,11 @@ impl Backend {
             return Ok(());
         };
         let workbook = Workbook::load(&next)?;
-        self.write_sheet(&next)?;
+        let revision = next.revision();
+        self.write_sheet(&next, &revision)?;
+        self.deck_stamp = stamp(&self.path);
         let s = self.sheet_session_mut()?;
-        let previous = std::mem::replace(&mut s.sheet, next);
+        let previous = s.replace(next, revision);
         if redo {
             s.redo.pop();
             s.undo.push(previous);
@@ -437,7 +461,7 @@ impl Backend {
             Command::Reveal { path } => return self.reveal(&path),
             _ => bail!("that action is for docs or decks; open a doc or deck to use it"),
         }
-        self.known_revision = self.sheet_session()?.sheet.revision();
+        self.known_revision = self.sheet_session()?.revision.clone();
         self.deck_stamp = stamp(&self.path);
         self.persist_sheet_feedback()?;
         Ok(self.sheet_event())
@@ -566,16 +590,18 @@ impl Backend {
         if next_stamp != self.deck_stamp {
             self.deck_stamp = next_stamp;
             let next = files::read_sheet(&self.path)?;
-            if next.revision() != self.known_revision {
+            let revision = next.revision();
+            if revision != self.known_revision {
                 let workbook = Workbook::load(&next)?;
                 let s = self.sheet_session_mut()?;
                 changed = sheet::read::changed_cells(&s.sheet, &next);
-                s.undo.push(std::mem::replace(&mut s.sheet, next));
+                let previous = s.replace(next, revision.clone());
+                s.undo.push(previous);
                 s.undo_threads.push(s.threads.clone());
                 s.redo.clear();
                 s.redo_threads.clear();
                 s.workbook = workbook;
-                self.known_revision = self.sheet_session()?.sheet.revision();
+                self.known_revision = revision;
                 reloaded = true;
             }
         }

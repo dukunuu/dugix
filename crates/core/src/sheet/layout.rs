@@ -27,6 +27,14 @@ pub const DEFAULT_COL: f64 = 100.0;
 pub const MIN_FIT: f64 = 40.0;
 pub const MAX_FIT: f64 = 480.0;
 
+/// Measured widths, shared by every `CellText`.
+static WIDTHS: std::sync::LazyLock<std::sync::Mutex<Widths>> =
+    std::sync::LazyLock::new(std::sync::Mutex::default);
+/// Body family, bold, text → width.
+type Widths = std::collections::HashMap<(String, bool, String), f64>;
+/// Past this many entries the cache starts over.
+const MAX_WIDTHS: usize = 200_000;
+
 /// Cell text measured with the sheet's body font, as the PNG and the grid draw it.
 pub struct CellText<'a> {
     typesetter: Typesetter<'a>,
@@ -55,19 +63,25 @@ impl<'a> CellText<'a> {
         }
     }
 
-    /// Pixel width of one line of `text`.
+    /// Pixel width of one line of `text`, remembered for the whole process.
     pub fn width(&mut self, text: &str, bold: bool) -> f64 {
-        let face = self.face(bold);
-        self.typesetter.advance(&face, FONT_SIZE, text)
-    }
-
-    /// The widest word, for a wrapped cell that only needs its longest word to fit.
-    pub fn longest_word(&mut self, text: &str, bold: bool) -> f64 {
-        let mut widest = 0.0_f64;
-        for word in text.split_whitespace() {
-            widest = widest.max(self.width(word, bold));
+        let key = (self.family.clone(), bold, text.to_string());
+        if let Some(width) = WIDTHS
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&key).copied())
+        {
+            return width;
         }
-        widest
+        let face = self.face(bold);
+        let width = self.typesetter.advance(&face, FONT_SIZE, text);
+        if let Ok(mut cache) = WIDTHS.lock() {
+            if cache.len() >= MAX_WIDTHS {
+                cache.clear();
+            }
+            cache.insert(key, width);
+        }
+        width
     }
 
     /// Greedy word wrap into `width`; overlong words break anywhere, like a browser.

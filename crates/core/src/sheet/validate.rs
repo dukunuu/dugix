@@ -46,12 +46,13 @@ impl Sheet {
         if source.len() > MAX_SOURCE {
             return Err(fail("sheet exceeds 32 MiB".into()));
         }
-        let raw: Value = serde_json::from_str(source).map_err(|e| fail(e.to_string()))?;
-        // Locate serde errors inside a cell instead of reporting only the root.
-        if let Some(tabs) = raw["tabs"].as_array() {
-            for tab in tabs {
-                if let Some(cells) = tab["cells"].as_object() {
-                    for (key, cell) in cells {
+        let mut sheet: Self = match serde_json::from_str(source) {
+            Ok(sheet) => sheet,
+            Err(error) => {
+                // Locate serde errors inside a cell instead of reporting only the root.
+                let raw: Value = serde_json::from_str(source).map_err(|e| fail(e.to_string()))?;
+                for tab in raw["tabs"].as_array().into_iter().flatten() {
+                    for (key, cell) in tab["cells"].as_object().into_iter().flatten() {
                         if let Err(e) = serde_json::from_value::<Cell>(cell.clone()) {
                             return Err(vec![CheckError {
                                 path: format!("$.tabs[{:?}].cells[{key:?}]", tab["name"]),
@@ -60,9 +61,12 @@ impl Sheet {
                         }
                     }
                 }
+                return Err(match serde_json::from_value::<Self>(raw) {
+                    Err(e) => fail(e.to_string()),
+                    Ok(_) => fail(error.to_string()),
+                });
             }
-        }
-        let mut sheet: Self = serde_json::from_value(raw).map_err(|e| fail(e.to_string()))?;
+        };
         let mut errors = crate::doc::validate::check_theme(&sheet.theme);
         if sheet.version != 1 {
             issue(&mut errors, "$.version", "expected sheet version 1");

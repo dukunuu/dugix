@@ -17,6 +17,22 @@ fn sample() -> Sheet {
 }
 
 #[test]
+fn remembered_cell_text_widths_match_a_fresh_measure() {
+    let theme = render::theme(&sample());
+    let text = "remembered width probe 12345";
+    let first = layout::CellText::new(&theme).width(text, false);
+    let mut again = layout::CellText::new(&theme);
+    assert!(first > 0.0);
+    assert_eq!(again.width(text, false).to_bits(), first.to_bits());
+    let bold = again.width(text, true);
+    assert_eq!(
+        layout::CellText::new(&theme).width(text, true).to_bits(),
+        bold.to_bits()
+    );
+    assert_eq!(again.width(text, false).to_bits(), first.to_bits());
+}
+
+#[test]
 fn sheet_copy_and_cut_shift_formulas_but_only_cut_moves_observers() {
     for cut in [false, true] {
         let sheet = ops(

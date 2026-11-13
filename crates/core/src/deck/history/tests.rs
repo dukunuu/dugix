@@ -39,6 +39,20 @@ fn write(folder: &Folder, next: &Deck, who: Who) {
 }
 
 #[test]
+fn a_caller_that_holds_the_previous_version_keeps_it_without_reading_the_file() {
+    let f = Folder::new();
+    let (a, b) = (deck(&["a"]), deck(&["b"]));
+    record_known_for(&f.deck(), &a, &a.revision(), &b.revision(), Who::User).unwrap();
+    let kept = list(&f.deck()).unwrap();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].rev8, a.revision()[..8]);
+    assert_eq!(kept[0].load().unwrap(), a);
+    record_known_for(&f.deck(), &a, &a.revision(), &b.revision(), Who::User).unwrap();
+    record_known_for(&f.deck(), &b, &b.revision(), &b.revision(), Who::User).unwrap();
+    assert_eq!(list(&f.deck()).unwrap().len(), 1);
+}
+
+#[test]
 fn the_first_write_keeps_nothing_and_later_ones_keep_the_replaced_version() {
     let f = Folder::new();
     let (a, b, c) = (deck(&["a"]), deck(&["b"]), deck(&["c"]));
