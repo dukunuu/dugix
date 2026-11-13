@@ -191,7 +191,12 @@ fn cell_svg(
         if fmt.underline { "underline" } else { "none" }
     );
     for (index, line) in lines.iter().enumerate() {
-        let baseline = top + 11.0 + index as f64 * LINE_HEIGHT - cy;
+        // The baseline sits where CSS puts it in a line box: half the leading, then the ascent.
+        let baseline = top
+            + (LINE_HEIGHT - super::layout::FONT_SIZE) / 2.0
+            + super::layout::FONT_SIZE * 0.8
+            + index as f64 * LINE_HEIGHT
+            - cy;
         let _ = write!(
             out,
             "<tspan x=\"{tx}\" y=\"{baseline}\">{}</tspan>",

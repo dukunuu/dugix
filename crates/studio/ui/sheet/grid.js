@@ -317,7 +317,7 @@ export function gridController(api) {
   /** Width in pixels of the widest text in a column among the cells loaded, for double-click-to-fit. */
   function measure(text, bold) {
     measureCtx ||= document.createElement('canvas').getContext('2d');
-    measureCtx.font = `${bold ? '600 ' : ''}13px ${getComputedStyle(scroll).fontFamily}`;
+    measureCtx.font = `${bold ? '700 ' : ''}13px ${getComputedStyle(scroll).fontFamily}`;
     return measureCtx.measureText(text).width;
   }
 

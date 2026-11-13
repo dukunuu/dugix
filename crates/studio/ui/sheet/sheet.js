@@ -15,6 +15,7 @@ import { interactController } from './interact.js';
 import { chartsController } from './charts.js';
 import { glyph } from './glyphs.js';
 import { placePopup } from '../popup.js';
+import { ensureDeckFonts, fontStack } from '../render.js';
 
 const el = (tag, className, text) => {
   const node = document.createElement(tag);
@@ -429,6 +430,10 @@ export function mount(shared) {
     set('--s-muted', M.cssColor(state.sheet.theme, 'muted') || mix(fg, bg, 55));
     set('--s-line', M.cssColor(state.sheet.theme, 'border') || mix(fg, bg, 16));
     set('--s-head', M.cssColor(state.sheet.theme, 'surface') || mix(fg, bg, 6));
+    // Cells use the sheet's body font, which the backend also measures to size wrapped rows.
+    ensureDeckFonts(state.sheet.theme);
+    const body = state.sheet.theme?.fonts?.body;
+    if (body) set('--s-font', fontStack(body)); else app.style.removeProperty('--s-font');
   }
 
   // -- events from the backend -------------------------------------------------------------------------------------------------------
