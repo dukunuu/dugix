@@ -1,5 +1,6 @@
 use super::{Control, Entry, no_modifier_but_shift, pin_focused, safe};
 use crate::app_view::AppView;
+use crate::ui::popups::chrome::{self, PopupFrame, hint, keys};
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -220,8 +221,65 @@ pub fn render_popup(f: &mut Frame, app: &mut AppView) {
         return;
     };
     if app.interactive.expanded {
+        let viewport = viewport.intersection(f.area());
         let enabled = can_send(app);
+        let Some(entry) = app
+            .interactive
+            .focused
+            .as_ref()
+            .and_then(|key| app.interactive.entries.get(key))
+        else {
+            return;
+        };
+        let title = entry.session.as_ref().map_or_else(
+            |_| "UI unavailable".into(),
+            |session| safe(session.document().title()),
+        );
+        let hints = if super::practice::editing(entry).is_some() || entry.focused_input().is_some()
+        {
+            entry
+                .hint(viewport.width, true)
+                .split(" · ")
+                .map(|part| {
+                    let (key, verb) = part.split_once(' ').unwrap_or((part, ""));
+                    hint(key.to_string(), verb.to_string())
+                })
+                .collect()
+        } else {
+            vec![
+                hint(keys::TAB, "next"),
+                hint(keys::ENTER, "choose"),
+                hint(keys::ESC, "close"),
+            ]
+        };
+        chrome::render_popup(
+            f,
+            viewport,
+            &PopupFrame {
+                title: &title,
+                count: "",
+                hints: &hints,
+                tone: chrome::Tone::Normal,
+                focused: true,
+            },
+            app,
+        );
+        // The panel painter owns its content and hits; keep only the shared outer chrome.
+        let edge = |x: u16, y: u16| {
+            y == viewport.y
+                || y + 1 == viewport.bottom()
+                || x == viewport.x
+                || x + 1 == viewport.right()
+        };
+        let border: Vec<_> = viewport
+            .positions()
+            .filter(|p| edge(p.x, p.y))
+            .map(|p| (p, f.buffer_mut()[(p.x, p.y)].clone()))
+            .collect();
         app.interactive.popup(f, &app.theme, viewport, enabled);
+        for (p, cell) in border {
+            f.buffer_mut()[(p.x, p.y)] = cell;
+        }
     } else {
         // Repaint just this card at full strength: the popup dispatcher dims the base view.
         app.interactive.hits.clear();

@@ -957,6 +957,10 @@ impl Widgets {
         f.render_widget(Clear, area);
         f.buffer_mut().set_style(area, app_theme.background_style());
         for y in 0..area.height.min(height) {
+            // Expanded panels get their title and footer from the shared popup frame.
+            if y + entry.scroll == 0 || y + entry.scroll + 1 == height {
+                continue;
+            }
             for x in 0..area.width {
                 f.buffer_mut()[(area.x + x, area.y + y)] = canvas[(x, y + entry.scroll)].clone();
             }

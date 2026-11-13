@@ -14,71 +14,11 @@ use crate::image_viewer::{Source, Zoom, display_name, source_of, video_for};
 use crate::image_viewer_actions::{Action, DOUBLE_CLICK, Drag, Menu, menu_rect};
 use crate::ui::style::{self, glyph};
 
-use super::chrome;
+use super::chrome::{self, PopupFrame, hint, keys};
 
 /// Cells one arrow press pans in 1:1; Shift pans [`FAST`] times as far.
 const PAN_CELLS: i32 = 4;
 const FAST: i32 = 4;
-
-/// The hint bar's pieces, best first: the bar keeps as many as fit and prints
-/// them in reading order.
-fn hint(app: &AppView, video: bool, width: u16) -> String {
-    let (pan_x, pan_y) = app.image_viewer.can_pan();
-    let mut parts: Vec<(u8, usize, String)> = Vec::new();
-    let mut add = |priority: u8, text: &str| {
-        let order = parts.len();
-        parts.push((priority, order, text.to_string()));
-    };
-    if video {
-        add(11, "Enter play");
-    }
-    if pan_x || pan_y {
-        add(9, "arrows/hjkl pan (Shift faster)");
-        add(8, "n/p prev/next");
-    } else {
-        add(9, "\u{2190}\u{2192} prev/next");
-    }
-    add(
-        8,
-        if app.image_viewer.is_fit() {
-            "f 1:1"
-        } else {
-            "f fit"
-        },
-    );
-    add(7, "o system viewer");
-    add(7, "c copy path");
-    add(6, "y copy image");
-    add(5, ". menu");
-    add(4, "s save");
-    add(3, "+/- zoom");
-    add(2, "r reveal");
-    add(1, "a attach");
-    add(10, "Esc close");
-    let budget = usize::from(width).saturating_sub(4);
-    let mut ranked: Vec<_> = parts.iter().collect();
-    ranked.sort_by_key(|(priority, order, _)| (std::cmp::Reverse(*priority), *order));
-    let mut used = 0;
-    let mut kept = Vec::new();
-    for (_, order, text) in ranked {
-        let cost = crate::ui::style::width(text)
-            + if kept.is_empty() {
-                0
-            } else {
-                crate::ui::style::width(style::SEP)
-            };
-        if used + cost > budget {
-            break;
-        }
-        used += cost;
-        kept.push(*order);
-    }
-    kept.sort_unstable();
-    kept.into_iter()
-        .map(|order| parts[order].2.as_str())
-        .collect::<Vec<_>>()
-        .join(style::SEP)
-}
 
 fn message(source: &Source) -> &'static str {
     match source {
@@ -125,21 +65,14 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
         app.popup = Popup::None;
         return;
     };
+    // Full screen as before; only its frame is shared.
     let area = f.area();
     let video = video_for(&item.target).is_some();
     let name = chrome::truncate_middle(
         &display_name(&item.target),
         usize::from(area.width.saturating_sub(8)),
     );
-    let inner = chrome::render_hinted(
-        f,
-        area,
-        chrome::popup_title(app, name),
-        &hint(app, video, area.width),
-        app,
-        true,
-        chrome::Tone::Normal,
-    );
+    let inner = chrome::popup_block_focused("", &app.theme, true, chrome::Tone::Normal).inner(area);
     if inner.height < 2 || inner.width < 4 {
         return;
     }
@@ -155,6 +88,42 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
         return;
     }
 
+    let mut status = vec![format!(
+        "{} of {}",
+        app.image_viewer.index() + 1,
+        app.image_viewer.items().len()
+    )];
+    if let Some(meta) = app.image_viewer.meta() {
+        status.push(format!("{}×{}", meta.width, meta.height));
+    }
+    let zoom = app.image_viewer.zoom_label();
+    let zoom = zoom.trim_start_matches(if app.image_viewer.is_fit() {
+        "fit "
+    } else {
+        "1:1 "
+    });
+    if zoom.ends_with('%') {
+        status.push(zoom.to_string());
+    }
+    chrome::render_popup(
+        f,
+        area,
+        &PopupFrame {
+            title: &name,
+            count: &status.join(style::SEP),
+            hints: &[
+                hint(keys::ENTER, if video { "play" } else { "" }),
+                hint(keys::SIDE, "prev/next"),
+                hint("+/-", "zoom"),
+                hint("arrows", "pan"),
+                hint(".", "actions"),
+                hint(keys::ESC, "close"),
+            ][usize::from(!video)..],
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
+        app,
+    );
     if let Some(protocol) = app.image_viewer.protocol_ready() {
         let size = protocol.size();
         let (w, h) = (size.width.min(body.width), size.height.min(body.height));
@@ -173,31 +142,17 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
         );
     }
 
-    let count = app.image_viewer.items().len();
-    let counter = (count > 1).then(|| format!("{}/{count} ", app.image_viewer.index() + 1));
-    let room = usize::from(footer.width).saturating_sub(
-        counter
-            .as_ref()
-            .map_or(0, |c| crate::ui::style::width(c) + 1),
-    );
     let mut spans = Vec::new();
-    for (index, (field, _)) in footer_line(app, video, room).into_iter().enumerate() {
+    for (index, (field, _)) in footer_line(app, video, usize::from(footer.width))
+        .into_iter()
+        .enumerate()
+    {
         if index > 0 {
             spans.push(style::sep(&app.theme));
         }
         spans.push(style::meta(&app.theme, field));
     }
     f.render_widget(Paragraph::new(Line::from(spans)), footer);
-    if let Some(counter) = counter {
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                counter,
-                Style::default().fg(app.theme.accent),
-            )))
-            .alignment(Alignment::Right),
-            footer,
-        );
-    }
     render_chevron(f, app, body);
     render_menu(f, app, area);
 }
@@ -263,14 +218,21 @@ fn render_menu(f: &mut Frame, app: &AppView, screen: Rect) {
         return;
     };
     let area = menu_rect(screen, menu.at);
-    let inner = chrome::render_hinted(
+    let inner = chrome::render_popup(
         f,
         area,
-        chrome::popup_title(app, "actions"),
-        "Enter run \u{b7} Esc close",
+        &PopupFrame {
+            title: "Actions",
+            count: "",
+            hints: &[
+                hint(keys::MOVE, ""),
+                hint(keys::ENTER, "run"),
+                hint(keys::ESC, "back"),
+            ],
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
         app,
-        true,
-        chrome::Tone::Normal,
     );
     // The highlight marker takes two columns and the list a scrollbar gutter.
     let width = usize::from(inner.width).saturating_sub(3);
@@ -455,9 +417,12 @@ fn menu_key(app: &mut AppView, key: KeyEvent) -> bool {
         return false;
     };
     match key.code {
-        KeyCode::Esc | KeyCode::Char('.' | 'q') => close_menu(app),
+        KeyCode::Esc | KeyCode::Char('.') => close_menu(app),
+        KeyCode::Char('q') => {}
         KeyCode::Up | KeyCode::Char('k') => move_menu(app, -1),
         KeyCode::Down | KeyCode::Char('j') => move_menu(app, 1),
+        KeyCode::PageUp => move_menu(app, -5),
+        KeyCode::PageDown => move_menu(app, 5),
         KeyCode::Home => move_menu(app, -100),
         KeyCode::End => move_menu(app, 100),
         KeyCode::Enter => run_menu(app, menu.selected),
@@ -490,7 +455,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
     }
     let fast = key.modifiers.contains(KeyModifiers::SHIFT);
     match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => app.close_image_viewer(),
+        KeyCode::Esc => app.close_image_viewer(),
         KeyCode::Char('f') => app.image_viewer.toggle_fit(),
         KeyCode::Char('+' | '=') => app.image_viewer.zoom_step(1, None),
         KeyCode::Char('-' | '_') => app.image_viewer.zoom_step(-1, None),

@@ -1578,7 +1578,7 @@ mod tests {
         let screen = draw(&mut app, 100, 40);
         let title = screen
             .iter()
-            .position(|line| line.contains(" approve "))
+            .position(|line| line.contains("Approve"))
             .expect("approval panel drawn");
         // Docked at the bottom (above the status row), conversation above it.
         assert!(title > 20, "{screen:#?}");

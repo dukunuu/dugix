@@ -69,6 +69,32 @@ pub fn popup_area(app: &AppView, screen: Rect, id: &'static str, default: (u16, 
     rect
 }
 
+/// [`popup_area`] that grows to `rows` lines plus the border when the sized
+/// rect would clip a report, still centered and within the screen.
+pub fn popup_area_fit(
+    app: &AppView,
+    screen: Rect,
+    id: &'static str,
+    default: (u16, u16),
+    rows: usize,
+) -> Rect {
+    let rect = popup_rect(app, screen, id, default);
+    let want = u16::try_from(rows.saturating_add(2))
+        .unwrap_or(u16::MAX)
+        .min(screen.height);
+    let rect = if want > rect.height {
+        Rect {
+            y: screen.y + (screen.height - want) / 2,
+            height: want,
+            ..rect
+        }
+    } else {
+        rect
+    };
+    app.popup_hit.set(Some(PopupHit { rect, id, default }));
+    rect
+}
+
 /// Horizontal padding inside every popup frame, in cells per side.
 pub const PAD: u16 = 1;
 

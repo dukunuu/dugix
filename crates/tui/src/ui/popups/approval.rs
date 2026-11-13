@@ -9,7 +9,7 @@ use ratatui::widgets::Paragraph;
 
 use crate::app_view::AppView;
 
-use super::chrome;
+use super::chrome::{self, PopupFrame, hint, keys};
 use crate::ui::diff::{self, escaped_rows};
 use crate::ui::style;
 
@@ -190,10 +190,9 @@ fn explain(tool: &str, action: &str, text: &str) -> String {
         }
     };
     match (tool, action) {
-        ("wave", _) => format!(
-            "The agent wants to make these {action} together. Each is shown below; \
-             y approves all of them, r lets you decide one by one."
-        ),
+        ("wave", _) => {
+            format!("The agent wants to make these {action} together. Each is shown below.")
+        }
         ("fs", "edit") => format!(
             "The agent wants to change {path}: {} added, {} removed.",
             lines(added),
@@ -256,36 +255,6 @@ fn insert_intro(
         intro.insert(0, Line::default());
     }
     lines.splice(at..at, intro);
-}
-
-/// The pinned key row: what each key does for this request.
-fn legend(app: &AppView, request: &nexus_core::tools::ApprovalRequest) -> String {
-    let wave = request.tool == "wave";
-    let session = match request.tool.as_str() {
-        "fs" => "a allow all edits this session",
-        "shell" | "proc" => "a allow all commands this session",
-        "wave" => "a + session",
-        _ => "a allow for this session",
-    };
-    if request.class.as_deref() == Some(nexus_core::connectors::exec::CLASS) {
-        return "y allow once · a this tool for the session · A always allow · n deny".to_string();
-    }
-    if shell_unread(app) {
-        let deny = if wave { "n deny all" } else { "n deny" };
-        let review = if wave { " · r one by one" } else { "" };
-        format!("scroll to the end to enable y{review} · {deny}")
-    } else if wave {
-        let session = if request.allow_session {
-            format!(" · {session}")
-        } else {
-            String::new()
-        };
-        format!("y approve all{session} · r one by one · n deny all")
-    } else if request.allow_session {
-        format!("y allow once · {session} · n deny")
-    } else {
-        "y allow once · n deny".to_string()
-    }
 }
 
 fn shell_unread(app: &AppView) -> bool {
@@ -358,6 +327,32 @@ pub fn render(f: &mut Frame, app: &AppView) {
 }
 
 /// Draw the approval panel in `area` (where the composer normally is).
+/// The footer keys that work for this request right now.
+fn key_hints(
+    app: &AppView,
+    request: &nexus_core::tools::ApprovalRequest,
+    wave: bool,
+    connector: bool,
+) -> Vec<chrome::Hint> {
+    let mut hints = Vec::new();
+    if shell_unread(app) {
+        hints.push(hint(keys::MOVE, "read to the end to approve"));
+    } else {
+        hints.push(hint("y", "approve"));
+        if request.allow_session {
+            hints.push(hint("a", "this session"));
+        }
+        if connector {
+            hints.push(hint("A", "always"));
+        }
+    }
+    if wave {
+        hints.push(hint("r", "one by one"));
+    }
+    hints.extend([hint("n", "deny"), hint(keys::ESC, "deny")]);
+    hints
+}
+
 pub fn render_in(f: &mut Frame, app: &AppView, area: Rect) {
     let Some(request) = &app.approval_request else {
         return;
@@ -370,7 +365,7 @@ pub fn render_in(f: &mut Frame, app: &AppView, area: Rect) {
         return;
     };
     let inner = panel_block(app).inner(area);
-    // The bottom inner row is the key legend; the preview scrolls above it.
+    // Keep the dock's preview height and scrolling guards unchanged.
     let height = usize::from(inner.height).saturating_sub(2);
     let max_scroll = lines.len().saturating_sub(height);
     let offset = app.approval_scroll.get().min(max_scroll);
@@ -384,34 +379,53 @@ pub fn render_in(f: &mut Frame, app: &AppView, area: Rect) {
     let queued = app.approval_count();
     let title = if wave {
         format!(
-            " approve {}{}{} ",
+            "Approve {}{}{}",
             request.action,
             style::SEP,
             request.summary.lines().next().unwrap_or_default()
         )
-    } else if queued > 1 {
-        format!(" approve{}1 of {queued} ", crate::ui::style::SEP)
     } else {
-        " approve ".to_string()
+        "Approve".to_string()
     };
-    let legend = legend(app, request);
-    chrome::render_hinted(
+    let title = escaped_rows(
+        &title,
+        usize::MAX,
+        Style::default().fg(app.theme.accent),
+        dim,
+    )
+    .remove(0)
+    .to_string();
+    let connector = request.class.as_deref() == Some(nexus_core::connectors::exec::CLASS);
+    let mut count = Vec::new();
+    if queued > 1 {
+        count.push(format!("1 of {queued}"));
+    }
+    if let Some(percent) = offset.saturating_mul(100).checked_div(max_scroll) {
+        count.push(format!("{percent}%"));
+    }
+    let count = count.join(style::SEP);
+    let hints = key_hints(app, request, wave, connector);
+    chrome::render_popup(
         f,
         area,
-        escaped_rows(
-            &title,
-            usize::MAX,
-            Style::default().fg(app.theme.accent),
-            dim,
-        )
-        .remove(0),
-        "",
+        &PopupFrame {
+            title: &title,
+            count: &count,
+            hints: &hints,
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
         app,
-        true,
-        chrome::Tone::Normal,
     );
-    render_footer(f, app, area, (offset, height, lines.len()), max_scroll);
-    render_legend(f, app, inner, &legend);
+    if app
+        .approval_opened_at
+        .is_some_and(|opened| opened.elapsed() < app.approval_delay)
+    {
+        f.buffer_mut().set_style(
+            Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1),
+            Style::default().add_modifier(Modifier::DIM),
+        );
+    }
     let visible = if offset < max_scroll {
         height.saturating_sub(1)
     } else {
@@ -431,87 +445,6 @@ pub fn render_in(f: &mut Frame, app: &AppView, area: Rect) {
         ..inner
     };
     f.render_widget(Paragraph::new(visible), body);
-}
-
-/// The pinned key row at the bottom of the popup, dim during the open delay
-/// when the keys don't work yet.
-fn render_legend(f: &mut Frame, app: &AppView, inner: ratatui::layout::Rect, legend: &str) {
-    if inner.height < 2 {
-        return;
-    }
-    let delayed = app
-        .approval_opened_at
-        .is_some_and(|opened| opened.elapsed() < app.approval_delay);
-    let style = if delayed {
-        Style::default()
-            .fg(app.theme.fg_dim)
-            .add_modifier(Modifier::DIM)
-    } else {
-        Style::default().fg(app.theme.accent)
-    };
-    let row = ratatui::layout::Rect::new(inner.x, inner.bottom() - 1, inner.width, 1);
-    f.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            chrome::truncate(legend, usize::from(inner.width)),
-            style,
-        ))),
-        row,
-    );
-}
-
-/// The border's position readout when the preview scrolls.
-fn render_footer(
-    f: &mut Frame,
-    app: &AppView,
-    area: ratatui::layout::Rect,
-    (offset, height, total): (usize, usize, usize),
-    max_scroll: usize,
-) {
-    let hint = if max_scroll > 0 {
-        format!(
-            "lines {}–{} of {total} · ↑↓ PgUp PgDn Home End or wheel",
-            offset + 1,
-            (offset + height).min(total),
-        )
-    } else {
-        String::new()
-    };
-    let hint = hint.as_str();
-    let percentage = offset
-        .saturating_mul(100)
-        .checked_div(max_scroll)
-        .map_or_else(String::new, |percent| format!(" · {percent}%"));
-    let hint_width = usize::from(area.width.saturating_sub(4));
-    let hint = if app.settings.hide_hints { "" } else { hint };
-    let footer = format!(
-        " {}{} ",
-        chrome::truncate(
-            hint,
-            hint_width.saturating_sub(crate::ui::style::width(&percentage) + 2)
-        ),
-        percentage
-    );
-    let delayed = app
-        .approval_opened_at
-        .is_some_and(|opened| opened.elapsed() < app.approval_delay);
-    let footer_style = if delayed {
-        Style::default()
-            .fg(app.theme.fg_dim)
-            .add_modifier(Modifier::DIM)
-    } else {
-        Style::default().fg(app.theme.fg)
-    };
-    if !hint.is_empty() || max_scroll > 0 {
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(footer, footer_style))).right_aligned(),
-            ratatui::layout::Rect::new(
-                area.x + 2,
-                area.bottom().saturating_sub(1),
-                area.width.saturating_sub(4),
-                1,
-            ),
-        );
-    }
 }
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) -> anyhow::Result<()> {

@@ -1628,6 +1628,8 @@ mod tests {
         key(&mut app, Char('n'));
         assert_eq!(app.image_viewer.index(), 4);
         key(&mut app, Char('q'));
+        assert!(app.popup == Popup::ImageViewer, "q no longer closes");
+        key(&mut app, crossterm::event::KeyCode::Esc);
         assert!(app.popup == Popup::None);
         assert!(
             app.image_viewer.items().is_empty(),
