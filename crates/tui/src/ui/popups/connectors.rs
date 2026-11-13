@@ -15,7 +15,7 @@ use ratatui::widgets::{ListItem, ListState, Paragraph};
 use crate::app_view::AppView;
 use crate::ui::style::{self, glyph};
 
-use super::chrome;
+use super::chrome::{self, PopupFrame, ctrl, hint, keys};
 
 /// Which screen of the popup is showing.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +26,7 @@ pub enum Mode {
     Add,
     ConfirmRemove,
     Import,
+    Log,
 }
 
 /// The add form's current step.
@@ -63,6 +64,8 @@ pub struct ConnectorsPopup {
     pub import: Vec<ImportRow>,
     pub import_selected: usize,
     pub import_skipped: Vec<String>,
+    pub log: String,
+    pub log_scroll: usize,
 }
 
 /// Open the popup on its list.
@@ -141,38 +144,69 @@ pub fn render(f: &mut Frame, app: &AppView) {
         Mode::Tools => render_tools(f, app, area),
         Mode::Add => render_add(f, app, area),
         Mode::Import => render_import(f, app, area),
+        Mode::Log => render_log(f, app, area),
     }
 }
 
+#[allow(clippy::too_many_lines)] // connector rows and removal frame
 fn render_list(f: &mut Frame, app: &AppView, area: ratatui::layout::Rect) {
     let infos = app.connectors.infos();
     let popup = &app.connectors_popup;
     let confirm = popup.mode == Mode::ConfirmRemove;
     let selected = popup.selected.min(infos.len().saturating_sub(1));
-    let title = if confirm {
-        let name = infos.get(selected).map_or("", |info| info.name.as_str());
-        chrome::danger_title(
-            app,
-            format!("remove \"{name}\" and its keychain entries?"),
-            "y or Ctrl+D confirm · Esc cancel",
-        )
-    } else {
-        chrome::popup_title(app, "connectors")
-    };
-    let hint = if confirm {
-        "y or Ctrl+D confirm · Esc cancel".to_string()
+    let tools: usize = infos
+        .iter()
+        .map(|info| match info.status {
+            Status::Connected { tools } => tools,
+            _ => 0,
+        })
+        .sum();
+    let count = if confirm {
+        String::new()
     } else {
         format!(
-            "{}⏎ tools · a add · e on/off · d remove · i import · l log · r retry",
-            chrome::count_hint(infos.len(), "connector")
+            "{} connector{} · {tools} tool{}",
+            infos.len(),
+            if infos.len() == 1 { "" } else { "s" },
+            if tools == 1 { "" } else { "s" }
         )
+    };
+    let hints = if confirm {
+        vec![hint(ctrl('d'), "remove"), hint(keys::ESC, "cancel")]
+    } else {
+        vec![
+            hint(keys::MOVE, ""),
+            hint(keys::ENTER, "tools"),
+            hint("a", "add"),
+            hint("e", "on/off"),
+            hint("i", "import"),
+            hint("l", "log"),
+            hint("r", "retry"),
+            hint(ctrl('d'), "remove"),
+            hint(keys::ESC, "close"),
+        ]
     };
     let tone = if confirm {
         chrome::Tone::Danger
     } else {
         chrome::Tone::Normal
     };
-    let inner = chrome::render_hinted(f, area, title, &hint, app, true, tone);
+    let inner = chrome::render_popup(
+        f,
+        area,
+        &PopupFrame {
+            title: if confirm {
+                "Remove connector?"
+            } else {
+                "Connectors"
+            },
+            count: &count,
+            hints: &hints,
+            tone,
+            focused: true,
+        },
+        app,
+    );
     let width = usize::from(inner.width.saturating_sub(4));
     let name_width = infos
         .iter()
@@ -180,54 +214,52 @@ fn render_list(f: &mut Frame, app: &AppView, area: ratatui::layout::Rect) {
         .max()
         .unwrap_or(0)
         .min(20);
-    let items: Vec<ListItem> = if infos.is_empty() {
-        vec![chrome::empty_placeholder(
-            "no connectors yet — a adds one, i imports from Claude Desktop, Claude Code or Cursor",
-            &app.theme,
-        )]
-    } else {
-        infos
-            .iter()
-            .map(|info| {
-                let tools = match &info.status {
-                    Status::Connected { tools } => {
-                        format!("{tools} tool{}", if *tools == 1 { "" } else { "s" })
-                    }
-                    _ => String::new(),
-                };
-                let kind = if info.remote { "hosted" } else { "local" };
-                let mut spans = vec![
-                    status_dot(&info.status, &app.theme),
-                    Span::raw(" "),
-                    Span::styled(
-                        format!("{:<name_width$}", chrome::truncate(&info.name, name_width)),
-                        Style::default().fg(app.theme.fg),
-                    ),
-                    Span::styled(
-                        format!("{}{kind}", style::SEP),
-                        Style::default().fg(app.theme.fg_dim),
-                    ),
-                ];
-                if !tools.is_empty() {
-                    spans.push(Span::styled(
-                        format!("{}{tools}", style::SEP),
-                        Style::default().fg(app.theme.fg_dim),
-                    ));
+    let items: Vec<ListItem> = infos
+        .iter()
+        .map(|info| {
+            let tools = match &info.status {
+                Status::Connected { tools } => {
+                    format!("{tools} tool{}", if *tools == 1 { "" } else { "s" })
                 }
-                let status_style = match &info.status {
-                    Status::Error(_) => Style::default().fg(app.theme.error),
-                    Status::NeedsAuth { .. } => Style::default().fg(app.theme.warning),
-                    _ => Style::default().fg(app.theme.fg_dim),
-                };
+                _ => String::new(),
+            };
+            let kind = if info.remote { "hosted" } else { "local" };
+            let mut spans = vec![
+                status_dot(&info.status, &app.theme),
+                Span::raw(" "),
+                Span::styled(
+                    format!("{:<name_width$}", chrome::truncate(&info.name, name_width)),
+                    Style::default().fg(app.theme.fg),
+                ),
+                Span::styled(
+                    format!("{}{kind}", style::SEP),
+                    Style::default().fg(app.theme.fg_dim),
+                ),
+            ];
+            if !tools.is_empty() {
                 spans.push(Span::styled(
-                    format!("{}{}", style::SEP, status_word(&info.status)),
-                    status_style,
+                    format!("{}{tools}", style::SEP),
+                    Style::default().fg(app.theme.fg_dim),
                 ));
-                ListItem::new(chrome::fit_line(Line::from(spans), width))
-            })
-            .collect()
+            }
+            let status_style = match &info.status {
+                Status::Error(_) => Style::default().fg(app.theme.error),
+                Status::NeedsAuth { .. } => Style::default().fg(app.theme.warning),
+                _ => Style::default().fg(app.theme.fg_dim),
+            };
+            spans.push(Span::styled(
+                format!("{}{}", style::SEP, status_word(&info.status)),
+                status_style,
+            ));
+            ListItem::new(chrome::fit_line(Line::from(spans), width))
+        })
+        .collect();
+    let detail = if confirm {
+        let name = infos.get(selected).map_or("", |info| info.name.as_str());
+        format!("“{name}” and its keychain entries will be removed.")
+    } else {
+        infos.get(selected).map(detail_for).unwrap_or_default()
     };
-    let detail = infos.get(selected).map(detail_for).unwrap_or_default();
     let (list_area, detail_area) = chrome::split_with_detail(inner, &detail);
     let mut state = ListState::default();
     if !infos.is_empty() {
@@ -243,6 +275,14 @@ fn render_list(f: &mut Frame, app: &AppView, area: ratatui::layout::Rect) {
         app,
     );
     chrome::render_detail(f, detail_area, &detail, &app.theme);
+    if infos.is_empty() {
+        chrome::render_empty(
+            f,
+            list_area,
+            "No connectors yet. a adds one, i imports from Claude Desktop, Claude Code or Cursor.",
+            &app.theme,
+        );
+    }
 }
 
 fn policy_cell(row: &ToolRow, theme: &crate::theme::Theme) -> Span<'static> {
@@ -267,42 +307,49 @@ fn render_tools(f: &mut Frame, app: &AppView, area: ratatui::layout::Rect) {
         .unwrap_or_default();
     let rows = app.connectors.tool_rows(&name);
     let selected = popup.tool_selected.min(rows.len().saturating_sub(1));
-    let inner = chrome::render_hinted(
+    let count = format!(
+        "{} tool{}",
+        rows.len(),
+        if rows.len() == 1 { "" } else { "s" }
+    );
+    let hints = [
+        hint(keys::MOVE, ""),
+        hint("a", "allow"),
+        hint("s", "ask"),
+        hint("d", "deny"),
+        hint("Backspace", "default"),
+        hint(keys::ESC, "back"),
+    ];
+    let inner = chrome::render_popup(
         f,
         area,
-        chrome::popup_title(app, format!("connectors{}{name}", style::SEP)),
-        &format!(
-            "{}↑↓ · a allow · s ask · d deny · ⌫ default · Esc back",
-            chrome::count_hint(rows.len(), "tool")
-        ),
+        &PopupFrame {
+            title: &format!("{name} tools"),
+            count: &count,
+            hints: &hints,
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
         app,
-        true,
-        chrome::Tone::Normal,
     );
     let width = usize::from(inner.width.saturating_sub(4));
-    let items: Vec<ListItem> = if rows.is_empty() {
-        vec![chrome::empty_placeholder(
-            "no tools — the connector is not connected, or lists none",
-            &app.theme,
-        )]
-    } else {
-        rows.iter()
-            .map(|row| {
-                let label = row.title.as_deref().unwrap_or(&row.name);
-                ListItem::new(chrome::fit_line(
-                    Line::from(vec![
-                        policy_cell(row, &app.theme),
-                        Span::styled(label.to_string(), Style::default().fg(app.theme.fg)),
-                        Span::styled(
-                            format!("{}{}", style::SEP, row.words),
-                            Style::default().fg(app.theme.fg_dim),
-                        ),
-                    ]),
-                    width,
-                ))
-            })
-            .collect()
-    };
+    let items: Vec<ListItem> = rows
+        .iter()
+        .map(|row| {
+            let label = row.title.as_deref().unwrap_or(&row.name);
+            ListItem::new(chrome::fit_line(
+                Line::from(vec![
+                    policy_cell(row, &app.theme),
+                    Span::styled(label.to_string(), Style::default().fg(app.theme.fg)),
+                    Span::styled(
+                        format!("{}{}", style::SEP, row.words),
+                        Style::default().fg(app.theme.fg_dim),
+                    ),
+                ]),
+                width,
+            ))
+        })
+        .collect();
     let detail = rows
         .get(selected)
         .map(|row| {
@@ -331,30 +378,67 @@ fn render_tools(f: &mut Frame, app: &AppView, area: ratatui::layout::Rect) {
         app,
     );
     chrome::render_detail(f, detail_area, &detail, &app.theme);
+    if rows.is_empty() {
+        chrome::render_empty(
+            f,
+            list_area,
+            "No tools yet. Connect the connector or retry from the list.",
+            &app.theme,
+        );
+    }
 }
 
+#[allow(clippy::too_many_lines)] // wizard fields and step-specific frame
 fn render_add(f: &mut Frame, app: &AppView, area: ratatui::layout::Rect) {
     let form = &app.connectors_popup.add;
-    let (label, value, hint) = match form.step {
-        AddStep::Target => (
-            "url or command",
-            form.target.clone(),
-            "Enter next · Esc cancel",
-        ),
-        AddStep::Name => ("name", form.name.clone(), "Enter next · Esc back"),
-        AddStep::Auth => (
-            "auth",
-            if form.bearer { "bearer token" } else { "none" }.to_string(),
-            "Tab or Space switches · Enter next · Esc back",
-        ),
-        AddStep::Token => (
-            "token",
-            "*".repeat(form.token.chars().count()),
-            "paste or type · Enter save · Esc back",
-        ),
+    let remote = form.target.trim().starts_with("http");
+    let total = if !remote {
+        2
+    } else if form.bearer {
+        4
+    } else {
+        3
     };
-    let title = chrome::input_title(app, label, value, "");
-    let inner = chrome::render_hinted(f, area, title, hint, app, true, chrome::Tone::Normal);
+    let (step, label, value) = match form.step {
+        AddStep::Target => (1, "URL or command", form.target.clone()),
+        AddStep::Name => (2, "Name", form.name.clone()),
+        AddStep::Auth => (
+            3,
+            "Auth",
+            if form.bearer { "bearer token" } else { "none" }.to_string(),
+        ),
+        AddStep::Token => (4, "Token", "*".repeat(form.token.chars().count())),
+    };
+    let count = format!("step {step} of {total}");
+    let mut hints = vec![hint(
+        keys::ENTER,
+        if step == total { "save" } else { "next" },
+    )];
+    if form.step == AddStep::Auth {
+        hints.push(hint(keys::TAB, "switch"));
+    }
+    hints.push(hint(keys::ESC, if step == 1 { "cancel" } else { "back" }));
+    let inner = chrome::render_popup(
+        f,
+        area,
+        &PopupFrame {
+            title: "Add connector",
+            count: &count,
+            hints: &hints,
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
+        app,
+    );
+    let inner = chrome::render_field(
+        f,
+        inner,
+        "✎",
+        &value,
+        label,
+        form.step != AddStep::Auth,
+        &app.theme,
+    );
     let dim = Style::default().fg(app.theme.fg_dim);
     let normal = Style::default().fg(app.theme.fg);
     let current = Style::default()
@@ -374,7 +458,6 @@ fn render_add(f: &mut Frame, app: &AppView, area: ratatui::layout::Rect) {
             "*".repeat(form.token.chars().count()),
         ),
     ];
-    let remote = form.target.starts_with("http");
     let mut lines = vec![Line::from("")];
     for (step, label, value) in steps {
         let skipped = (!remote && matches!(step, AddStep::Auth | AddStep::Token))
@@ -472,28 +555,32 @@ fn import_detail(proposal: &Proposal) -> String {
 fn render_import(f: &mut Frame, app: &AppView, area: ratatui::layout::Rect) {
     let popup = &app.connectors_popup;
     let chosen = popup.import.iter().filter(|row| row.checked).count();
-    let inner = chrome::render_hinted(
+    let count = format!("{chosen} selected");
+    let hints = [
+        hint(keys::MOVE, ""),
+        hint(keys::SPACE, "toggle"),
+        hint("a", "all"),
+        hint(keys::ENTER, "import"),
+        hint(keys::ESC, "back"),
+    ];
+    let inner = chrome::render_popup(
         f,
         area,
-        chrome::popup_title(app, format!("import{}{chosen} selected", style::SEP)),
-        "↑↓ · Space toggle · a all · Enter import · Esc back",
+        &PopupFrame {
+            title: "Import connectors",
+            count: &count,
+            hints: &hints,
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
         app,
-        true,
-        chrome::Tone::Normal,
     );
     let width = usize::from(inner.width.saturating_sub(4));
-    let items: Vec<ListItem> = if popup.import.is_empty() {
-        vec![chrome::empty_placeholder(
-            "nothing found in Claude Desktop, Claude Code or Cursor",
-            &app.theme,
-        )]
-    } else {
-        popup
-            .import
-            .iter()
-            .map(|row| import_item(row, width, &app.theme))
-            .collect()
-    };
+    let items: Vec<ListItem> = popup
+        .import
+        .iter()
+        .map(|row| import_item(row, width, &app.theme))
+        .collect();
     let detail = popup.import.get(popup.import_selected).map_or_else(
         || popup.import_skipped.join("\n"),
         |row| import_detail(&row.proposal),
@@ -513,6 +600,48 @@ fn render_import(f: &mut Frame, app: &AppView, area: ratatui::layout::Rect) {
         app,
     );
     chrome::render_detail(f, detail_area, &detail, &app.theme);
+    if popup.import.is_empty() {
+        chrome::render_empty(
+            f,
+            list_area,
+            "Nothing found in Claude Desktop, Claude Code or Cursor.",
+            &app.theme,
+        );
+    }
+}
+
+fn render_log(f: &mut Frame, app: &AppView, area: ratatui::layout::Rect) {
+    let name = selected_connector(app)
+        .map(|info| info.name)
+        .unwrap_or_default();
+    let hints = [hint(keys::MOVE, "scroll"), hint(keys::ESC, "back")];
+    let inner = chrome::render_popup(
+        f,
+        area,
+        &PopupFrame {
+            title: &format!("{name} log"),
+            count: "",
+            hints: &hints,
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
+        app,
+    );
+    if app.connectors_popup.log.is_empty() {
+        chrome::render_empty(f, inner, "No log entries yet.", &app.theme);
+    } else {
+        let lines: Vec<_> = app
+            .connectors_popup
+            .log
+            .lines()
+            .skip(app.connectors_popup.log_scroll)
+            .map(Line::raw)
+            .collect();
+        f.render_widget(
+            Paragraph::new(lines).style(Style::default().fg(app.theme.fg)),
+            inner,
+        );
+    }
 }
 
 fn run(app: &mut AppView, command: AppCommand) {
@@ -532,6 +661,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
         Mode::Tools => tools_key(app, key),
         Mode::Add => add_key(app, key),
         Mode::Import => import_key(app, key),
+        Mode::Log => log_key(app, key),
     }
 }
 
@@ -551,6 +681,12 @@ fn list_key(app: &mut AppView, key: KeyEvent) {
         KeyCode::Esc => app.popup = Popup::None,
         KeyCode::Up => popup.selected = move_by(popup.selected, count, -1),
         KeyCode::Down => popup.selected = move_by(popup.selected, count, 1),
+        KeyCode::Char('k') if !super::is_chord(key) => {
+            popup.selected = move_by(popup.selected, count, -1);
+        }
+        KeyCode::Char('j') if !super::is_chord(key) => {
+            popup.selected = move_by(popup.selected, count, 1);
+        }
         KeyCode::PageUp => popup.selected = move_by(popup.selected, count, -10),
         KeyCode::PageDown => popup.selected = move_by(popup.selected, count, 10),
         KeyCode::Home => popup.selected = 0,
@@ -576,7 +712,7 @@ fn list_key(app: &mut AppView, key: KeyEvent) {
                 );
             }
         }
-        KeyCode::Char('d') if !super::is_chord(key) => {
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             if count > 0 {
                 popup.mode = Mode::ConfirmRemove;
             }
@@ -599,8 +735,14 @@ fn list_key(app: &mut AppView, key: KeyEvent) {
         KeyCode::Char('l') if !super::is_chord(key) => {
             if let Some(path) = selected_connector(app).and_then(|info| info.log_path) {
                 if path.exists() {
-                    let _ = open::that_detached(&path);
-                    app.push_status(format!("log: {}", path.display()));
+                    match std::fs::read_to_string(&path) {
+                        Ok(log) => {
+                            app.connectors_popup.log = log;
+                            app.connectors_popup.log_scroll = 0;
+                            app.connectors_popup.mode = Mode::Log;
+                        }
+                        Err(error) => app.push_status(format!("could not read log: {error}")),
+                    }
                 } else {
                     app.push_status(format!("no log yet · it will be {}", path.display()));
                 }
@@ -612,8 +754,7 @@ fn list_key(app: &mut AppView, key: KeyEvent) {
 }
 
 fn confirm_key(app: &mut AppView, key: KeyEvent) {
-    let yes = matches!(key.code, KeyCode::Char('y'))
-        || (key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL));
+    let yes = super::classify_confirm_delete_key(key) == Some(super::ConfirmDeleteAction::Yes);
     if yes {
         if let Some(info) = selected_connector(app) {
             run(app, AppCommand::RemoveConnector { name: info.name });
@@ -622,7 +763,7 @@ fn confirm_key(app: &mut AppView, key: KeyEvent) {
         let popup = &mut app.connectors_popup;
         popup.selected = popup.selected.min(count.saturating_sub(1));
         popup.mode = Mode::List;
-    } else if matches!(key.code, KeyCode::Esc | KeyCode::Char('n')) {
+    } else if key.code == KeyCode::Esc {
         app.connectors_popup.mode = Mode::List;
     }
 }
@@ -654,6 +795,12 @@ fn tools_key(app: &mut AppView, key: KeyEvent) {
         KeyCode::Esc => popup.mode = Mode::List,
         KeyCode::Up => popup.tool_selected = move_by(selected, rows.len(), -1),
         KeyCode::Down => popup.tool_selected = move_by(selected, rows.len(), 1),
+        KeyCode::Char('k') if !super::is_chord(key) => {
+            popup.tool_selected = move_by(selected, rows.len(), -1);
+        }
+        KeyCode::Char('j') if !super::is_chord(key) => {
+            popup.tool_selected = move_by(selected, rows.len(), 1);
+        }
         KeyCode::PageUp => popup.tool_selected = move_by(selected, rows.len(), -10),
         KeyCode::PageDown => popup.tool_selected = move_by(selected, rows.len(), 10),
         KeyCode::Home => popup.tool_selected = 0,
@@ -817,6 +964,27 @@ pub fn open_import(app: &mut AppView, paths: &ImportPaths) {
     popup.mode = Mode::Import;
 }
 
+fn log_key(app: &mut AppView, key: KeyEvent) {
+    let popup = &mut app.connectors_popup;
+    let count = popup.log.lines().count();
+    let delta = match key.code {
+        KeyCode::Esc => {
+            popup.mode = Mode::List;
+            return;
+        }
+        KeyCode::Up => -1,
+        KeyCode::Down => 1,
+        KeyCode::Char('k') if !super::is_chord(key) => -1,
+        KeyCode::Char('j') if !super::is_chord(key) => 1,
+        KeyCode::PageUp => -10,
+        KeyCode::PageDown => 10,
+        KeyCode::Home => i32::MIN / 2,
+        KeyCode::End => i32::MAX / 2,
+        _ => return,
+    };
+    popup.log_scroll = move_by(popup.log_scroll, count, delta);
+}
+
 fn import_key(app: &mut AppView, key: KeyEvent) {
     let popup = &mut app.connectors_popup;
     let count = popup.import.len();
@@ -824,6 +992,16 @@ fn import_key(app: &mut AppView, key: KeyEvent) {
         KeyCode::Esc => popup.mode = Mode::List,
         KeyCode::Up => popup.import_selected = move_by(popup.import_selected, count, -1),
         KeyCode::Down => popup.import_selected = move_by(popup.import_selected, count, 1),
+        KeyCode::Char('k') if !super::is_chord(key) => {
+            popup.import_selected = move_by(popup.import_selected, count, -1);
+        }
+        KeyCode::Char('j') if !super::is_chord(key) => {
+            popup.import_selected = move_by(popup.import_selected, count, 1);
+        }
+        KeyCode::PageUp => popup.import_selected = move_by(popup.import_selected, count, -10),
+        KeyCode::PageDown => popup.import_selected = move_by(popup.import_selected, count, 10),
+        KeyCode::Home => popup.import_selected = 0,
+        KeyCode::End => popup.import_selected = count.saturating_sub(1),
         KeyCode::Char(' ') => {
             if let Some(row) = popup.import.get_mut(popup.import_selected)
                 && !row.proposal.already

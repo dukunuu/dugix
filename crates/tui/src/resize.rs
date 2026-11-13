@@ -714,7 +714,7 @@ mod tests {
         let resized = hit(&app);
         assert!(resized.width > rect.width && resized.height > rect.height);
         let picture = rows.join("\n");
-        assert!(picture.contains("nerd config"), "{picture}");
+        assert!(picture.contains("Settings"), "{picture}");
         println!("{picture}");
     }
 }

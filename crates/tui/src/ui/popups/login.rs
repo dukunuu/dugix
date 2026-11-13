@@ -9,7 +9,7 @@ use ratatui::widgets::{ListItem, ListState};
 
 use crate::app_view::AppView;
 
-use super::chrome;
+use super::chrome::{self, PopupFrame, hint, keys};
 use crate::ui::style::glyph;
 
 // Preserve the login selector's historical order, which differs from routing order.
@@ -24,14 +24,27 @@ pub(crate) const LOGIN_ORDER: [BackendTag; 6] = [
 
 pub fn render(f: &mut Frame, app: &AppView) {
     let area = chrome::popup_area(app, f.area(), "login", chrome::SMALL);
-    let inner = chrome::render_hinted(
+    let configured = LOGIN_ORDER
+        .iter()
+        .filter(|&&tag| app.backends.configured(tag))
+        .count();
+    let count = format!("{configured} of {} set", LOGIN_ORDER.len());
+    let hints = [
+        hint(keys::MOVE, ""),
+        hint(keys::ENTER, "pick"),
+        hint(keys::ESC, "close"),
+    ];
+    let inner = chrome::render_popup(
         f,
         area,
-        chrome::popup_title(app, "login"),
-        "↑↓ · Enter pick · Esc close",
+        &PopupFrame {
+            title: "Login",
+            count: &count,
+            hints: &hints,
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
         app,
-        true,
-        chrome::Tone::Normal,
     );
 
     let dim = Style::default().fg(app.theme.fg_dim);
@@ -98,6 +111,12 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
         KeyCode::Esc => app.popup = nexus_core::app::Popup::None,
         KeyCode::Up => app.move_login_selection(-1),
         KeyCode::Down => app.move_login_selection(1),
+        KeyCode::Char('k') if !super::is_chord(key) => app.move_login_selection(-1),
+        KeyCode::Char('j') if !super::is_chord(key) => app.move_login_selection(1),
+        KeyCode::PageUp => app.move_login_selection(-10),
+        KeyCode::PageDown => app.move_login_selection(10),
+        KeyCode::Home => app.move_login_selection(i32::MIN / 2),
+        KeyCode::End => app.move_login_selection(i32::MAX / 2),
         KeyCode::Enter => app.confirm_login_selection(),
         _ => {}
     }
