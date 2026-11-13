@@ -52,7 +52,7 @@ export function libraryController({ command, toast: modeToast }) {
     items: [], current: null, filter: 'all', query: '', visible: false, loaded: false,
     awaiting: false, home: false, shownForHome: false, selected: null,
   };
-  let menu = null, renaming = null, lastFocus = null, toastTimer = 0, freshTimer = 0;
+  let menu = null, renaming = null, lastFocus = null, toastTimer = 0, freshTimer = 0, watchTimer = 0, listed = '';
   const inertTargets = () => ['#topbar', 'main', '#doc-app', '#sheet-app'].map(s => document.querySelector(s)).filter(Boolean);
 
   // -- the shell -------------------------------------------------------------------------------
@@ -369,12 +369,20 @@ export function libraryController({ command, toast: modeToast }) {
     for (const node of inertTargets()) node.inert = true;
     renderTabs(); renderGrid();
     command({ command: 'Library' });
+    // Files added or removed elsewhere show up while the library is open.
+    clearInterval(watchTimer);
+    watchTimer = setInterval(relist, 2000);
     requestAnimationFrame(() => search.focus({ preventScroll: true }));
+  }
+  /** Ask for the listing again, unless the user is mid-action. */
+  function relist() {
+    if (state.visible && !state.awaiting && !menu && !renaming && !confirm.open) command({ command: 'Library' });
   }
   function hide() {
     if (!state.visible || (state.home && !state.current)) return;
     closeMenu();
     state.visible = false; state.awaiting = false;
+    clearInterval(watchTimer);
     root.hidden = true;
     for (const node of inertTargets()) node.inert = false;
     try { lastFocus?.focus?.({ preventScroll: true }); } catch { /* the element may be gone */ }
@@ -422,12 +430,17 @@ export function libraryController({ command, toast: modeToast }) {
       if (event.home && !state.shownForHome) { state.shownForHome = true; show(); return; }
       if (!event.home) state.shownForHome = true;
       if (state.visible && state.awaiting) hide();
+      else relist();
     },
     onEvent(event) {
       if (event.event === 'Library') {
+        // An unchanged listing leaves the grid, its focus and its scroll alone.
+        const key = JSON.stringify([event.items, event.current, event.home, event.selected || null]);
+        const same = state.loaded && key === listed && !event.selected;
+        listed = key;
         state.items = event.items; state.current = event.current; state.loaded = true; state.home = event.home;
         state.selected = event.selected || null;
-        renderTabs(); renderGrid();
+        if (!same) { renderTabs(); renderGrid(); }
         if (event.notice && state.visible) notice(event.notice);
       } else if (event.event === 'Idle' || event.event === 'Error') state.awaiting = false;
     },

@@ -404,6 +404,8 @@ impl Event {
     }
 }
 
+type LibraryStamp = Vec<(PathBuf, u64, Option<std::time::SystemTime>)>;
+
 pub struct Backend {
     pub deck: Deck,
     /// Set while a doc is open; `deck` is then a placeholder.
@@ -437,6 +439,8 @@ pub struct Backend {
     /// No file was given and nothing has been opened or written since.
     home: std::cell::Cell<bool>,
     listing: std::cell::RefCell<Vec<nexus_core::canvas::Entry>>,
+    /// The files `listing` was read from, so an unchanged space is not parsed again.
+    listing_stamp: std::cell::RefCell<Option<LibraryStamp>>,
     /// Import approximations, reported once with the open.
     doc_notice: std::cell::RefCell<Option<String>>,
 }
@@ -510,6 +514,7 @@ impl Backend {
             data_dir: data_dir.into(),
             home: std::cell::Cell::new(no_path_given),
             listing: std::cell::RefCell::default(),
+            listing_stamp: std::cell::RefCell::default(),
             doc_notice: std::cell::RefCell::default(),
         };
         if opens_sheet {

@@ -53,7 +53,14 @@ impl Backend {
 
     /// List the space and remember the listing for thumbnail requests.
     pub(super) fn library_event(&self, notice: Option<String>, selected: Option<String>) -> Event {
-        let entries = canvas::library(&self.files_dir);
+        let stamp = canvas::library_stamp(&self.files_dir);
+        let unchanged = self.listing_stamp.borrow().as_ref() == Some(&stamp);
+        let entries = if unchanged {
+            self.listing.borrow().clone()
+        } else {
+            canvas::library(&self.files_dir)
+        };
+        *self.listing_stamp.borrow_mut() = Some(stamp);
         let current = self.current_relative();
         let items = entries
             .iter()

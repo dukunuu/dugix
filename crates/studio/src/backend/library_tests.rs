@@ -128,6 +128,35 @@ fn a_file_given_on_the_command_line_skips_the_library() {
 }
 
 #[test]
+fn a_repeated_listing_is_reused_until_a_file_changes() {
+    let temp = Temp::new();
+    let talk = temp.deck("decks/talk.deck.json", "Talk");
+    let (mut backend, _) = temp.opened(&talk, []);
+    let titles = |event| -> Vec<String> {
+        let mut titles: Vec<_> = library(event).0.into_iter().map(|i| i.title).collect();
+        titles.sort_unstable();
+        titles
+    };
+    assert_eq!(
+        titles(send(&mut backend, json!({"command":"Library"}))),
+        ["Talk"]
+    );
+    let stamp = backend.listing_stamp.borrow().clone();
+    assert!(stamp.is_some());
+    assert_eq!(
+        titles(send(&mut backend, json!({"command":"Library"}))),
+        ["Talk"]
+    );
+    assert_eq!(*backend.listing_stamp.borrow(), stamp);
+    temp.doc("docs/memo.doc.json", "Memo", "# Memo\n\nHello.\n");
+    assert_eq!(
+        titles(send(&mut backend, json!({"command":"Library"}))),
+        ["Memo", "Talk"]
+    );
+    assert_ne!(*backend.listing_stamp.borrow(), stamp);
+}
+
+#[test]
 fn the_library_lists_everything_without_a_single_absolute_path() {
     let temp = Temp::new();
     let talk = temp.deck("decks/talk.deck.json", "Talk");

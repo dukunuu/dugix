@@ -840,6 +840,24 @@ Object.assign(tests, {
   },
 });
 Object.assign(tests, {
+  async libraryShowsFilesMadeElsewhereWhileOpen() {
+    const page = await open('dark', undefined, { scripts: [libraryMock] });
+    await page.getByRole('button', { name: 'Library', exact: true }).click();
+    await page.locator('#library .lib-card').first().waitFor();
+    const before = await page.locator('#library .lib-card').count();
+    await page.evaluate(() => {
+      const items = window.__library.items;
+      items.unshift({ ...items.find(i => i.kind === 'doc'), relative: 'docs/made-by-model.doc.json', title: 'Made by the model' });
+      window.__library.items = items;
+    });
+    await page.locator('#library .lib-card', { hasText: 'Made by the model' }).waitFor({ timeout: 5000 });
+    assert.equal(await page.locator('#library .lib-card').count(), before + 1);
+    // An unchanged listing leaves the grid alone.
+    await page.locator('#library .lib-card').first().evaluate(n => { n.dataset.kept = '1'; });
+    await page.waitForTimeout(2500);
+    assert.equal(await page.locator('#library .lib-card').first().getAttribute('data-kept'), '1');
+    await page.close();
+  },
   async libraryOpensFromTheBarAndTheKeyboard() {
     const page = await open('dark', undefined, { scripts: [libraryMock] });
     assert.equal(await page.locator('#library').isVisible(), false);

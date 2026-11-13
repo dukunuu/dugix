@@ -120,6 +120,29 @@ pub fn library(files: &Path) -> Vec<Entry> {
     entries
 }
 
+/// Path, size and modified time of every file `library` reads; equal stamps
+/// mean an equal listing.
+#[must_use]
+pub fn library_stamp(files: &Path) -> Vec<(PathBuf, u64, Option<std::time::SystemTime>)> {
+    let Ok(root) = files.canonicalize() else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for kind in [Kind::Deck, Kind::Doc, Kind::Sheet] {
+        let (folder, suffix) = suffixes(kind);
+        walk(&root.join(folder), suffix, 0, &mut found);
+    }
+    found
+        .into_iter()
+        .map(|path| {
+            let meta = std::fs::metadata(&path).ok();
+            let size = meta.as_ref().map_or(0, std::fs::Metadata::len);
+            let modified = meta.and_then(|m| m.modified().ok());
+            (path, size, modified)
+        })
+        .collect()
+}
+
 fn walk(dir: &Path, suffix: &str, depth: usize, out: &mut Vec<PathBuf>) {
     let Ok(read) = std::fs::read_dir(dir) else {
         return;
