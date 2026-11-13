@@ -96,7 +96,7 @@ fn agents_lists_runs_newest_first_with_their_usage() {
     assert!(newer < older, "newest first:\n{text}");
     assert!(text.contains("12.3k tokens"), "{text}");
     assert!(text.contains("$0.0123"), "{text}");
-    assert!(text.contains("2 sub-agents"), "{text}");
+    assert!(text.contains("2 runs"), "{text}");
     assert!(text.contains("$0.0246 total"), "{text}");
 }
 
@@ -111,7 +111,7 @@ fn a_transcript_shows_reasoning_calls_answer_and_live_text() {
     key(&mut app, KeyCode::Enter);
     let text = screen(&mut app);
     for expected in [
-        "sub-agent #3",
+        "Sub-agent #3",
         "find callers of run 3",
         "grep first",
         "grep",
