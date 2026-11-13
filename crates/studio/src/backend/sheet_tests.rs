@@ -54,6 +54,65 @@ fn assert_sheet(event: Event) {
 }
 
 #[test]
+fn sheet_chart_events_recalculate_undo_reload_and_warn_on_xlsx() {
+    let temp = Temp::new();
+    let mut backend = temp.backend();
+    let event = send(
+        &mut backend,
+        json!({"command":"SheetApply","ops":[
+            {"op":"set_cells","tab":"Sheet1","at":"A1","values":[["Label","N"],["A","2"],["B","4"]]},
+            {"op":"add_tab","name":"Other"},
+            {"op":"add_chart","tab":"Sheet1","data":"A1:B3"}
+        ]}),
+    );
+    let Event::Sheet { charts, .. } = event else {
+        panic!("{event:?}")
+    };
+    assert_eq!(charts.len(), 2);
+    assert!(charts["t2"].is_empty());
+    let original = charts["t1"][0].svg.clone();
+    assert_eq!(charts["t1"][0].id, "c1");
+    let event = send(
+        &mut backend,
+        json!({"command":"SheetApply","ops":[{"op":"set_cells","tab":"Sheet1","at":"B2","values":[["9"]]}]}),
+    );
+    let Event::Sheet { charts, .. } = event else {
+        panic!("{event:?}")
+    };
+    assert_ne!(charts["t1"][0].svg, original);
+    let event = send(&mut backend, json!({"command":"Undo"}));
+    let Event::Sheet { charts, .. } = event else {
+        panic!("{event:?}")
+    };
+    assert_eq!(charts["t1"][0].svg, original);
+    let event = send(
+        &mut backend,
+        json!({"command":"SheetExport","format":"xlsx"}),
+    );
+    let Event::Exported { warnings, .. } = event else {
+        panic!("{event:?}")
+    };
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w == "charts aren't included in XLSX exports")
+    );
+    let next = sheet::apply(
+        &temp.disk(),
+        &serde_json::from_value::<Vec<sheet::Op>>(
+            json!([{"op":"set_cells","tab":"Sheet1","at":"B2","values":[["12"]]}]),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(temp.path(), serde_json::to_vec(&next).unwrap()).unwrap();
+    let Event::Sheet { charts, .. } = backend.poll().unwrap().unwrap() else {
+        panic!("sheet reload")
+    };
+    assert_ne!(charts["t1"][0].svg, original);
+}
+
+#[test]
 fn sheet_open_apply_atomic_failure_and_undo_redo_restore_the_file() {
     let temp = Temp::new();
     let mut backend = temp.backend();

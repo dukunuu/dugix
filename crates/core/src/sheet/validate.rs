@@ -77,6 +77,8 @@ impl Sheet {
         let reserved: BTreeSet<_> = sheet.tabs.iter().map(|t| t.id.clone()).collect();
         let mut ids = BTreeSet::new();
         let mut names = BTreeSet::new();
+        let tab_names: BTreeSet<_> = sheet.tabs.iter().map(|t| t.name.to_lowercase()).collect();
+        let mut chart_ids = BTreeSet::new();
         for (index, tab) in sheet.tabs.iter_mut().enumerate() {
             let path = format!("$.tabs[{:?}]", tab.name);
             if tab.id.is_empty() || ids.contains(&tab.id) {
@@ -146,6 +148,63 @@ impl Sheet {
                     format!("{path}.frozen"),
                     "frozen panes exceed grid",
                 );
+            }
+            for chart in &tab.charts {
+                let path = format!("{path}.charts[{:?}]", chart.id);
+                if chart.id.is_empty() || !chart_ids.insert(chart.id.clone()) {
+                    issue(&mut errors, &path, "empty or duplicate chart id");
+                }
+                if chart.data != "#REF!"
+                    && !chart
+                        .data
+                        .parse::<super::address::TabRange>()
+                        .is_ok_and(|r| {
+                            r.tab
+                                .as_ref()
+                                .is_none_or(|name| tab_names.contains(&name.to_lowercase()))
+                        })
+                {
+                    issue(&mut errors, &path, "invalid chart data range or tab prefix");
+                }
+                if chart.at.parse::<Address>().is_err() {
+                    issue(&mut errors, &path, "invalid chart placement");
+                }
+                if !chart.w.is_finite()
+                    || !chart.h.is_finite()
+                    || !(160.0..=2000.0).contains(&chart.w)
+                    || !(120.0..=2000.0).contains(&chart.h)
+                    || !chart.dx.is_finite()
+                    || chart.dx < 0.0
+                    || !chart.dy.is_finite()
+                    || chart.dy < 0.0
+                {
+                    issue(&mut errors, &path, "invalid chart size or offset");
+                }
+                if chart.stacked
+                    && !matches!(
+                        chart.kind,
+                        super::ChartKind::Column | super::ChartKind::Bar | super::ChartKind::Area
+                    )
+                {
+                    issue(&mut errors, &path, "stacked requires column, bar or area");
+                }
+                if chart.y_min.is_some_and(|v| !v.is_finite())
+                    || chart.y_max.is_some_and(|v| !v.is_finite())
+                    || chart
+                        .y_min
+                        .zip(chart.y_max)
+                        .is_some_and(|(min, max)| min >= max)
+                {
+                    issue(&mut errors, &path, "invalid value axis bounds");
+                }
+                if chart.kind == super::ChartKind::Pie
+                    && (chart.x_title.is_some()
+                        || chart.y_title.is_some()
+                        || chart.y_min.is_some()
+                        || chart.y_max.is_some())
+                {
+                    issue(&mut errors, &path, "pie has no axes");
+                }
             }
             let mut merges: Vec<Rect> = Vec::new();
             for text in &tab.merges {

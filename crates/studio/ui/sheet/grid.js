@@ -260,7 +260,7 @@ export function gridController(api) {
     paintSelection();
     paintBoxes();
   }
-  function renderAll() { layout(); if (g.tab) { shown = null; render(true); } }
+  function renderAll() { layout(); if (g.tab) { shown = null; render(true); api.charts?.render(); } }
   function schedule() { if (!frame) frame = requestAnimationFrame(() => { frame = 0; render(); api.scrolled(); }); }
   scroll.addEventListener('scroll', schedule);
   new ResizeObserver(() => { shown = null; schedule(); }).observe(scroll);
@@ -322,7 +322,7 @@ export function gridController(api) {
   }
 
   return {
-    root, scroll, layout, render, renderAll, paintSelection, paintBoxes, cellAt, edgeAt, screenRect, reveal, pageRows, measure, box,
+    root, scroll, overlay, layout, render, renderAll, paintSelection, paintBoxes, cellAt, edgeAt, screenRect, reveal, pageRows, measure, box,
     geometry: g, resizeGuide: boxes.resize,
     setPins(map) { pins = map; },
     setFlash(set) { flash = set; },

@@ -76,6 +76,26 @@ pub(crate) fn valid_number_format(code: &str) -> bool {
         .any(ironcalc::base::formatter::parser::ParsePart::is_error)
 }
 
+/// Format chart ticks and tooltips with the same locale as computed cells.
+#[must_use]
+pub fn format_number(value: f64, code: Option<&str>) -> String {
+    ironcalc::base::formatter::format::format_number(
+        value,
+        code.unwrap_or("General"),
+        ironcalc::base::locale::get_locale("en").expect("built-in locale"),
+    )
+    .text
+}
+
+pub(crate) fn date_format(code: &str) -> bool {
+    let mut parser = Parser::new(code);
+    parser.parse();
+    parser
+        .parts
+        .iter()
+        .any(ironcalc::base::formatter::parser::ParsePart::is_date)
+}
+
 fn style(fmt: &Format) -> Style {
     let mut style = Style::default();
     if let Some(num) = &fmt.num {

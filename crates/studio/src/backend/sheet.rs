@@ -21,6 +21,32 @@ pub struct CellValue {
     pub error: Option<String>,
 }
 
+/// A chart's stable identity and freshly calculated SVG.
+#[derive(Debug, Serialize)]
+pub struct ChartSvg {
+    pub id: String,
+    pub svg: String,
+}
+
+fn charts(sheet: &Sheet, workbook: &Workbook) -> BTreeMap<String, Vec<ChartSvg>> {
+    sheet
+        .tabs
+        .iter()
+        .map(|tab| {
+            (
+                tab.id.clone(),
+                tab.charts
+                    .iter()
+                    .map(|chart| ChartSvg {
+                        id: chart.id.clone(),
+                        svg: sheet::chart_svg::svg(sheet, workbook, tab, chart),
+                    })
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
 /// The open workbook and whole-sheet undo steps.
 pub struct SheetSession {
     pub sheet: Sheet,
@@ -107,6 +133,7 @@ impl Backend {
             revision: s.sheet.revision(),
             relative,
             auto_rows: auto_rows(&s.sheet, &s.workbook),
+            charts: charts(&s.sheet, &s.workbook),
             values: values(
                 &s.workbook,
                 &s.sheet.tabs[0].name,
@@ -350,12 +377,14 @@ impl Backend {
                     revision,
                     values: window,
                     auto_rows: rows,
+                    charts: rendered,
                     ..
                 } = &mut event
                 {
                     *revision = next.revision();
                     *window = values(&workbook, &next.tabs[0].name, "A1:AZ200".parse()?);
                     *rows = auto_rows(&next, &workbook);
+                    *rendered = charts(&next, &workbook);
                     *sheet = next;
                 }
                 return Ok(event);
@@ -387,8 +416,13 @@ impl Backend {
                 self.replace_sheet(next, &[])?;
             }
             Command::SheetExport { format, path, tab } => {
-                let output =
+                let mut output =
                     files::sheet_output(&self.sheet_session()?.sheet, &format, tab.as_deref())?;
+                if let Some(notice) =
+                    sheet::chart::export_notice(&self.sheet_session()?.sheet, &format)
+                {
+                    output.warnings.push(notice);
+                }
                 let path = nexus_core::deck::export::write_export(
                     &output,
                     &self.files_dir,

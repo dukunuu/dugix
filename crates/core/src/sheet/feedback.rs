@@ -124,6 +124,50 @@ fn shift(rect: &mut Rect, at: u32, count: u32, rows: bool, delete: bool) -> bool
         && rect.end.col <= super::address::MAX_COLS
 }
 
+/// Shared range tracking for comments and charts. A cut may change the owning tab.
+pub(crate) fn follow<'a>(rect: &mut Rect, name: &str, op: &'a Op) -> (bool, Option<&'a str>) {
+    let same = |tab: &str| name.eq_ignore_ascii_case(tab);
+    let alive = match op {
+        Op::InsertRows { tab, at, count } if same(tab) => shift(rect, *at, *count, true, false),
+        Op::DeleteRows { tab, at, count } if same(tab) => shift(rect, *at, *count, true, true),
+        Op::InsertCols { tab, at, count } if same(tab) => shift(
+            rect,
+            column_index(at).expect("validated op"),
+            *count,
+            false,
+            false,
+        ),
+        Op::DeleteCols { tab, at, count } if same(tab) => shift(
+            rect,
+            column_index(at).expect("validated op"),
+            *count,
+            false,
+            true,
+        ),
+        Op::DeleteTab { tab } if same(tab) => false,
+        Op::Copy {
+            tab,
+            from,
+            to_tab,
+            to,
+            cut: true,
+        } if same(tab) => {
+            let source = from.parse::<Range>().expect("validated op").bounds();
+            if source.contains(rect.start) && source.contains(rect.end) {
+                let target: super::address::Address = to.parse().expect("validated op");
+                rect.start.row = target.row + rect.start.row - source.start.row;
+                rect.end.row = target.row + rect.end.row - source.start.row;
+                rect.start.col = target.col + rect.start.col - source.start.col;
+                rect.end.col = target.col + rect.end.col - source.start.col;
+                return (true, to_tab.as_deref());
+            }
+            true
+        }
+        _ => true,
+    };
+    (alive, None)
+}
+
 /// Follow structural edits in order; deleted selections retain their old anchor.
 pub fn reanchor(threads: &mut [Thread], before: &Sheet, after_ops: &[Op]) {
     let mut tabs: Vec<_> = before
@@ -140,54 +184,12 @@ pub fn reanchor(threads: &mut [Thread], before: &Sheet, after_ops: &[Op]) {
                 continue;
             };
             let mut rect = range.bounds();
-            let same = |tab: &str| name.eq_ignore_ascii_case(tab);
-            let alive = match op {
-                Op::InsertRows { tab, at, count } if same(tab) => {
-                    shift(&mut rect, *at, *count, true, false)
-                }
-                Op::DeleteRows { tab, at, count } if same(tab) => {
-                    shift(&mut rect, *at, *count, true, true)
-                }
-                Op::InsertCols { tab, at, count } if same(tab) => shift(
-                    &mut rect,
-                    column_index(at).expect("validated op"),
-                    *count,
-                    false,
-                    false,
-                ),
-                Op::DeleteCols { tab, at, count } if same(tab) => shift(
-                    &mut rect,
-                    column_index(at).expect("validated op"),
-                    *count,
-                    false,
-                    true,
-                ),
-                Op::DeleteTab { tab } if same(tab) => false,
-                Op::Copy {
-                    tab,
-                    from,
-                    to_tab,
-                    to,
-                    cut: true,
-                } if same(tab) => {
-                    let source = from.parse::<Range>().expect("validated op").bounds();
-                    if source.contains(rect.start) && source.contains(rect.end) {
-                        let target: super::address::Address = to.parse().expect("validated op");
-                        rect.start.row = target.row + rect.start.row - source.start.row;
-                        rect.end.row = target.row + rect.end.row - source.start.row;
-                        rect.start.col = target.col + rect.start.col - source.start.col;
-                        rect.end.col = target.col + rect.end.col - source.start.col;
-                        if let Some(to_tab) = to_tab
-                            && let Some((id, _)) =
-                                tabs.iter().find(|(_, n)| n.eq_ignore_ascii_case(to_tab))
-                        {
-                            thread.anchor.tab.clone_from(id);
-                        }
-                    }
-                    true
-                }
-                _ => true,
-            };
+            let (alive, moved) = follow(&mut rect, name, op);
+            if let Some(to_tab) = moved
+                && let Some((id, _)) = tabs.iter().find(|(_, n)| n.eq_ignore_ascii_case(to_tab))
+            {
+                thread.anchor.tab.clone_from(id);
+            }
             if alive {
                 thread.anchor.range = Range::Cells(rect).to_string();
             } else {

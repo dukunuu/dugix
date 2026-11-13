@@ -429,6 +429,28 @@ test('threads and external changes', () => {
   assert.equal(M.splitChanged('B2'), null);
 });
 
+test('charts: insertion, edit, movement, resize and deletion use atomic op JSON', () => {
+  assert.deepEqual(M.addChartOp('Data', 'A1:B4'), { op: 'add_chart', tab: 'Data', data: 'A1:B4' });
+  assert.deepEqual(M.editChartOp('Data', 'c1', { kind: 'line' }), { op: 'edit_chart', tab: 'Data', id: 'c1', patch: { kind: 'line' } });
+  assert.deepEqual(M.editChartOp('Data', 'c1', { at: 'D2', dx: 3, dy: 4, w: 600, h: 300 }).patch, { at: 'D2', dx: 3, dy: 4, w: 600, h: 300 });
+  assert.deepEqual(M.deleteChartOp('Data', 'c1'), { op: 'delete_chart', tab: 'Data', id: 'c1' });
+});
+test('charts: floating geometry uses custom widths, heights and automatic rows', () => {
+  const tab = tabOf({}, { cols: { A: 150, B: 80 }, rows: { 1: 40 } });
+  const axes = M.axesOf(tab, { rows: 100, cols: 26 }, { 2: 60 });
+  assert.deepEqual(M.chartBox({ at: 'C3', dx: 5, dy: 7, w: 480, h: 296 }, axes), { left: 235, top: 107, width: 480, height: 296 });
+  assert.deepEqual(M.chartPlacement(238, 110, axes), { at: 'C3', dx: 8, dy: 10 });
+  assert.deepEqual(M.chartPlacement(151, 42, axes), { at: 'B2', dx: 1, dy: 2 });
+  assert.deepEqual(M.chartPlacement(-4, -8, axes), { at: 'A1', dx: 0, dy: 0 });
+});
+test('charts: a single cell expands only to its connected data block', () => {
+  const tab = tabOf({ A1: 'Name', B1: 'N', A2: 'One', B2: '1', A3: 'Two', B3: '2', D1: 'Separate', D2: '9' });
+  assert.equal(M.rectStr(M.chartDataBlock(tab, M.cellRect(2, 2))), 'A1:B3');
+  assert.equal(M.rectStr(M.chartDataBlock(tab, M.cellRect(1, 4))), 'D1:D2');
+  assert.equal(M.rectStr(M.chartDataBlock(tab, M.cellRect(7, 8))), 'H7');
+  assert.equal(M.rectStr(M.chartDataBlock(tab, M.parseRange('B2:C3'))), 'B2:C3');
+});
+
 let failed = 0;
 for (const [name, error] of results) {
   if (error) { failed++; console.log(`FAIL ${name}\n${error.stack}`); } else console.log(`ok   ${name}`);
