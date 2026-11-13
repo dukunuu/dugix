@@ -12,7 +12,7 @@ use crate::app_view::AppView;
 use crate::theme::Theme;
 use crate::ui::{fmt_cost, humanize};
 
-use super::chrome;
+use super::chrome::{self, PopupFrame, hint, keys};
 
 #[allow(clippy::too_many_lines)] // usage popup: window header, tables per section
 pub fn render(f: &mut Frame, app: &AppView) {
@@ -22,21 +22,42 @@ pub fn render(f: &mut Frame, app: &AppView) {
     };
     let theme = &app.theme;
     let dim = Style::default().fg(theme.fg_dim);
-    let title = chrome::popup_title(app, format!("usage · {}", app.usage_range.label()));
-    let hint = format!(
-        "{}←→/t {} · ↑↓ recent · Ctrl+R refresh · Esc close",
-        chrome::count_hint(data.totals.requests as usize, "request"),
-        app.usage_range.title()
+    let inner = chrome::render_popup(
+        f,
+        area,
+        &PopupFrame {
+            title: "Usage",
+            count: app.usage_range.label(),
+            hints: &[
+                hint(keys::SIDE, "period"),
+                hint(keys::MOVE, "recent"),
+                hint("r", "refresh"),
+                hint(keys::ESC, "close"),
+            ],
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
+        app,
     );
-    let inner = chrome::render_hinted(f, area, title, &hint, app, true, chrome::Tone::Normal);
+    let active = nexus_core::db::UsageRange::CYCLE
+        .iter()
+        .position(|range| *range == app.usage_range)
+        .unwrap_or_default();
+    let inner = chrome::render_tabs(f, inner, &["24h", "7d", "30d", "All"], active, theme);
     if data.totals.requests == 0 {
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                app.usage_range.empty_message(),
-                dim,
-            ))),
-            inner,
-        );
+        let message = match app.usage_range {
+            nexus_core::db::UsageRange::Day => {
+                "No usage in the last 24 hours. ←→ widens the period."
+            }
+            nexus_core::db::UsageRange::Week => {
+                "No usage in the last 7 days. ←→ widens the period."
+            }
+            nexus_core::db::UsageRange::Month => {
+                "No usage in the last 30 days. ←→ widens the period."
+            }
+            nexus_core::db::UsageRange::All => "No usage logged yet. Send a message first.",
+        };
+        chrome::render_empty(f, inner, message, theme);
         return;
     }
 
@@ -423,13 +444,11 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
         KeyCode::Down | KeyCode::Char('j') => app.scroll_usage(1),
         KeyCode::PageUp => app.scroll_usage(-10),
         KeyCode::PageDown => app.scroll_usage(10),
+        KeyCode::Home => app.scroll_usage(i32::MIN / 2),
+        KeyCode::End => app.scroll_usage(i32::MAX / 2),
         KeyCode::Left | KeyCode::Char('h') => app.cycle_usage_range(-1),
         KeyCode::Right | KeyCode::Char('l' | 't') => app.cycle_usage_range(1),
-        KeyCode::Char('r')
-            if key
-                .modifiers
-                .contains(crossterm::event::KeyModifiers::CONTROL) =>
-        {
+        KeyCode::Char('r') if !super::is_chord(key) => {
             app.refresh_usage();
         }
         _ => {}

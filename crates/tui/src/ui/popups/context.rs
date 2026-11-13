@@ -7,7 +7,7 @@ use ratatui::widgets::Paragraph;
 use crate::app_view::AppView;
 use nexus_core::app::Popup;
 
-use super::chrome;
+use super::chrome::{self, PopupFrame, hint, keys};
 
 #[cfg(test)]
 #[path = "context_tests.rs"]
@@ -65,50 +65,31 @@ pub fn render(f: &mut Frame, app: &AppView) {
             dim,
         )));
     }
-    lines.push(Line::from(""));
     let limit_s = b
         .limit
         .map_or_else(|| "unknown window".to_string(), crate::ui::humanize);
-    lines.push(Line::from(vec![
-        Span::styled(
-            "Total        ",
-            Style::default()
-                .fg(app.theme.fg)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("{} / {}", crate::ui::humanize(total), limit_s),
-            Style::default().fg(app.theme.warning),
-        ),
-    ]));
+    let count = format!("{} of {limit_s}", crate::ui::humanize(total));
 
     lines.extend(cache_lines(app));
     lines.extend(session_lines(app));
 
-    let hint = if b.compacted {
-        "v digest · Esc close"
-    } else {
-        "Ctrl+G toggle · Esc close"
-    };
-    let screen = f.area();
-    let width = (screen.width * chrome::SMALL.0 / 100).clamp(40.min(screen.width), screen.width);
-    let height = u16::try_from(lines.len() + 2)
-        .unwrap_or(u16::MAX)
-        .min(screen.height);
-    let area = ratatui::layout::Rect::new(
-        screen.x + (screen.width - width) / 2,
-        screen.y + (screen.height - height) / 2,
-        width,
-        height,
-    );
-    let inner = chrome::render_hinted(
+    let mut hints = Vec::new();
+    if b.compacted {
+        hints.push(hint("v", "digest"));
+    }
+    hints.push(hint(keys::ESC, "close"));
+    let area = chrome::popup_area_fit(app, f.area(), "context", chrome::SMALL, lines.len());
+    let inner = chrome::render_popup(
         f,
         area,
-        chrome::popup_title(app, "context"),
-        hint,
+        &PopupFrame {
+            title: "Context",
+            count: &count,
+            hints: &hints,
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
         app,
-        true,
-        chrome::Tone::Normal,
     );
     f.render_widget(Paragraph::new(lines), inner);
 }

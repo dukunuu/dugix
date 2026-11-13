@@ -1,59 +1,45 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::style::Style;
 use ratatui::widgets::Paragraph;
 
 use crate::app_view::AppView;
 use nexus_core::app::Popup;
 
-use super::chrome;
+use super::chrome::{self, PopupFrame, hint, keys};
 
-/// API-key entry: a centered masked value under the input title.
+/// API-key entry with a masked field.
 pub fn render(f: &mut Frame, app: &AppView) {
     let outer = chrome::popup_area(app, f.area(), "key", chrome::SMALL);
-    let masked = "*".repeat(app.key_input.chars().count());
-    let title = chrome::input_title(
-        app,
-        format!("{} key", app.key_target_label()),
-        masked.as_str(),
-        "",
-    );
-    let inner = chrome::render_hinted(
+    let masked = "•".repeat(app.key_input.chars().count());
+    let title = format!("{} key", app.key_target_label());
+    let inner = chrome::render_popup(
         f,
         outer,
-        title,
-        "paste or type · Enter save · Esc back",
+        &PopupFrame {
+            title: &title,
+            count: "",
+            hints: &[hint(keys::ENTER, "save"), hint(keys::ESC, "back")],
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
         app,
-        true,
-        chrome::Tone::Normal,
     );
-
-    let shown = if masked.is_empty() {
-        "• • •".to_string()
-    } else {
-        masked
-    };
-    let lines = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            shown,
-            Style::default()
-                .fg(app.theme.accent)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            if app.settings.hide_hints {
-                String::new()
-            } else {
-                "keys never leave this machine — stored in your config".to_string()
-            },
-            Style::default().fg(app.theme.fg_dim),
-        )),
-    ];
+    let inner = chrome::render_field(
+        f,
+        inner,
+        "✎",
+        &masked,
+        "Paste or type the key",
+        false,
+        &app.theme,
+    );
+    if app.settings.hide_hints {
+        return;
+    }
     f.render_widget(
-        Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center),
+        Paragraph::new("Keys stay on this machine, in your config file.")
+            .style(Style::default().fg(app.theme.fg_dim)),
         inner,
     );
 }

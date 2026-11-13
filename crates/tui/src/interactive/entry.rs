@@ -442,7 +442,7 @@ impl Entry {
             .err()
             .map_or_else(String::new, |error| error.to_string());
     }
-    fn hint(&self, width: u16, focused: bool) -> String {
+    pub(super) fn hint(&self, width: u16, focused: bool) -> String {
         let choices = self.choices().len().min(9);
         let pending_url = self.session.as_ref().ok().and_then(Session::pending_url);
         if let Some(status) = self.session.as_ref().ok().and_then(Session::data_hint) {

@@ -324,7 +324,7 @@ fn approval_overflow_is_counted_scrollable_and_reset_for_each_request() {
     let root = app.space.root.clone();
     let screen = render_to_string(120, 24, |f| super::approval::render(f, &app));
     assert!(
-        screen.contains("y allow once · a allow all edits this session · n deny"),
+        screen.contains("y approve · a this session · n deny · Esc deny"),
         "{screen}"
     );
     let (marker_row, marker) = screen
@@ -402,7 +402,12 @@ fn queued_approvals_show_their_position_and_reset_the_guards_at_the_head() {
     let mut third = queued.pop().unwrap();
     let second = queued.pop().unwrap();
     let screen = render_to_string(120, 24, |f| super::approval::render(f, &app));
-    assert!(screen.contains(" approve · 1 of 3 "), "{screen}");
+    assert!(
+        screen
+            .lines()
+            .any(|line| line.contains("╭ Approve ") && line.contains(" 1 of 3 ")),
+        "{screen}"
+    );
     let read_to_end = |app: &mut AppView| {
         while app.approval_scroll.get() < app.approval_max_scroll.get() {
             super::approval::handle_key(app, KeyCode::PageDown.into()).unwrap();
@@ -427,13 +432,18 @@ fn queued_approvals_show_their_position_and_reset_the_guards_at_the_head() {
     };
     assert_fresh(&app);
     let screen = render_to_string(120, 24, |f| super::approval::render(f, &app));
-    assert!(screen.contains(" approve · 1 of 2 "), "{screen}");
+    assert!(
+        screen
+            .lines()
+            .any(|line| line.contains("╭ Approve ") && line.contains(" 1 of 2 ")),
+        "{screen}"
+    );
     read_to_end(&mut app);
     drop(second);
     app.sync_approval_popup();
     assert_fresh(&app);
     let screen = render_to_string(120, 24, |f| super::approval::render(f, &app));
-    assert!(screen.contains(" approve "), "{screen}");
+    assert!(screen.contains("╭ Approve "), "{screen}");
     assert!(!screen.contains("1 of"), "{screen}");
     app.approval_opened_at = Some(Instant::now() - Duration::from_secs(1));
     super::approval::handle_key(&mut app, KeyCode::Char('y').into()).unwrap();
@@ -459,7 +469,8 @@ fn approval_requires_the_end_of_a_wrapped_shell_command_before_allowing() {
         );
         let root = app.space.root.clone();
         let screen = render_to_string(120, 24, |f| super::approval::render(f, &app));
-        assert!(screen.contains("scroll to the end to enable y"), "{screen}");
+        assert!(screen.contains("n deny · Esc deny"), "{screen}");
+        assert!(!screen.contains("y approve"), "{screen}");
         assert!(screen.contains("more lines"), "{screen}");
         super::approval::handle_key(&mut app, KeyCode::Char(key).into()).unwrap();
         assert!(receiver.try_recv().is_err());
@@ -471,7 +482,7 @@ fn approval_requires_the_end_of_a_wrapped_shell_command_before_allowing() {
         let screen = render_to_string(120, 24, |f| super::approval::render(f, &app));
         assert!(screen.contains("echo LAST_COMMAND"), "{screen}");
         assert!(
-            !screen.contains("scroll to the end to enable y"),
+            screen.contains("y approve · a this session · n deny · Esc deny"),
             "{screen}"
         );
         super::approval::handle_key(&mut app, KeyCode::PageUp.into()).unwrap();
@@ -526,9 +537,12 @@ fn approval_popup_combined_wave_snapshot() {
     app.approvals.pending_request.as_mut().unwrap().action = "3 calls".into();
     app.sync_approval_popup();
     let screen = render_to_string(120, 40, |f| super::approval::render(f, &app));
-    assert!(screen.contains(" approve "), "{screen}");
     assert!(
-        screen.contains("y approve all · a + session · r one by one · n deny all"),
+        screen.contains("╭ Approve 3 calls · 2 edits, 1 command "),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("y approve · a this session · r one by one · n deny · Esc deny"),
         "{screen}"
     );
     let snapshot: Vec<_> = screen
@@ -543,15 +557,13 @@ fn approval_popup_combined_wave_snapshot() {
     assert_eq!(
         snapshot,
         [
-            " The agent wants to make these 3 calls together. Each is shown below; y approves all of them, r lets you",
-            " decide one by one.",
+            " The agent wants to make these 3 calls together. Each is shown below.",
             " ▍ 1  edit one  +1 −1",
             " 1 − old",
             " 1 + new",
             " ▍ 2  write two",
             " ▍ 3  shell · run",
             " $ cargo test",
-            " y approve all · a + session · r one by one · n deny all",
         ]
     );
     drop(app);
@@ -586,8 +598,13 @@ fn approval_edit_at_80_columns_has_colored_diff_and_class_badge() {
             "42 − let n = cfg.limit;",
             "42 + let n = cfg.limit.max(1);",
             "43 + let m = n * 2;",
-            "y allow once · a allow all edits this session · n deny",
         ]
+    );
+    let screen = render_to_string(80, 24, |frame| super::approval::render(frame, &app));
+    assert!(
+        screen.lines().any(|line| line.contains('╰')
+            && line.contains("y approve · a this session · n deny · Esc deny")),
+        "{screen}"
     );
     for (symbol, color) in [("+", app.theme.success), ("−", app.theme.error)] {
         let cells: Vec<_> = buffer
@@ -700,7 +717,6 @@ fn approval_popup_shell_and_diff_snapshots() {
                 "The agent wants to run this command:",
                 "$ cargo test",
                 "in crates/core",
-                "y allow once · a allow all commands this session · n deny",
             ],
         ),
         (
@@ -712,7 +728,6 @@ fn approval_popup_shell_and_diff_snapshots() {
                 "The agent wants to replace the contents of file: 1 line added, 1 line removed.",
                 "1 − old",
                 "1 + new",
-                "y allow once · a allow all edits this session · n deny",
             ],
         ),
     ] {
@@ -725,13 +740,9 @@ fn approval_popup_shell_and_diff_snapshots() {
             allow_session: true,
         });
         let screen = render_to_string(120, 40, |f| super::approval::render(f, &app));
-        assert!(screen.contains(" approve "), "{screen}");
+        assert!(screen.contains("╭ Approve "), "{screen}");
         assert!(
-            screen.contains(if tool == "fs" {
-                "y allow once · a allow all edits this session · n deny"
-            } else {
-                "y allow once · a allow all commands this session · n deny"
-            }),
+            screen.contains("y approve · a this session · n deny · Esc deny"),
             "{screen}"
         );
         let snapshot: Vec<_> = screen
@@ -1020,7 +1031,7 @@ fn research_live_popup_shows_agent_lifecycle_and_activity() {
 
     let screen = render_to_string(100, 30, |f| super::research_live::render(f, &app));
 
-    assert!(screen.contains("research agents"), "{screen}");
+    assert!(screen.contains("╭ Research "), "{screen}");
     assert!(screen.contains("✓ planner"), "{screen}");
     assert!(screen.contains("⟳ searcher r1 1/4"), "{screen}");
     assert!(screen.contains("Searching the web"), "{screen}");
@@ -2244,9 +2255,9 @@ fn context_popup_fits_its_content_and_ctrl_g_closes_it() {
     assert!(screen.contains("unknown window"), "{screen}");
     assert!(screen.contains('█'), "per-bucket bars:\n{screen}");
     let framed_rows = screen.lines().filter(|l| l.contains('│')).count();
-    assert!(
-        framed_rows < 14,
-        "sized to content, not 40% of the screen:\n{screen}"
+    assert_eq!(
+        framed_rows, 14,
+        "the SMALL preset uses 40% of the screen height:\n{screen}"
     );
 
     let ctrl_g = crossterm::event::KeyEvent::new(
@@ -2377,7 +2388,10 @@ fn large_write_preview_scrolls_through_the_whole_detail() {
         screen.contains("The agent wants to create src/big.rs with 120 lines."),
         "{screen}"
     );
-    assert!(screen.contains("lines 1–"), "{screen}");
+    assert!(
+        screen.contains("y approve · a this session · n deny · Esc deny"),
+        "{screen}"
+    );
     assert!(!screen.contains("line 120"), "{screen}");
     super::approval::handle_key(&mut app, KeyCode::End.into()).unwrap();
     let screen = render_to_string(80, 30, |f| super::approval::render(f, &app));
@@ -3082,9 +3096,14 @@ fn connector_approvals_offer_session_and_always_and_warn_about_changed_definitio
     );
     assert!(screen.contains("writes · may delete"), "{screen}");
     assert!(screen.contains("\"title\": \"Fix it\""), "{screen}");
-    assert_eq!(
-        lines.last().unwrap(),
-        "y allow once · a this tool for the session · A always allow · n deny"
+    assert!(
+        screen
+            .lines()
+            .find(|line| line.contains('╰'))
+            .unwrap()
+            .trim_end()
+            .ends_with("y approve · a this session · A always · n deny · Esc deny ╯"),
+        "{screen}"
     );
     app.approval_delay = std::time::Duration::from_millis(400);
     app.approval_opened_at = Some(std::time::Instant::now());
@@ -3162,10 +3181,14 @@ fn image_viewer_chrome_shows_title_footer_and_hints_for_a_generated_png() {
     let screen = render_to_string(100, 24, |f| super::image_viewer::render(f, &mut app));
     let lines: Vec<_> = screen.lines().collect();
     assert!(
-        lines[0].starts_with("\u{256d}") && lines[0].contains(" sunset.png "),
+        lines
+            .iter()
+            .any(|line| line.trim_start().starts_with("╭ sunset.png ")
+                && line.contains("1 of 1 · 64×32 ·")),
         "{screen}"
     );
-    let footer = lines[lines.len() - 2];
+    let bottom = lines.iter().position(|line| line.contains('╰')).unwrap();
+    let footer = lines[bottom - 1];
     let size = crate::image_viewer::human_bytes(std::fs::metadata(&pic).unwrap().len());
     assert!(
         footer.contains(&format!("64x32 \u{b7} PNG \u{b7} {size} \u{b7} fit")),
@@ -3175,12 +3198,12 @@ fn image_viewer_chrome_shows_title_footer_and_hints_for_a_generated_png() {
         !footer.contains('/'),
         "a lone image shows no counter: {footer}"
     );
-    let hints = lines[lines.len() - 1];
+    let hints = lines[bottom];
     for hint in [
-        "\u{2190}\u{2192} prev/next",
-        "f 1:1",
-        "o system viewer",
-        "c copy",
+        "←→ prev/next",
+        "+/- zoom",
+        "arrows pan",
+        ". actions",
         "Esc close",
     ] {
         assert!(hints.contains(hint), "{hint}: {hints}");
@@ -3202,22 +3225,36 @@ fn image_viewer_footer_counts_images_and_names_the_one_to_one_mode() {
     app.open_image_target(&a, &Anchor::Line(0), Return::Nothing);
     super::image_viewer::handle_key(&mut app, crossterm::event::KeyCode::Char('f').into());
     let screen = render_to_string(100, 24, |f| super::image_viewer::render(f, &mut app));
-    let footer = screen.lines().nth(22).unwrap();
+    let header = screen.lines().find(|line| line.contains('╭')).unwrap();
+    assert!(header.contains("1 of 2 · 20×10 · 100%"), "{screen}");
+    let footer = screen.lines().find(|line| line.contains("· 1:1")).unwrap();
+    assert!(footer.contains("· 1:1 100%"), "{footer}");
     assert!(
-        footer.contains("\u{b7} 1:1") && footer.contains("1/2"),
-        "{footer}"
-    );
-    assert!(
-        screen.lines().nth(23).unwrap().contains("f fit"),
+        screen
+            .lines()
+            .find(|line| line.contains('╰'))
+            .unwrap()
+            .contains("+/- zoom · arrows pan · . actions · Esc close"),
         "{screen}"
     );
     super::image_viewer::handle_key(&mut app, crossterm::event::KeyCode::Right.into());
     let screen = render_to_string(100, 24, |f| super::image_viewer::render(f, &mut app));
     assert!(
-        screen.lines().next().unwrap().contains(" b.png "),
+        screen
+            .lines()
+            .find(|line| line.contains('╭'))
+            .unwrap()
+            .contains(" b.png "),
         "{screen}"
     );
-    assert!(screen.lines().nth(22).unwrap().contains("2/2"), "{screen}");
+    assert!(
+        screen
+            .lines()
+            .find(|line| line.contains('╭'))
+            .unwrap()
+            .contains("2 of 2 · 20×10 · 100%"),
+        "{screen}"
+    );
 }
 
 #[test]
@@ -3263,7 +3300,7 @@ fn image_viewer_action_menu_lists_every_action_with_its_key() {
     open_viewer_on(&mut app, &["menu.png"]);
     super::image_viewer::handle_key(&mut app, KeyCode::Char('.').into());
     let screen = render_to_string(100, 24, |f| super::image_viewer::render(f, &mut app));
-    assert!(screen.contains(" actions "), "{screen}");
+    assert!(screen.contains("╭ Actions "), "{screen}");
     for (label, key) in [
         ("Copy image", "y"),
         ("Copy path", "c"),
@@ -3291,7 +3328,7 @@ fn image_viewer_action_menu_lists_every_action_with_its_key() {
         first.contains("\u{25b8} Copy image"),
         "selection marker: {first}"
     );
-    assert!(screen.contains("Enter run"), "{screen}");
+    assert!(screen.contains("↑↓ · Enter run · Esc back"), "{screen}");
     assert!(
         screen.contains('\u{256d}') && screen.contains('\u{256f}'),
         "{screen}"
@@ -3309,18 +3346,18 @@ fn image_viewer_hints_and_footer_adapt_to_the_width() {
     open_viewer_on(&mut app, &["sunset.png"]);
     let wide = render_to_string(140, 24, |f| super::image_viewer::render(f, &mut app));
     let lines: Vec<_> = wide.lines().collect();
-    let hints = lines[lines.len() - 1];
+    let bottom = lines.iter().position(|line| line.contains('╰')).unwrap();
+    let hints = lines[bottom];
     for hint in [
-        ". menu",
-        "y copy image",
-        "c copy path",
-        "s save",
+        "←→ prev/next",
         "+/- zoom",
-        "r reveal",
+        "arrows pan",
+        ". actions",
+        "Esc close",
     ] {
         assert!(hints.contains(hint), "{hint}: {hints}");
     }
-    let footer = lines[lines.len() - 2];
+    let footer = lines[bottom - 1];
     assert!(
         footer.contains("40x20 \u{b7} PNG") && footer.contains("fit 100%"),
         "{footer}"
@@ -3332,13 +3369,14 @@ fn image_viewer_hints_and_footer_adapt_to_the_width() {
 
     let narrow = render_to_string(44, 12, |f| super::image_viewer::render(f, &mut app));
     let lines: Vec<_> = narrow.lines().collect();
-    let hints = lines[lines.len() - 1];
+    let bottom = lines.iter().position(|line| line.contains('╰')).unwrap();
+    let hints = lines[bottom];
     assert!(
-        hints.contains("Esc close"),
+        hints.contains("←→ prev/next") && hints.trim_end().ends_with("Esc close ╯"),
         "the essentials survive: {hints}"
     );
-    assert!(!hints.contains("y copy image"), "{hints}");
-    let footer = lines[lines.len() - 2];
+    assert!(!hints.contains("+/- zoom"), "{hints}");
+    let footer = lines[bottom - 1];
     assert!(footer.contains("40x20"), "size is the last to go: {footer}");
     assert!(
         !footer.contains("sunset.png"),

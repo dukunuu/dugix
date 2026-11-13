@@ -6,7 +6,7 @@ use ratatui::widgets::ListItem;
 
 use crate::app_view::AppView;
 
-use super::chrome;
+use super::chrome::{self, PopupFrame, ctrl, hint, keys};
 use crate::ui::style::glyph;
 
 /// Live per-searcher activity: the transcript's `research_stage` rows plus a
@@ -47,12 +47,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
         }
         items.push(ListItem::new(Line::from("")));
     }
-    if rows.is_empty() && !has_pending {
-        items.push(ListItem::new(Line::from(Span::styled(
-            "waiting for the first update…",
-            dim,
-        ))));
-    } else {
+    if !rows.is_empty() {
         // Newest agents first, so the active synthesis/verifier/writer stays
         // visible after a full six-searcher fan-out.
         for content in rows.iter().rev() {
@@ -86,21 +81,44 @@ pub fn render(f: &mut Frame, app: &AppView) {
         }
     }
 
-    let inner = chrome::render_frame(
+    let stage = rows
+        .iter()
+        .rev()
+        .find(|row| !row.starts_with("steer #"))
+        .map_or("", |row| {
+            row.split_once(':').map_or(row.as_str(), |(label, _)| label)
+        });
+    let inner = chrome::render_popup(
         f,
         area,
-        chrome::input_title(
-            app,
-            "research agents · steer",
-            &app.research.live_input,
-            "type instruction · Enter send · Ctrl+X stop · Esc close",
-        ),
-        &app.theme,
-        true,
-        chrome::Tone::Normal,
+        &PopupFrame {
+            title: "Research",
+            count: stage,
+            hints: &[
+                hint(keys::ENTER, "send"),
+                hint(ctrl('x'), "stop"),
+                hint(keys::ESC, "close"),
+            ],
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
+        app,
     );
-    let list = chrome::standard_list(items, &app.theme);
-    f.render_widget(list, inner);
+    let inner = chrome::render_field(
+        f,
+        inner,
+        "❯",
+        &app.research.live_input,
+        "Steer the run…",
+        false,
+        &app.theme,
+    );
+    if items.is_empty() {
+        chrome::render_empty(f, inner, "Waiting for the first update…", &app.theme);
+    } else {
+        let list = chrome::standard_list(items, &app.theme);
+        f.render_widget(list, inner);
+    }
 }
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) {
