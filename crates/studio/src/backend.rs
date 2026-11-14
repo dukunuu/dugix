@@ -176,27 +176,40 @@ pub enum Command {
         block: Option<String>,
         selection: Option<String>,
     },
-    /// The decks and docs of the space, newest first.
+    /// The decks, docs and sheets of every space, newest first.
     Library {},
+    /// `space` names a space the listing gave; none is the open file's space.
     LibraryOpen {
         path: String,
+        #[serde(default)]
+        space: Option<String>,
     },
     LibraryReveal {
         path: String,
+        #[serde(default)]
+        space: Option<String>,
     },
     LibraryRename {
         path: String,
         title: String,
+        #[serde(default)]
+        space: Option<String>,
     },
     LibraryDuplicate {
         path: String,
+        #[serde(default)]
+        space: Option<String>,
     },
     LibraryDelete {
         path: String,
+        #[serde(default)]
+        space: Option<String>,
     },
     LibraryExport {
         path: String,
         format: String,
+        #[serde(default)]
+        space: Option<String>,
     },
     /// nexus files open; Office and Markdown files import.
     OpenDialog {},
@@ -359,8 +372,13 @@ pub enum Event {
         items: Vec<library::Item>,
         /// The open file's library path, when it is inside the space.
         current: Option<String>,
+        /// The open file's space: where new files go.
+        space: String,
+        /// Every space, in name order.
+        spaces: Vec<String>,
         home: bool,
         selected: Option<String>,
+        selected_space: Option<String>,
         notice: Option<String>,
     },
     /// Newest first.
@@ -438,8 +456,8 @@ pub struct Backend {
     data_dir: PathBuf,
     /// No file was given and nothing has been opened or written since.
     home: std::cell::Cell<bool>,
-    listing: std::cell::RefCell<Vec<nexus_core::canvas::Entry>>,
-    /// The files `listing` was read from, so an unchanged space is not parsed again.
+    listing: std::cell::RefCell<Vec<library::Listed>>,
+    /// The files `listing` was read from, so an unchanged library is not parsed again.
     listing_stamp: std::cell::RefCell<Option<LibraryStamp>>,
     /// Import approximations, reported once with the open.
     doc_notice: std::cell::RefCell<Option<String>>,
@@ -469,6 +487,9 @@ impl Backend {
         let mut import_warnings = Vec::new();
         let no_path_given = path.is_none();
         let chosen = path.or(remembered.as_deref());
+        // A file of another space works in that space: its designs, its new files.
+        let followed = chosen.and_then(|p| library::space_files_of(data_dir, p));
+        let files_dir = followed.as_deref().unwrap_or(files_dir);
         let opens_doc = chosen.is_some_and(doc::is_doc_path);
         let opens_sheet = chosen.is_some_and(sheet::is_sheet_path);
         let path = match chosen {
@@ -1066,6 +1087,7 @@ impl Backend {
         let root = asset_root(&path)?;
         atomic_write(&self.recent, &serde_json::to_vec(&path)?)?;
         self.path = path;
+        self.follow_space();
         self.deck = deck;
         self.doc = None;
         self.sheet = None;

@@ -1,4 +1,4 @@
-// The Library: every deck and doc of the space as a grid of cards. It is a
+// The Library: every deck, doc and sheet of every space as a grid of cards. It is a
 // full-window layer above both modes (deck and doc), so it reaches the backend
 // through whichever mode's own command queue is live. It holds no path of its
 // own: a card names its file by the path inside the space that the backend
@@ -51,6 +51,8 @@ export function libraryController({ command, toast: modeToast }) {
   const state = {
     items: [], current: null, filter: 'all', query: '', visible: false, loaded: false,
     awaiting: false, home: false, shownForHome: false, selected: null,
+    // `space` filters by space name ('' is every space); `spaces` lists them all.
+    space: '', spaces: [], openSpace: '',
   };
   let menu = null, renaming = null, lastFocus = null, toastTimer = 0, freshTimer = 0, watchTimer = 0, listed = '';
   const inertTargets = () => ['#topbar', 'main', '#doc-app', '#sheet-app'].map(s => document.querySelector(s)).filter(Boolean);
@@ -76,8 +78,8 @@ export function libraryController({ command, toast: modeToast }) {
   const title = el('h1', 'lib-title-main', 'Library');
   const counter = el('span', 'lib-count');
   const search = el('input', 'lib-search');
-  search.type = 'search'; search.placeholder = 'Search by title'; search.autocomplete = 'off'; search.spellcheck = false;
-  search.setAttribute('aria-label', 'Search the library by title');
+  search.type = 'search'; search.placeholder = 'Search by title or space'; search.autocomplete = 'off'; search.spellcheck = false;
+  search.setAttribute('aria-label', 'Search the library by title or space');
   const searchBox = el('label', 'lib-searchbox');
   searchBox.append(icon('search'), search);
   const tabs = el('div', 'lib-tabs');
@@ -90,7 +92,11 @@ export function libraryController({ command, toast: modeToast }) {
     tab.addEventListener('click', () => { state.filter = id; renderTabs(); renderGrid(); });
     tabs.append(tab); tabButtons[id] = tab;
   }
-  head.append(title, counter, el('span', 'spacer'), searchBox, tabs);
+  const spacePick = el('select', 'lib-space');
+  spacePick.setAttribute('aria-label', 'Show the files of');
+  spacePick.title = 'Space';
+  spacePick.addEventListener('change', () => { state.space = spacePick.value; renderTabs(); renderGrid(); });
+  head.append(title, counter, el('span', 'spacer'), searchBox, spacePick, tabs);
   const grid = el('div', 'lib-grid');
   grid.setAttribute('role', 'list');
   grid.setAttribute('aria-label', 'Decks, docs and sheets');
@@ -121,11 +127,13 @@ export function libraryController({ command, toast: modeToast }) {
   // -- commands -----------------------------------------------------------------------------------
 
   /** Send a command; when it did not answer with a fresh listing, ask for one. */
+  const at = item => ({ path: item.relative, space: item.space });
+  const keyOf = (space, relative) => `${space}\u0000${relative}`;
   const run = (cmd, then) => command(cmd, event => {
     then?.(event);
     if (event.event !== 'Library') command({ command: 'Library' });
   });
-  const open = item => { state.awaiting = true; command({ command: 'LibraryOpen', path: item.relative }); };
+  const open = item => { state.awaiting = true; command({ command: 'LibraryOpen', ...at(item) }); };
   const create = kind => { state.awaiting = true; command({ command: { deck: 'NewDeck', doc: 'NewDoc', sheet: 'NewSheet' }[kind], title: 'Untitled' }); };
   newDeck.addEventListener('click', () => create('deck'));
   newDoc.addEventListener('click', () => create('doc'));
@@ -133,16 +141,16 @@ export function libraryController({ command, toast: modeToast }) {
   openFile.addEventListener('click', () => { state.awaiting = true; command({ command: 'OpenDialog' }); });
   close.addEventListener('click', () => hide());
 
-  const exportItem = (item, format) => command({ command: 'LibraryExport', path: item.relative, format });
-  const reveal = item => command({ command: 'LibraryReveal', path: item.relative });
-  const duplicate = item => command({ command: 'LibraryDuplicate', path: item.relative });
+  const exportItem = (item, format) => command({ command: 'LibraryExport', ...at(item), format });
+  const reveal = item => command({ command: 'LibraryReveal', ...at(item) });
+  const duplicate = item => command({ command: 'LibraryDuplicate', ...at(item) });
   function askDelete(item) {
     confirmHeading.textContent = `Delete “${item.title}”?`;
     confirmText.textContent = 'It moves to the .trash folder of your space files, with its comments and history, so you can still get it back.';
     confirm.returnValue = '';
     confirm.addEventListener('close', () => {
       if (confirm.returnValue !== 'delete') return;
-      run({ command: 'LibraryDelete', path: item.relative }, () => {
+      run({ command: 'LibraryDelete', ...at(item) }, () => {
         // The open file went: the window falls back to its start page.
         if (item.current) command({ command: 'Load' });
       });
@@ -153,12 +161,30 @@ export function libraryController({ command, toast: modeToast }) {
 
   // -- the grid ---------------------------------------------------------------------------------------
 
+  /** The files of the chosen space, before the kind tabs and the search. */
+  const inSpace = () => state.items.filter(i => !state.space || i.space === state.space);
   function visibleItems() {
     const q = state.query.trim().toLowerCase();
-    return state.items.filter(i => (state.filter === 'all' || i.kind === state.filter) && (!q || i.title.toLowerCase().includes(q)));
+    return inSpace().filter(i => (state.filter === 'all' || i.kind === state.filter)
+      && (!q || i.title.toLowerCase().includes(q) || i.space.toLowerCase().includes(q)));
+  }
+  function renderSpaces() {
+    // A space that went away (renamed, deleted) stops filtering.
+    if (state.space && !state.spaces.includes(state.space)) state.space = '';
+    const options = [['', 'All spaces'], ...state.spaces.map(name => [name, name])].map(([value, label]) => {
+      const option = el('option', '', label);
+      option.value = value;
+      const n = value ? state.items.filter(i => i.space === value).length : state.items.length;
+      option.textContent = `${label} (${n})`;
+      return option;
+    });
+    spacePick.replaceChildren(...options);
+    spacePick.value = state.space;
+    spacePick.hidden = state.spaces.length < 2;
   }
   function renderTabs() {
-    const totals = { all: state.items.length, deck: state.items.filter(i => i.kind === 'deck').length, doc: state.items.filter(i => i.kind === 'doc').length, sheet: state.items.filter(i => i.kind === 'sheet').length };
+    const pool = inSpace();
+    const totals = { all: pool.length, deck: pool.filter(i => i.kind === 'deck').length, doc: pool.filter(i => i.kind === 'doc').length, sheet: pool.filter(i => i.kind === 'sheet').length };
     for (const [id, tab] of Object.entries(tabButtons)) {
       tab.setAttribute('aria-pressed', String(state.filter === id));
       tab.querySelector('.lib-tab-count').textContent = String(totals[id]);
@@ -167,11 +193,11 @@ export function libraryController({ command, toast: modeToast }) {
   function card(item) {
     const node = el('article', 'lib-card');
     node.setAttribute('role', 'listitem');
-    node.dataset.path = item.relative;
+    node.dataset.key = keyOf(item.space, item.relative);
     node.classList.toggle('current', item.current);
     const opener = el('button', 'lib-open');
     opener.type = 'button';
-    opener.setAttribute('aria-label', `Open ${item.title}, ${KIND_LABEL[item.kind].toLowerCase()}, ${count(item)}, ${ago(item.modified)}`);
+    opener.setAttribute('aria-label', `Open ${item.title}, ${KIND_LABEL[item.kind].toLowerCase()} in ${item.space}, ${count(item)}, ${ago(item.modified)}`);
     const thumb = el('span', `lib-thumb ${item.kind}`);
     const placeholder = el('span', 'lib-placeholder');
     placeholder.append(icon(KIND_ICON[item.kind]));
@@ -197,6 +223,12 @@ export function libraryController({ command, toast: modeToast }) {
     const time = el('time', '', ago(item.modified));
     time.dateTime = item.modified;
     sub.append(el('span', '', count(item)), el('span', 'lib-dot', '·'), time);
+    // Which space a file is in matters once more than one is shown.
+    if (!state.space && state.spaces.length > 1) {
+      const where = el('span', 'lib-space-name', item.space);
+      where.title = `In the ${item.space} space`;
+      sub.prepend(where, el('span', 'lib-dot', '·'));
+    }
     if (item.current) sub.append(el('span', 'lib-dot', '·'), el('span', 'lib-now', 'Open now'));
     meta.append(name, sub);
     node.append(opener, more, meta);
@@ -207,13 +239,13 @@ export function libraryController({ command, toast: modeToast }) {
     const items = visibleItems();
     grid.replaceChildren(...items.map(card));
     grid.hidden = !items.length;
-    const total = state.items.length;
-    head.classList.toggle('bare', state.loaded && !total);
+    const total = inSpace().length;
+    head.classList.toggle('bare', state.loaded && !state.items.length);
     counter.textContent = !total ? '' : items.length === total ? `${total} ${total === 1 ? 'file' : 'files'}` : `${items.length} of ${total}`;
     empty.replaceChildren();
     empty.hidden = Boolean(items.length) || !state.loaded;
     if (!empty.hidden) {
-      if (!total) {
+      if (!state.items.length) {
         empty.append(icon('library'), el('h2', '', 'Nothing in your library yet'),
           el('p', '', 'Decks, docs and sheets you make here, or ask nexus to draft in the conversation, collect in this list.'));
         const actions = el('div', 'lib-empty-actions');
@@ -221,17 +253,19 @@ export function libraryController({ command, toast: modeToast }) {
         doc.addEventListener('click', () => create('doc')); deck.addEventListener('click', () => create('deck'));
         actions.append(doc, deck); empty.append(actions);
       } else {
-        const what = state.filter === 'all' ? 'decks or docs' : `${state.filter}s`;
+        const what = state.filter === 'all' ? 'decks, docs or sheets' : `${state.filter}s`;
+        const where = state.space ? ` in ${state.space}` : '';
         const q = state.query.trim();
-        empty.append(icon('search'), el('h2', '', q ? `No ${what} match “${q}”` : `No ${what} yet`));
+        empty.append(icon('search'), el('h2', '', q ? `No ${what}${where} match “${q}”` : `No ${what}${where} yet`));
         const reset = button('', null, null, q ? 'Clear search' : 'Show everything');
-        reset.addEventListener('click', () => { state.query = ''; search.value = ''; state.filter = 'all'; renderTabs(); renderGrid(); search.focus(); });
+        reset.addEventListener('click', () => { state.query = ''; search.value = ''; state.filter = 'all'; state.space = ''; renderSpaces(); renderTabs(); renderGrid(); search.focus(); });
         empty.append(reset);
       }
     }
     close.hidden = state.home && !state.current;
     if (state.selected) {
-      const fresh = grid.querySelector(`[data-path="${CSS.escape(state.selected)}"]`);
+      // Compared directly: CSS.escape cannot round-trip the key's NUL separator.
+      const fresh = [...grid.children].find(node => node.dataset.key === state.selected);
       state.selected = null;
       if (fresh) {
         fresh.classList.add('fresh');
@@ -348,7 +382,7 @@ export function libraryController({ command, toast: modeToast }) {
       finished = true; renaming = null;
       const value = input.value.trim();
       input.replaceWith(name);
-      if (commit && value && value !== item.title) run({ command: 'LibraryRename', path: item.relative, title: value });
+      if (commit && value && value !== item.title) run({ command: 'LibraryRename', ...at(item), title: value });
       else name.focus();
     };
     input.addEventListener('keydown', event => {
@@ -367,7 +401,7 @@ export function libraryController({ command, toast: modeToast }) {
     lastFocus = document.activeElement;
     root.hidden = false;
     for (const node of inertTargets()) node.inert = true;
-    renderTabs(); renderGrid();
+    renderSpaces(); renderTabs(); renderGrid();
     command({ command: 'Library' });
     // Files added or removed elsewhere show up while the library is open.
     clearInterval(watchTimer);
@@ -435,12 +469,14 @@ export function libraryController({ command, toast: modeToast }) {
     onEvent(event) {
       if (event.event === 'Library') {
         // An unchanged listing leaves the grid, its focus and its scroll alone.
-        const key = JSON.stringify([event.items, event.current, event.home, event.selected || null]);
+        const key = JSON.stringify([event.items, event.current, event.home, event.spaces, event.selected || null]);
         const same = state.loaded && key === listed && !event.selected;
         listed = key;
         state.items = event.items; state.current = event.current; state.loaded = true; state.home = event.home;
-        state.selected = event.selected || null;
-        if (!same) { renderTabs(); renderGrid(); }
+        state.spaces = event.spaces || [...new Set(event.items.map(i => i.space))];
+        state.openSpace = event.space || '';
+        state.selected = event.selected ? keyOf(event.selected_space ?? state.openSpace, event.selected) : null;
+        if (!same) { renderSpaces(); renderTabs(); renderGrid(); }
         if (event.notice && state.visible) notice(event.notice);
       } else if (event.event === 'Idle' || event.event === 'Error') state.awaiting = false;
     },

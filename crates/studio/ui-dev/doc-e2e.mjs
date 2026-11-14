@@ -900,7 +900,7 @@ Object.assign(tests, {
     assert.equal((await cards()).length, 9);
     await page.locator('#library .lib-search').fill('zzz');
     await page.locator('#library .lib-empty h2').waitFor();
-    assert.match(await page.locator('#library .lib-empty h2').textContent(), /No decks or docs match “zzz”/);
+    assert.match(await page.locator('#library .lib-empty h2').textContent(), /No decks, docs or sheets match “zzz”/);
     await page.getByRole('button', { name: 'Clear search' }).click();
     assert.equal((await cards()).length, 9);
     // Arrows move between cards, Enter opens one.
@@ -910,7 +910,7 @@ Object.assign(tests, {
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => window.__library.commands.some(c => c.command === 'LibraryOpen'));
     const open1 = await page.evaluate(() => window.__library.commands.find(c => c.command === 'LibraryOpen'));
-    assert.deepEqual(open1, { command: 'LibraryOpen', path: 'decks/launch.deck.json' });
+    assert.deepEqual(open1, { command: 'LibraryOpen', path: 'decks/launch.deck.json', space: 'career' });
     await page.locator('#library').waitFor({ state: 'hidden' });
     await page.close();
   },
@@ -931,7 +931,7 @@ Object.assign(tests, {
     // Reveal
     menu = await menuFor('Launch review');
     await menu.getByRole('menuitem', { name: /Reveal|Show in/ }).click();
-    assert.deepEqual((await sent()).at(-1), { command: 'LibraryReveal', path: 'decks/launch.deck.json' });
+    assert.deepEqual((await sent()).at(-1), { command: 'LibraryReveal', path: 'decks/launch.deck.json', space: 'career' });
     // Duplicate: the copy appears first and is highlighted.
     menu = await menuFor('Launch review');
     await menu.getByRole('menuitem', { name: 'Duplicate' }).click();
@@ -953,7 +953,7 @@ Object.assign(tests, {
     await page.locator('#library .lib-rename').fill('  Launch v2 ');
     await page.keyboard.press('Enter');
     await page.locator('#library .lib-title', { hasText: 'Launch v2' }).waitFor();
-    assert.deepEqual((await sent()).find(c => c.command === 'LibraryRename'), { command: 'LibraryRename', path: 'decks/launch-copy.deck.json', title: 'Launch v2' });
+    assert.deepEqual((await sent()).find(c => c.command === 'LibraryRename'), { command: 'LibraryRename', path: 'decks/launch-copy.deck.json', space: 'career', title: 'Launch v2' });
     // Export: the formats of the kind, through the Save dialog.
     menu = await menuFor('Launch v2');
     await menu.getByRole('menuitem', { name: 'Export' }).click();
@@ -961,7 +961,7 @@ Object.assign(tests, {
     await shot(page, 'library-menu-export');
     await menu.getByRole('menuitem', { name: /^PDF/ }).click();
     await page.locator('.lib-toast', { hasText: 'Exported Launch v2.pdf' }).waitFor();
-    assert.deepEqual((await sent()).find(c => c.command === 'LibraryExport'), { command: 'LibraryExport', path: 'decks/launch-copy.deck.json', format: 'pdf' });
+    assert.deepEqual((await sent()).find(c => c.command === 'LibraryExport'), { command: 'LibraryExport', path: 'decks/launch-copy.deck.json', space: 'career', format: 'pdf' });
     await page.locator('.lib-toast').getByRole('button', { name: 'Reveal' }).waitFor();
     menu = await menuFor('Q3 strategy');
     await menu.getByRole('menuitem', { name: 'Export' }).click();
@@ -984,7 +984,7 @@ Object.assign(tests, {
     await menu.getByRole('menuitem', { name: 'Delete' }).click();
     await page.locator('.lib-dialog').getByRole('button', { name: 'Delete' }).click();
     await page.locator('#library .lib-title', { hasText: 'Launch v2' }).waitFor({ state: 'detached' });
-    assert.deepEqual((await sent()).find(c => c.command === 'LibraryDelete'), { command: 'LibraryDelete', path: 'decks/launch-copy.deck.json' });
+    assert.deepEqual((await sent()).find(c => c.command === 'LibraryDelete'), { command: 'LibraryDelete', path: 'decks/launch-copy.deck.json', space: 'career' });
     // The right button opens the same menu.
     await card('Roadmap 2027').click({ button: 'right' });
     assert.equal(await page.locator('.lib-menu').count(), 1);

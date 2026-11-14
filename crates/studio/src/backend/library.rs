@@ -11,12 +11,17 @@ use nexus_core::deck::link::Kind as FileKind;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 
-use super::{Backend, Command, Deck, Event, Result, absolute, bail, doc, ensure, read_deck_noted};
+use super::{
+    Backend, Command, Deck, Event, LibraryStamp, Result, absolute, bail, doc, ensure,
+    read_deck_noted,
+};
 
 #[derive(Debug, Serialize)]
 pub struct Item {
     pub kind: FileKind,
-    /// `decks/q3.deck.json`: the file's path inside the space.
+    /// The space the file belongs to, by name.
+    pub space: String,
+    /// `decks/q3.deck.json`: the file's path inside its space.
     pub relative: String,
     pub title: String,
     /// RFC 3339, rendered as "3 hours ago" by the page.
@@ -28,14 +33,43 @@ pub struct Item {
     pub current: bool,
 }
 
+/// One library file with the space it was listed from.
+#[derive(Clone, Debug)]
+pub struct Listed {
+    pub space: String,
+    pub files: PathBuf,
+    pub entry: Entry,
+}
+
+/// The space files folder `path` lies in, when it is under `<data>/spaces/<name>/files`.
+pub(super) fn space_files_of(data_dir: &Path, path: &Path) -> Option<PathBuf> {
+    let spaces = data_dir.join("spaces").canonicalize().ok()?;
+    let path = absolute(path).ok()?;
+    // A file not written yet is placed by its folder.
+    let path = path
+        .canonicalize()
+        .ok()
+        .or_else(|| Some(path.parent()?.canonicalize().ok()?.join(path.file_name()?)))?;
+    let name = path.strip_prefix(&spaces).ok()?.components().next()?;
+    let files = spaces.join(name).join("files");
+    path.starts_with(&files).then_some(files)
+}
+
 /// The URL name of an entry's thumbnail: stable for a file and revision.
-fn thumb_key(entry: &Entry) -> String {
-    let digest = Sha256::digest(entry.relative.as_bytes());
-    let hex = digest.iter().take(6).fold(String::new(), |mut hex, byte| {
-        let _ = write!(hex, "{byte:02x}");
-        hex
-    });
-    format!("{hex}-{}.png", &entry.revision[..8])
+fn thumb_key(listed: &Listed) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(listed.space.as_bytes());
+    hasher.update([0]);
+    hasher.update(listed.entry.relative.as_bytes());
+    let hex = hasher
+        .finalize()
+        .iter()
+        .take(6)
+        .fold(String::new(), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        });
+    format!("{hex}-{}.png", &listed.entry.revision[..8])
 }
 
 fn deck_format(word: &str) -> Result<nexus_core::deck::export::Format> {
@@ -43,6 +77,13 @@ fn deck_format(word: &str) -> Result<nexus_core::deck::export::Format> {
 }
 
 impl Backend {
+    /// The open file's space follows it, so its designs and new files are that space's.
+    pub(super) fn follow_space(&mut self) {
+        if let Some(files) = space_files_of(&self.data_dir, &self.path) {
+            self.files_dir = files;
+        }
+    }
+
     fn current_relative(&self) -> Option<String> {
         let root = self.files_dir.canonicalize().ok()?;
         let path = self.path.canonicalize().ok()?;
@@ -51,56 +92,149 @@ impl Backend {
             .map(|p| p.to_string_lossy().replace('\\', "/"))
     }
 
-    /// List the space and remember the listing for thumbnail requests.
-    pub(super) fn library_event(&self, notice: Option<String>, selected: Option<String>) -> Event {
-        let stamp = canvas::library_stamp(&self.files_dir);
-        let unchanged = self.listing_stamp.borrow().as_ref() == Some(&stamp);
-        let entries = if unchanged {
-            self.listing.borrow().clone()
-        } else {
-            canvas::library(&self.files_dir)
+    /// The name the open file's space goes by in the listing.
+    fn current_space(&self) -> String {
+        let name = |dir: &Path| {
+            dir.parent()
+                .and_then(Path::file_name)
+                .map(|n| n.to_string_lossy().into_owned())
         };
-        *self.listing_stamp.borrow_mut() = Some(stamp);
-        let current = self.current_relative();
-        let items = entries
-            .iter()
-            .map(|entry| Item {
-                kind: entry.kind,
-                relative: entry.relative.clone(),
-                title: entry.title.clone(),
-                modified: entry.modified.to_rfc3339(),
-                count: entry.count,
-                design: entry.design.clone(),
-                thumb: entry
-                    .thumbnail
-                    .as_ref()
-                    .map(|_| format!("/library/{}", thumb_key(entry))),
-                current: current.as_deref() == Some(entry.relative.as_str()),
+        name(&self.files_dir)
+            .or_else(|| self.files_dir.canonicalize().ok().as_deref().and_then(name))
+            .unwrap_or_else(|| "this space".into())
+    }
+
+    /// Every space by name with its files folder: those under `<data>/spaces`,
+    /// and the open file's space when it lives elsewhere.
+    fn spaces(&self) -> Vec<(String, PathBuf)> {
+        let mut spaces: Vec<(String, PathBuf)> = std::fs::read_dir(self.data_dir.join("spaces"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|child| child.file_type().is_ok_and(|t| t.is_dir()))
+            .filter_map(|child| {
+                let name = child.file_name().to_string_lossy().into_owned();
+                let files = child.path().join("files");
+                (!name.starts_with('.') && files.is_dir()).then_some((name, files))
             })
             .collect();
-        *self.listing.borrow_mut() = entries;
+        let current = self.files_dir.canonicalize().ok();
+        let listed = spaces
+            .iter()
+            .any(|(_, files)| files.canonicalize().ok() == current);
+        if !listed {
+            let mut name = self.current_space();
+            while spaces.iter().any(|(other, _)| *other == name) {
+                name.push('\'');
+            }
+            spaces.push((name, self.files_dir.clone()));
+        }
+        spaces.sort_by_key(|a| a.0.to_lowercase());
+        spaces
+    }
+
+    /// The files folder of the space a library command names.
+    fn space_files(&self, space: Option<&str>) -> Result<PathBuf> {
+        let Some(space) = space else {
+            return Ok(self.files_dir.clone());
+        };
+        self.spaces()
+            .into_iter()
+            .find(|(name, _)| name == space)
+            .map(|(_, files)| files)
+            .ok_or_else(|| anyhow::anyhow!("there is no space named {space}"))
+    }
+
+    /// List every space and remember the listing for thumbnail requests.
+    pub(super) fn library_event(
+        &self,
+        notice: Option<String>,
+        selected: Option<(String, String)>,
+    ) -> Event {
+        let spaces = self.spaces();
+        let stamp: LibraryStamp = spaces
+            .iter()
+            .flat_map(|(_, files)| canvas::library_stamp(files))
+            .collect();
+        let unchanged = self.listing_stamp.borrow().as_ref() == Some(&stamp);
+        let mut listed = if unchanged {
+            self.listing.borrow().clone()
+        } else {
+            spaces
+                .iter()
+                .flat_map(|(space, files)| {
+                    canvas::library(files).into_iter().map(|entry| Listed {
+                        space: space.clone(),
+                        files: files.clone(),
+                        entry,
+                    })
+                })
+                .collect()
+        };
+        if !unchanged {
+            listed.sort_by(|a: &Listed, b: &Listed| {
+                b.entry
+                    .modified
+                    .cmp(&a.entry.modified)
+                    .then_with(|| a.space.cmp(&b.space))
+                    .then_with(|| a.entry.relative.cmp(&b.entry.relative))
+            });
+        }
+        *self.listing_stamp.borrow_mut() = Some(stamp);
+        let current = self.current_relative();
+        let current_files = self.files_dir.canonicalize().ok();
+        let items = listed
+            .iter()
+            .map(|listed| {
+                let entry = &listed.entry;
+                Item {
+                    kind: entry.kind,
+                    space: listed.space.clone(),
+                    relative: entry.relative.clone(),
+                    title: entry.title.clone(),
+                    modified: entry.modified.to_rfc3339(),
+                    count: entry.count,
+                    design: entry.design.clone(),
+                    thumb: entry
+                        .thumbnail
+                        .as_ref()
+                        .map(|_| format!("/library/{}", thumb_key(listed))),
+                    current: current.as_deref() == Some(entry.relative.as_str())
+                        && listed.files.canonicalize().ok() == current_files,
+                }
+            })
+            .collect();
+        *self.listing.borrow_mut() = listed;
+        let space = spaces
+            .iter()
+            .find(|(_, files)| files.canonicalize().ok() == current_files)
+            .map_or_else(|| self.current_space(), |(name, _)| name.clone());
+        let (selected_space, selected) = selected.unzip();
         Event::Library {
             items,
             current,
+            space,
+            spaces: spaces.into_iter().map(|(name, _)| name).collect(),
             home: self.home.get(),
             selected,
+            selected_space,
             notice,
         }
     }
 
-    fn thumbnail_entry(&self, name: &str) -> Result<Entry> {
+    fn thumbnail_entry(&self, name: &str) -> Result<Listed> {
         self.listing
             .borrow()
             .iter()
-            .find(|entry| thumb_key(entry) == name)
+            .find(|listed| thumb_key(listed) == name)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("unknown thumbnail"))
     }
 
     /// `/library/<key>.png`, drawn on first request.
     pub(super) fn serve_thumbnail(&self, name: &str) -> Result<(&'static str, Vec<u8>)> {
-        let entry = self.thumbnail_entry(name)?;
-        let path = canvas::ensure_thumbnail(&self.files_dir, &entry)?;
+        let listed = self.thumbnail_entry(name)?;
+        let path = canvas::ensure_thumbnail(&listed.files, &listed.entry)?;
         Ok(("image/png", std::fs::read(path)?))
     }
 
@@ -110,24 +244,32 @@ impl Backend {
         let name = path
             .strip_prefix("/library/")
             .ok_or_else(|| anyhow::anyhow!("unknown resource"))?;
-        Ok((self.files_dir.clone(), self.thumbnail_entry(name)?))
+        let listed = self.thumbnail_entry(name)?;
+        Ok((listed.files, listed.entry))
     }
 
     /// The window's own library commands. Returns `None` for any other.
     pub(super) fn library_command(&mut self, command: &Command) -> Result<Option<Event>> {
         Ok(Some(match command {
             Command::Library {} => self.library_event(None, None),
-            Command::LibraryOpen { path } => self.library_open(path)?,
-            Command::LibraryReveal { path } => {
-                let (_, file) = files::resolve(&self.files_dir, path)?;
+            Command::LibraryOpen { path, space } => self.library_open(space.as_deref(), path)?,
+            Command::LibraryReveal { path, space } => {
+                let files = self.space_files(space.as_deref())?;
+                let (_, file) = files::resolve(&files, path)?;
                 Self::show_in_folder(&file)?
             }
-            Command::LibraryRename { path, title } => self.library_rename(path, title)?,
-            Command::LibraryDuplicate { path } => {
-                let copy = files::duplicate(&self.files_dir, path)?;
-                self.library_event(Some("Duplicated".into()), Some(copy))
+            Command::LibraryRename { path, title, space } => {
+                self.library_rename(space.as_deref(), path, title)?
             }
-            Command::LibraryDelete { path } => self.library_delete(path)?,
+            Command::LibraryDuplicate { path, space } => {
+                let files = self.space_files(space.as_deref())?;
+                let copy = files::duplicate(&files, path)?;
+                let space = space.clone().unwrap_or_else(|| self.current_space());
+                self.library_event(Some("Duplicated".into()), Some((space, copy)))
+            }
+            Command::LibraryDelete { path, space } => {
+                self.library_delete(space.as_deref(), path)?
+            }
             // The window shows these off the backend's lock (`prepare_dialog`);
             // everything else, tests included, asks and finishes in place.
             _ => match self.dialog_job(command)? {
@@ -141,19 +283,30 @@ impl Backend {
     }
 
     /// The file already open stays as it is, with its undo history.
-    fn library_open(&mut self, relative: &str) -> Result<Event> {
-        let (_, file) = files::resolve(&self.files_dir, relative)?;
+    fn library_open(&mut self, space: Option<&str>, relative: &str) -> Result<Event> {
+        let files = self.space_files(space)?;
+        let (_, file) = files::resolve(&files, relative)?;
         if nexus_core::deck::same_file(&file, &self.path) && !self.home.get() {
             return Ok(self.event());
         }
-        self.execute(Command::Open { path: file })
+        let event = self.execute(Command::Open { path: file })?;
+        // A space outside `<data>/spaces` is not found from the path alone.
+        self.files_dir = files;
+        Ok(event)
     }
 
-    fn library_rename(&mut self, relative: &str, title: &str) -> Result<Event> {
-        let (_, file) = files::resolve(&self.files_dir, relative)?;
+    fn library_rename(
+        &mut self,
+        space: Option<&str>,
+        relative: &str,
+        title: &str,
+    ) -> Result<Event> {
+        let files = self.space_files(space)?;
+        let (_, file) = files::resolve(&files, relative)?;
         if !nexus_core::deck::same_file(&file, &self.path) {
-            files::rename(&self.files_dir, relative, title)?;
-            return Ok(self.library_event(None, Some(relative.into())));
+            files::rename(&files, relative, title)?;
+            let space = space.map_or_else(|| self.current_space(), Into::into);
+            return Ok(self.library_event(None, Some((space, relative.into()))));
         }
         // The open file changes through the window's own undo history.
         let title = title.trim();
@@ -171,14 +324,15 @@ impl Backend {
         }
     }
 
-    fn library_delete(&mut self, relative: &str) -> Result<Event> {
-        let (_, file) = files::resolve(&self.files_dir, relative)?;
+    fn library_delete(&mut self, space: Option<&str>, relative: &str) -> Result<Event> {
+        let files = self.space_files(space)?;
+        let (_, file) = files::resolve(&files, relative)?;
         let was_open = nexus_core::deck::same_file(&file, &self.path);
         let name = file
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        files::delete(&self.files_dir, relative)?;
+        files::delete(&files, relative)?;
         if was_open {
             self.reset_to_home()?;
         }
@@ -264,8 +418,13 @@ impl Backend {
             Command::ExportAs { format, template } => {
                 self.export_job(self.current_file(), format, template.clone())?
             }
-            Command::LibraryExport { path, format } => {
-                let (kind, file) = files::resolve(&self.files_dir, path)?;
+            Command::LibraryExport {
+                path,
+                format,
+                space,
+            } => {
+                let files = self.space_files(space.as_deref())?;
+                let (kind, file) = files::resolve(&files, path)?;
                 self.export_job((kind, file), format, None)?
             }
             Command::SaveCopy {} => self.save_copy_job()?,

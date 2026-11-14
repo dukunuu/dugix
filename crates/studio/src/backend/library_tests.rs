@@ -935,3 +935,95 @@ fn image_dialog_and_pasted_bytes_store_a_sanitized_png_with_the_deck() {
     );
     assert!(matches!(event, Event::Error { .. }), "{event:?}");
 }
+
+/// `<data>/spaces/<name>/files`, as `Space::files_dir` lays them out.
+fn space_files(temp: &Temp, name: &str) -> PathBuf {
+    let files = temp.data().join("spaces").join(name).join("files");
+    fs::create_dir_all(&files).unwrap();
+    files
+}
+
+fn write_deck(files: &Path, relative: &str, title: &str) -> PathBuf {
+    let path = files.join(relative);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&Deck::titled(title)).unwrap(),
+    )
+    .unwrap();
+    path
+}
+
+#[test]
+fn the_library_lists_every_space_and_opens_across_them() {
+    let temp = Temp::new();
+    let default = space_files(&temp, "default");
+    let career = space_files(&temp, "career");
+    write_deck(&career, "decks/review.deck.json", "Review");
+    write_deck(&career, "decks/plan.deck.json", "Plan");
+    let dialogs = Scripted::new([]);
+    let mut backend = Backend::launch(None, &default, &temp.data()).unwrap();
+    backend.dialogs = Arc::new(dialogs);
+
+    let Event::Library {
+        items,
+        space,
+        spaces,
+        ..
+    } = send(&mut backend, json!({"command":"Library"}))
+    else {
+        panic!("a library event");
+    };
+    assert_eq!(space, "default");
+    assert_eq!(spaces, ["career", "default"]);
+    let mut titles: Vec<_> = items
+        .iter()
+        .map(|i| (i.space.as_str(), i.title.as_str()))
+        .collect();
+    titles.sort_unstable();
+    assert_eq!(titles, [("career", "Plan"), ("career", "Review")]);
+
+    // Opening a file of another space moves the window into that space.
+    send(
+        &mut backend,
+        json!({"command":"LibraryOpen","space":"career","path":"decks/review.deck.json"}),
+    );
+    assert_eq!(backend.files_dir, career.canonicalize().unwrap());
+    let Event::Library { items, space, .. } = send(&mut backend, json!({"command":"Library"}))
+    else {
+        panic!("a library event");
+    };
+    assert_eq!(space, "career");
+    let open: Vec<_> = items.iter().filter(|i| i.current).collect();
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].title, "Review");
+
+    // Commands name their space; an unknown one is refused, not guessed.
+    send(
+        &mut backend,
+        json!({"command":"LibraryRename","space":"career","path":"decks/plan.deck.json","title":"Plan B"}),
+    );
+    assert_eq!(
+        read_deck_noted(&career.join("decks/plan.deck.json"))
+            .unwrap()
+            .0
+            .title,
+        "Plan B"
+    );
+    let event = send(
+        &mut backend,
+        json!({"command":"LibraryDelete","space":"../career","path":"decks/plan.deck.json"}),
+    );
+    assert!(matches!(event, Event::Error { .. }), "{event:?}");
+    assert!(career.join("decks/plan.deck.json").exists());
+}
+
+#[test]
+fn a_file_of_another_space_given_at_launch_works_in_that_space() {
+    let temp = Temp::new();
+    let default = space_files(&temp, "default");
+    let career = space_files(&temp, "career");
+    let deck = write_deck(&career, "decks/review.deck.json", "Review");
+    let backend = Backend::launch(Some(&deck), &default, &temp.data()).unwrap();
+    assert_eq!(backend.files_dir, career.canonicalize().unwrap());
+}

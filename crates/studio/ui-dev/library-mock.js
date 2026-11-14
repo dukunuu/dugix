@@ -16,7 +16,9 @@
     { kind: 'deck', relative: 'decks/untitled.deck.json', title: 'Untitled', modified: ago(40 * 86400), count: 2, design: null, thumb: null, current: false },
     { kind: 'doc', relative: 'docs/changelog.doc.json', title: 'Changelog', modified: ago(70 * 86400), count: 9, design: 'Nexus', thumb: '/library/doc-4.png', current: false },
   ];
-  let items = structuredClone(window.__libraryItems ?? defaults());
+  // Every listed file belongs to a space; the first two sit in another one.
+  let items = structuredClone(window.__libraryItems ?? defaults().map((item, i) => ({ space: i === 1 || i === 4 ? 'career' : 'default', ...item })));
+  for (const item of items) item.space ??= 'default';
   const state = { home: Boolean(window.__libraryHome), current: window.__libraryCurrent === undefined ? 'docs/q3.doc.json' : window.__libraryCurrent, cancel: false, commands: [] };
   window.__library = {
     get items() { return structuredClone(items); },
@@ -36,7 +38,7 @@
   };
   wrap('studioEvent'); wrap('studioAsyncEvent');
 
-  const listing = (extra = {}) => ({ event: 'Library', items: items.map(i => ({ ...i, current: i.relative === state.current })), current: state.current, home: state.home, selected: null, notice: null, ...extra });
+  const listing = (extra = {}) => ({ event: 'Library', items: items.map(i => ({ ...i, current: i.relative === state.current })), current: state.current, space: 'default', spaces: [...new Set(['default', ...items.map(i => i.space)])].sort(), home: state.home, selected: null, selected_space: null, notice: null, ...extra });
   const reply = event => window.studioEvent(structuredClone(event));
   const find = path => items.find(i => i.relative === path);
   const extension = { pptx: 'pptx', pdf: 'pdf', png: 'zip', html: 'html', json: 'deck.json', docx: 'docx', md: 'md' };
@@ -53,11 +55,11 @@
           case 'LibraryOpen': state.current = m.path; state.home = false; return inner.postMessage(JSON.stringify({ command: 'Load' }));
           case 'NewDeck': case 'NewDoc': state.home = false; return inner.postMessage(JSON.stringify({ command: 'Load' }));
           case 'LibraryReveal': return reply({ event: 'Revealed' });
-          case 'LibraryRename': { const item = find(m.path); if (!item) return reply({ event: 'Error', message: 'no such deck or doc' }); item.title = m.title.trim(); item.modified = new Date().toISOString(); return reply(listing({ selected: m.path })); }
+          case 'LibraryRename': { const item = find(m.path); if (!item) return reply({ event: 'Error', message: 'no such deck or doc' }); item.title = m.title.trim(); item.modified = new Date().toISOString(); return reply(listing({ selected: m.path, selected_space: item.space })); }
           case 'LibraryDuplicate': {
             const item = find(m.path); if (!item) return reply({ event: 'Error', message: 'no such deck or doc' });
             const copy = { ...structuredClone(item), relative: m.path.replace(/\.(deck|doc)\.json$/, '-copy.$1.json'), title: `${item.title} copy`, modified: new Date().toISOString(), current: false };
-            items.unshift(copy); return reply(listing({ selected: copy.relative, notice: 'Duplicated' }));
+            items.unshift(copy); return reply(listing({ selected: copy.relative, selected_space: copy.space, notice: 'Duplicated' }));
           }
           case 'LibraryDelete': { items = items.filter(i => i.relative !== m.path); const was = state.current === m.path; if (was) { state.current = null; state.home = true; } return reply(listing({ notice: 'Moved the file to the trash folder (.trash)' })); }
           case 'LibraryExport': { const item = find(m.path); return dialog({ event: 'Exported', path: `/Users/me/Desktop/${item.title}.${extension[m.format]}`, warnings: [] }); }

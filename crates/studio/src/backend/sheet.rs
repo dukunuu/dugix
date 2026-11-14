@@ -192,6 +192,7 @@ impl Backend {
         atomic_write(&self.recent, &serde_json::to_vec(&path)?)?;
         self.home.set(false);
         self.path = path;
+        self.follow_space();
         self.doc = None;
         let revision = sheet.revision();
         self.known_revision.clone_from(&revision);

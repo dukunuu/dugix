@@ -311,6 +311,7 @@ impl Backend {
         let root = asset_root(&path)?;
         atomic_write(&self.recent, &serde_json::to_vec(&path)?)?;
         self.path = path;
+        self.follow_space();
         self.fetcher = nexus_core::remote_image::Fetcher::new(root);
         self.known_revision = doc.revision();
         self.deck_stamp = stamp(&self.path);
