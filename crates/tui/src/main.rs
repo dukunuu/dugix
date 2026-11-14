@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
     let (selection_server, selection_requests) = cli::start_selection_server()?;
 
     let mut terminal = ratatui::init();
-    diagrams::protect_terminal_from_renderer_panics();
+    install_terminal_panic_hook();
     // Graphics probing must precede EventStream taking ownership of terminal input.
     let picker = ratatui_image::picker::Picker::from_query_stdio()
         .unwrap_or_else(|_| ratatui_image::picker::Picker::halfblocks());
@@ -96,6 +96,26 @@ async fn main() -> Result<()> {
     );
     ratatui::restore();
     result
+}
+
+/// Wrap ratatui's panic hook: a recovered panic (a parser fed a bad file) leaves
+/// the screen alone, and a real crash also turns off the mouse and paste
+/// reporting ratatui doesn't know about, so the shell isn't flooded with escapes.
+fn install_terminal_panic_hook() {
+    let restore = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if nexus_core::panic_guard::catching() {
+            return;
+        }
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::event::PopKeyboardEnhancementFlags,
+            crossterm::event::DisableMouseCapture,
+            crossterm::event::DisableBracketedPaste,
+            crossterm::event::DisableFocusChange
+        );
+        restore(info);
+    }));
 }
 
 fn open_start_session(

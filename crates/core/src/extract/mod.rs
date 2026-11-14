@@ -510,7 +510,13 @@ fn metadata_chunk(name: &str, ex: &Extracted, size: u64, reason: &str) -> (Strin
 }
 
 /// A PDF's text with its outline in front; `Ok("")` means no text layer (scanned).
+/// The parser panics on some malformed files, so a panic is an extraction error.
 pub fn pdf_text(bytes: &[u8]) -> Result<String> {
+    crate::panic_guard::catch(|| pdf_text_unguarded(bytes))
+        .map_err(|panic| anyhow::anyhow!("the pdf parser failed on this file: {panic}"))?
+}
+
+fn pdf_text_unguarded(bytes: &[u8]) -> Result<String> {
     let toc = pdf_toc(bytes);
     let text = pdf_extract::extract_text_from_mem(bytes)
         .map(|t| t.trim().to_string())
@@ -794,6 +800,27 @@ fn serialize_pdf(objs: &[String]) -> Vec<u8> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    /// A path operator with no operands crashes pdf-extract 0.12 (index out of
+    /// bounds); the guard turns that into an ordinary extraction failure.
+    #[test]
+    fn a_pdf_that_crashes_the_parser_is_a_failed_extraction_not_a_panic() {
+        let stream = "m";
+        let crashing = serialize_pdf(&[
+            "<< /Type /Catalog /Pages 2 0 R >>".into(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 150] /Contents 4 0 R >>".into(),
+            format!(
+                "<< /Length {} >>\nstream\n{stream}\nendstream",
+                stream.len()
+            ),
+        ]);
+        let error = pdf_text(&crashing).unwrap_err().to_string();
+        assert!(error.contains("pdf parser failed"), "{error}");
+        assert!(error.contains("index out of bounds"), "{error}");
+        assert!(!crate::panic_guard::catching());
+        assert_eq!(pdf_text(&minimal_pdf(Some("Hello"))).unwrap(), "Hello");
+    }
 
     fn temp_dir() -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("nexus-extract-{}", uuid::Uuid::new_v4()));

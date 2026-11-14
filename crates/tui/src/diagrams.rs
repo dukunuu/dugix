@@ -1,6 +1,5 @@
 //! Mermaid previews rendered off the draw path into fixed-height transcript slots.
 
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
@@ -25,25 +24,8 @@ const MAX_ENTRIES: usize = 8;
 const MAX_PIXEL_WIDTH: u32 = 4096;
 const MAX_PIXEL_HEIGHT: u32 = 1024;
 static FONTS: OnceLock<Arc<resvg::usvg::fontdb::Database>> = OnceLock::new();
-thread_local! {
-    static IN_RENDER_JOB: Cell<bool> = const { Cell::new(false) };
-}
-
-/// Install after `ratatui::init` to prevent caught renderer panics from restoring the terminal.
-pub fn protect_terminal_from_renderer_panics() {
-    let hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        if !IN_RENDER_JOB.get() {
-            hook(info);
-        }
-    }));
-}
-
 fn render_safely<T>(render: impl FnOnce() -> Result<T>) -> Result<T, String> {
-    let previous = IN_RENDER_JOB.replace(true);
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(render));
-    IN_RENDER_JOB.set(previous);
-    result.map_or_else(
+    nexus_core::panic_guard::catch(render).map_or_else(
         |_| Err("diagram renderer failed; source is available below".into()),
         |result| result.map_err(|error| format!("{error:#}")),
     )
@@ -396,15 +378,16 @@ mod tests {
 
     #[test]
     fn renderer_panics_are_marked_for_the_terminal_hook_and_become_errors() {
-        assert!(!IN_RENDER_JOB.get());
+        use nexus_core::panic_guard::catching;
+        assert!(!catching());
         let result: Result<(), String> = render_safely(|| {
-            assert!(IN_RENDER_JOB.get());
+            assert!(catching());
             panic!("simulated renderer panic");
         });
         assert!(result.unwrap_err().contains("source is available"));
-        assert!(!IN_RENDER_JOB.get());
+        assert!(!catching());
         assert!(render_safely(|| Ok(())).is_ok());
-        assert!(!IN_RENDER_JOB.get());
+        assert!(!catching());
     }
 
     #[test]

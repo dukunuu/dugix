@@ -28,6 +28,7 @@ pub mod jobs;
 pub mod markdown;
 pub mod memory;
 pub mod panels;
+pub mod panic_guard;
 pub mod prompts;
 pub mod provider;
 pub mod remote_image;
