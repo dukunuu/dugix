@@ -4,7 +4,7 @@
     clippy::cast_precision_loss,
     clippy::cast_sign_loss
 )]
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 
 use nexus_core::app::{
     Popup, SEARCH_PROVIDERS, SETTINGS_GROUPS, SettingsField, SettingsRow, VERBOSITY_LEVELS,
@@ -273,7 +273,9 @@ impl AppView {
             .trim()
             != blocked
         {
-            let _ = std::fs::write(&blocked_path, blocked);
+            // Search reads this file, so a failed write must not report "settings saved".
+            std::fs::write(&blocked_path, blocked)
+                .with_context(|| format!("saving blocked domains to {}", blocked_path.display()))?;
             changed = true;
         }
         self.popup = Popup::None;
