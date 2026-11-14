@@ -690,7 +690,7 @@ async fn an_empty_role_answer_fails_the_run_in_agents() {
 async fn read_only_tools_refuse_writes_and_pass_reads_through() {
     let temp = Temp::new();
     fs::write(temp.root().join("notes.txt"), "kept\n").unwrap();
-    let tools = crate::tools::ReadOnly(Arc::new(temp.toolbox()));
+    let tools = crate::tools::ReadOnly::new(Arc::new(temp.toolbox()));
     let write = r#"{"action":"write","path":"new.txt","content":"x"}"#;
     assert!(!tools.is_read_only("fs", write));
     let (result, status) = tools.run("fs", write).await;

@@ -4,7 +4,7 @@ use tokio::sync::mpsc;
 
 use crate::prompts;
 use crate::provider::openrouter::OpenRouter;
-use crate::provider::{ChatMessage, ChatParams, StreamEvent};
+use crate::provider::{ChatMessage, ChatParams, StreamEvent, SubagentEvent};
 use crate::subagent::{self, Role};
 use crate::tools::{NoTools, ToolBox, ToolExecutor};
 
@@ -54,32 +54,58 @@ impl ResearchUsage {
     }
 
     /// One research agent, listed in `/agents` as `title` and logged under `kind`.
+    /// `on_step` hears a one-line summary of each tool call, for its stage row.
+    /// An agent that ends with no text answers with an empty string.
     async fn agent(
         &self,
         (provider, model, kind): (&OpenRouter, &str, &str),
         title: String,
         tools: &dyn ToolExecutor,
         (messages, max_steps): (Vec<ChatMessage>, usize),
+        on_step: &(dyn Fn(String) + Sync),
     ) -> Result<String, String> {
+        let (events, mut steps) = mpsc::unbounded_channel::<StreamEvent>();
         let context = subagent::Context::new(
             provider.clone().logged(self.log(), kind),
             model.to_string(),
             self.chat_params(),
-            self.events.clone(),
+            events,
         )
         .with_slots(self.slots.clone());
-        subagent::run_role(
-            &context,
-            tools,
-            Role {
-                title,
-                messages,
-                max_steps,
-            },
-        )
-        .await
-        .map(|text| text.trim().to_string())
-        .map_err(|e| e.to_string())
+        let run = async move {
+            let outcome = subagent::run_role(
+                &context,
+                tools,
+                Role {
+                    title,
+                    messages,
+                    max_steps,
+                },
+            )
+            .await;
+            drop(context);
+            outcome
+        };
+        let relay = async {
+            while let Some(event) = steps.recv().await {
+                if let StreamEvent::Subagent(update) = &event
+                    && let SubagentEvent::Round { calls, .. } = &update.event
+                    && let Some((call, result)) = calls.last()
+                {
+                    on_step(crate::app::tool_call_summary(
+                        &call.name,
+                        &call.arguments,
+                        result,
+                    ));
+                }
+                let _ = self.events.send(event);
+            }
+        };
+        match tokio::join!(run, relay).0 {
+            Ok(text) => Ok(text.trim().to_string()),
+            Err(e) if e.is::<subagent::EmptyAnswer>() => Ok(String::new()),
+            Err(e) => Err(e.to_string()),
+        }
     }
 }
 
@@ -120,14 +146,19 @@ async fn complete_text(
         .next()
         .map(|first| first.to_uppercase().chain(stage).collect())
         .unwrap_or_default();
-    usage
+    let text = usage
         .agent(
             (provider, model, kind),
             format!("{title} · {}", usage.topic),
             &NoTools,
             (messages, 0),
+            &|_| {},
         )
-        .await
+        .await?;
+    if text.is_empty() {
+        return Err(subagent::EmptyAnswer.to_string());
+    }
+    Ok(text)
 }
 
 async fn complete_agent(
@@ -235,11 +266,11 @@ async fn run_searcher(
             ),
             ctx.toolbox.as_ref(),
             (messages, RESEARCH_SEARCHER_MAX_ITERS),
+            &|step| send_stage(ctx.tx, ctx.ids, &label, format!("working — {step}")),
         )
         .await
     {
         Ok(text) => text,
-        Err(e) if e.contains("empty answer") => String::new(),
         Err(e) => {
             send_stage(ctx.tx, ctx.ids, &label, format!("error — {e}"));
             return format!("[search agent error on \"{display}\": {e}]");
@@ -276,11 +307,11 @@ async fn verify_with_quote_check(
             format!("Verifier · {}", usage.topic),
             cache_only_toolbox.as_ref(),
             (messages, RESEARCH_SEARCHER_MAX_ITERS),
+            &|step| send_stage(tx, ids, "verifier", format!("working — {step}")),
         )
         .await
     {
         Ok(text) => (text, false),
-        Err(e) if e.contains("empty answer") => (String::new(), false),
         Err(e) => {
             send_stage(tx, ids, "verifier", format!("error — {e}"));
             (String::new(), true)

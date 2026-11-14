@@ -224,14 +224,8 @@ impl App {
                 ),
             ));
             // Tools and reasoning effort are part of the cached prefix.
-            let effort = self.current_model.clone().and_then(|model| {
-                let effort = self.reasoning.get(&model).cloned()?;
-                self.effort_accepted(&model, &effort).then_some(effort)
-            });
-            let tools = self
-                .active_prefix()
-                .map_or_else(|| self.chat_tool_defs(), |prefix| prefix.tools.clone());
-            (history, self.turn_params(effort), tools)
+            let (params, tools) = self.turn_shape();
+            (history, params, tools)
         });
         CompactionRequest { flat, replay }
     }

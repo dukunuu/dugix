@@ -384,6 +384,19 @@ impl App {
     }
 
     /// A chat turn's request parameters; compaction sends the same to reuse its cache.
+    /// The parameters and tool list a request needs to share the chat's
+    /// cached prefix: the turn's own, with the effort the catalog still accepts.
+    pub(super) fn turn_shape(&self) -> (ChatParams, Vec<crate::provider::ToolDef>) {
+        let effort = self.current_model.clone().and_then(|model| {
+            let effort = self.reasoning.get(&model).cloned()?;
+            self.effort_accepted(&model, &effort).then_some(effort)
+        });
+        let tools = self
+            .active_prefix()
+            .map_or_else(|| self.chat_tool_defs(), |prefix| prefix.tools.clone());
+        (self.turn_params(effort), tools)
+    }
+
     pub(super) fn turn_params(&self, reasoning_effort: Option<String>) -> ChatParams {
         let profile = self.model_profile();
         ChatParams {

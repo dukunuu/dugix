@@ -904,26 +904,44 @@ impl ToolExecutor for NoTools {
 
 /// An executor that only runs calls its inner executor classifies as read-only,
 /// for agents that may look but never change anything (the swarm's drafters).
-pub(crate) struct ReadOnly(pub Arc<dyn ToolExecutor>);
+pub(crate) struct ReadOnly {
+    inner: Arc<dyn ToolExecutor>,
+    /// The list offered instead of `inner`'s: the chat's frozen one, so an agent
+    /// that shares the chat's history also shares its cached prefix.
+    defs: Option<Vec<ToolDef>>,
+}
+
+impl ReadOnly {
+    pub(crate) fn new(inner: Arc<dyn ToolExecutor>) -> Self {
+        Self { inner, defs: None }
+    }
+
+    pub(crate) fn offering(mut self, defs: Vec<ToolDef>) -> Self {
+        self.defs = Some(defs);
+        self
+    }
+}
 
 pub(crate) const READ_ONLY_REFUSAL: &str =
     "refused · this agent is read-only; describe the change instead of making it";
 
 impl ToolExecutor for ReadOnly {
     fn defs(&self) -> Vec<ToolDef> {
-        self.0.defs()
+        self.defs.clone().unwrap_or_else(|| self.inner.defs())
     }
 
     fn defs_compact(&self) -> Vec<ToolDef> {
-        self.0.defs_compact()
+        self.defs
+            .clone()
+            .unwrap_or_else(|| self.inner.defs_compact())
     }
 
     fn is_read_only(&self, name: &str, args: &str) -> bool {
-        self.0.is_read_only(name, args)
+        self.inner.is_read_only(name, args)
     }
 
     fn effect(&self, name: &str, args: &str) -> Effect {
-        self.0.effect(name, args)
+        self.inner.effect(name, args)
     }
 
     fn run<'a>(
@@ -931,8 +949,8 @@ impl ToolExecutor for ReadOnly {
         name: &'a str,
         args: &'a str,
     ) -> Pin<Box<dyn Future<Output = (String, String)> + Send + 'a>> {
-        if self.0.is_read_only(name, args) {
-            self.0.run(name, args)
+        if self.inner.is_read_only(name, args) {
+            self.inner.run(name, args)
         } else {
             Box::pin(std::future::ready((
                 READ_ONLY_REFUSAL.to_string(),
@@ -942,11 +960,11 @@ impl ToolExecutor for ReadOnly {
     }
 
     fn supports_images(&self) -> bool {
-        self.0.supports_images()
+        self.inner.supports_images()
     }
 
     fn space_files_dir(&self) -> Option<std::path::PathBuf> {
-        self.0.space_files_dir()
+        self.inner.space_files_dir()
     }
 }
 

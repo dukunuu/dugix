@@ -390,8 +390,11 @@ pub(crate) async fn run_role(
     )
     .await
     .and_then(|done| {
-        anyhow::ensure!(!done.content.trim().is_empty(), "returned an empty answer");
-        Ok(done.content)
+        if done.content.trim().is_empty() {
+            Err(EmptyAnswer.into())
+        } else {
+            Ok(done.content)
+        }
     });
     drop(slot);
     context.send(
@@ -404,6 +407,18 @@ pub(crate) async fn run_role(
     );
     outcome
 }
+
+/// A role's run ended without any text.
+#[derive(Debug)]
+pub(crate) struct EmptyAnswer;
+
+impl std::fmt::Display for EmptyAnswer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("returned an empty answer")
+    }
+}
+
+impl std::error::Error for EmptyAnswer {}
 
 /// The last round's text and what the run took.
 struct Done {

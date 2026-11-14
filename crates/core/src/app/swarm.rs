@@ -18,6 +18,7 @@ use crate::provider::openrouter::OpenRouter;
 use crate::provider::{ChatMessage, ChatParams, StreamEvent, SubagentUpdate};
 use crate::subagent::{self, Role};
 use crate::tools::{ReadOnly, ToolExecutor};
+use tokio::sync::Semaphore;
 
 /// Drafts when the session has no roster.
 const DEFAULT_DRAFTS: usize = 3;
@@ -43,6 +44,8 @@ pub struct Drafter {
     pub focus: String,
     pub provider: OpenRouter,
     pub model: String,
+    /// Drafts on the session model, so it shares the chat's cache and effort.
+    pub session_model: bool,
 }
 
 impl App {
@@ -82,6 +85,9 @@ impl App {
             .map(|m| m.content.clone())
             .unwrap_or_default();
         let base_history = self.build_history();
+        // The chat's lane, parameters and tool list: every agent here starts
+        // from the conversation, so all of them reuse its cached prefix.
+        let (params, chat_tools) = self.turn_shape();
 
         let (tx, rx) = mpsc::unbounded_channel();
         self.swarm.rx = Some(rx);
@@ -95,10 +101,9 @@ impl App {
             provider: default_provider,
             model: raw_default_model,
             base_history,
-            tools: Arc::new(ReadOnly(self.toolbox.clone())),
+            tools: Arc::new(ReadOnly::new(self.toolbox.clone()).offering(chat_tools)),
             user_message,
-            prompt_cache_key: format!("swarm:{}", self.prompt_cache_key_for(&session.id)),
-            cache_ttl_1h: self.settings.cache_lifetime == "extended",
+            params,
             session_id: session.id,
             tx,
         }));
@@ -121,28 +126,34 @@ impl App {
                     focus: String::new(),
                     provider: default_provider.clone(),
                     model: default_model.to_string(),
+                    session_model: true,
                 })
                 .collect();
         }
+        let current = self.current_model.clone();
         personas
             .iter()
             .take(MAX_DRAFTS)
             .map(|persona| {
-                let (provider, model) =
-                    if let Some((provider, model)) = self.resolve_model_backend(&persona.model) {
-                        (self.usage_provider(provider, "swarm"), model)
-                    } else {
-                        self.push_status(format!(
-                            "swarm: {} model unavailable ({}); using the session model",
-                            persona.name, persona.model
-                        ));
-                        (default_provider.clone(), default_model.to_string())
-                    };
+                let (provider, model, session_model) = if current.as_deref()
+                    == Some(persona.model.as_str())
+                {
+                    (default_provider.clone(), default_model.to_string(), true)
+                } else if let Some((provider, model)) = self.resolve_model_backend(&persona.model) {
+                    (self.usage_provider(provider, "swarm"), model, false)
+                } else {
+                    self.push_status(format!(
+                        "swarm: {} model unavailable ({}); using the session model",
+                        persona.name, persona.model
+                    ));
+                    (default_provider.clone(), default_model.to_string(), true)
+                };
                 Drafter {
                     label: persona.name.clone(),
                     focus: persona.blurb.trim().to_string(),
                     provider,
                     model,
+                    session_model,
                 }
             })
             .collect()
@@ -315,21 +326,13 @@ pub struct SwarmTurnOptions {
     /// Read-only: every agent here may look, none may change anything.
     pub tools: Arc<dyn ToolExecutor>,
     pub user_message: String,
-    pub prompt_cache_key: String,
-    pub cache_ttl_1h: bool,
+    /// The chat turn's parameters, cache lane included.
+    pub params: ChatParams,
     pub session_id: String,
     pub tx: mpsc::UnboundedSender<SwarmMsg>,
 }
 
-impl SwarmTurnOptions {
-    fn chat_params(&self) -> ChatParams {
-        ChatParams {
-            prompt_cache_key: Some(self.prompt_cache_key.clone()),
-            cache_ttl_1h: self.cache_ttl_1h,
-            ..ChatParams::default()
-        }
-    }
-}
+impl SwarmTurnOptions {}
 
 /// Draft letters, so the reviewer and writer can name answers without names
 /// that hint at a role.
@@ -400,16 +403,26 @@ async fn draft_apart(
     base_history: &[ChatMessage],
     tools: &Arc<dyn ToolExecutor>,
     params: &ChatParams,
-    events: &mpsc::UnboundedSender<StreamEvent>,
+    (events, slots): (&mpsc::UnboundedSender<StreamEvent>, &Arc<Semaphore>),
     topic: &str,
 ) -> Vec<Result<String>> {
     let runs = drafters.iter().enumerate().map(|(index, drafter)| {
+        // Another model may not take the session model's reasoning effort.
+        let params = if drafter.session_model {
+            params.clone()
+        } else {
+            ChatParams {
+                reasoning_effort: None,
+                ..params.clone()
+            }
+        };
         let context = subagent::Context::new(
             drafter.provider.clone(),
             drafter.model.clone(),
-            params.clone(),
+            params,
             events.clone(),
-        );
+        )
+        .with_slots(Arc::clone(slots));
         let role = Role {
             title: format!("Draft {} · {} · {topic}", letter(index), drafter.label),
             messages: draft_messages(base_history, drafter),
@@ -422,7 +435,6 @@ async fn draft_apart(
 }
 
 async fn run_swarm_turn(opts: SwarmTurnOptions) {
-    let params = opts.chat_params();
     let SwarmTurnOptions {
         drafters,
         provider,
@@ -430,10 +442,12 @@ async fn run_swarm_turn(opts: SwarmTurnOptions) {
         base_history,
         tools,
         user_message,
+        params,
         session_id,
         tx,
-        ..
     } = opts;
+    // Its own slots: every drafter runs at once, whatever the chat's sub-agents do.
+    let slots = Arc::new(Semaphore::new(MAX_DRAFTS));
     let send = |u: SwarmUpdate| {
         let _ = tx.send((session_id.clone(), u));
     };
@@ -443,7 +457,8 @@ async fn run_swarm_turn(opts: SwarmTurnOptions) {
     send(SwarmUpdate::Progress(format!(
         "{count} agents drafting apart · Ctrl+↑ to watch"
     )));
-    let results = draft_apart(&drafters, &base_history, &tools, &params, &events, &topic).await;
+    let agents = (&events, &slots);
+    let results = draft_apart(&drafters, &base_history, &tools, &params, agents, &topic).await;
     let mut drafts = Vec::new();
     for (index, (drafter, result)) in drafters.iter().zip(results).enumerate() {
         match result {
@@ -456,7 +471,7 @@ async fn run_swarm_turn(opts: SwarmTurnOptions) {
         return;
     }
     let rendered = render_drafts(&drafts);
-    let context = subagent::Context::new(provider, model, params, events);
+    let context = subagent::Context::new(provider, model, params, events).with_slots(slots);
 
     send(SwarmUpdate::Progress(format!(
         "checking {} drafts · Ctrl+↑ to watch",
@@ -497,7 +512,8 @@ async fn run_swarm_turn(opts: SwarmTurnOptions) {
             ],
         ),
     );
-    // No steps: the writer answers from the drafts and review without tools.
+    // No steps, but the tool list is still sent (and refused by the request), so
+    // the writer shares the reviewer's cached prefix.
     let reply = subagent::run_role(
         &context,
         tools.as_ref(),
@@ -527,26 +543,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn swarm_params_pass_the_cache_ttl_experiment() {
-        let app = super::super::tests::app_with_key();
-        let provider = OpenRouter::openrouter_flavor("test-key".to_string());
-        for enabled in [false, true] {
-            let (tx, _rx) = mpsc::unbounded_channel();
-            let opts = SwarmTurnOptions {
-                drafters: Vec::new(),
-                provider: provider.clone(),
-                model: "anthropic/claude-sonnet-4".to_string(),
-                base_history: Vec::new(),
-                tools: app.toolbox.clone(),
-                user_message: "topic".to_string(),
-                prompt_cache_key: "swarm:s:0".to_string(),
-                cache_ttl_1h: enabled,
-                session_id: "s".to_string(),
-                tx,
-            };
-            let params = opts.chat_params();
-            assert_eq!(params.cache_ttl_1h, enabled);
-            assert_eq!(params.prompt_cache_key.as_deref(), Some("swarm:s:0"));
+    fn swarm_agents_ask_like_the_chat_so_they_share_its_cache() {
+        let mut app = super::super::tests::app_with_key();
+        let space = app.active_space.id.clone();
+        let session = app.db.create_session("swarm", "m", &space, "chat").unwrap();
+        app.session = Some(session.clone());
+        for extended in [false, true] {
+            app.settings.cache_lifetime = if extended { "extended" } else { "default" }.into();
+            let (params, tools) = app.turn_shape();
+            assert_eq!(
+                params.prompt_cache_key.as_deref(),
+                Some(app.prompt_cache_key_for(&session.id).as_str()),
+                "the chat's own lane, not a swarm one"
+            );
+            assert_eq!(params.cache_ttl_1h, extended);
+            let chat_tools = app
+                .active_prefix()
+                .map_or_else(|| app.chat_tool_defs(), |prefix| prefix.tools.clone());
+            assert_eq!(
+                serde_json::to_string(&tools).unwrap(),
+                serde_json::to_string(&chat_tools).unwrap()
+            );
+            let offered = ReadOnly::new(app.toolbox.clone()).offering(tools.clone());
+            assert_eq!(
+                serde_json::to_string(&offered.defs()).unwrap(),
+                serde_json::to_string(&tools).unwrap()
+            );
         }
     }
 
@@ -594,6 +616,7 @@ mod tests {
             focus: "what breaks at 3am".into(),
             provider,
             model: "m".into(),
+            session_model: true,
         };
         let messages = draft_messages(&base, &drafter);
         assert_eq!(messages.len(), 3);
