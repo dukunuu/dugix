@@ -136,6 +136,10 @@ pub struct SwarmState {
     pub session: Option<String>,
     /// Active session's roster, cached for the popup and kept in sync by `on_swarm_update`.
     pub cache: Vec<crate::db::Persona>,
+    /// Whether the running turn's session is incognito, so its agents stay unsaved.
+    pub incognito: bool,
+    /// What the running turn's agents have cost so far; it lands on the reply.
+    pub cost: Option<f64>,
 }
 
 #[derive(Default)]

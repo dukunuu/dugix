@@ -522,7 +522,7 @@ impl App {
                 if let Some(session) = &self.session {
                     let _ = self.db.save_swarm_personas(&session.id, &self.swarm.cache);
                 }
-                self.push_status(format!("persona model: {id}"));
+                self.push_status(format!("drafter model: {id}"));
             }
         }
         if self.work_mode == super::WorkMode::AgentAuto

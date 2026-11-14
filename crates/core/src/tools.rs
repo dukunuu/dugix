@@ -870,6 +870,54 @@ impl ToolExecutor for ToolBox {
     }
 }
 
+/// An executor that only runs calls its inner executor classifies as read-only,
+/// for agents that may look but never change anything (the swarm's drafters).
+pub(crate) struct ReadOnly(pub Arc<dyn ToolExecutor>);
+
+pub(crate) const READ_ONLY_REFUSAL: &str =
+    "refused · this agent is read-only; describe the change instead of making it";
+
+impl ToolExecutor for ReadOnly {
+    fn defs(&self) -> Vec<ToolDef> {
+        self.0.defs()
+    }
+
+    fn defs_compact(&self) -> Vec<ToolDef> {
+        self.0.defs_compact()
+    }
+
+    fn is_read_only(&self, name: &str, args: &str) -> bool {
+        self.0.is_read_only(name, args)
+    }
+
+    fn effect(&self, name: &str, args: &str) -> Effect {
+        self.0.effect(name, args)
+    }
+
+    fn run<'a>(
+        &'a self,
+        name: &'a str,
+        args: &'a str,
+    ) -> Pin<Box<dyn Future<Output = (String, String)> + Send + 'a>> {
+        if self.0.is_read_only(name, args) {
+            self.0.run(name, args)
+        } else {
+            Box::pin(std::future::ready((
+                READ_ONLY_REFUSAL.to_string(),
+                "blocked".to_string(),
+            )))
+        }
+    }
+
+    fn supports_images(&self) -> bool {
+        self.0.supports_images()
+    }
+
+    fn space_files_dir(&self) -> Option<std::path::PathBuf> {
+        self.0.space_files_dir()
+    }
+}
+
 /// Run calls in waves of non-conflicting effects; results come back in call order.
 pub(crate) async fn run_scheduled(
     exec: &dyn ToolExecutor,

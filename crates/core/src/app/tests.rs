@@ -3754,6 +3754,99 @@ fn swarm_progress_and_errors_are_visible_in_transcript() {
     );
 }
 
+#[test]
+fn swarm_agents_show_in_agents_and_their_cost_lands_on_the_reply() {
+    use super::swarm::SwarmUpdate;
+    use crate::provider::{SubagentEvent, SubagentUpdate, Usage};
+    let mut a = app_with_key();
+    let space = a.active_space.id.clone();
+    let s =
+        a.db.create_session("swarm", "a/one", &space, "chat")
+            .unwrap();
+    let sid = s.id.clone();
+    a.session = Some(s);
+    a.swarm.session = Some(sid.clone());
+    let agent = |id: &str, event| {
+        SwarmUpdate::Subagent(Box::new(SubagentUpdate {
+            id: id.into(),
+            number: 1,
+            event,
+        }))
+    };
+    for id in ["draft-a", "draft-b"] {
+        a.on_swarm_update(Some((
+            sid.clone(),
+            agent(
+                id,
+                SubagentEvent::Started {
+                    prompt: format!("Draft {id} · which cache?"),
+                    model: "a/one".into(),
+                    writable: false,
+                    max_steps: 8,
+                },
+            ),
+        )));
+    }
+    a.on_swarm_update(Some((
+        sid.clone(),
+        agent(
+            "draft-a",
+            SubagentEvent::Round {
+                step: 0,
+                reasoning: None,
+                content: "use redis".into(),
+                calls: Vec::new(),
+                usage: Some(Usage {
+                    prompt_tokens: 10,
+                    completion_tokens: 5,
+                    total_tokens: 15,
+                    cost: Some(0.25),
+                    ..Default::default()
+                }),
+                secs: 1.0,
+            },
+        ),
+    )));
+    a.on_swarm_update(Some((
+        sid.clone(),
+        agent(
+            "draft-a",
+            SubagentEvent::Finished {
+                error: None,
+                review: None,
+            },
+        ),
+    )));
+    let runs = a.subagents_for(&sid);
+    assert_eq!(runs.len(), 2);
+    assert!(
+        runs.iter()
+            .any(|run| run.title() == "Draft draft-a · which cache?"
+                && run.status == super::subagents::SubagentStatus::Done
+                && run.cost == Some(0.25))
+    );
+
+    a.on_swarm_update(Some((
+        sid.clone(),
+        SwarmUpdate::Synthesis("use redis".into()),
+    )));
+    let reply = a.messages.last().unwrap();
+    assert_eq!(reply.cost, Some(0.25));
+    assert_eq!(reply.phrase.as_deref(), Some("Drafted"));
+    let stored = a.db.load_messages(&sid).unwrap();
+    assert_eq!(stored.last().unwrap().cost, Some(0.25));
+
+    // The turn ending (or being stopped) settles any agent still running.
+    a.on_swarm_update(None);
+    let stuck = a
+        .subagents_for(&sid)
+        .into_iter()
+        .find(|run| run.id == "draft-b")
+        .unwrap();
+    assert_eq!(stuck.status, super::subagents::SubagentStatus::Failed);
+    assert!(a.swarm.session.is_none());
+}
+
 #[tokio::test]
 async fn swarm_synthesis_triggers_post_reply_jobs_like_normal_chat() {
     let mut a = app_with_key();

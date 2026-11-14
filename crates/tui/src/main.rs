@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
         if continue_session || selection_chat || send_only {
             anyhow::bail!("launch flags can only be used when launching the TUI");
         }
-        return cli::run(cmd).await;
+        return Box::pin(cli::run(cmd)).await;
     }
 
     let selection_prompt = (selection_chat || send_only)

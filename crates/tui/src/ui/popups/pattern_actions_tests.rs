@@ -163,12 +163,12 @@ fn swarm_uses_the_shared_frame_and_plain_n_starts_a_persona() {
         blurb: "Reviews work".into(),
     });
     let screen = render_to_string(110, 30, |f| super::swarm::render(f, &app));
-    assert_frame(&screen, "Swarm", "off · 1 persona", "Esc close");
+    assert_frame(&screen, "Swarm", "off · 1 drafter", "Esc close");
     assert!(screen.contains("Enter edit · n add"), "{screen}");
     let remove = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL);
     super::swarm::handle_key(&mut app, remove).unwrap();
     let screen = render_to_string(110, 30, |f| super::swarm::render(f, &app));
-    assert_frame(&screen, "Remove persona?", "", "Esc cancel");
+    assert_frame(&screen, "Remove drafter?", "", "Esc cancel");
     assert!(
         screen.contains("“Reviewer” will be removed from the swarm."),
         "{screen}"
@@ -178,10 +178,10 @@ fn swarm_uses_the_shared_frame_and_plain_n_starts_a_persona() {
     super::swarm::handle_key(&mut app, KeyCode::Esc.into()).unwrap();
     app.swarm.cache.clear();
     let screen = render_to_string(110, 30, |f| super::swarm::render(f, &app));
-    assert_frame(&screen, "Swarm", "off · 0 personas", "Esc close");
+    assert_frame(&screen, "Swarm", "off · 0 drafters", "Esc close");
     assert!(
         screen.contains(
-            "No personas yet. n adds one, or send a message and three will be suggested."
+            "No drafters set, so each message gets 3 plain drafts. n adds one with a focus."
         ),
         "{screen}"
     );

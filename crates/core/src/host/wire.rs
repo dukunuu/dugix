@@ -7,7 +7,6 @@ use crate::app::{
     AppEvent, ConvertUpdate, GateState, LoginMsg, PlanQuestion, ResearchUpdate, SurveyPhase,
     SwarmUpdate,
 };
-use crate::db::Persona;
 use crate::provider::serve::RuntimeStatus;
 use crate::provider::{
     BackendTag, Model, ModelPricing, PromptConvention, ReasoningEffort, StreamEvent, Usage,
@@ -178,30 +177,11 @@ pub enum WireLoginMsg {
 /// A `/swarm` turn update.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum WireSwarmUpdate {
-    /// The roster was empty, so one was suggested; persist it before the first
-    /// turn.
-    RosterSuggested(Vec<WirePersona>),
-    /// Status-line progress text.
+    /// Status-line progress text, including each drafting agent's progress.
     Progress(String),
-    /// One persona's reply for the turn just run.
-    Reply {
-        persona: String,
-        model: String,
-        content: String,
-    },
-    /// The moderator added a voice; persist it to the roster.
-    PersonaJoined(WirePersona),
-    /// The turn's final synthesis reply — the canonical assistant message.
+    /// The turn's final reply — the canonical assistant message.
     Synthesis(String),
     Error(String),
-}
-
-/// One row of a session's `/swarm` roster: a model + a personality blurb.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WirePersona {
-    pub name: String,
-    pub model: String,
-    pub blurb: String,
 }
 
 /// The wire mirror of provider [`Model`], one routable model.
@@ -329,27 +309,24 @@ impl From<StreamEvent> for WireStreamEvent {
             StreamEvent::Done => Self::Done,
             StreamEvent::Error(e) => Self::Error(e),
             // Thin clients get a status line; the transcript stays in the TUI.
-            StreamEvent::Subagent(update) => {
-                let n = update.number;
-                Self::Status(match update.event {
-                    crate::provider::SubagentEvent::Started { .. } => {
-                        format!("sub-agent {n}: started")
-                    }
-                    crate::provider::SubagentEvent::Delta { .. } => {
-                        format!("sub-agent {n}: thinking")
-                    }
-                    crate::provider::SubagentEvent::Round { step, .. } => {
-                        format!("sub-agent {n}: step {}", step + 1)
-                    }
-                    crate::provider::SubagentEvent::Finished { error, .. } => {
-                        format!(
-                            "sub-agent {n}: {}",
-                            if error.is_some() { "failed" } else { "done" }
-                        )
-                    }
-                })
-            }
+            StreamEvent::Subagent(update) => Self::Status(subagent_status(&update)),
         }
+    }
+}
+
+/// A sub-agent step as one status line for thin clients.
+fn subagent_status(update: &crate::provider::SubagentUpdate) -> String {
+    let n = update.number;
+    match &update.event {
+        crate::provider::SubagentEvent::Started { .. } => format!("sub-agent {n}: started"),
+        crate::provider::SubagentEvent::Delta { .. } => format!("sub-agent {n}: thinking"),
+        crate::provider::SubagentEvent::Round { step, .. } => {
+            format!("sub-agent {n}: step {}", step + 1)
+        }
+        crate::provider::SubagentEvent::Finished { error, .. } => format!(
+            "sub-agent {n}: {}",
+            if error.is_some() { "failed" } else { "done" }
+        ),
     }
 }
 
@@ -439,32 +416,10 @@ impl From<LoginMsg> for WireLoginMsg {
 impl From<SwarmUpdate> for WireSwarmUpdate {
     fn from(u: SwarmUpdate) -> Self {
         match u {
-            SwarmUpdate::RosterSuggested(p) => {
-                Self::RosterSuggested(p.into_iter().map(WirePersona::from).collect())
-            }
             SwarmUpdate::Progress(s) => Self::Progress(s),
-            SwarmUpdate::Reply {
-                persona,
-                model,
-                content,
-            } => Self::Reply {
-                persona,
-                model,
-                content,
-            },
-            SwarmUpdate::PersonaJoined(p) => Self::PersonaJoined(p.into()),
+            SwarmUpdate::Subagent(update) => Self::Progress(subagent_status(&update)),
             SwarmUpdate::Synthesis(s) => Self::Synthesis(s),
             SwarmUpdate::Error(e) => Self::Error(e),
-        }
-    }
-}
-
-impl From<Persona> for WirePersona {
-    fn from(p: Persona) -> Self {
-        Self {
-            name: p.name,
-            model: p.model,
-            blurb: p.blurb,
         }
     }
 }
@@ -611,11 +566,7 @@ mod tests {
             WireEvent::Login(Some(WireLoginMsg::Done(Ok(())))),
             WireEvent::Swarm(Some((
                 "s1".into(),
-                WireSwarmUpdate::RosterSuggested(vec![WirePersona {
-                    name: "ada".into(),
-                    model: "m1".into(),
-                    blurb: "b".into(),
-                }]),
+                WireSwarmUpdate::Progress("3 agents drafting apart".into()),
             ))),
         ];
         for ev in events {
@@ -910,27 +861,30 @@ mod tests {
         }
     }
 
-    /// Swarm and login payloads map their nested types (roster personas),
-    /// while login credentials are reduced to a success marker.
+    /// Swarm agents reach thin clients as status lines, while login
+    /// credentials are reduced to a success marker.
     #[test]
     fn from_app_event_maps_swarm_and_login() {
         let app = AppEvent::Swarm(Some((
             "s1".into(),
-            SwarmUpdate::RosterSuggested(vec![Persona {
-                name: "ada".into(),
-                model: "m1".into(),
-                blurb: "b".into(),
-            }]),
+            SwarmUpdate::Subagent(Box::new(crate::provider::SubagentUpdate {
+                id: "run".into(),
+                number: 4,
+                event: crate::provider::SubagentEvent::Round {
+                    step: 1,
+                    reasoning: None,
+                    content: "draft".into(),
+                    calls: Vec::new(),
+                    usage: None,
+                    secs: 0.5,
+                },
+            })),
         )));
         assert_eq!(
             WireEvent::from(app),
             WireEvent::Swarm(Some((
                 "s1".into(),
-                WireSwarmUpdate::RosterSuggested(vec![WirePersona {
-                    name: "ada".into(),
-                    model: "m1".into(),
-                    blurb: "b".into(),
-                }]),
+                WireSwarmUpdate::Progress("sub-agent 4: step 2".into()),
             )))
         );
 

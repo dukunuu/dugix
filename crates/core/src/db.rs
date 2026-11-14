@@ -73,7 +73,7 @@ pub struct Session {
     /// Number of raw messages folded into `compact_summary`; later messages are
     /// still sent verbatim.
     pub compact_through: i64,
-    /// `/swarm` mode: each turn is a multi-persona roundtable.
+    /// `/swarm` mode: each turn is independent drafts, a review, then one reply.
     pub swarm_mode: bool,
     /// `"chat"` or `"research"`.
     pub kind: String,

@@ -20,11 +20,8 @@ pub const COMPACTION: &str = include_str!("../assets/prompts/compaction.md");
 pub const COMPACTION_ITEMIZED: &str = include_str!("../assets/prompts/compaction-itemized.md");
 pub const MEMORY_TIDY: &str = include_str!("../assets/prompts/memory-tidy.md");
 pub const TITLE: &str = include_str!("../assets/prompts/title.md");
-pub const SWARM_PERSONA: &str = include_str!("../assets/prompts/swarm/persona.md");
-pub const SWARM_REPLY_TURN: &str = include_str!("../assets/prompts/swarm/reply-turn.md");
-pub const SWARM_OPENING_TURN: &str = include_str!("../assets/prompts/swarm/opening-turn.md");
-pub const SWARM_ROSTER: &str = include_str!("../assets/prompts/swarm/roster.md");
-pub const SWARM_MODERATOR: &str = include_str!("../assets/prompts/swarm/moderator.md");
+pub const SWARM_DRAFT: &str = include_str!("../assets/prompts/swarm/draft.md");
+pub const SWARM_VERIFY: &str = include_str!("../assets/prompts/swarm/verify.md");
 pub const SWARM_SYNTHESIS: &str = include_str!("../assets/prompts/swarm/synthesis.md");
 
 /// Unknown keys panic in debug builds and remain unchanged in release builds.
@@ -72,12 +69,9 @@ mod tests {
         (COMPACTION, &[]),
         (MEMORY_TIDY, &[]),
         (TITLE, &["conversation"]),
-        (SWARM_PERSONA, &["name", "blurb"]),
-        (SWARM_REPLY_TURN, &["transcript", "round", "name"]),
-        (SWARM_OPENING_TURN, &["round", "name"]),
-        (SWARM_ROSTER, &["topic"]),
-        (SWARM_MODERATOR, &["topic", "transcript"]),
-        (SWARM_SYNTHESIS, &["topic", "transcript"]),
+        (SWARM_DRAFT, &["drafter", "focus"]),
+        (SWARM_VERIFY, &["topic", "drafts"]),
+        (SWARM_SYNTHESIS, &["topic", "drafts", "review"]),
     ];
 
     #[test]

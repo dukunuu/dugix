@@ -1,4 +1,4 @@
-//! Swarm roster interactions and persona editor handoffs.
+//! Swarm drafter roster interactions and editor handoffs.
 
 use anyhow::Result;
 
@@ -51,7 +51,7 @@ impl AppView {
         )?;
         self.swarm_popup_mode = SwarmPopupMode::Browse;
         self.pending_editor = Some(PendingEditor::Persona(path));
-        self.push_status("opening persona in $EDITOR…".to_string());
+        self.push_status("opening drafter in $EDITOR…".to_string());
         Ok(())
     }
 
@@ -65,7 +65,7 @@ impl AppView {
                 }
                 self.core.save_swarm_roster()?;
                 self.clamp_swarm_selection();
-                self.push_status("persona saved".to_string());
+                self.push_status("drafter saved".to_string());
             }
             Err(e) => {
                 if self
@@ -79,7 +79,7 @@ impl AppView {
                     self.core.save_swarm_roster()?;
                     self.clamp_swarm_selection();
                 }
-                self.push_status(format!("persona edit ignored: {e}"));
+                self.push_status(format!("drafter edit ignored: {e}"));
             }
         }
         Ok(())

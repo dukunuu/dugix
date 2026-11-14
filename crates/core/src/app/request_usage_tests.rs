@@ -469,16 +469,17 @@ async fn workflow_server(
 }
 
 #[tokio::test]
-async fn swarm_personas_roster_moderation_and_synthesis_each_log_a_request() {
+async fn swarm_drafts_review_and_reply_each_log_a_request() {
     for incognito in [false, true] {
         let mut fixture = Fixture::new();
         let app = &mut fixture.app;
         let session = app.session.as_ref().unwrap().id.clone();
         let (provider, server) = workflow_server(vec![
-            (r#"[{"name":"Analyst","blurb":"check evidence"}]"#, false),
-            ("Persona response", true),
-            ("CONVERGED", false),
-            ("Final synthesis", false),
+            ("Draft", true),
+            ("Draft", true),
+            ("Draft", true),
+            ("All three agree; nothing wrong", true),
+            ("Final reply", true),
         ])
         .await;
         app.backends.set(BackendTag::OpenRouter, provider);
@@ -492,7 +493,7 @@ async fn swarm_personas_roster_moderation_and_synthesis_each_log_a_request() {
         .unwrap();
         server.await.unwrap();
         let rows = app.db.usage_for_session(&session).unwrap();
-        assert_eq!(rows.len(), if incognito { 0 } else { 4 });
+        assert_eq!(rows.len(), if incognito { 0 } else { 5 });
         for row in rows {
             assert_eq!(row.kind.as_deref(), Some("swarm"));
             assert_eq!(row.usage.cost, Some(0.01));

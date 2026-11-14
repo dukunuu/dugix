@@ -18,7 +18,7 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
     let (fav_outer, avail_outer) = model_popup_areas(app, f.area());
     let picking = match app.model_pick_target {
         nexus_core::app::ModelPickTarget::Session => "chat model",
-        nexus_core::app::ModelPickTarget::SwarmPersona(_) => "persona model",
+        nexus_core::app::ModelPickTarget::SwarmPersona(_) => "drafter model",
     };
     let mut count = format!("{} · {picking}", app.model_backend_filter_label());
     if let Some(efforts) = app.focused_reasoning_hint() {

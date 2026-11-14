@@ -100,7 +100,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "swarm",
-        desc: "multi-persona roundtable roster",
+        desc: "independent drafts, checked, then one reply",
         aliases: &["swarms", "personas", "panel"],
     },
     Command {

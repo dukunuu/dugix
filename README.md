@@ -442,8 +442,11 @@ Chat search is available in chat and agent mode, never in research searcher tool
   research job listed in `/jobs`; press `r` there to run it again. The finished report
   is saved as `research-<topic>-<time>.md` in the space files and as a doc in
   the **Library**, so it opens in studio to edit, comment on and export
-- **Swarm** (`/swarm`): a moderator-conducted multi-persona roundtable that
-  iterates toward consensus
+- **Swarm** (`/swarm`): several agents answer each message independently
+  (read-only, with tools), a reviewer checks their claims, and a writer replies
+  from what held up, keeping a minority view the others missed. Every agent is a
+  sub-agent run in `/agents`; the roster sets each drafter's focus and model
+  (three plain drafts on the session model without one)
 - **Watches** (`/watch <topic>`): research jobs that start immediately and repeat daily
   through `nexus jobs daemon` (or `nexus jobs run-due` from cron). `/watch` opens
   `/jobs`, where `w` toggles a research job between one-off and daily repeats
@@ -624,7 +627,7 @@ Type `/` in the composer for autocomplete. Aliases in parentheses.
 | `/research <topic>` | create and run a one-off research job, listed in `/jobs` |
 | `/research! <topic>` | same, no survey/approval gates |
 | `/watch [topic]` | create and run a daily research job; blank opens `/jobs` (`w` toggles daily) |
-| `/swarm` (`panel`) | multi-persona roundtable |
+| `/swarm` (`panel`) | independent drafts, checked, then one reply; roster of drafters |
 | `/files` (`images`, `scripts`, …) | browse space files / images / scripts; `Ctrl+N` imports through the system Open panel, `/` finds files on this machine (Spotlight on macOS, `~/` for a path), and files dropped on it import at once |
 | `/apps` (`webapps`) | view web apps and pinned interactive panels |
 | `/pin-panel [name]` (`pin`) | keep the focused panel as a reusable mini-app |
@@ -714,7 +717,7 @@ crates/core/        nexus-chat-core (lib crate `nexus_core`) — domain only, ze
 │   ├── commands.rs AppCommand seam + the /-command catalog (COMMANDS, fuzzy_score)
 │   ├── chat.rs     request lifecycle: history build, streaming, tool loop
 │   ├── research.rs the research pipeline: survey → plan → searchers → …
-│   ├── swarm.rs    multi-persona roundtable
+│   ├── swarm.rs    independent drafts → review → reply
 │   ├── research_jobs.rs  repeating research jobs and report diffs
 │   ├── usage.rs    usage/cost analytics
 │   ├── sessions.rs, spaces.rs, models.rs, backends.rs, memory.rs

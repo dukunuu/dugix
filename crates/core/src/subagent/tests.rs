@@ -252,6 +252,8 @@ async fn read_only_task_is_fresh_restricted_capped_accounted_and_traced() {
     let mut updates = Vec::new();
     while let Ok(event) = events.try_recv() {
         match event {
+            // Tests running at once share the global slots, so a run may wait.
+            StreamEvent::Status(status) if status.starts_with("sub-agent waiting") => {}
             StreamEvent::Status(status) => statuses.push(status),
             StreamEvent::Subagent(update) => updates.push(*update),
             other => panic!("child output leaked to parent: {other:?}"),
@@ -590,4 +592,112 @@ async fn task_schema_defaults_validation_and_agent_only_availability() {
     }
     toolbox.workspace = None;
     assert!(toolbox.defs().iter().all(|tool| tool.name != "task"));
+}
+
+fn role_events(events: &mut mpsc::UnboundedReceiver<StreamEvent>) -> Vec<SubagentEvent> {
+    let mut seen = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        if let StreamEvent::Subagent(update) = event {
+            seen.push(update.event);
+        }
+    }
+    seen
+}
+
+fn bare_toolbox() -> ToolBox {
+    ToolBox::new(
+        PathBuf::new(),
+        None,
+        None,
+        "auto".into(),
+        Vec::new(),
+        None,
+        None,
+        None,
+    )
+}
+
+#[tokio::test]
+async fn a_role_runs_without_a_workspace_and_returns_its_answer_whole() {
+    let long = "x".repeat(REPORT_CAP * 2);
+    let fake = Fake::new(vec![reply(&long, Vec::new())]);
+    let params = ChatParams {
+        prompt_cache_key: Some("swarm:key".into()),
+        ..Default::default()
+    };
+    let (ctx, mut events) = context(fake.clone(), params);
+    let answer = run_role(
+        &ctx,
+        &bare_toolbox(),
+        Role {
+            title: "Draft A · drafter 1 · which cache?".into(),
+            messages: vec![ChatMessage::text("user", "which cache?")],
+            max_steps: 3,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        answer, long,
+        "a role's answer is not capped like a task report"
+    );
+    let seen = fake.seen.lock().unwrap();
+    assert_eq!(seen[0].model, "session-model");
+    assert_eq!(
+        seen[0].params.prompt_cache_key.as_deref(),
+        Some("swarm:key"),
+        "roles share the caller's cached prefix"
+    );
+    let events = role_events(&mut events);
+    assert!(matches!(
+        &events[0],
+        SubagentEvent::Started { prompt, writable: false, max_steps: 3, .. }
+            if prompt == "Draft A · drafter 1 · which cache?"
+    ));
+    assert!(matches!(
+        events.last(),
+        Some(SubagentEvent::Finished {
+            error: None,
+            review: None
+        })
+    ));
+}
+
+#[tokio::test]
+async fn an_empty_role_answer_fails_the_run_in_agents() {
+    let fake = Fake::new(vec![reply("  ", Vec::new())]);
+    let (ctx, mut events) = context(fake, ChatParams::default());
+    let error = run_role(
+        &ctx,
+        &bare_toolbox(),
+        Role {
+            title: "Reply · q".into(),
+            messages: vec![ChatMessage::text("user", "q")],
+            max_steps: 0,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("empty answer"), "{error}");
+    assert!(matches!(
+        role_events(&mut events).last(),
+        Some(SubagentEvent::Finished { error: Some(_), .. })
+    ));
+}
+
+#[tokio::test]
+async fn read_only_tools_refuse_writes_and_pass_reads_through() {
+    let temp = Temp::new();
+    fs::write(temp.root().join("notes.txt"), "kept\n").unwrap();
+    let tools = crate::tools::ReadOnly(Arc::new(temp.toolbox()));
+    let write = r#"{"action":"write","path":"new.txt","content":"x"}"#;
+    assert!(!tools.is_read_only("fs", write));
+    let (result, status) = tools.run("fs", write).await;
+    assert_eq!(result, crate::tools::READ_ONLY_REFUSAL);
+    assert_eq!(status, "blocked");
+    assert!(!temp.root().join("new.txt").exists());
+    let (result, _) = tools
+        .run("fs", r#"{"action":"read","path":"notes.txt"}"#)
+        .await;
+    assert!(result.contains("kept"), "{result}");
 }

@@ -45,14 +45,14 @@ pub fn render(f: &mut Frame, app: &AppView) {
         String::new()
     } else {
         format!(
-            "{} · {n} persona{}",
+            "{} · {n} drafter{}",
             if on { "on" } else { "off" },
             if n == 1 { "" } else { "s" }
         )
     };
     let (title, hints) = if confirm {
         (
-            "Remove persona?",
+            "Remove drafter?",
             vec![hint(ctrl('d'), "remove"), hint(keys::ESC, "cancel")],
         )
     } else {
@@ -121,7 +121,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
         chrome::render_empty(
             f,
             list_area,
-            "No personas yet. n adds one, or send a message and three will be suggested.",
+            "No drafters set, so each message gets 3 plain drafts. n adds one with a focus.",
             &app.theme,
         );
     }

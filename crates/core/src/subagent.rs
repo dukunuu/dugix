@@ -15,7 +15,7 @@ use crate::provider::openrouter::OpenRouter;
 use crate::provider::{
     ChatMessage, ChatParams, StreamEvent, SubagentEvent, SubagentUpdate, ToolCall, ToolDef, Usage,
 };
-use crate::tools::{ToolBox, cap_head_tail, run_scheduled};
+use crate::tools::{ToolBox, ToolExecutor, cap_head_tail, run_scheduled};
 use crate::trace::{TraceResponse, TraceStep, TraceToolResult};
 use crate::workspace::Workspace;
 
@@ -309,13 +309,85 @@ pub(crate) async fn run(context: &Context, toolbox: &ToolBox, args: &Value) -> R
         max_steps,
         (number, &id),
     )
-    .await;
+    .await
+    .map(|done| {
+        format!(
+            "sub-agent report ({model}, {} steps, {} tokens):\n{}",
+            done.steps,
+            done.tokens,
+            cap_head_tail(&done.content, REPORT_CAP)
+        )
+    });
     drop(slot);
     let review = prepared
         .as_ref()
         .map(|(tree, _)| finish_tree(tree, number))
         .transpose();
     conclude(context, (number, &id), outcome, review)
+}
+
+/// A nested agent outside the `task` tool, such as one of the swarm's drafters:
+/// the caller supplies the whole conversation and the tools, and gets the final
+/// answer back uncapped. It shows in `/agents` like any sub-agent.
+pub(crate) struct Role {
+    /// What `/agents` lists the run as; its first line is the title.
+    pub title: String,
+    pub messages: Vec<ChatMessage>,
+    pub max_steps: usize,
+}
+
+pub(crate) async fn run_role(
+    context: &Context,
+    tools: &dyn ToolExecutor,
+    role: Role,
+) -> Result<String> {
+    let number = NEXT_TASK.fetch_add(1, Ordering::Relaxed);
+    let id = uuid::Uuid::new_v4().to_string();
+    // Unlike a task, a role usually shares its caller's history, so it keeps the
+    // caller's cache key and reuses that prefix.
+    let params = context.params.clone();
+    context.send(
+        &id,
+        number,
+        SubagentEvent::Started {
+            prompt: role.title,
+            model: context.model.clone(),
+            writable: false,
+            max_steps: role.max_steps,
+        },
+    );
+    let slot = slots().acquire().await.context("sub-agent slots closed")?;
+    let outcome = run_loop(
+        context,
+        tools,
+        &context.model,
+        &params,
+        role.messages,
+        role.max_steps,
+        (number, &id),
+    )
+    .await
+    .and_then(|done| {
+        anyhow::ensure!(!done.content.trim().is_empty(), "returned an empty answer");
+        Ok(done.content)
+    });
+    drop(slot);
+    context.send(
+        &id,
+        number,
+        SubagentEvent::Finished {
+            error: outcome.as_ref().err().map(ToString::to_string),
+            review: None,
+        },
+    );
+    outcome
+}
+
+/// The last round's text and what the run took.
+struct Done {
+    content: String,
+    steps: usize,
+    tokens: u64,
 }
 
 fn conclude(
@@ -348,13 +420,13 @@ fn conclude(
 
 async fn run_loop(
     context: &Context,
-    toolbox: &ToolBox,
+    toolbox: &dyn ToolExecutor,
     model: &str,
     params: &ChatParams,
     mut messages: Vec<ChatMessage>,
     max_steps: usize,
     (number, id): (u64, &str),
-) -> Result<String> {
+) -> Result<Done> {
     let tools = toolbox.defs();
     let mut tokens = 0;
     for step in 0..=max_steps {
@@ -443,10 +515,11 @@ async fn run_loop(
         )
         .await;
         if done {
-            return Ok(format!(
-                "sub-agent report ({model}, {step} steps, {tokens} tokens):\n{}",
-                cap_head_tail(&round.content, REPORT_CAP)
-            ));
+            return Ok(Done {
+                content: round.content,
+                steps: step,
+                tokens,
+            });
         }
     }
     unreachable!("the last round always returns a report")
