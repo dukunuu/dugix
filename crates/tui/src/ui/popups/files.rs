@@ -18,6 +18,7 @@ use crate::app_view::AppView;
 use nexus_core::app::{FilesMode, FilesTab, ImagesMode, ScriptsMode};
 
 use super::chrome::{self, PopupFrame, ctrl, hint, keys};
+use super::list_filter;
 
 pub fn render(f: &mut Frame, app: &AppView) {
     match app.files_tab {
@@ -39,10 +40,12 @@ fn render_files(f: &mut Frame, app: &AppView) {
 
     let dim = Style::default().fg(app.theme.fg_dim);
     let content_w = (area.width.saturating_sub(5 + 2 * chrome::PAD)) as usize; // border + scrollbar + highlight
-    let items: Vec<ListItem> = app
-        .caches
-        .files
+    let visible = app.files_rows();
+    let filtering = !app.files_filter.is_empty();
+    let shown = list_filter::shown(&visible, app.files_selected);
+    let items: Vec<ListItem> = visible
         .iter()
+        .map(|&index| &app.caches.files[index])
         .map(|file| {
             let ok = nexus_core::extract::status_is_ok(&file.status);
             let status_style = if ok {
@@ -70,9 +73,9 @@ fn render_files(f: &mut Frame, app: &AppView) {
         })
         .collect();
 
-    let total = app.caches.files.len();
+    let total = visible.len();
     let count = if app.files_mode == FilesMode::Browse {
-        format!("{total} file{}", if total == 1 { "" } else { "s" })
+        list_filter::count(total, app.caches.files.len(), filtering, "file")
     } else {
         String::new()
     };
@@ -91,18 +94,18 @@ fn render_files(f: &mut Frame, app: &AppView) {
         ),
         FilesMode::Browse => {
             let mut hints = Vec::new();
-            if total > 0 {
+            if shown.is_some() {
                 hints.extend([hint(keys::MOVE, ""), hint(keys::ENTER, "open")]);
             }
-            hints.extend([
-                hint(keys::TAB, "tab"),
-                hint("/", "find"),
-                hint(ctrl('n'), "add"),
-            ]);
-            if total > 0 {
+            hints.push(hint(keys::TAB, "tab"));
+            if !filtering {
+                hints.push(hint("/", "find"));
+            }
+            hints.push(hint(ctrl('n'), "add"));
+            if shown.is_some() {
                 hints.extend([hint(ctrl('r'), "rename"), hint(ctrl('d'), "delete")]);
             }
-            hints.push(hint(keys::ESC, "close"));
+            hints.push(hint(keys::ESC, if filtering { "clear" } else { "close" }));
             ("Files", hints)
         }
         FilesMode::Pick => unreachable!(),
@@ -127,6 +130,16 @@ fn render_files(f: &mut Frame, app: &AppView) {
     inner = chrome::render_tabs(f, inner, &["Files", "Images", "Scripts"], 0, &app.theme);
     if matches!(app.files_mode, FilesMode::Add | FilesMode::Rename) {
         inner = chrome::render_field(f, inner, "✎", &app.files_edit, "", true, &app.theme);
+    } else if app.files_mode == FilesMode::Browse {
+        inner = chrome::render_field(
+            f,
+            inner,
+            "⌕",
+            &app.files_filter,
+            "Type to filter, / to find",
+            false,
+            &app.theme,
+        );
     }
     if app.files_mode == FilesMode::ConfirmDelete {
         let name = app
@@ -159,17 +172,18 @@ fn render_files(f: &mut Frame, app: &AppView) {
     }
     let list = chrome::standard_list(items, &app.theme);
     let mut state = ListState::default();
-    if !app.caches.files.is_empty() {
-        state.select(Some(app.files_selected.min(app.caches.files.len() - 1)));
-    }
-    chrome::render_list(f, list, &mut state, inner, app.caches.files.len(), 1, app);
+    state.select(shown);
+    chrome::render_list(f, list, &mut state, inner, total, 1, app);
     if total == 0 {
-        chrome::render_empty(
-            f,
-            inner,
-            "No files yet. ^N adds one, or drop files here.",
-            &app.theme,
-        );
+        let message = if filtering {
+            format!(
+                "No file matches “{}”. Esc clears the filter.",
+                app.files_filter
+            )
+        } else {
+            "No files yet. ^N adds one, or drop files here.".to_string()
+        };
+        chrome::render_empty(f, inner, &message, &app.theme);
     }
 }
 
@@ -467,8 +481,9 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
         return Ok(());
     }
 
+    // The Files list filters as you type, so j/k move only on the other tabs.
     let browsing = match app.files_tab {
-        FilesTab::Files => app.files_mode == FilesMode::Browse,
+        FilesTab::Files => false,
         FilesTab::Images => app.images_mode == ImagesMode::Browse,
         FilesTab::Scripts => app.scripts_mode == ScriptsMode::Browse,
     };
@@ -514,20 +529,44 @@ fn handle_files_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
             None => {}
         },
         FilesMode::Browse => {
+            // Letters filter; an action on a file needs a highlighted row.
+            let selected = list_filter::shown(&app.files_rows(), app.files_selected).is_some();
+            let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+            if !selected
+                && (key.code == KeyCode::Enter
+                    || (ctrl && matches!(key.code, KeyCode::Char('o' | 'r' | 'd'))))
+            {
+                return Ok(());
+            }
             if key.code == KeyCode::Enter {
                 app.open_selected_file();
                 return Ok(());
             }
-            if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            if key.code == KeyCode::Char('o') && ctrl {
                 app.reextract_selected_file();
                 return Ok(());
             }
-            if key.code == KeyCode::Char('/') && !super::is_chord(key) {
+            // `/` finds a file to import until a filter is typed, then it is text.
+            if key.code == KeyCode::Char('/')
+                && !super::is_chord(key)
+                && app.files_filter.is_empty()
+            {
                 app.open_file_picker();
                 return Ok(());
             }
             match classify_browse_key(key, true, true) {
+                Some(BrowseAction::Close) if !app.files_filter.is_empty() => {
+                    app.files_filter.clear();
+                }
                 Some(BrowseAction::Close) => app.popup = nexus_core::app::Popup::None,
+                Some(BrowseAction::Filter(c)) => {
+                    app.files_filter.push(c);
+                    app.files_selected = list_filter::first(&app.files_rows(), app.files_selected);
+                }
+                Some(BrowseAction::Backspace) => {
+                    app.files_filter.pop();
+                    app.files_selected = list_filter::first(&app.files_rows(), app.files_selected);
+                }
                 Some(BrowseAction::MoveUp) => app.move_files_selection(-1),
                 Some(BrowseAction::MoveDown) => app.move_files_selection(1),
                 Some(

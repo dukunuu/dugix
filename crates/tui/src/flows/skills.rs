@@ -7,6 +7,7 @@ use crate::app_view::AppView;
 impl AppView {
     pub fn open_skills_popup(&mut self) {
         self.skills_mode = SkillsMode::Browse;
+        self.skills_filter.clear();
         self.skills_selected = self
             .skills_selected
             .min(self.core.skills.len().saturating_sub(1));
@@ -19,9 +20,17 @@ impl AppView {
         self.skills_selected = self.skills_selected.min(len.saturating_sub(1));
     }
 
+    /// Indices of the skills the typed filter keeps.
+    pub fn skills_rows(&self) -> Vec<usize> {
+        crate::ui::popups::list_filter::matching(
+            &self.skills_filter,
+            self.core.skills.iter().map(|skill| skill.name.as_str()),
+        )
+    }
+
     pub fn move_skills_selection(&mut self, delta: i32) {
         self.skills_selected =
-            nexus_core::app::clamp_cursor(self.skills_selected, self.core.skills.len(), delta);
+            crate::ui::popups::list_filter::step(&self.skills_rows(), self.skills_selected, delta);
     }
 
     pub fn start_skill_install(&mut self) {

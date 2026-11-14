@@ -74,7 +74,7 @@ fn skills_follow_the_list_pattern() {
     let screen = render_to_string(110, 30, |f| super::skills::render(f, &app));
     assert_frame(&screen, "Skills", "1 skill");
     assert!(screen.contains("Plan a project."), "{screen}");
-    assert!(!screen.contains('⌕'), "{screen}");
+    assert!(screen.contains("⌕ Type to filter"), "{screen}");
     app.skills_mode = nexus_core::app::SkillsMode::Install;
     let screen = render_to_string(110, 30, |f| super::skills::render(f, &app));
     assert!(screen.contains("✎ owner/repo/path"), "{screen}");
@@ -302,5 +302,146 @@ fn spaces_confirm_delete_uses_the_question_and_filter_escape_clears_first() {
     assert_eq!(app.popup, Popup::Space);
     super::space::handle_key(&mut app, KeyCode::Esc.into()).unwrap();
     assert_eq!(app.popup, Popup::None);
+    std::fs::remove_dir_all(&app.space.root).unwrap();
+}
+
+fn press(app: &mut crate::app_view::AppView, popup: &Popup, key: KeyEvent) {
+    match popup {
+        Popup::Skills => super::skills::handle_key(app, key),
+        Popup::Apps => super::apps::handle_key(app, key).unwrap(),
+        _ => super::files::handle_key(app, key).unwrap(),
+    }
+}
+
+fn type_text(app: &mut crate::app_view::AppView, popup: &Popup, text: &str) {
+    for c in text.chars() {
+        press(app, popup, KeyCode::Char(c).into());
+    }
+}
+
+fn bottom(screen: &str) -> &str {
+    screen.lines().find(|line| line.contains('╰')).unwrap()
+}
+
+#[test]
+fn skills_filter_as_you_type_and_esc_clears_before_closing() {
+    let mut app = test_app();
+    app.core.skills = ["plan", "pdf", "deck"]
+        .into_iter()
+        .map(|name| nexus_core::skills::Skill {
+            name: name.into(),
+            description: format!("About {name}."),
+            dir: app.space.root.join("skills").join(name),
+        })
+        .collect();
+    app.open_skills_popup();
+    type_text(&mut app, &Popup::Skills, "pd");
+    assert_eq!(
+        app.skills_selected, 1,
+        "the selection lands on the first match"
+    );
+    let screen = render_to_string(110, 30, |f| super::skills::render(f, &app));
+    assert!(screen.contains(" 1 of 3 ╮"), "{screen}");
+    assert!(screen.contains("⌕ pd"), "{screen}");
+    assert!(screen.contains("About pdf."), "{screen}");
+    assert!(!screen.contains("deck"), "{screen}");
+    assert!(
+        bottom(&screen).trim_end().ends_with("Esc clear ╯"),
+        "{screen}"
+    );
+
+    // j is text here, and with nothing matching no action fires.
+    type_text(&mut app, &Popup::Skills, "j");
+    let screen = render_to_string(110, 30, |f| super::skills::render(f, &app));
+    assert!(
+        screen.contains("No skill matches “pdj”. Esc clears the filter."),
+        "{screen}"
+    );
+    press(&mut app, &Popup::Skills, ctrl('d'));
+    assert!(app.skills_mode == nexus_core::app::SkillsMode::Browse);
+    press(&mut app, &Popup::Skills, KeyCode::Enter.into());
+    assert_eq!(app.popup, Popup::Skills);
+
+    press(&mut app, &Popup::Skills, KeyCode::Backspace.into());
+    assert_eq!(app.skills_filter, "pd");
+    press(&mut app, &Popup::Skills, KeyCode::Esc.into());
+    assert!(app.skills_filter.is_empty());
+    assert_eq!(app.popup, Popup::Skills);
+    assert_eq!(app.skills_selected, 1, "clearing keeps the selection");
+    press(&mut app, &Popup::Skills, KeyCode::Esc.into());
+    assert_eq!(app.popup, Popup::None);
+    std::fs::remove_dir_all(&app.space.root).unwrap();
+}
+
+#[test]
+fn apps_filter_moves_only_among_matches() {
+    let mut app = test_app();
+    app.core.caches.apps = vec!["dashboard".into(), "notes".into(), "notebook".into()];
+    app.popup = Popup::Apps;
+    type_text(&mut app, &Popup::Apps, "note");
+    assert_eq!(app.apps_selected, 1);
+    press(&mut app, &Popup::Apps, KeyCode::Down.into());
+    assert_eq!(app.apps_selected, 2);
+    press(&mut app, &Popup::Apps, KeyCode::Down.into());
+    assert_eq!(app.apps_selected, 2, "stops at the last match");
+    press(&mut app, &Popup::Apps, KeyCode::Home.into());
+    assert_eq!(app.apps_selected, 1, "Home is the first match, not row 0");
+    let screen = render_to_string(110, 30, |f| super::apps::render(f, &app));
+    assert!(screen.contains(" 2 of 3 ╮"), "{screen}");
+    assert!(!screen.contains("dashboard"), "{screen}");
+    press(&mut app, &Popup::Apps, ctrl('d'));
+    assert!(app.apps_mode == nexus_core::app::AppsMode::ConfirmDelete);
+    let screen = render_to_string(110, 30, |f| super::apps::render(f, &app));
+    assert!(
+        screen.contains("App “notes”"),
+        "deletes what is highlighted: {screen}"
+    );
+    std::fs::remove_dir_all(&app.space.root).unwrap();
+}
+
+#[test]
+fn files_filter_after_slash_finds_and_letters_filter() {
+    let mut app = test_app();
+    app.core.caches.files = ["report.txt", "notes/plan.md", "data.csv"]
+        .into_iter()
+        .map(|name| nexus_core::db::FileRow {
+            id: name.into(),
+            name: name.into(),
+            hash: String::new(),
+            size: 100,
+            status: "ok".into(),
+            mtime: 0,
+            extractor: 0,
+        })
+        .collect();
+    app.popup = Popup::Files;
+    let screen = render_to_string(110, 30, |f| super::files::render(f, &app));
+    let tabs = screen
+        .lines()
+        .position(|l| l.contains("Files   Images"))
+        .unwrap();
+    let field = screen
+        .lines()
+        .position(|l| l.contains("⌕ Type to filter"))
+        .unwrap();
+    assert!(
+        tabs < field,
+        "the tab strip sits above the field row: {screen}"
+    );
+    press(&mut app, &Popup::Files, KeyCode::Char('/').into());
+    assert!(app.files_mode == nexus_core::app::FilesMode::Pick);
+    press(&mut app, &Popup::Files, KeyCode::Esc.into());
+    assert!(app.files_mode == nexus_core::app::FilesMode::Browse);
+
+    type_text(&mut app, &Popup::Files, "notes/");
+    assert_eq!(app.files_filter, "notes/", "once filtering, / is text");
+    assert_eq!(app.files_selected, 1);
+    let screen = render_to_string(110, 30, |f| super::files::render(f, &app));
+    assert!(screen.contains(" 1 of 3 ╮"), "{screen}");
+    assert!(!screen.contains("report.txt"), "{screen}");
+    assert!(!bottom(&screen).contains("/ find"), "{screen}");
+    press(&mut app, &Popup::Files, KeyCode::Esc.into());
+    press(&mut app, &Popup::Files, KeyCode::Char('j').into());
+    assert_eq!(app.files_filter, "j", "j filters the Files list");
     std::fs::remove_dir_all(&app.space.root).unwrap();
 }

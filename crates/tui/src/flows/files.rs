@@ -152,12 +152,21 @@ impl AppView {
             }
         }
         self.files_mode = FilesMode::Browse;
+        self.files_filter.clear();
         self.popup = Popup::Files;
+    }
+
+    /// Indices of the files the typed filter keeps.
+    pub fn files_rows(&self) -> Vec<usize> {
+        crate::ui::popups::list_filter::matching(
+            &self.files_filter,
+            self.core.caches.files.iter().map(|file| file.name.as_str()),
+        )
     }
 
     pub fn move_files_selection(&mut self, delta: i32) {
         self.files_selected =
-            nexus_core::app::clamp_cursor(self.files_selected, self.core.caches.files.len(), delta);
+            crate::ui::popups::list_filter::step(&self.files_rows(), self.files_selected, delta);
     }
 
     pub fn start_files_add(&mut self) {

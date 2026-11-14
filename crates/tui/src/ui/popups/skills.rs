@@ -7,6 +7,7 @@ use ratatui::widgets::{ListItem, ListState};
 use crate::app_view::AppView;
 
 use super::chrome::{self, PopupFrame, ctrl, hint, keys};
+use super::list_filter;
 
 #[allow(clippy::too_many_lines)] // rows + browse / install / confirm chrome
 pub fn render(f: &mut Frame, app: &AppView) {
@@ -14,9 +15,12 @@ pub fn render(f: &mut Frame, app: &AppView) {
     let area = chrome::popup_area(app, f.area(), "skills", chrome::STANDARD);
 
     let width = area.width.saturating_sub(5 + 2 * chrome::PAD) as usize;
-    let items: Vec<ListItem> = app
-        .skills
+    let rows = app.skills_rows();
+    let filtering = !app.skills_filter.is_empty();
+    let shown = list_filter::shown(&rows, app.skills_selected);
+    let items: Vec<ListItem> = rows
         .iter()
+        .map(|&index| &app.skills[index])
         .map(|s| {
             // App-managed skills are removable; an agent tool's are read-only.
             let source = if app.skill_is_app_managed(s) {
@@ -39,11 +43,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
         .collect();
 
     let count = if app.skills_mode == SkillsMode::Browse {
-        format!(
-            "{} skill{}",
-            app.skills.len(),
-            if app.skills.len() == 1 { "" } else { "s" }
-        )
+        list_filter::count(rows.len(), app.skills.len(), filtering, "skill")
     } else {
         String::new()
     };
@@ -63,7 +63,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
                 hint(keys::ENTER, "arm"),
                 hint(ctrl('n'), "install"),
                 hint(ctrl('d'), "remove"),
-                hint(keys::ESC, "close"),
+                hint(keys::ESC, if filtering { "clear" } else { "close" }),
             ],
         ),
     };
@@ -84,7 +84,17 @@ pub fn render(f: &mut Frame, app: &AppView) {
         },
         app,
     );
-    if app.skills_mode == SkillsMode::Install {
+    if app.skills_mode == SkillsMode::Browse {
+        inner = chrome::render_field(
+            f,
+            inner,
+            "⌕",
+            &app.skills_filter,
+            "Type to filter",
+            false,
+            &app.theme,
+        );
+    } else if app.skills_mode == SkillsMode::Install {
         inner = chrome::render_field(
             f,
             inner,
@@ -95,9 +105,8 @@ pub fn render(f: &mut Frame, app: &AppView) {
             &app.theme,
         );
     }
-    let desc = app
-        .skills
-        .get(app.skills_selected)
+    let desc = shown
+        .and_then(|_| app.skills.get(app.skills_selected))
         .map_or_else(String::new, |skill| {
             if app.skills_mode == SkillsMode::ConfirmRemove {
                 format!("“{}” will be removed.", skill.name)
@@ -109,18 +118,19 @@ pub fn render(f: &mut Frame, app: &AppView) {
 
     let list = chrome::standard_list(items, &app.theme);
     let mut state = ListState::default();
-    if !app.skills.is_empty() {
-        state.select(Some(app.skills_selected.min(app.skills.len() - 1)));
-    }
-    chrome::render_list(f, list, &mut state, list_area, app.skills.len(), 1, app);
+    state.select(shown);
+    chrome::render_list(f, list, &mut state, list_area, rows.len(), 1, app);
     chrome::render_detail(f, detail_area, &desc, &app.theme);
-    if app.skills.is_empty() {
-        chrome::render_empty(
-            f,
-            list_area,
-            "No skills installed. ^N installs one.",
-            &app.theme,
-        );
+    if rows.is_empty() {
+        let message = if filtering {
+            format!(
+                "No skill matches “{}”. Esc clears the filter.",
+                app.skills_filter
+            )
+        } else {
+            "No skills installed. ^N installs one.".to_string()
+        };
+        chrome::render_empty(f, list_area, &message, &app.theme);
     }
 }
 
@@ -146,8 +156,11 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
             None => {}
         },
         // Enter arms the highlighted skill for the next message, like
-        // `/<skill-name>`; there is no rename and no text filter.
-        SkillsMode::Browse if key.code == crossterm::event::KeyCode::Enter => {
+        // `/<skill-name>`; letters filter, so every other action is a Ctrl key.
+        SkillsMode::Browse if key.code == KeyCode::Enter => {
+            if list_filter::shown(&app.skills_rows(), app.skills_selected).is_none() {
+                return;
+            }
             if let Some(name) = app.skills.get(app.skills_selected).map(|s| s.name.clone()) {
                 app.popup = nexus_core::app::Popup::None;
                 if let Err(e) =
@@ -157,14 +170,19 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
                 }
             }
         }
-        SkillsMode::Browse if !super::is_chord(key) && key.code == KeyCode::Char('k') => {
-            app.move_skills_selection(-1);
-        }
-        SkillsMode::Browse if !super::is_chord(key) && key.code == KeyCode::Char('j') => {
-            app.move_skills_selection(1);
-        }
         SkillsMode::Browse => match classify_browse_key(key, true, false) {
+            Some(super::BrowseAction::Close) if !app.skills_filter.is_empty() => {
+                app.skills_filter.clear();
+            }
             Some(super::BrowseAction::Close) => app.popup = nexus_core::app::Popup::None,
+            Some(super::BrowseAction::Filter(c)) => {
+                app.skills_filter.push(c);
+                app.skills_selected = list_filter::first(&app.skills_rows(), app.skills_selected);
+            }
+            Some(super::BrowseAction::Backspace) => {
+                app.skills_filter.pop();
+                app.skills_selected = list_filter::first(&app.skills_rows(), app.skills_selected);
+            }
             Some(super::BrowseAction::MoveUp) => app.move_skills_selection(-1),
             Some(super::BrowseAction::MoveDown) => app.move_skills_selection(1),
             Some(
@@ -176,7 +194,11 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
                 super::apply_page(|d| app.move_skills_selection(d), a, 10);
             }
             Some(super::BrowseAction::Create) => app.start_skill_install(),
-            Some(super::BrowseAction::ConfirmDelete) => app.start_skill_remove(),
+            Some(super::BrowseAction::ConfirmDelete)
+                if list_filter::shown(&app.skills_rows(), app.skills_selected).is_some() =>
+            {
+                app.start_skill_remove();
+            }
             _ => {}
         },
     }

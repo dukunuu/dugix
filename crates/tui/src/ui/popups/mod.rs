@@ -11,6 +11,7 @@ pub mod image_viewer;
 pub mod jobs;
 pub mod key;
 pub mod library;
+pub mod list_filter;
 pub mod local;
 pub mod login;
 pub mod model;

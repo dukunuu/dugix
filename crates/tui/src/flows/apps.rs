@@ -12,6 +12,7 @@ impl AppView {
         self.pinned_apps = self.core.pinned_panels().unwrap_or_default();
         self.apps_selected = self.apps_selected.min(self.apps_total().saturating_sub(1));
         self.apps_mode = AppsMode::Browse;
+        self.apps_filter.clear();
         self.popup = Popup::Apps;
     }
 
@@ -25,9 +26,16 @@ impl AppView {
             .and_then(|index| self.pinned_apps.get(index))
     }
 
+    /// Indices (web apps, then pinned panels) the typed filter keeps.
+    pub fn apps_rows(&self) -> Vec<usize> {
+        let names = self.core.caches.apps.iter().map(String::as_str);
+        let panels = self.pinned_apps.iter().map(|pinned| pinned.name.as_str());
+        crate::ui::popups::list_filter::matching(&self.apps_filter, names.chain(panels))
+    }
+
     pub fn move_apps_selection(&mut self, delta: i32) {
         self.apps_selected =
-            nexus_core::app::clamp_cursor(self.apps_selected, self.apps_total(), delta);
+            crate::ui::popups::list_filter::step(&self.apps_rows(), self.apps_selected, delta);
     }
 
     pub fn start_panel_rename(&mut self) {
