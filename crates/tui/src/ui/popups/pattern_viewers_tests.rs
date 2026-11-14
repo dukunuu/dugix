@@ -116,7 +116,7 @@ fn research_steer_is_a_field_and_never_part_of_the_title() {
     assert!(!top.contains("focus on evidence"), "{top}");
     assert!(screen.contains("❯ focus on evidence▏"), "{screen}");
     assert!(
-        screen.contains("Enter send · ^X stop · Esc close"),
+        screen.contains("Enter send · Tab agents · ^X stop · Esc close"),
         "{screen}"
     );
     drop(app);
@@ -223,4 +223,16 @@ fn expanded_interactive_panel_uses_the_shared_name_and_footer() {
     assert!(screen.contains("Count: 0"), "{screen}");
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn research_tab_opens_the_agent_transcripts() {
+    let mut app = test_app();
+    app.popup = Popup::ResearchLive;
+    let screen = render_to_string(110, 30, |frame| super::research_live::render(frame, &app));
+    assert!(screen.contains("Tab agents"), "{screen}");
+    super::research_live::handle_key(&mut app, KeyCode::Tab.into());
+    assert_eq!(app.popup, Popup::Subagents);
+    assert!(app.research.live_input.is_empty(), "Tab is not steer text");
+    std::fs::remove_dir_all(&app.space.root).unwrap();
 }

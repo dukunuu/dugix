@@ -4,8 +4,9 @@ use tokio::sync::mpsc;
 
 use crate::prompts;
 use crate::provider::openrouter::OpenRouter;
-use crate::provider::{ChatMessage, ChatParams, StreamEvent, Usage};
-use crate::tools::{ToolBox, ToolExecutor};
+use crate::provider::{ChatMessage, ChatParams, StreamEvent};
+use crate::subagent::{self, Role};
+use crate::tools::{NoTools, ToolBox, ToolExecutor};
 
 use super::prompts::{
     critic_messages, plan_approval_messages, planner_messages_with_context, research_stage_prompt,
@@ -17,7 +18,12 @@ use super::{
     parse_plan_blocks, parse_survey_reply,
 };
 
-// Research usage accounting must never persist prompt text.
+/// Agents research runs at once; its searchers fan out wider than the
+/// global sub-agent limit allows.
+const RESEARCH_AGENTS: usize = 8;
+
+/// What every research agent shares: usage accounting (which must never
+/// persist prompt text), the channel its runs report on, and their slots.
 #[derive(Clone)]
 pub(super) struct ResearchUsage {
     pub(super) db_path: std::path::PathBuf,
@@ -25,7 +31,9 @@ pub(super) struct ResearchUsage {
     pub(super) prompt_cache_key: String,
     pub(super) cache_ttl_1h: bool,
     pub(super) space_id: String,
-    pub(super) backend: &'static str,
+    pub(super) topic: String,
+    pub(super) events: mpsc::UnboundedSender<StreamEvent>,
+    pub(super) slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl ResearchUsage {
@@ -45,10 +53,33 @@ impl ResearchUsage {
         })
     }
 
-    fn record(&self, model: &str, usage: Usage, kind: &str) {
-        if let Some(log) = self.log() {
-            log.record(self.backend, model, usage, kind);
-        }
+    /// One research agent, listed in `/agents` as `title` and logged under `kind`.
+    async fn agent(
+        &self,
+        (provider, model, kind): (&OpenRouter, &str, &str),
+        title: String,
+        tools: &dyn ToolExecutor,
+        (messages, max_steps): (Vec<ChatMessage>, usize),
+    ) -> Result<String, String> {
+        let context = subagent::Context::new(
+            provider.clone().logged(self.log(), kind),
+            model.to_string(),
+            self.chat_params(),
+            self.events.clone(),
+        )
+        .with_slots(self.slots.clone());
+        subagent::run_role(
+            &context,
+            tools,
+            Role {
+                title,
+                messages,
+                max_steps,
+            },
+        )
+        .await
+        .map(|text| text.trim().to_string())
+        .map_err(|e| e.to_string())
     }
 }
 
@@ -84,15 +115,19 @@ async fn complete_text(
     usage: &ResearchUsage,
     kind: &str,
 ) -> Result<String, String> {
-    let params = usage.chat_params();
-    provider
-        .complete_with_params(model, messages, &params)
+    let mut stage = kind.trim_start_matches("research:").chars();
+    let title: String = stage
+        .next()
+        .map(|first| first.to_uppercase().chain(stage).collect())
+        .unwrap_or_default();
+    usage
+        .agent(
+            (provider, model, kind),
+            format!("{title} · {}", usage.topic),
+            &NoTools,
+            (messages, 0),
+        )
         .await
-        .map(|completion| {
-            usage.record(model, completion.usage.unwrap_or_default(), kind);
-            completion.text.trim().to_string()
-        })
-        .map_err(|e| e.to_string())
 }
 
 async fn complete_agent(
@@ -183,48 +218,33 @@ async fn run_searcher(
         ),
         ChatMessage::text("user", prompt),
     ];
-    let tools = ctx.toolbox.defs();
     let kind = if slot.batch == "web survey" {
         "research:web survey"
     } else {
         "research:searcher"
     };
-    let (mut rx, abort) = provider.clone().logged(ctx.usage.log(), kind).stream_chat(
-        model.to_string(),
-        messages,
-        ctx.usage.chat_params(),
-        tools,
-        ctx.toolbox,
-        RESEARCH_SEARCHER_MAX_ITERS,
-    );
-    let _abort = super::AbortOnDrop(abort);
-    let mut buf = String::new();
-    while let Some(ev) = rx.recv().await {
-        match ev {
-            StreamEvent::Token(t) => buf.push_str(&t),
-            StreamEvent::Status(s) => {
-                send_stage(ctx.tx, ctx.ids, &label, format!("working — {s}"));
-            }
-            StreamEvent::ToolCall {
-                name,
-                arguments,
-                result,
-                ..
-            } => {
-                let summary = crate::app::tool_call_summary(&name, &arguments, &result);
-                send_stage(ctx.tx, ctx.ids, &label, format!("working — {summary}"));
-            }
-            StreamEvent::Error(e) => {
-                send_stage(ctx.tx, ctx.ids, &label, format!("error — {e}"));
-                return format!("[search agent error on \"{display}\": {e}]");
-            }
-            StreamEvent::Done => break,
-            StreamEvent::Usage(_)
-            | StreamEvent::Reasoning(_)
-            | StreamEvent::Notice(_)
-            | StreamEvent::Subagent(_) => {}
+    let buf = match ctx
+        .usage
+        .agent(
+            (provider, model, kind),
+            format!(
+                "Searcher {} {}/{} · {display}",
+                slot.batch,
+                slot.idx + 1,
+                slot.total
+            ),
+            ctx.toolbox.as_ref(),
+            (messages, RESEARCH_SEARCHER_MAX_ITERS),
+        )
+        .await
+    {
+        Ok(text) => text,
+        Err(e) if e.contains("empty answer") => String::new(),
+        Err(e) => {
+            send_stage(ctx.tx, ctx.ids, &label, format!("error — {e}"));
+            return format!("[search agent error on \"{display}\": {e}]");
         }
-    }
+    };
     let text = buf.trim();
     if text.is_empty() {
         send_stage(ctx.tx, ctx.ids, &label, "error — no findings returned");
@@ -250,46 +270,22 @@ async fn verify_with_quote_check(
     tx: &mpsc::UnboundedSender<ResearchMsg>,
     ids: &(String, String, String),
 ) -> String {
-    let tools = cache_only_toolbox.defs();
-    let (mut rx, abort) = provider
-        .clone()
-        .logged(usage.log(), "research:verifier")
-        .stream_chat(
-            model.to_string(),
-            messages,
-            usage.chat_params(),
-            tools,
-            cache_only_toolbox,
-            RESEARCH_SEARCHER_MAX_ITERS,
-        );
-    let _abort = super::AbortOnDrop(abort);
-    let mut buf = String::new();
-    let mut failed = false;
-    while let Some(ev) = rx.recv().await {
-        match ev {
-            StreamEvent::Token(t) => buf.push_str(&t),
-            StreamEvent::Status(s) => send_stage(tx, ids, "verifier", format!("working — {s}")),
-            StreamEvent::ToolCall {
-                name,
-                arguments,
-                result,
-                ..
-            } => {
-                let summary = crate::app::tool_call_summary(&name, &arguments, &result);
-                send_stage(tx, ids, "verifier", format!("working — {summary}"));
-            }
-            StreamEvent::Error(e) => {
-                failed = true;
-                send_stage(tx, ids, "verifier", format!("error — {e}"));
-                break;
-            }
-            StreamEvent::Done => break,
-            StreamEvent::Usage(_)
-            | StreamEvent::Reasoning(_)
-            | StreamEvent::Notice(_)
-            | StreamEvent::Subagent(_) => {}
+    let (buf, failed) = match usage
+        .agent(
+            (provider, model, "research:verifier"),
+            format!("Verifier · {}", usage.topic),
+            cache_only_toolbox.as_ref(),
+            (messages, RESEARCH_SEARCHER_MAX_ITERS),
+        )
+        .await
+    {
+        Ok(text) => (text, false),
+        Err(e) if e.contains("empty answer") => (String::new(), false),
+        Err(e) => {
+            send_stage(tx, ids, "verifier", format!("error — {e}"));
+            (String::new(), true)
         }
-    }
+    };
     if !failed {
         if buf.trim().is_empty() {
             send_stage(
@@ -503,7 +499,32 @@ pub struct ResearchOptions {
 }
 
 pub async fn run_research(mut opts: ResearchOptions) {
-    let result = run_research_inner(&mut opts).await;
+    // Every agent reports on one channel, forwarded as research updates; the
+    // report waits for the forwarder so no agent's last step trails it.
+    let (events, mut agent_rx) = mpsc::unbounded_channel::<StreamEvent>();
+    let forward = {
+        let tx = opts.tx.clone();
+        let ids = (
+            opts.session_id.clone(),
+            opts.space_id.clone(),
+            opts.space_name.clone(),
+        );
+        tokio::spawn(async move {
+            while let Some(event) = agent_rx.recv().await {
+                if let StreamEvent::Subagent(update) = event {
+                    let _ = tx.send((
+                        ids.0.clone(),
+                        ids.1.clone(),
+                        ids.2.clone(),
+                        ResearchUpdate::Subagent(update),
+                    ));
+                }
+            }
+        })
+    };
+    let result = run_research_inner(&mut opts, events).await;
+    // An aborted context-gathering task may still hold a sender briefly.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), forward).await;
     let _ = opts.tx.send((
         opts.session_id,
         opts.space_id,
@@ -695,7 +716,10 @@ pub(super) async fn await_plan_approval(
 }
 
 #[allow(clippy::too_many_lines)]
-async fn run_research_inner(opts: &mut ResearchOptions) -> Result<String, String> {
+async fn run_research_inner(
+    opts: &mut ResearchOptions,
+    events: mpsc::UnboundedSender<StreamEvent>,
+) -> Result<String, String> {
     let ids = &(
         opts.session_id.clone(),
         opts.space_id.clone(),
@@ -728,7 +752,9 @@ async fn run_research_inner(opts: &mut ResearchOptions) -> Result<String, String
         prompt_cache_key,
         cache_ttl_1h,
         space_id: ids.1.clone(),
-        backend: research_provider.backend_tag().name(),
+        topic: topic.clone(),
+        events,
+        slots: Arc::new(tokio::sync::Semaphore::new(RESEARCH_AGENTS)),
     });
     let run = Run {
         provider: research_provider,

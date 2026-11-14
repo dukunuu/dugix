@@ -96,6 +96,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
             count: stage,
             hints: &[
                 hint(keys::ENTER, "send"),
+                hint(keys::TAB, "agents"),
                 hint(ctrl('x'), "stop"),
                 hint(keys::ESC, "close"),
             ],
@@ -131,6 +132,8 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
             app.popup = nexus_core::app::Popup::None;
         }
         KeyCode::Esc => app.popup = nexus_core::app::Popup::None,
+        // Each stage is a sub-agent run; Tab opens their transcripts.
+        KeyCode::Tab => super::subagents::open(app),
         KeyCode::Enter => {
             let text = app.research.live_input.trim().to_string();
             app.research.live_input.clear();

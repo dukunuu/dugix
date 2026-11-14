@@ -870,6 +870,38 @@ impl ToolExecutor for ToolBox {
     }
 }
 
+/// No tools at all, for agents that only write from what they are given.
+pub(crate) struct NoTools;
+
+impl ToolExecutor for NoTools {
+    fn defs(&self) -> Vec<ToolDef> {
+        Vec::new()
+    }
+
+    fn is_read_only(&self, _name: &str, _args: &str) -> bool {
+        true
+    }
+
+    fn run<'a>(
+        &'a self,
+        _name: &'a str,
+        _args: &'a str,
+    ) -> Pin<Box<dyn Future<Output = (String, String)> + Send + 'a>> {
+        Box::pin(std::future::ready((
+            "no tools are available here".to_string(),
+            "blocked".to_string(),
+        )))
+    }
+
+    fn supports_images(&self) -> bool {
+        false
+    }
+
+    fn space_files_dir(&self) -> Option<std::path::PathBuf> {
+        None
+    }
+}
+
 /// An executor that only runs calls its inner executor classifies as read-only,
 /// for agents that may look but never change anything (the swarm's drafters).
 pub(crate) struct ReadOnly(pub Arc<dyn ToolExecutor>);

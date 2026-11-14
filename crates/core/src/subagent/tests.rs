@@ -156,6 +156,7 @@ fn context(
             model: "session-model".into(),
             params,
             events,
+            slots: None,
         }),
         rx,
     )

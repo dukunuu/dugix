@@ -46,6 +46,8 @@ pub enum ResearchUpdate {
         rework: bool,
     },
     Done(std::result::Result<String, String>),
+    /// One of the run's agents moved; it lands in `/agents` like a `task` run.
+    Subagent(Box<crate::provider::SubagentUpdate>),
 }
 
 const MAX_SUBQUESTIONS: usize = 6;
@@ -474,6 +476,7 @@ impl super::App {
                     "research",
                     "stopped by user",
                 );
+                self.end_subagents(&session_id, self.research.incognito);
             }
             self.set_survey_gate(None);
             self.research.survey_reply_tx = None;
@@ -646,7 +649,9 @@ impl super::App {
         let Some((session_id, space_id, space_name, update)) = r else {
             self.research.rx = None;
             self.research.abort = None;
-            self.research.running = None;
+            if let Some((session_id, _)) = self.research.running.take() {
+                self.end_subagents(&session_id, self.research.incognito);
+            }
             self.set_survey_gate(None);
             self.research.survey_reply_tx = None;
             self.research.steer_tx = None;
@@ -659,6 +664,9 @@ impl super::App {
         };
         let viewing = self.session.as_ref().is_some_and(|s| s.id == session_id);
         match update {
+            ResearchUpdate::Subagent(update) => {
+                self.on_subagent(&session_id, self.research.incognito, *update);
+            }
             ResearchUpdate::Stage { label, detail } => {
                 if let Some(n) = label.strip_prefix("steer #").and_then(|n| n.parse().ok()) {
                     self.research.steer_acked.insert(n);

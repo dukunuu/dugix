@@ -508,17 +508,18 @@ async fn research_pipeline_logs_every_stage_and_respects_incognito() {
         let fixture = Fixture::new();
         let app = &fixture.app;
         let session = app.session.as_ref().unwrap().id.clone();
+        // Every stage is a sub-agent run now, so every request streams.
         let (provider, server) = workflow_server(vec![
             ("Landscape findings", true),
-            ("1. What evidence is available?", false),
+            ("1. What evidence is available?", true),
             ("Searcher findings", true),
-            ("Draft", false),
-            ("SATISFIED", false),
+            ("Draft", true),
+            ("SATISFIED", true),
             ("Verified draft", true),
-            ("Final report", false),
+            ("Final report", true),
         ])
         .await;
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::unbounded_channel();
         let (_steer_tx, steer_rx) = mpsc::unbounded_channel();
         tokio::time::timeout(
             Duration::from_secs(5),
@@ -563,6 +564,33 @@ async fn research_pipeline_logs_every_stage_and_respects_incognito() {
         assert!(
             rows.iter()
                 .all(|r| r.usage.cost == Some(0.01) && r.tools.is_none())
+        );
+        // Each stage is a run in `/agents`, all finished before the report.
+        let mut started = Vec::new();
+        let mut finished = 0;
+        let mut done_last = false;
+        while let Ok((_, _, _, update)) = rx.try_recv() {
+            done_last = matches!(update, research::ResearchUpdate::Done(Ok(_)));
+            if let research::ResearchUpdate::Subagent(update) = update {
+                match update.event {
+                    crate::provider::SubagentEvent::Started { prompt, .. } => started.push(prompt),
+                    crate::provider::SubagentEvent::Finished { error: None, .. } => finished += 1,
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(started.len(), 7, "{started:?}");
+        assert_eq!(finished, 7);
+        assert!(done_last, "the report comes after every agent's last step");
+        assert!(
+            started.contains(&"Planner · Evidence".to_string()),
+            "{started:?}"
+        );
+        assert!(
+            started
+                .iter()
+                .any(|title| title.starts_with("Searcher round 1 1/1 · ")),
+            "{started:?}"
         );
     }
 }

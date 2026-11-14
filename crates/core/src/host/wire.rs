@@ -384,6 +384,11 @@ impl From<ResearchUpdate> for WireResearchUpdate {
                 rework,
             },
             ResearchUpdate::Done(d) => Self::Done(d),
+            // Thin clients see each agent as a stage row of its own.
+            ResearchUpdate::Subagent(update) => Self::Stage {
+                label: format!("sub-agent {}", update.number),
+                detail: subagent_status(&update),
+            },
         }
     }
 }

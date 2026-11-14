@@ -22,7 +22,9 @@ fn research_params_pass_the_cache_ttl_experiment() {
             prompt_cache_key: "research:s:0".to_string(),
             cache_ttl_1h: enabled,
             space_id: "sp".to_string(),
-            backend: "OpenRouter",
+            topic: "topic".to_string(),
+            events: mpsc::unbounded_channel().0,
+            slots: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
         };
         let params = usage.chat_params();
         assert_eq!(params.cache_ttl_1h, enabled);
@@ -510,7 +512,9 @@ async fn closed_reply_channel_fails_plan_approval_closed() {
         prompt_cache_key: "s:0".to_string(),
         cache_ttl_1h: false,
         space_id: ids.1.clone(),
-        backend: provider.backend_tag().name(),
+        topic: "topic".to_string(),
+        events: mpsc::unbounded_channel().0,
+        slots: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
     };
     let result = await_plan_approval(
         PlanApprovalContext {

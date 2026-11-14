@@ -74,6 +74,8 @@ pub struct Context {
     model: String,
     params: ChatParams,
     events: mpsc::UnboundedSender<StreamEvent>,
+    /// The run's own concurrency limit; `None` shares the global one.
+    slots: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 impl Context {
@@ -98,7 +100,19 @@ impl Context {
             model,
             params,
             events,
+            slots: None,
         }
+    }
+
+    /// Limit these runs by their own semaphore instead of the global slots, for
+    /// a pipeline that fans out wider than chat sub-agents may.
+    pub(crate) fn with_slots(mut self, slots: Arc<tokio::sync::Semaphore>) -> Self {
+        self.slots = Some(slots);
+        self
+    }
+
+    fn slots(&self) -> &tokio::sync::Semaphore {
+        self.slots.as_deref().unwrap_or_else(|| slots())
     }
 }
 
@@ -292,13 +306,17 @@ pub(crate) async fn run(context: &Context, toolbox: &ToolBox, args: &Value) -> R
             max_steps,
         },
     );
-    let slot = if let Ok(permit) = slots().try_acquire() {
+    let slot = if let Ok(permit) = context.slots().try_acquire() {
         permit
     } else {
         let _ = context.events.send(StreamEvent::Status(format!(
             "sub-agent waiting: {MAX_CONCURRENT} already running"
         )));
-        slots().acquire().await.context("sub-agent slots closed")?
+        context
+            .slots()
+            .acquire()
+            .await
+            .context("sub-agent slots closed")?
     };
     let outcome = run_loop(
         context,
@@ -356,7 +374,11 @@ pub(crate) async fn run_role(
             max_steps: role.max_steps,
         },
     );
-    let slot = slots().acquire().await.context("sub-agent slots closed")?;
+    let slot = context
+        .slots()
+        .acquire()
+        .await
+        .context("sub-agent slots closed")?;
     let outcome = run_loop(
         context,
         tools,
