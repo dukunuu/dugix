@@ -9,6 +9,7 @@
 mod parse;
 mod pipeline;
 mod prompts;
+mod sources;
 
 pub use parse::*;
 pub use pipeline::*;
@@ -55,7 +56,10 @@ const MAX_SUBQUESTIONS: usize = 6;
 const MAX_QUEUED_STEERS: usize = 64;
 const MAX_SURVEY_QUESTIONS: usize = 4;
 pub const MAX_SURVEY_ROUNDS: u8 = 3;
-pub const RESEARCH_SEARCHER_MAX_ITERS: usize = 6;
+/// Tool steps per searcher: room for three or four search-then-read cycles.
+pub const RESEARCH_SEARCHER_MAX_ITERS: usize = 10;
+/// Tool steps for the verifier, which starts with the cited pages' excerpts in hand.
+pub const RESEARCH_VERIFIER_MAX_STEPS: usize = 6;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub struct PlanQuestion {

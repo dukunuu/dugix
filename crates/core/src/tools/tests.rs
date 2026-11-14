@@ -2154,14 +2154,43 @@ fn cited_url_norms_extracts_every_sources_url() {
 }
 
 #[test]
-fn dedup_source_lines_keeps_first_occurrence_of_each_normalized_url() {
-    let a = "Finding A body. [1]\nSources:\n1. https://example.com/a\n2. https://example.com/b?utm_source=x";
-    let b = "Finding B body. [1]\nSources:\n1. https://EXAMPLE.com/a/\n2. https://other.com/c";
-    let out = dedup_source_lines(&[a.to_string(), b.to_string()]);
-    assert!(out[0].contains("https://example.com/a"));
-    assert!(out[0].contains("https://example.com/b"));
-    assert!(!out[1].contains("example.com/a"));
-    assert!(out[1].contains("other.com/c"));
+fn split_sources_reads_the_lists_models_actually_write() {
+    for heading in [
+        "Sources:",
+        "**Sources:**",
+        "## Sources",
+        "References:",
+        "sources",
+    ] {
+        let text =
+            format!("Body [1] and [2].\n\n{heading}\n1. https://a.example/x\n2) https://b.example");
+        let split = split_sources(&text);
+        assert_eq!(split.body, "Body [1] and [2].", "{heading}");
+        assert_eq!(
+            split.sources,
+            vec![
+                (Some(1), "https://a.example/x".to_string()),
+                (Some(2), "https://b.example".to_string())
+            ],
+            "{heading}"
+        );
+    }
+    // Brackets, titles, bullets without numbers, a first item on the heading line.
+    let split = split_sources(
+        "Body.\nSources: [1] https://a.example\n- Title — https://www.b.example/p.\n[3] <https://c.example>",
+    );
+    assert_eq!(
+        split.sources,
+        vec![
+            (Some(1), "https://a.example".to_string()),
+            (Some(2), "https://www.b.example/p".to_string()),
+            (Some(3), "https://c.example".to_string())
+        ]
+    );
+    // Prose that starts with the word is not a list.
+    let prose = "Sources disagree on this [1].";
+    assert_eq!(split_sources(prose).body, prose);
+    assert!(split_sources(prose).sources.is_empty());
 }
 
 #[test]

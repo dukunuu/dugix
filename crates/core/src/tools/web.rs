@@ -1617,53 +1617,85 @@ pub fn normalize_url(url: &str) -> String {
     s
 }
 
-/// Drop `Sources:` lines whose normalized URL already appeared in an earlier
-/// finding; other lines are untouched.
-pub fn dedup_source_lines(findings: &[String]) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    findings
-        .iter()
-        .map(|f| {
-            let mut out_lines = Vec::new();
-            let mut in_sources = false;
-            for line in f.lines() {
-                if line.trim().eq_ignore_ascii_case("Sources:") {
-                    in_sources = true;
-                    out_lines.push(line.to_string());
-                    continue;
-                }
-                if in_sources
-                    && let Some((_, url)) = line.trim().split_once(['.', ')'])
-                    && !seen.insert(normalize_url(url.trim()))
-                {
-                    continue; // dup — drop this line
-                }
-                out_lines.push(line.to_string());
-            }
-            out_lines.join("\n")
-        })
-        .collect()
+/// A findings text split at its sources list: the prose before it, and each
+/// listed source as `(its number, url)`.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct SourcedText<'a> {
+    pub body: &'a str,
+    pub sources: Vec<(Option<usize>, String)>,
 }
 
-/// Every normalized URL cited in a set of findings' `Sources:` blocks.
-pub fn cited_url_norms(findings: &[String]) -> Vec<String> {
-    let mut out = Vec::new();
-    for f in findings {
-        let mut in_sources = false;
-        for line in f.lines() {
-            if line.trim().eq_ignore_ascii_case("Sources:") {
-                in_sources = true;
-                continue;
-            }
-            if in_sources && let Some((_, url)) = line.trim().split_once(['.', ')']) {
-                let url = url.trim();
-                if !url.is_empty() {
-                    out.push(normalize_url(url));
+/// What follows a `Sources:` heading on its own line, however the model dressed
+/// it: `Sources:`, `**Sources:**`, `## Sources`, `References:`. `None` for any
+/// other line, so a sentence that merely starts with "Sources" is prose.
+fn sources_heading(line: &str) -> Option<&str> {
+    let t = line
+        .trim()
+        .trim_start_matches(['#', '*', '_', '>'])
+        .trim_start();
+    let word = ["sources", "references"].into_iter().find(|w| {
+        t.get(..w.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(w))
+    })?;
+    let rest = t[word.len()..].trim_start_matches(['*', '_']);
+    if rest.trim().is_empty() {
+        return Some("");
+    }
+    let rest = rest.strip_prefix(':')?;
+    Some(rest.trim_start_matches(['*', '_']).trim())
+}
+
+/// One listed source: `1. url`, `[1] url`, `1) url`, `- url`, or `1. Title — url`.
+fn source_line(line: &str) -> Option<(Option<usize>, String)> {
+    let t = line.trim().trim_start_matches(['-', '*', '•']).trim();
+    let start = t.find("http://").or_else(|| t.find("https://"))?;
+    let label = t[..start].trim_start_matches('[').trim_start();
+    let digits = label
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(label.len());
+    let number = label[..digits].parse().ok();
+    let url: String = t[start..]
+        .chars()
+        .take_while(|c| !c.is_whitespace() && !matches!(c, '>' | '"' | '<'))
+        .collect();
+    let url = url.trim_end_matches([')', ']', '.', ',', ';', '*', '_']);
+    (url.len() > "https://".len()).then(|| (number, url.to_string()))
+}
+
+/// Split findings at their sources list. Sources with no number take their
+/// position in the list, which is how a model that numbers its citations lists them.
+#[must_use]
+pub fn split_sources(text: &str) -> SourcedText<'_> {
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        if let Some(first) = sources_heading(line) {
+            let mut sources = Vec::new();
+            let listed = std::iter::once(first).chain(text[offset + line.len()..].lines());
+            for item in listed {
+                if let Some((number, url)) = source_line(item) {
+                    sources.push((number.or(Some(sources.len() + 1)), url));
                 }
             }
+            return SourcedText {
+                body: text[..offset].trim_end(),
+                sources,
+            };
         }
+        offset += line.len();
     }
-    out
+    SourcedText {
+        body: text,
+        sources: Vec::new(),
+    }
+}
+
+/// Every normalized URL cited in a set of findings' sources lists.
+pub fn cited_url_norms(findings: &[String]) -> Vec<String> {
+    findings
+        .iter()
+        .flat_map(|f| split_sources(f).sources)
+        .map(|(_, url)| normalize_url(&url))
+        .collect()
 }
 
 /// Rewrite `query` with `site:`/`-site:` terms, which every backend honours, so

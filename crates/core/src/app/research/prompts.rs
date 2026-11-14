@@ -99,9 +99,11 @@ pub(super) fn plan_approval_messages(
     ]
 }
 
+/// `findings` already carry the shared numbering of `sources`.
 pub(super) fn synthesizer_messages(
     topic: &str,
     findings: &[String],
+    sources: &str,
     pinned: &[String],
 ) -> Vec<ChatMessage> {
     let body = findings
@@ -119,6 +121,7 @@ pub(super) fn synthesizer_messages(
         );
     }
     user.push_str(&body);
+    let _ = write!(user, "\n\n--- Shared sources list ---\n{sources}");
     vec![
         ChatMessage::text(
             "system",
@@ -141,10 +144,10 @@ pub(super) fn critic_messages(topic: &str, draft: &str) -> Vec<ChatMessage> {
 pub(super) fn resolver_messages(
     topic: &str,
     draft: &str,
-    findings: &[String],
+    (findings, sources): (&[String], &str),
     contradiction: &str,
 ) -> Vec<ChatMessage> {
-    let body = findings.join("\n\n");
+    let body = format!("{}\n\n{sources}", findings.join("\n\n"));
     vec![
         ChatMessage::text(
             "system",
@@ -159,7 +162,13 @@ pub(super) fn resolver_messages(
     ]
 }
 
-pub(super) fn verifier_messages(topic: &str, draft: &str, findings: &[String]) -> Vec<ChatMessage> {
+/// `excerpts` is the cached text of each cited page near the claims citing it.
+pub(super) fn verifier_messages(
+    topic: &str,
+    draft: &str,
+    findings: &[String],
+    excerpts: &str,
+) -> Vec<ChatMessage> {
     let body = findings.join("\n\n");
     vec![
         ChatMessage::text(
@@ -168,7 +177,9 @@ pub(super) fn verifier_messages(topic: &str, draft: &str, findings: &[String]) -
         ),
         ChatMessage::text(
             "user",
-            format!("Topic: {topic}\n\nSource findings:\n{body}\n\nDraft:\n{draft}"),
+            format!(
+                "Topic: {topic}\n\nSource findings:\n{body}\n\nSource page excerpts, by citation number:\n{excerpts}\n\nDraft:\n{draft}"
+            ),
         ),
     ]
 }

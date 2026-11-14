@@ -1187,40 +1187,85 @@ fn parse_subquestions_caps_at_max() {
     assert_eq!(qs.len(), MAX_SUBQUESTIONS);
 }
 
+fn gaps(list: &[&str]) -> Critique {
+    Critique {
+        gaps: list.iter().map(ToString::to_string).collect(),
+        ..Critique::default()
+    }
+}
+
 #[test]
 fn parse_critique_recognizes_satisfied() {
-    assert_eq!(parse_critique("SATISFIED"), Critique::Satisfied);
-    assert_eq!(parse_critique("  satisfied  "), Critique::Satisfied);
+    for reply in ["SATISFIED", "  satisfied  ", "**SATISFIED**", "Satisfied."] {
+        assert_eq!(parse_critique(reply), Critique::satisfied(), "{reply}");
+    }
 }
 
 #[test]
 fn parse_critique_recognizes_gaps() {
     let c = parse_critique("GAPS:\n- what about pricing?\n- any recent incidents?");
-    assert_eq!(
-        c,
-        Critique::Gaps(vec![
-            "what about pricing?".to_string(),
-            "any recent incidents?".to_string()
-        ])
-    );
+    assert_eq!(c, gaps(&["what about pricing?", "any recent incidents?"]));
+}
+
+#[test]
+fn parse_critique_reads_gaps_however_they_are_dressed() {
+    for reply in [
+        "Gaps:\n- what about pricing?",
+        "**GAPS:**\n- what about pricing?",
+        "## Gaps\n1. what about pricing?",
+        "Here is my review.\nGAPS:\n* what about pricing?",
+        "GAPS: what about pricing?",
+    ] {
+        assert_eq!(
+            parse_critique(reply),
+            gaps(&["what about pricing?"]),
+            "{reply}"
+        );
+    }
 }
 
 #[test]
 fn parse_critique_recognizes_contradiction() {
     let c = parse_critique("CONTRADICTION: source A says X, source B says not-X");
     assert_eq!(
-        c,
-        Critique::Contradiction("source A says X, source B says not-X".to_string())
+        c.contradiction.as_deref(),
+        Some("source A says X, source B says not-X")
     );
+    assert!(c.gaps.is_empty() && !c.unreadable);
+    let next_line = parse_critique("**Contradiction:**\nsource A says X, source B says not-X");
+    assert_eq!(c, next_line);
 }
 
 #[test]
-fn parse_critique_falls_back_to_satisfied_on_garbage() {
-    assert_eq!(
-        parse_critique("uh, looks fine I guess?"),
-        Critique::Satisfied
-    );
-    assert_eq!(parse_critique("GAPS:\n"), Critique::Satisfied);
+fn parse_critique_keeps_gaps_and_a_contradiction_together() {
+    let c = parse_critique("GAPS:\n- pricing?\nCONTRADICTION: A says X, B says not-X");
+    assert_eq!(c.gaps, vec!["pricing?".to_string()]);
+    assert_eq!(c.contradiction.as_deref(), Some("A says X, B says not-X"));
+}
+
+#[test]
+fn parse_critique_flags_garbage_instead_of_passing_it() {
+    for reply in ["uh, looks fine I guess?", "GAPS:\n", ""] {
+        let c = parse_critique(reply);
+        assert!(c.unreadable && !c.is_satisfied(), "{reply}");
+    }
+}
+
+#[test]
+fn approval_and_survey_tolerate_markdown_and_punctuation() {
+    for reply in [
+        "APPROVED",
+        "APPROVED.",
+        "**APPROVED**",
+        "Approved — go ahead",
+        "approved!",
+    ] {
+        assert_eq!(parse_approval(reply), Approval::Approved, "{reply}");
+    }
+    assert_eq!(parse_approval("Not approved, drop 2"), Approval::Malformed);
+    for reply in ["COMPLETE", "**COMPLETE**", "Complete."] {
+        assert_eq!(parse_survey_reply(reply), SurveyReply::Complete, "{reply}");
+    }
 }
 
 #[test]
@@ -1228,9 +1273,11 @@ fn synthesizer_messages_includes_topic_and_all_findings() {
     let msgs = synthesizer_messages(
         "rust async runtimes",
         &["finding one".to_string(), "finding two".to_string()],
+        "Sources:\n1. https://shared.example\n",
         &[],
     );
     assert_eq!(msgs[0].role, "system");
+    assert!(msgs[1].content.contains("1. https://shared.example"));
     assert!(msgs[1].content.contains("rust async runtimes"));
     assert!(msgs[1].content.contains("finding one"));
     assert!(msgs[1].content.contains("finding two"));
@@ -1241,6 +1288,7 @@ fn synthesizer_messages_lists_pinned_sources_when_present() {
     let msgs = synthesizer_messages(
         "topic",
         &["finding one".to_string()],
+        "",
         &["https://a.example".to_string()],
     );
     let user = msgs.iter().find(|m| m.role == "user").unwrap();
@@ -1258,7 +1306,7 @@ fn synthesizer_messages_lists_pinned_sources_when_present() {
 
 #[test]
 fn synthesizer_messages_omits_pinned_section_when_empty() {
-    let msgs = synthesizer_messages("topic", &["finding one".to_string()], &[]);
+    let msgs = synthesizer_messages("topic", &["finding one".to_string()], "", &[]);
     let user = msgs.iter().find(|m| m.role == "user").unwrap();
     assert!(
         !user.content.to_lowercase().contains("prioritize"),
@@ -1276,7 +1324,13 @@ fn critic_messages_includes_topic_and_draft() {
 
 #[test]
 fn resolver_messages_includes_contradiction_description() {
-    let msgs = resolver_messages("t", "draft", &["f1".to_string()], "A vs B");
+    let msgs = resolver_messages(
+        "t",
+        "draft",
+        (&["f1".to_string()], "Sources:\n1. https://s.example\n"),
+        "A vs B",
+    );
+    assert!(msgs[1].content.contains("https://s.example"));
     assert!(msgs[1].content.contains("A vs B"));
     assert!(msgs[1].content.contains("f1"));
 }

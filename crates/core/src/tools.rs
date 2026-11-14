@@ -25,7 +25,9 @@ pub use effect::{Effect, plan_waves};
 #[cfg(test)]
 pub(crate) use files::unreadable_file_message_for_test;
 pub(crate) use hashline::{apply_hashline_edits, number_lines_with_hash};
-pub use web::{cited_url_norms, dedup_source_lines, normalize_url, rewrite_query_with_domains};
+pub use web::{
+    SourcedText, cited_url_norms, normalize_url, rewrite_query_with_domains, split_sources,
+};
 
 use fs::{APPROVAL_DETAIL_LINES, fs_approval_summary, fs_diff, fs_relative, fs_replacement};
 use hashline::number_lines;

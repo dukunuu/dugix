@@ -12,10 +12,11 @@ use super::prompts::{
     critic_messages, plan_approval_messages, planner_messages_with_context, research_stage_prompt,
     resolver_messages, survey_messages, synthesizer_messages, verifier_messages, writer_messages,
 };
+use super::sources::{Ledger, plural};
 use super::{
-    Approval, Critique, MAX_SURVEY_ROUNDS, PlanQuestion, RESEARCH_SEARCHER_MAX_ITERS, ResearchMsg,
-    ResearchUpdate, SEARCHER_PROMPT, SurveyReply, parse_approval, parse_critique,
-    parse_plan_blocks, parse_survey_reply,
+    Approval, Critique, MAX_SURVEY_ROUNDS, PlanQuestion, RESEARCH_SEARCHER_MAX_ITERS,
+    RESEARCH_VERIFIER_MAX_STEPS, ResearchMsg, ResearchUpdate, SEARCHER_PROMPT, SurveyReply,
+    parse_approval, parse_critique, parse_plan_blocks, parse_survey_reply,
 };
 
 /// Agents research runs at once; its searchers fan out wider than the
@@ -306,7 +307,7 @@ async fn verify_with_quote_check(
             (provider, model, "research:verifier"),
             format!("Verifier · {}", usage.topic),
             cache_only_toolbox.as_ref(),
-            (messages, RESEARCH_SEARCHER_MAX_ITERS),
+            (messages, RESEARCH_VERIFIER_MAX_STEPS),
             &|step| send_stage(tx, ids, "verifier", format!("working — {step}")),
         )
         .await
@@ -408,6 +409,46 @@ impl Run<'_> {
         self.search(batch, &items).await
     }
 
+    /// Merge more findings into the draft by continuing the synthesizer's own
+    /// conversation, which keeps the provider's cached prefix.
+    async fn fold_in(
+        &self,
+        history: &mut Vec<ChatMessage>,
+        draft: &str,
+        (found, ledger, findings, limitations): (
+            &[String],
+            &mut Ledger,
+            &mut Vec<String>,
+            &mut Vec<String>,
+        ),
+        label: &str,
+    ) -> Result<String, String> {
+        note_failed_searches(found, limitations);
+        let known = ledger.len();
+        let absorbed: Vec<String> = found.iter().map(|f| ledger.absorb(f)).collect();
+        findings.extend(absorbed.iter().cloned());
+        self.stage(label, "working — merging follow-up findings");
+        history.push(ChatMessage::text("assistant", draft.to_string()));
+        let new_sources = if ledger.len() > known {
+            format!(
+                "\n\nNew entries in the shared sources list:\n{}",
+                ledger.list_from(known)
+            )
+        } else {
+            String::new()
+        };
+        history.push(ChatMessage::text(
+            "user",
+            format!(
+                "Additional searcher findings to incorporate:\n{}{new_sources}",
+                absorbed.join("\n\n")
+            ),
+        ));
+        let revised = self.agent(history.clone(), label).await?;
+        self.stage(label, "done — revised draft assembled");
+        Ok(revised)
+    }
+
     async fn critic(&self, draft: &str, second: bool) -> Result<Critique, String> {
         let (label, working) = if second {
             ("critic r2", "working — reviewing the revised draft")
@@ -420,32 +461,40 @@ impl Run<'_> {
                 .agent(critic_messages(self.topic, draft), label)
                 .await?,
         );
-        let detail = match &critique {
-            Critique::Satisfied => if second {
+        let detail = if critique.unreadable {
+            "error — unreadable verdict; treated as unreviewed, not as satisfied".to_string()
+        } else if critique.is_satisfied() {
+            if second {
                 "done — revised draft is complete"
             } else {
                 "done — draft is sufficiently complete"
             }
-            .to_string(),
-            Critique::Gaps(gaps) => {
-                let list = gaps
+            .to_string()
+        } else {
+            let mut parts = Vec::new();
+            if !critique.gaps.is_empty() {
+                let list = critique
+                    .gaps
                     .iter()
                     .enumerate()
                     .map(|(i, g)| format!("{}. {g}", i + 1))
                     .collect::<Vec<_>>()
                     .join("\n");
-                if second {
-                    format!("done — {} gaps remain:\n{list}", gaps.len())
+                let n = critique.gaps.len();
+                parts.push(if second {
+                    format!("{n} gaps remain:\n{list}")
                 } else {
-                    format!("done — found {} coverage gaps:\n{list}", gaps.len())
-                }
+                    format!("found {n} coverage gaps:\n{list}")
+                });
             }
-            Critique::Contradiction(_) => if second {
-                "done — contradiction remains"
-            } else {
-                "done — found a source contradiction"
+            if critique.contradiction.is_some() {
+                parts.push(if second {
+                    "a contradiction remains".to_string()
+                } else {
+                    "found a source contradiction".to_string()
+                });
             }
-            .to_string(),
+            format!("done — {}", parts.join("; "))
         };
         self.stage(label, detail);
         Ok(critique)
@@ -936,8 +985,14 @@ async fn run_research_inner(
         .and_then(|conn| crate::db::pinned_urls(&conn, &ids.0).ok())
         .unwrap_or_default();
 
+    // One run-wide numbering: every finding is rewritten onto it as it arrives.
+    let mut ledger = Ledger::default();
+    let mut limitations: Vec<String> = Vec::new();
     let mut findings: Vec<String> = if !web_survey.is_empty() && !web_survey.starts_with('[') {
-        vec![format!("--- Survey overview ---\n{web_survey}")]
+        vec![format!(
+            "--- Survey overview ---\n{}",
+            ledger.absorb(&web_survey)
+        )]
     } else {
         Vec::new()
     };
@@ -945,62 +1000,95 @@ async fn run_research_inner(
         .iter()
         .map(|q| (q.prompt(topic), q.question.clone()))
         .collect();
-    findings.extend(run.search("round 1", &searcher_items).await);
-
+    let mut round_one = run.search("round 1", &searcher_items).await;
     let mut steer_seq: usize = 0;
-    findings.extend(run.steer(steer_rx, &mut steer_seq, "round 1 steer").await);
+    round_one.extend(run.steer(steer_rx, &mut steer_seq, "round 1 steer").await);
+    note_failed_searches(&round_one, &mut limitations);
+    findings.extend(round_one.iter().map(|f| ledger.absorb(f)));
 
     run.stage(
         "synthesizer",
         format!("working — combining {} agent findings", findings.len()),
     );
     let mut synthesizer_history =
-        synthesizer_messages(topic, &crate::tools::dedup_source_lines(&findings), &pinned);
+        synthesizer_messages(topic, &findings, &ledger.list_from(0), &pinned);
     let mut draft = run
         .agent(synthesizer_history.clone(), "synthesizer")
         .await?;
     run.stage("synthesizer", "done — draft assembled");
 
-    let mut critique = run.critic(&draft, false).await?;
+    let first = run.critic(&draft, false).await?;
+    if first.unreadable {
+        limitations.push(
+            "The coverage review returned an unreadable verdict, so no follow-up search for \
+             missing angles was run."
+                .to_string(),
+        );
+    }
+    let mut contradiction = first.contradiction.clone();
 
-    if let Critique::Gaps(gaps) = &critique {
-        let mut follow_up_findings = run
+    if !first.gaps.is_empty() {
+        let mut follow_up = run
             .search(
                 "round 2",
-                &gaps
+                &first
+                    .gaps
                     .iter()
                     .map(|g| (g.clone(), g.clone()))
                     .collect::<Vec<_>>(),
             )
             .await;
-        follow_up_findings.extend(run.steer(steer_rx, &mut steer_seq, "round 2 steer").await);
-        findings.extend(follow_up_findings.clone());
-
-        run.stage("synthesizer r2", "working — merging follow-up findings");
-        // Append findings without rebuilding history to preserve the provider's cached prefix.
-        synthesizer_history.push(ChatMessage::text("assistant", draft.clone()));
-        synthesizer_history.push(ChatMessage::text(
-            "user",
-            format!(
-                "Additional searcher findings to incorporate:\n{}",
-                crate::tools::dedup_source_lines(&follow_up_findings).join("\n\n")
-            ),
-        ));
+        follow_up.extend(run.steer(steer_rx, &mut steer_seq, "round 2 steer").await);
         draft = run
-            .agent(synthesizer_history.clone(), "synthesizer r2")
+            .fold_in(
+                &mut synthesizer_history,
+                &draft,
+                (&follow_up, &mut ledger, &mut findings, &mut limitations),
+                "synthesizer r2",
+            )
             .await?;
-        run.stage("synthesizer r2", "done — revised draft assembled");
-        critique = run.critic(&draft, true).await?;
+        let second = run.critic(&draft, true).await?;
+        if second.unreadable {
+            limitations.push(
+                "The second coverage review returned an unreadable verdict; gaps may remain."
+                    .to_string(),
+            );
+        } else {
+            // The revised draft is what gets resolved, so its own verdict stands.
+            contradiction = second.contradiction;
+        }
+        if !second.gaps.is_empty() {
+            let mut open = second.gaps.join("; ");
+            if !open.ends_with(['.', '?', '!']) {
+                open.push('.');
+            }
+            limitations.push(format!(
+                "Still not covered after a second search round: {open}"
+            ));
+        }
     }
 
-    if let Critique::Contradiction(desc) = &critique {
+    // A steer sent while drafting or reviewing still belongs in this report.
+    let late = run.steer(steer_rx, &mut steer_seq, "late steer").await;
+    if !late.is_empty() {
+        draft = run
+            .fold_in(
+                &mut synthesizer_history,
+                &draft,
+                (&late, &mut ledger, &mut findings, &mut limitations),
+                "synthesizer steer",
+            )
+            .await?;
+    }
+
+    if let Some(desc) = &contradiction {
         run.stage(
             "resolver",
             "working — reconciling conflicting source claims",
         );
         let resolution = run
             .agent(
-                resolver_messages(topic, &draft, &findings, desc),
+                resolver_messages(topic, &draft, (&findings, &ledger.list_from(0)), desc),
                 "resolver",
             )
             .await?;
@@ -1011,8 +1099,35 @@ async fn run_research_inner(
 
     run.stage(
         "verifier",
-        "working — checking claims, citations, and direct quotes",
+        "working — checking claims against the cited pages",
     );
+    let excerpts = {
+        let conn = crate::db::open_attached(db_path).ok();
+        ledger.excerpts(&draft, |norm| {
+            let conn = conn.as_ref()?;
+            crate::db::cache_get(conn, norm)
+                .ok()
+                .flatten()
+                .map(|(_, text, _)| text)
+        })
+    };
+    if excerpts.unopened > 0 {
+        limitations.push(format!(
+            "{} cited source{} {} never opened, only seen in search results; claims resting on {} alone are marked ‹snippet›.",
+            excerpts.unopened,
+            plural(excerpts.unopened),
+            if excerpts.unopened == 1 { "was" } else { "were" },
+            if excerpts.unopened == 1 { "it" } else { "them" },
+        ));
+    }
+    if excerpts.skipped > 0 {
+        limitations.push(format!(
+            "{} cited source{} fell outside the verifier's reading budget and {} checked only against the searchers' summaries.",
+            excerpts.skipped,
+            plural(excerpts.skipped),
+            if excerpts.skipped == 1 { "was" } else { "were" },
+        ));
+    }
     let verify_toolbox = Arc::new(
         ToolBox::research(
             None,
@@ -1026,7 +1141,7 @@ async fn run_research_inner(
     let verified_raw = verify_with_quote_check(
         research_provider,
         research_model,
-        verifier_messages(topic, &draft, &findings),
+        verifier_messages(topic, &draft, &findings, &excerpts.text),
         verify_toolbox,
         &usage,
         tx,
@@ -1034,10 +1149,22 @@ async fn run_research_inner(
     )
     .await;
     let verified = if verified_raw.trim().is_empty() {
+        limitations.push(
+            "Claim checking failed, so this report's claims were not verified against their sources."
+                .to_string(),
+        );
         draft.clone()
     } else {
         verified_raw
     };
+    if ledger.unlisted > 0 {
+        limitations.push(format!(
+            "{} searcher citation{} named no listed source and {} removed before drafting.",
+            ledger.unlisted,
+            plural(ledger.unlisted),
+            if ledger.unlisted == 1 { "was" } else { "were" },
+        ));
+    }
 
     run.stage("writer", "working — polishing structure and citations");
     match complete_text(
@@ -1050,13 +1177,40 @@ async fn run_research_inner(
     .await
     {
         Ok(report) => {
-            run.stage("writer", "done — final report ready");
-            Ok(report)
+            let finished = ledger.finish(&report, &limitations);
+            let detail = if finished.dropped == 0 {
+                "done — final report ready".to_string()
+            } else {
+                format!(
+                    "done — final report ready; removed {} citation{} to no gathered source",
+                    finished.dropped,
+                    plural(finished.dropped)
+                )
+            };
+            run.stage("writer", detail);
+            Ok(finished.report)
         }
         Err(e) => {
             run.stage("writer", format!("error — {e}"));
             Err(e)
         }
+    }
+}
+
+/// Searches that came back with nothing are a limit on what the report covers.
+fn note_failed_searches(found: &[String], limitations: &mut Vec<String>) {
+    let failed: Vec<&str> = found
+        .iter()
+        .filter(|f| f.starts_with("[search agent error") || f.starts_with("[no findings"))
+        .map(String::as_str)
+        .collect();
+    if !failed.is_empty() {
+        limitations.push(format!(
+            "{} search{} returned no findings: {}",
+            failed.len(),
+            if failed.len() == 1 { "" } else { "es" },
+            failed.join("; ")
+        ));
     }
 }
 
@@ -1069,3 +1223,7 @@ fn persist_session_sources(db_path: &std::path::Path, session_id: &str, findings
         let _ = crate::db::add_session_sources(&conn, session_id, &url_norms);
     }
 }
+
+#[cfg(test)]
+#[path = "pipeline_tests.rs"]
+mod pipeline_tests;
