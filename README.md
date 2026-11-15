@@ -460,7 +460,11 @@ Chat search is available in chat and agent mode, never in research searcher tool
   Chapters are private by default. `/memory share <chapter> with all|none|<space>[, <space>…]`
   shares a chapter with all or chosen spaces, or makes it private again; `/memory share`
   lists both directions. Shared chapters show their home space, and the model can read
-  and edit their facts from any recipient space; only you change sharing. The editor
+  and edit their facts from any recipient space. You can also just ask in chat — "share
+  About you with every space", "merge my About you chapters": the model's `memory` tool
+  lists every space's chapters (`spaces`), can `share` a chapter with chosen spaces, all
+  of them or none, and can `merge` same-titled chapters from every space into one shared
+  chapter — only when you ask, and only once you have more than one space. The editor
   still edits only the current space's own chapters. Memory lives in `nexus.db` and syncs
 - **Skills**: Agent Skills-compatible instruction packs (`SKILL.md`) with
   progressive disclosure, project/user/global discovery, bundled resources,
@@ -632,7 +636,8 @@ Type `/` in the composer for autocomplete. Aliases in parentheses.
 | `/apps` (`webapps`) | view web apps and pinned interactive panels |
 | `/pin-panel [name]` (`pin`) | keep the focused panel as a reusable mini-app |
 | `/studio [file]` (`deck`, `slides`) | open the last doc or deck (or the named one) in the studio window linked to this conversation; with none yet, open the library |
-| `/agents` (`subagents`) | this conversation's `task` sub-agents: status, model, steps, tokens and cost; Enter opens a run's transcript (prompt, reasoning, tool calls, answer, review diff), live while it runs (`t` tool bodies, `r` reasoning, ←→ other runs). Ctrl+↑ opens it while the chat has sub-agents. The reply's cost includes its sub-agents |
+| `/agents` (`subagents`) | this conversation's `task` sub-agents: status, model, steps, tokens and cost; Enter opens a run's transcript (prompt, reasoning, tool calls, answer, review diff), live while it runs (`t` tool bodies, `r` reasoning, ←→ other runs). Ctrl+↑ opens it while the chat has sub-agents. The reply's cost includes its sub-agents. A task started with `background: true` keeps working after the reply ends: the model collects it with `agents` wait (or lists/stops it), and a report nobody collected comes back as a message when the conversation is idle. `proc` wait blocks on a background command until a line appears or it exits, instead of polling |
+| `/queue [send \| edit [n] \| drop <n> \| clear]` (`queued`) | messages you sent while a reply was still being written. They wait above the composer and go out one by one as each reply finishes; `↑` on an empty composer takes the newest back for editing. Stopping a reply (Esc) or an error holds the rest until you press Enter on an empty composer or send something new (which goes behind them). A background agent's report arrives through the same queue |
 | `/library` (`decks`, `lib`) | list the space's decks and docs: Enter opens in studio, `e` exports through the Save dialog, `d` deletes (to `.trash/`) |
 | `/skills` | manage skills (app + project/user/global Agent Skills) |
 | `/usage` (`analytics`, `costs`) | token/cache/cost analytics by backend & model, with both the share served from cache and the share reused (of what the provider had already seen), plus why requests missed (←/→ for 24h/7d/30d/all windows) |

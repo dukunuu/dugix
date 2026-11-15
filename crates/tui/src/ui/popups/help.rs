@@ -80,6 +80,14 @@ pub const KEYS: &[(&str, &[(&str, &str)])] = &[
                 "^↑",
                 "live research view, or this chat's sub-agents (/agents)",
             ),
+            (
+                "Enter while it answers",
+                "queue the message; it sends when the reply finishes",
+            ),
+            (
+                "↑ on an empty line",
+                "take the newest queued message back to edit (/queue)",
+            ),
         ],
     ),
     (

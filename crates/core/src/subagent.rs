@@ -32,6 +32,9 @@ fn slots() -> &'static tokio::sync::Semaphore {
     SLOTS.get_or_init(|| tokio::sync::Semaphore::new(MAX_CONCURRENT))
 }
 
+mod background;
+pub use background::{Background, BackgroundMsg, Report};
+
 #[cfg(test)]
 mod tests;
 
@@ -113,6 +116,18 @@ impl Context {
 
     fn slots(&self) -> &tokio::sync::Semaphore {
         self.slots.as_deref().unwrap_or_else(|| slots())
+    }
+
+    /// The same model and settings reporting to `events` instead, for a run
+    /// that outlives the turn this context was made for.
+    fn reporting_to(&self, events: mpsc::UnboundedSender<StreamEvent>) -> Self {
+        Self {
+            provider: Arc::clone(&self.provider),
+            model: self.model.clone(),
+            params: self.params.clone(),
+            events,
+            slots: self.slots.clone(),
+        }
     }
 }
 
@@ -246,15 +261,36 @@ fn finish_tree(tree: &Tree, number: u64) -> Result<String> {
     ))
 }
 
-/// One task, returning only its final report and optional branch review.
-pub(crate) async fn run(context: &Context, toolbox: &ToolBox, args: &Value) -> Result<String> {
+/// A task's number and, for a workspace task, its worktree: settled before the
+/// run starts so a background run can be named in the call's own result.
+pub(crate) struct Reserved {
+    pub number: u64,
+    prepared: Option<(Tree, Arc<Workspace>)>,
+}
+
+pub(crate) fn reserve(toolbox: &ToolBox, args: &Value) -> Result<Reserved> {
     let mut number = NEXT_TASK.fetch_add(1, Ordering::Relaxed);
-    let writable = args["tools"] == "workspace";
-    let prepared = if writable {
+    let prepared = if args["tools"] == "workspace" {
         Some(prepare_tree(toolbox, &mut number)?)
     } else {
         None
     };
+    Ok(Reserved { number, prepared })
+}
+
+/// One task, returning only its final report and optional branch review.
+pub(crate) async fn run(context: &Context, toolbox: &ToolBox, args: &Value) -> Result<String> {
+    let reserved = reserve(toolbox, args)?;
+    run_reserved(context, toolbox, args, reserved).await
+}
+
+pub(crate) async fn run_reserved(
+    context: &Context,
+    toolbox: &ToolBox,
+    args: &Value,
+    Reserved { number, prepared }: Reserved,
+) -> Result<String> {
+    let writable = prepared.is_some();
     let mut child = toolbox.for_subagent(prepared.as_ref().map(|(_, workspace)| workspace.clone()));
     child.decision_context = Arc::new(std::sync::Mutex::new((
         toolbox.session_id.clone(),

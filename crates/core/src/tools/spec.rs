@@ -867,6 +867,11 @@ pub(super) static PROC: ToolSpec = ToolSpec {
             kind: Kind::Int,
             doc: "1-based starting line; default new output since the previous read",
         },
+        Param {
+            name: "until",
+            kind: Kind::Str,
+            doc: "output substring to wait for (literal); default: until exit",
+        },
     ],
     actions: &[
         ActionSpec {
@@ -884,6 +889,14 @@ pub(super) static PROC: ToolSpec = ToolSpec {
             optional: &["since"],
             read_only: true,
             internal: "proc_read",
+        },
+        ActionSpec {
+            name: "wait",
+            summary: "Block until it prints `until` or exits (wait_s default 60, maximum 600), then return the new output; use instead of polling read",
+            required: &["id"],
+            optional: &["until", "wait_s"],
+            read_only: true,
+            internal: "proc_wait",
         },
         ActionSpec {
             name: "list",
@@ -968,6 +981,16 @@ pub(super) static MEMORY: ToolSpec = ToolSpec {
             kind: Kind::Int,
             doc: "1-based start of the page",
         },
+        Param {
+            name: "spaces",
+            kind: Kind::StrList,
+            doc: "space names, [\"all\"] or [\"none\"] (private)",
+        },
+        Param {
+            name: "space",
+            kind: Kind::Str,
+            doc: "chapter's home space, if not this one",
+        },
     ],
     actions: &[
         ActionSpec {
@@ -1001,6 +1024,30 @@ pub(super) static MEMORY: ToolSpec = ToolSpec {
             optional: &[],
             read_only: false,
             internal: "memory_delete",
+        },
+        ActionSpec {
+            name: "spaces",
+            summary: "Every space's chapters and sharing",
+            required: &[],
+            optional: &[],
+            read_only: true,
+            internal: "memory_spaces",
+        },
+        ActionSpec {
+            name: "share",
+            summary: "When asked: set which spaces see a chapter",
+            required: &["chapter", "spaces"],
+            optional: &["space"],
+            read_only: false,
+            internal: "memory_share",
+        },
+        ActionSpec {
+            name: "merge",
+            summary: "When asked: fold same-titled chapters of all spaces into one shared chapter",
+            required: &["chapter"],
+            optional: &["space"],
+            read_only: false,
+            internal: "memory_merge",
         },
     ],
 };
@@ -1385,15 +1432,64 @@ pub(super) static TASK: ToolSpec = ToolSpec {
             kind: Kind::Int,
             doc: "maximum tool rounds, 1–40 (default 20)",
         },
+        Param {
+            name: "background",
+            kind: Kind::Bool,
+            doc: "true: return at once and keep working; collect with agents action=wait, or the report arrives as a message after your reply",
+        },
     ],
     actions: &[ActionSpec {
         name: "task",
         summary: "Run a focused helper",
         required: &["prompt"],
-        optional: &["tools", "max_steps"],
+        optional: &["tools", "max_steps", "background"],
         read_only: true,
         internal: "task",
     }],
+};
+
+pub(super) static AGENTS: ToolSpec = ToolSpec {
+    name: "agents",
+    purpose: "Background sub-agents started with task background=true.",
+    selector: Some("action"),
+    params: &[
+        Param {
+            name: "id",
+            kind: Kind::Int,
+            doc: "agent number from task; default: all of this conversation",
+        },
+        Param {
+            name: "wait_s",
+            kind: Kind::Int,
+            doc: "longest wait in seconds (default 300, maximum 600)",
+        },
+    ],
+    actions: &[
+        ActionSpec {
+            name: "wait",
+            summary: "Block until they finish and return their reports; a report read here is not delivered again",
+            required: &[],
+            optional: &["id", "wait_s"],
+            read_only: true,
+            internal: "agents_wait",
+        },
+        ActionSpec {
+            name: "list",
+            summary: "Running and finished-but-unread agents",
+            required: &[],
+            optional: &[],
+            read_only: true,
+            internal: "agents_list",
+        },
+        ActionSpec {
+            name: "stop",
+            summary: "Stop a running agent",
+            required: &["id"],
+            optional: &[],
+            read_only: false,
+            internal: "agents_stop",
+        },
+    ],
 };
 
 pub(super) static CANVAS: ToolSpec = ToolSpec {
@@ -1596,6 +1692,7 @@ pub(super) static CANVAS: ToolSpec = ToolSpec {
 const TOOLS: &[&ToolSpec] = &[
     &CANVAS,
     &TASK,
+    &AGENTS,
     &SKILLS,
     &SCRIPTS,
     &SEARCH,
@@ -1736,6 +1833,9 @@ mod tests {
             "canvas_design",
         ),
         ("task", r#"{"prompt":"x"}"#, "task"),
+        ("agents", r#"{"action":"wait"}"#, "agents_wait"),
+        ("agents", r#"{"action":"list"}"#, "agents_list"),
+        ("agents", r#"{"action":"stop","id":3}"#, "agents_stop"),
         ("skills", r#"{"action":"load","name":"x"}"#, "skill"),
         (
             "skills",
@@ -1816,6 +1916,7 @@ mod tests {
             "proc_start",
         ),
         ("proc", r#"{"action":"read","id":"0123abcd"}"#, "proc_read"),
+        ("proc", r#"{"action":"wait","id":"0123abcd"}"#, "proc_wait"),
         ("proc", r#"{"action":"list"}"#, "proc_list"),
         ("proc", r#"{"action":"kill","id":"0123abcd"}"#, "proc_kill"),
         (
@@ -1844,6 +1945,17 @@ mod tests {
             "memory",
             r#"{"action":"delete","id":"abcd"}"#,
             "memory_delete",
+        ),
+        ("memory", r#"{"action":"spaces"}"#, "memory_spaces"),
+        (
+            "memory",
+            r#"{"action":"share","chapter":"c","spaces":["all"]}"#,
+            "memory_share",
+        ),
+        (
+            "memory",
+            r#"{"action":"merge","chapter":"c"}"#,
+            "memory_merge",
         ),
         (
             "files",
@@ -1982,6 +2094,8 @@ mod tests {
             "deck_view",
             "deck_fonts",
             "task",
+            "agents_wait",
+            "agents_list",
             "skill",
             "web_search",
             "academic_search",
@@ -1992,6 +2106,7 @@ mod tests {
             "list_citations",
             "list_files",
             "memory_read",
+            "memory_spaces",
             "search_files",
             "search_chats",
             "read_file",
@@ -2005,6 +2120,7 @@ mod tests {
             "fs_read",
             "shell_log",
             "proc_read",
+            "proc_wait",
             "proc_list",
         ];
         for &(tool, args, internal) in ROUTES {

@@ -308,7 +308,7 @@ pub(super) fn parse(name: &str, args: &str, result: &str) -> Option<ToolView> {
                     view.verb = "start".into();
                     view.target = field("cmd")?.into();
                 }
-                ("proc", "read" | "kill") => {
+                ("proc", "read" | "wait" | "kill") => {
                     view.verb = action.into();
                     view.target = format!("process {}", field("id")?);
                 }

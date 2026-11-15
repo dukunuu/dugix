@@ -238,6 +238,8 @@ impl App {
             .subagent_runs
             .iter_mut()
             .filter(|run| run.session_id == session_id && run.status == SubagentStatus::Running)
+            // A background run belongs to the conversation, not to this turn.
+            .filter(|run| !self.background_agents.contains(&run.id))
         {
             run.status = SubagentStatus::Failed;
             run.finished_at = Some(chrono::Utc::now().to_rfc3339());

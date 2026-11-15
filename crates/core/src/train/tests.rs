@@ -166,7 +166,9 @@ fn every_offered_tool_is_current_and_its_recorded_definition_exports() {
     toolbox.memory = Some(crate::tools::MemoryCtx {
         db_path: fixture.root.join("nexus.db"),
         space_id: db.default_space_id().unwrap(),
+        sharing: false,
     });
+    toolbox.background = Some(crate::subagent::Background::new().0);
     toolbox.interactive_ui = true;
     toolbox.approver = Some(Arc::new(crate::app::EvalApprover {
         allow_shell: Vec::new(),

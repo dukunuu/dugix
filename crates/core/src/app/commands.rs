@@ -162,6 +162,11 @@ pub const COMMANDS: &[Command] = &[
         aliases: &["deck", "slides"],
     },
     Command {
+        name: "queue",
+        desc: "messages waiting for the reply: send, edit [n], drop <n>, clear",
+        aliases: &["queued"],
+    },
+    Command {
         name: "agents",
         desc: "this conversation's sub-agents: live transcripts, steps, tokens and cost",
         aliases: &["subagents", "sub-agents"],
@@ -389,6 +394,10 @@ pub enum AppCommand {
     },
     Steer {
         text: String,
+    },
+    /// Act on the messages waiting for the running reply.
+    Queue {
+        action: super::QueueAction,
     },
     AnswerGate {
         text: String,
@@ -640,6 +649,9 @@ impl App {
             }),
             "library" => Ok(AppCommand::OpenLibrary),
             "agents" => Ok(AppCommand::OpenSubagents),
+            "queue" => {
+                super::queue::parse(&rest(cmd, token)).map(|action| AppCommand::Queue { action })
+            }
             "connectors" => parse_connectors(&rest(cmd, token)),
             "pin-panel" => parse_pin_panel(token, &rest(cmd, token)),
             "research" => Ok(AppCommand::RunResearch {
@@ -832,6 +844,7 @@ impl App {
             },
             AppCommand::Approve { decision } => self.answer_approval(decision),
             AppCommand::Steer { text } => self.steer_research(&text),
+            AppCommand::Queue { action } => self.run_queue_action(action)?,
             AppCommand::AnswerGate { text } => self.reply_to_survey_gate(&text),
             AppCommand::NewSession => self.new_session(),
             AppCommand::Compact => self.force_compact(),

@@ -140,7 +140,8 @@ async fn run_loop(
             break;
         }
 
-        let streaming = app.is_streaming();
+        // Background agents keep the screen live too: `/agents` streams them.
+        let streaming = app.is_streaming() || app.background_running() > 0;
         let long_deadline = app.sel.deadline();
         let welcome = app.is_welcome();
         let status_deadline = app.status_deadline();
@@ -759,6 +760,18 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
             app.refresh_at_matches();
             return Ok(());
         }
+        // An empty composer has no line to move to: Up takes back the newest
+        // queued message for editing.
+        KeyCode::Up
+            if !shift
+                && !ctrl
+                && app.input_text().is_empty()
+                && !app.queued_messages().is_empty() =>
+        {
+            app.execute(AppCommand::Queue {
+                action: nexus_core::app::QueueAction::Edit(None),
+            })?;
+        }
         KeyCode::Up if !shift && !ctrl && app.shell_history_mode() => app.recall_prev(),
         KeyCode::Down if !shift && !ctrl && app.shell_history_mode() => app.recall_next(),
         KeyCode::Up if !shift => {
@@ -1278,6 +1291,62 @@ mod tests {
             handle_normal(&mut app, KeyCode::Down.into()).unwrap();
             assert_eq!(app.input_text(), expected);
         }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn queued_messages_show_above_the_composer_and_up_takes_the_newest_back() {
+        let mut app = test_app();
+        let root = app.space.root.clone();
+        app.models = vec![nexus_core::provider::Model {
+            id: "a/one".into(),
+            name: "One".into(),
+            reasoning_efforts: Vec::new(),
+            context_length: None,
+            supports_images: false,
+            supports_image_generation: false,
+            supports_video_generation: false,
+            backend: nexus_core::provider::BackendTag::OpenRouter,
+            pricing: None,
+            aliases: Vec::new(),
+        }];
+        app.core.current_model = Some("a/one".into());
+        for text in ["first", "then this", "and that"] {
+            app.set_input(text);
+            app.submit().unwrap();
+        }
+        assert_eq!(app.queued_messages(), ["then this", "and that"]);
+        assert_eq!(app.input_text(), "", "the composer is free while it waits");
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 20)).unwrap();
+        terminal.draw(|f| ui::render(f, &mut app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let screen: String = (0..buffer.area.height)
+            .flat_map(|y| {
+                (0..buffer.area.width)
+                    .map(move |x| buffer[(x, y)].symbol())
+                    .chain(["\n"])
+            })
+            .collect();
+        assert!(screen.contains("2 queued"), "{screen}");
+        assert!(screen.contains("1. then this"), "{screen}");
+        assert!(screen.contains("2. and that"), "{screen}");
+
+        handle_normal(&mut app, KeyCode::Up.into()).unwrap();
+        while let Some(event) = app.pop_pending_event() {
+            app.apply_event(&event);
+        }
+        assert_eq!(app.input_text(), "and that");
+        assert_eq!(app.queued_messages(), ["then this"]);
+
+        // Stopping holds the rest; Enter on the empty composer sends the next.
+        app.set_input("");
+        app.stop_stream().unwrap();
+        assert_eq!(app.queued_messages(), ["then this"]);
+        app.submit().unwrap();
+        assert!(app.queued_messages().is_empty());
+        assert!(app.viewing_stream());
+        app.stop_stream().unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
 

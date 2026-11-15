@@ -88,6 +88,11 @@ impl App {
         if self.current_model.is_none() {
             bail!("no model selected — pass --model, or pick one in the TUI first");
         }
+        // This process ends with the reply, so nothing may be left running behind it.
+        if self.detached_agents {
+            self.detached_agents = false;
+            self.refresh_toolbox();
+        }
         self.execute(AppCommand::Send { text: prompt })?;
 
         let mut usage: Option<Usage> = None;

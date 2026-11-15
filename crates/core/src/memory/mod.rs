@@ -702,6 +702,149 @@ pub fn merge_chapters(conn: &Connection, from: &str, into: &str) -> Result<()> {
     delete_chapter(conn, from)
 }
 
+/// `share` with `more` added; sharing with every space absorbs any list.
+#[must_use]
+pub fn widen(share: &Share, more: &Share, home: &str) -> Share {
+    match (share, more) {
+        (Share::All, _) | (_, Share::All) => Share::All,
+        (Share::Private, Share::Private) => Share::Private,
+        (Share::Spaces(a), Share::Private) | (Share::Private, Share::Spaces(a)) => {
+            canonical(a.iter(), home)
+        }
+        (Share::Spaces(a), Share::Spaces(b)) => canonical(a.iter().chain(b), home),
+    }
+}
+
+fn canonical<'a>(ids: impl Iterator<Item = &'a String>, home: &str) -> Share {
+    let mut ids: Vec<String> = ids.filter(|id| *id != home).cloned().collect();
+    ids.sort();
+    ids.dedup();
+    Share::from(ids)
+}
+
+/// What [`merge_same_titled`] did.
+#[derive(Debug)]
+pub struct Merged {
+    pub chapter: Chapter,
+    /// Facts moved in from other chapters.
+    pub moved: usize,
+    /// Facts dropped because `chapter` already said the same.
+    pub duplicates: usize,
+    /// Home space ids of the chapters folded in.
+    pub from: Vec<String>,
+}
+
+/// Fold every other live chapter titled like `into` — in any space — into it.
+/// Their facts move to `into`'s space (a fact lives in its chapter's home space),
+/// facts it already holds are dropped, the emptied chapters are deleted, and
+/// `into` is shared with their spaces so nothing a space could see disappears.
+pub fn merge_same_titled(conn: &Connection, into: &Chapter) -> Result<Merged> {
+    let tx = conn.unchecked_transaction()?;
+    let others: Vec<Chapter> = {
+        let mut stmt = tx.prepare(&format!(
+            "SELECT {CHAPTER_COLUMNS} FROM memory_chapters
+             WHERE deleted_at IS NULL AND id != ?1 AND lower(title) = lower(?2)
+             ORDER BY created_at, id"
+        ))?;
+        stmt.query_map(params![into.id, into.title], chapter_row)?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    let mut known: std::collections::HashSet<String> = chapter_texts(&tx, &into.id)?
+        .into_iter()
+        .map(|(_, text)| text.to_lowercase())
+        .collect();
+    let mut moving: Vec<(String, String)> = Vec::new();
+    let mut duplicates = 0;
+    for other in &others {
+        for (id, text) in chapter_texts(&tx, &other.id)? {
+            if known.insert(text.to_lowercase()) {
+                moving.push((id, other.id.clone()));
+            } else {
+                duplicates += 1;
+            }
+        }
+    }
+    let live: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM memories WHERE space_id = ?1 AND deleted_at IS NULL",
+        [&into.space_id],
+        |r| r.get(0),
+    )?;
+    let incoming = moving
+        .iter()
+        .filter(|(_, from)| {
+            others
+                .iter()
+                .any(|o| o.id == *from && o.space_id != into.space_id)
+        })
+        .count();
+    ensure!(
+        usize::try_from(live).unwrap_or(usize::MAX) + incoming <= MAX_FACTS,
+        "merging would pass the {MAX_FACTS}-fact limit of the target space — delete facts first"
+    );
+    let stamp = now();
+    for (id, _) in &moving {
+        tx.execute(
+            "UPDATE memories SET chapter_id = ?2, space_id = ?3, updated_at = ?4 WHERE id = ?1",
+            params![id, into.id, into.space_id, stamp],
+        )?;
+    }
+    let mut share = into.shared_with.clone();
+    let mut pinned = into.pinned;
+    let mut description = into.description.clone();
+    for other in &others {
+        // The duplicates still in it go with the chapter.
+        delete_chapter(&tx, &other.id)?;
+        let theirs = widen(
+            &other.shared_with,
+            &Share::Spaces(vec![other.space_id.clone()]),
+            "",
+        );
+        share = widen(&share, &theirs, &into.space_id);
+        pinned |= other.pinned;
+        if description.is_empty() {
+            description.clone_from(&other.description);
+        }
+    }
+    let chapter = Chapter {
+        shared_with: share,
+        pinned,
+        description,
+        updated_at: stamp,
+        ..into.clone()
+    };
+    tx.execute(
+        "UPDATE memory_chapters SET shared_with = ?2, pinned = ?3, description = ?4, updated_at = ?5
+         WHERE id = ?1",
+        params![
+            chapter.id,
+            serde_json::to_string(&chapter.shared_with)?,
+            chapter.pinned,
+            chapter.description,
+            chapter.updated_at
+        ],
+    )?;
+    tx.commit()?;
+    let mut from: Vec<String> = others.iter().map(|o| o.space_id.clone()).collect();
+    from.sort();
+    from.dedup();
+    Ok(Merged {
+        chapter,
+        moved: moving.len(),
+        duplicates,
+        from,
+    })
+}
+
+fn chapter_texts(conn: &Connection, chapter_id: &str) -> Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, text FROM memories WHERE chapter_id = ?1 AND deleted_at IS NULL
+         ORDER BY created_at, id",
+    )?;
+    Ok(stmt
+        .query_map([chapter_id], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
 /// Mark every memory row of a deleted space deleted, so the delete syncs.
 pub fn delete_space(conn: &Connection, space: &str) -> Result<()> {
     let stamp = now();

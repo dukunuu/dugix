@@ -23,6 +23,7 @@ use crate::space::Space;
 
 mod apps;
 mod backends;
+mod background;
 mod cache_accounting;
 mod chat;
 mod chats;
@@ -45,6 +46,7 @@ mod prefix_stability_tests;
 mod prompt_freeze;
 #[cfg(test)]
 mod prompt_snapshots;
+mod queue;
 #[cfg(test)]
 mod reply_style_tests;
 #[cfg(test)]
@@ -84,6 +86,7 @@ pub use commands::{
     AppCommand, COMMANDS, Command, Match, MemoryAction, command_score, fuzzy_score,
 };
 pub use files::ConvertUpdate;
+pub use queue::{MAX_QUEUED_MESSAGES, QueueAction, one_line};
 pub use research::{PlanQuestion, ResearchUpdate};
 pub use sessions::session_score;
 pub use snapshot::{
@@ -945,6 +948,8 @@ pub struct App {
     pub deck_link: Arc<std::sync::Mutex<crate::deck::link::Context>>,
     /// Approved workspace root deferred until the current chat task finishes.
     pub(crate) queued_workspace: Option<(ChatTaskId, String)>,
+    /// Messages waiting for a running reply, by session id (`app/queue.rs`).
+    pub(crate) queued: HashMap<String, Vec<String>>,
     pub user_command: UserCommandState,
     pub verbosity: String,
     pub ui_repair: UiRepairState,
@@ -972,6 +977,14 @@ pub struct App {
     pub toolbox: std::sync::Arc<dyn crate::tools::ToolExecutor>,
     image_fetcher: Arc<crate::remote_image::Fetcher>,
     pub procs: Arc<crate::workspace::procs::Procs>,
+    /// Background `task` runs, which outlive the turn that started them.
+    pub background: Arc<crate::subagent::Background>,
+    background_rx: mpsc::UnboundedReceiver<crate::subagent::BackgroundMsg>,
+    /// Ids of the background runs still working: a turn ending leaves them be.
+    pub(crate) background_agents: std::collections::HashSet<String>,
+    /// Off where the process ends with the reply (`nexus ask`), so a detached
+    /// run would be cut off; then `task` only runs in the foreground.
+    pub detached_agents: bool,
     pub app_server: Option<crate::appserver::AppServer>,
     pub skills_rx: Option<mpsc::UnboundedReceiver<Result<String, String>>>,
     pub local: LocalRuntimeState,
@@ -1062,6 +1075,7 @@ impl App {
             )
             .with_skill_dirs(skill_dirs),
         );
+        let (background, background_rx) = crate::subagent::Background::new();
         let mut app = Self {
             db,
             space,
@@ -1092,6 +1106,10 @@ impl App {
             toolbox,
             image_fetcher,
             procs: Arc::default(),
+            background,
+            background_rx,
+            background_agents: std::collections::HashSet::new(),
+            detached_agents: true,
             app_server: None,
             skills_rx: None,
             local: LocalRuntimeState::default(),
@@ -1119,6 +1137,7 @@ impl App {
             approvals: ApprovalState::default(),
             deck_link: Arc::default(),
             queued_workspace: None,
+            queued: HashMap::new(),
             user_command: UserCommandState::default(),
             verbosity: "concise".to_string(),
             ui_repair: UiRepairState::new(),
@@ -1691,6 +1710,7 @@ impl App {
             crate::tools::MemoryCtx {
                 db_path: self.space.db_path(),
                 space_id: self.active_space.id.clone(),
+                sharing: self.db.list_spaces().is_ok_and(|spaces| spaces.len() > 1),
             }
         });
         toolbox.space_apps_dir = self.space.apps_dir(&self.active_space.name);
@@ -1734,6 +1754,8 @@ impl App {
         }
         toolbox.subagent_environment = self.environment_section();
         toolbox.procs = Arc::clone(&self.procs);
+        toolbox.background =
+            (self.detached_agents && !self.incognito).then(|| Arc::clone(&self.background));
         toolbox.session_id = self
             .session
             .as_ref()
@@ -1982,12 +2004,28 @@ impl App {
         Ok(())
     }
 
-    #[allow(clippy::too_many_lines)]
     pub async fn next_event(&mut self) -> AppEvent {
-        if let Some(ev) = self.pending_events.pop_front() {
-            return ev;
+        loop {
+            if let Some(ev) = self.pending_events.pop_front() {
+                return ev;
+            }
+            if let Some(ev) = self.next_source_event().await {
+                return ev;
+            }
         }
-        tokio::select! {
+    }
+
+    /// The next result from a background source; `None` when one was handled
+    /// here and only left events (or nothing) in `pending_events`.
+    #[allow(clippy::too_many_lines)]
+    async fn next_source_event(&mut self) -> Option<AppEvent> {
+        Some(tokio::select! {
+            message = self.background_rx.recv() => {
+                if let Some(message) = message {
+                    self.on_background(message);
+                }
+                return None;
+            },
             () = tokio::time::sleep_until(self.index.next_chat_index.into()), if self.index.embed_rx.is_none() => {
                 self.start_embedding();
                 AppEvent::Status(self.index.embedding_status.clone())
@@ -2000,7 +2038,7 @@ impl App {
             } => {
                 if let Some((request, reply)) = request {
                     if reply.is_closed() {
-                        return AppEvent::Status("approval cancelled".to_string());
+                        return Some(AppEvent::Status("approval cancelled".to_string()));
                     }
                     let status = format!("approval needed · {} {}", request.tool, request.action);
                     self.approvals.queue.push_back((request, reply));
@@ -2142,7 +2180,7 @@ impl App {
                     None => std::future::pending().await,
                 }
             } => AppEvent::Swarm(r),
-        }
+        })
     }
 
     pub fn on_models_result(&mut self, result: Option<ModelsResult>) {

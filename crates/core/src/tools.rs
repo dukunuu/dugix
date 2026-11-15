@@ -229,6 +229,9 @@ pub struct ToolBox {
     prepared_decisions: Arc<Mutex<HashMap<u64, PreparedDecision>>>,
     next_decision: Arc<AtomicU64>,
     subagents: Option<Arc<crate::subagent::Context>>,
+    /// App-owned registry of background `task` runs; `None` where a run could
+    /// not outlive its turn usefully (incognito, one-shot frontends, sub-agents).
+    pub background: Option<Arc<crate::subagent::Background>>,
     subagent_workspace: Option<bool>,
     pub(crate) subagent_environment: String,
     decision_parent: Option<Arc<Self>>,
@@ -748,7 +751,7 @@ impl ToolExecutor for ToolBox {
                 exec: true,
                 ..Effect::barrier()
             },
-            Ok("shell_log" | "proc_read" | "proc_list") => Effect::read_only(),
+            Ok("shell_log" | "proc_read" | "proc_wait" | "proc_list") => Effect::read_only(),
             Ok("proc_kill") => Effect::barrier(),
             Ok(
                 action @ ("fs_list" | "fs_glob" | "fs_grep" | "fs_read" | "fs_edit" | "fs_write"
@@ -1030,6 +1033,7 @@ impl ToolBox {
             prepared_decisions: Arc::default(),
             next_decision: Arc::new(AtomicU64::new(0)),
             subagents: None,
+            background: None,
             subagent_workspace: None,
             subagent_environment: String::new(),
             decision_parent: None,
@@ -1114,6 +1118,7 @@ impl ToolBox {
             prepared_decisions: self.prepared_decisions.clone(),
             next_decision: self.next_decision.clone(),
             subagents: self.subagents.clone(),
+            background: self.background.clone(),
             subagent_workspace: self.subagent_workspace,
             subagent_environment: self.subagent_environment.clone(),
             decision_parent: Some(parent),
@@ -1157,9 +1162,32 @@ impl ToolBox {
         }
     }
 
+    /// Start a `task` that outlives this turn and say how its report returns.
+    fn start_background_task(
+        &self,
+        context: &crate::subagent::Context,
+        args: serde_json::Value,
+    ) -> anyhow::Result<String> {
+        use anyhow::Context as _;
+        let background = self
+            .background
+            .as_ref()
+            .context("background agents are not available here · run it without background")?;
+        let parent = self.decision_parent.clone().context("unbound toolbox")?;
+        // Checked before a worktree is prepared, so a refusal leaves nothing behind.
+        background.check_room(&self.session_id)?;
+        let reserved = crate::subagent::reserve(self, &args)?;
+        let toolbox = Arc::new(self.copy(parent));
+        let number = background.start(context, toolbox, args, reserved);
+        Ok(format!(
+            "background agent {number} started · keep working, or agents action=wait id={number} for its report; if you finish first, the report arrives as a message"
+        ))
+    }
+
     pub(crate) fn for_subagent(&self, workspace: Option<Arc<Workspace>>) -> Self {
         let mut toolbox = self.copy(self.decision_parent.clone().expect("bound toolbox"));
         toolbox.subagents = None;
+        toolbox.background = None;
         toolbox.subagent_workspace = Some(workspace.is_some());
         if let Some(workspace) = workspace {
             toolbox.confine_shell_writes = Some(workspace.root().to_path_buf());
@@ -1373,8 +1401,11 @@ impl ToolBox {
                 ],
             ));
             defs.push(def(&spec::SHELL, &["run", "log"]));
-            defs.push(def(&spec::PROC, &["start", "read", "list", "kill"]));
+            defs.push(def(&spec::PROC, &["start", "read", "wait", "list", "kill"]));
             defs.push(def(&spec::TASK, &["task"]));
+            if self.background.is_some() {
+                defs.push(def(&spec::AGENTS, &["wait", "list", "stop"]));
+            }
         }
         if self.interactive_ui {
             // `!` lines run only in agent mode, which is when a workspace is open.
@@ -1403,8 +1434,15 @@ impl ToolBox {
         if self.files_count() > 0 {
             defs.push(def(&spec::FILES, &["list", "search", "read", "pdf_page"]));
         }
-        if self.memory.is_some() {
-            defs.push(def(&spec::MEMORY, &["read", "add", "update", "delete"]));
+        if let Some(memory) = &self.memory {
+            let actions: &[&str] = if memory.sharing {
+                &[
+                    "read", "add", "update", "delete", "spaces", "share", "merge",
+                ]
+            } else {
+                &["read", "add", "update", "delete"]
+            };
+            defs.push(def(&spec::MEMORY, actions));
         }
         if self.apps.is_some() {
             defs.push(tool_def(
@@ -2054,9 +2092,40 @@ impl ToolBox {
                         );
                     }
                 }
+                if value["background"] == true {
+                    return match self.start_background_task(context, value) {
+                        Ok(started) => (started, "Sub-agent started".into()),
+                        Err(error) => (format!("sub-agent failed: {error}"), "blocked".into()),
+                    };
+                }
                 return match crate::subagent::run(context, self, &value).await {
                     Ok(report) => (report, "Sub-agent finished".into()),
                     Err(error) => (format!("sub-agent failed: {error}"), "blocked".into()),
+                };
+            }
+            "agents_wait" | "agents_list" | "agents_stop" => {
+                let Some(background) = &self.background else {
+                    return (
+                        "background agents are not available here".into(),
+                        "blocked".into(),
+                    );
+                };
+                let value: serde_json::Value = serde_json::from_str(args).unwrap_or_default();
+                return match name {
+                    "agents_wait" => (
+                        background.wait(&self.session_id, &value).await,
+                        "Waiting for sub-agents…".into(),
+                    ),
+                    "agents_list" => (
+                        background.list(&self.session_id),
+                        "Listing sub-agents…".into(),
+                    ),
+                    _ => match background
+                        .stop(&self.session_id, value["id"].as_u64().unwrap_or_default())
+                    {
+                        Ok(stopped) => (stopped, "Sub-agent stopped".into()),
+                        Err(error) => (format!("agents: {error}"), "blocked".into()),
+                    },
                 };
             }
             "panel_app_list" | "panel_app_read" | "panel_app_patch" => {
@@ -2134,31 +2203,33 @@ impl ToolBox {
                     "Requesting a workspace…".to_string(),
                 )
             }
-            "proc_start" | "proc_read" | "proc_list" | "proc_kill" => match &self.workspace {
-                None => (
-                    "proc needs an agent workspace · switch with /agent <path>".to_string(),
-                    "blocked".to_string(),
-                ),
-                Some(workspace) => (
-                    self.procs
-                        .action(
-                            crate::workspace::procs::Context {
-                                workspace,
-                                db_path: self.db_path.as_deref(),
-                                confinement: self
-                                    .confine_shell_writes
-                                    .as_deref()
-                                    .or_else(|| auto_allowed.then(|| workspace.root())),
-                                session_id: &self.session_id,
-                                allow_unparseable,
-                            },
-                            name,
-                            args,
-                        )
-                        .await,
-                    format!("Running {name}…"),
-                ),
-            },
+            "proc_start" | "proc_read" | "proc_wait" | "proc_list" | "proc_kill" => {
+                match &self.workspace {
+                    None => (
+                        "proc needs an agent workspace · switch with /agent <path>".to_string(),
+                        "blocked".to_string(),
+                    ),
+                    Some(workspace) => (
+                        self.procs
+                            .action(
+                                crate::workspace::procs::Context {
+                                    workspace,
+                                    db_path: self.db_path.as_deref(),
+                                    confinement: self
+                                        .confine_shell_writes
+                                        .as_deref()
+                                        .or_else(|| auto_allowed.then(|| workspace.root())),
+                                    session_id: &self.session_id,
+                                    allow_unparseable,
+                                },
+                                name,
+                                args,
+                            )
+                            .await,
+                        format!("Running {name}…"),
+                    ),
+                }
+            }
             "shell_run" | "shell_log" => match &self.workspace {
                 None => (
                     "shell needs an agent workspace · switch with /agent <path>".to_string(),
@@ -2457,8 +2528,9 @@ impl ToolBox {
                     "Reading past chats".to_string(),
                 )
             }
-            "memory_read" | "memory_add" | "memory_update" | "memory_delete" => {
-                let status = if name == "memory_read" {
+            "memory_read" | "memory_add" | "memory_update" | "memory_delete" | "memory_spaces"
+            | "memory_share" | "memory_merge" => {
+                let status = if matches!(name, "memory_read" | "memory_spaces") {
                     "Reading memory…"
                 } else {
                     "Updating memory…"

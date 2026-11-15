@@ -66,10 +66,19 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
         content_rows.saturating_add(2)
     };
 
+    // Messages waiting for the running reply sit between the transcript and
+    // the composer; an approval hides them like it hides the composer.
+    let queue_h = if approving {
+        0
+    } else {
+        input::queue_height(app)
+    };
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(1),
+            Constraint::Length(queue_h),
             Constraint::Length(input_h),
             Constraint::Length(1),
         ])
@@ -78,14 +87,15 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
     render_history(f, app, chunks[0]);
     crate::resize::paint_column_handles(f, app, column);
     if approving {
-        popups::approval::render_in(f, app, chunks[1]);
+        popups::approval::render_in(f, app, chunks[2]);
     } else {
-        render_input(f, app, chunks[1]);
+        input::render_queue(f, app, chunks[1]);
+        render_input(f, app, chunks[2]);
     }
-    render_status(f, app, chunks[2]);
+    render_status(f, app, chunks[3]);
     if app.popup == Popup::None {
-        render_command_popup(f, app, chunks[1]);
-        render_at_popup(f, app, chunks[1]);
+        render_command_popup(f, app, chunks[2]);
+        render_at_popup(f, app, chunks[2]);
         render_notifications(f, app, chunks[0]);
     } else {
         app.notification_areas.clear();

@@ -842,6 +842,8 @@ impl AppView {
         self.sel.clear();
         let text = text.trim();
         if text.is_empty() {
+            // Enter on an empty composer starts a held queue again.
+            self.core.send_next_queued()?;
             return Ok(());
         }
         if let Some(cmd) = text.strip_prefix('/') {

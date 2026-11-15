@@ -73,7 +73,7 @@ pub struct Cli {
     pub command: Option<Command>,
 }
 
-/// User-only memory sharing operations.
+/// Memory sharing operations (the model's `memory` tool can do these too, when asked).
 #[derive(Subcommand)]
 pub enum MemoryCommand {
     /// Share one of the home space's chapters.
@@ -689,7 +689,7 @@ pub async fn run(cmd: Command) -> Result<()> {
             install_service,
             uninstall_service,
         } => {
-            host(HostOptions {
+            Box::pin(host(HostOptions {
                 port,
                 tunnel,
                 no_sleep_guard,
@@ -701,7 +701,7 @@ pub async fn run(cmd: Command) -> Result<()> {
                 } else {
                     None
                 },
-            })
+            }))
             .await
         }
         Command::Deck { cmd } => {

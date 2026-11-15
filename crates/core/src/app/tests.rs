@@ -1893,23 +1893,257 @@ async fn send_in_another_session_is_allowed_while_one_streams() {
     assert_eq!(a.chat_task_count(), 2);
 }
 
+fn user_texts(a: &App) -> Vec<String> {
+    a.messages
+        .iter()
+        .filter(|m| m.role == "user")
+        .map(|m| m.content.lines().last().unwrap_or_default().to_string())
+        .collect()
+}
+
+fn send(a: &mut App, text: &str) {
+    a.execute(AppCommand::Send {
+        text: text.to_string(),
+    })
+    .unwrap();
+}
+
 #[tokio::test]
-async fn second_send_in_the_same_session_is_rejected() {
+async fn sends_during_a_reply_queue_and_go_out_in_order_as_replies_finish() {
     let mut a = app_with_key();
     a.current_model = Some("a/one".into());
-    a.execute(AppCommand::Send {
-        text: "first".to_string(),
-    })
-    .unwrap();
-    a.execute(AppCommand::Send {
-        text: "second".to_string(),
-    })
-    .unwrap();
+    send(&mut a, "first");
+    send(&mut a, "second");
+    send(&mut a, "third");
 
     assert_eq!(a.chat_task_count(), 1);
+    assert_eq!(a.queued_messages(), ["second", "third"]);
     let (sets, status) = a.drain_ui_events();
-    assert_eq!(sets, vec!["second".to_string()]);
-    assert!(status.contains("still streaming in"));
+    assert!(sets.is_empty(), "the composer stays free: {sets:?}");
+    assert!(status.contains("queued (2 waiting)"), "{status}");
+    assert_eq!(user_texts(&a), ["first"]);
+
+    let task = a.active_chat_task().unwrap().id;
+    a.on_chat_event(task, StreamEvent::Token("one".into()))
+        .unwrap();
+    a.on_chat_event(task, StreamEvent::Done).unwrap();
+    assert_eq!(a.queued_messages(), ["third"]);
+    assert_eq!(user_texts(&a), ["first", "second"]);
+    let next = a.active_chat_task().unwrap().id;
+    assert_ne!(next, task, "the queued message started its own reply");
+
+    a.on_chat_event(next, StreamEvent::Done).unwrap();
+    assert!(a.queued_messages().is_empty());
+    assert_eq!(user_texts(&a), ["first", "second", "third"]);
+    a.stop_stream().unwrap();
+}
+
+#[tokio::test]
+async fn a_stopped_reply_holds_the_queue_until_the_user_sends_again() {
+    let mut a = app_with_key();
+    a.current_model = Some("a/one".into());
+    send(&mut a, "first");
+    send(&mut a, "second");
+    send(&mut a, "third");
+    a.stop_stream().unwrap();
+
+    assert_eq!(a.chat_task_count(), 0, "nothing fires after a stop");
+    assert_eq!(a.queued_messages(), ["second", "third"]);
+    assert!(a.last_status().contains("2 queued messages held"));
+
+    // A new message goes behind the waiting ones; the oldest is sent.
+    send(&mut a, "fourth");
+    assert_eq!(user_texts(&a), ["first", "second"]);
+    assert_eq!(a.queued_messages(), ["third", "fourth"]);
+    a.stop_stream().unwrap();
+
+    // Enter on an empty composer sends the next one.
+    assert!(a.send_next_queued().unwrap());
+    assert_eq!(user_texts(&a), ["first", "second", "third"]);
+    assert!(!a.send_next_queued().unwrap(), "busy again");
+    a.stop_stream().unwrap();
+}
+
+#[tokio::test]
+async fn queue_command_edits_drops_and_clears_waiting_messages() {
+    let mut a = app_with_key();
+    a.current_model = Some("a/one".into());
+    a.run_command("queue").unwrap();
+    assert_eq!(a.last_status(), "no messages queued");
+    send(&mut a, "first");
+    for text in ["one", "two", "three", "four"] {
+        send(&mut a, text);
+    }
+    a.drain_ui_events();
+
+    a.run_command("queue").unwrap();
+    assert_eq!(
+        a.last_status(),
+        "queued: 1. one · 2. two · 3. three · 4. four"
+    );
+    a.run_command("queue edit 2").unwrap();
+    let (sets, _) = a.drain_ui_events();
+    assert_eq!(sets, ["two"], "the message is back in the composer");
+    assert_eq!(a.queued_messages(), ["one", "three", "four"]);
+    a.run_command("queue edit").unwrap();
+    assert_eq!(
+        a.drain_ui_events().0,
+        ["four"],
+        "no number edits the newest"
+    );
+    a.run_command("queue drop 1").unwrap();
+    assert_eq!(a.queued_messages(), ["three"]);
+    a.run_command("queue drop 5").unwrap();
+    assert!(a.last_status().contains("no queued message 5"));
+    a.run_command("queue send").unwrap();
+    assert!(a.last_status().contains("still streaming"));
+    a.run_command("queue clear").unwrap();
+    assert!(a.queued_messages().is_empty());
+    assert!(a.parse_command("queue drop").is_err());
+
+    for i in 0..=crate::app::MAX_QUEUED_MESSAGES {
+        send(&mut a, &format!("m{i}"));
+    }
+    assert_eq!(a.queued_messages().len(), crate::app::MAX_QUEUED_MESSAGES);
+    let (sets, status) = a.drain_ui_events();
+    assert_eq!(
+        sets.last().unwrap(),
+        &format!("m{}", crate::app::MAX_QUEUED_MESSAGES)
+    );
+    assert!(status.contains("queue full"), "{status}");
+    a.stop_stream().unwrap();
+}
+
+#[tokio::test]
+async fn a_queue_belongs_to_its_conversation() {
+    let mut a = app_with_key();
+    a.current_model = Some("a/one".into());
+    send(&mut a, "first");
+    send(&mut a, "second");
+    let task = a.active_chat_task().unwrap().id;
+    a.new_session();
+    assert!(a.queued_messages().is_empty());
+
+    a.on_chat_event(task, StreamEvent::Done).unwrap();
+    assert_eq!(
+        a.chat_task_count(),
+        0,
+        "never sent into another conversation"
+    );
+    assert_eq!(a.queued.values().next().unwrap(), &["second".to_string()]);
+}
+
+#[tokio::test]
+async fn a_background_agents_report_comes_back_as_a_message_when_the_chat_is_idle() {
+    use crate::subagent::BackgroundMsg;
+    let mut a = app_with_key();
+    a.current_model = Some("a/one".into());
+    send(&mut a, "first");
+    let session = a.session.as_ref().unwrap().id.clone();
+    let task = a.active_chat_task().unwrap().id;
+
+    // It finishes while the reply is still being written: the report waits.
+    a.background
+        .insert_finished(&session, 4, "dig into the parser", "found it");
+    a.on_background(BackgroundMsg::Finished {
+        session_id: session.clone(),
+    });
+    assert_eq!(user_texts(&a), ["first"]);
+    assert!(a.queued_messages().is_empty(), "still in the registry");
+
+    a.on_chat_event(task, StreamEvent::Token("ok".into()))
+        .unwrap();
+    a.on_chat_event(task, StreamEvent::Done).unwrap();
+    let sent = a.messages.iter().rev().find(|m| m.role == "user").unwrap();
+    assert!(
+        sent.content
+            .ends_with("[background agent 4 finished: dig into the parser]\nfound it"),
+        "{}",
+        sent.content
+    );
+    let next = a.active_chat_task().unwrap().id;
+    assert_ne!(next, task, "the report started a new turn");
+    a.on_chat_event(next, StreamEvent::Token("thanks".into()))
+        .unwrap();
+    a.on_chat_event(next, StreamEvent::Done).unwrap();
+    assert_eq!(a.chat_task_count(), 0);
+
+    // Idle: the next report goes out at once.
+    a.background
+        .insert_finished(&session, 5, "second look", "also fine");
+    a.on_background(BackgroundMsg::Finished {
+        session_id: session.clone(),
+    });
+    assert_eq!(a.chat_task_count(), 1);
+    assert!(
+        a.messages
+            .iter()
+            .any(|m| m.content.contains("agent 5 finished"))
+    );
+    a.stop_stream().unwrap();
+
+    // A held queue stays held: the report joins it instead of starting it.
+    a.queued.insert(session.clone(), vec!["held".into()]);
+    a.background.insert_finished(&session, 6, "third", "done");
+    a.on_background(BackgroundMsg::Finished {
+        session_id: session.clone(),
+    });
+    assert_eq!(a.chat_task_count(), 0);
+    assert_eq!(a.queued_messages().len(), 2);
+    assert!(a.queued_messages()[1].contains("agent 6 finished"));
+
+    // Another conversation is open: it waits there, marked unread.
+    a.queued.clear();
+    a.new_session();
+    a.background.insert_finished(&session, 7, "fourth", "done");
+    a.on_background(BackgroundMsg::Finished {
+        session_id: session.clone(),
+    });
+    assert_eq!(a.chat_task_count(), 0);
+    assert!(a.unread.contains(&session));
+    assert!(a.queued[&session][0].contains("agent 7 finished"));
+    assert!(a.last_status().contains("background agent finished in:"));
+}
+
+#[tokio::test]
+async fn a_turn_ending_leaves_background_agents_running_in_agents() {
+    use crate::provider::{SubagentEvent, SubagentUpdate};
+    use crate::subagent::BackgroundMsg;
+    let mut a = app_with_key();
+    a.current_model = Some("a/one".into());
+    send(&mut a, "first");
+    let session = a.session.as_ref().unwrap().id.clone();
+    let task = a.active_chat_task().unwrap().id;
+    let update = |event| BackgroundMsg::Update {
+        session_id: session.clone(),
+        update: Box::new(SubagentUpdate {
+            id: "run-1".into(),
+            number: 9,
+            event,
+        }),
+    };
+    a.on_background(update(SubagentEvent::Started {
+        prompt: "long job".into(),
+        model: "a/one".into(),
+        writable: false,
+        max_steps: 20,
+    }));
+    a.on_chat_event(task, StreamEvent::Token("ok".into()))
+        .unwrap();
+    a.on_chat_event(task, StreamEvent::Done).unwrap();
+    let run = a.live_subagent("run-1").unwrap();
+    assert_eq!(run.status, crate::app::SubagentStatus::Running);
+
+    a.on_background(BackgroundMsg::Stopped {
+        session_id: session.clone(),
+        number: 9,
+    });
+    let run = a.live_subagent("run-1").unwrap();
+    assert_eq!(run.status, crate::app::SubagentStatus::Failed);
+    assert_eq!(run.rows.last().unwrap().content, "stopped");
+
+    // In incognito, and where the process ends with the reply, nothing detaches.
+    assert!(a.chat_tool_defs().iter().all(|def| def.name != "agents"));
 }
 
 #[tokio::test]

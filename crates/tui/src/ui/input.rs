@@ -34,9 +34,67 @@ fn vim_mode(app: &AppView) -> Option<Span<'static>> {
     })
 }
 
-pub(super) fn render_input(f: &mut Frame, app: &mut AppView, area: Rect) {
-    let hints = !app.settings.hide_hints;
-    let busy = app.is_streaming() || app.is_compacting_current_session();
+/// Waiting messages shown at once; the rest are a count.
+const QUEUE_ROWS: usize = 3;
+
+/// Rows the queued-message strip takes: a header and up to [`QUEUE_ROWS`] messages.
+pub(super) fn queue_height(app: &AppView) -> u16 {
+    match app.queued_messages().len() {
+        0 => 0,
+        n => 1 + n.min(QUEUE_ROWS) as u16,
+    }
+}
+
+/// The messages waiting for the running reply, above the composer.
+pub(super) fn render_queue(f: &mut Frame, app: &AppView, area: Rect) {
+    use super::style::SEP;
+    let queued = app.queued_messages();
+    if queued.is_empty() || area.height == 0 {
+        return;
+    }
+    let dim = Style::default().fg(app.theme.fg_dim);
+    let held = !app.viewing_stream();
+    let mut header = format!("  {} {} queued", glyph::RING, queued.len());
+    if held {
+        header.push_str(SEP);
+        header.push_str("held");
+    }
+    if !app.settings.hide_hints {
+        header.push_str(SEP);
+        header.push_str(if held {
+            "Enter sends the next"
+        } else {
+            "sends after this reply"
+        });
+        header.push_str(SEP);
+        header.push_str("Up edits the newest");
+        header.push_str(SEP);
+        header.push_str("/queue");
+    }
+    let width = usize::from(area.width);
+    let mut lines = vec![Line::from(Span::styled(
+        popups::chrome::truncate(&header, width),
+        dim,
+    ))];
+    // The newest are the ones Up reaches, so they are the ones shown.
+    let skipped = queued.len().saturating_sub(QUEUE_ROWS);
+    for (index, text) in queued.iter().enumerate().skip(skipped) {
+        let row = format!(
+            "    {}. {}",
+            index + 1,
+            nexus_core::app::one_line(text, 400)
+        );
+        lines.push(Line::from(Span::styled(
+            popups::chrome::truncate(&row, width),
+            dim,
+        )));
+    }
+    f.render_widget(ratatui::widgets::Paragraph::new(lines), area);
+}
+
+/// What is running, for the composer's border: the reply, compaction, other
+/// chats, research, and background agents beside any of them.
+fn activity_label(app: &AppView, hints: bool) -> Option<String> {
     // What's running shows even with hints hidden: it's state, not key help.
     let activity = if app.viewing_stream() {
         Some(if hints {
@@ -60,6 +118,27 @@ pub(super) fn render_input(f: &mut Frame, app: &mut AppView, area: Rect) {
             .filter(|(id, _)| app.session.as_ref().is_none_or(|s| &s.id != id))
             .map(|(_, topic)| format!("{} researching: {topic}", glyph::RESEARCH))
     };
+    // Background agents outlive the reply that started them, so they show
+    // beside whatever else is running.
+    match app.background_running() {
+        0 => activity,
+        n => {
+            let agents = format!(
+                "{} {n} background agent{}",
+                glyph::RUNNING,
+                if n == 1 { "" } else { "s" }
+            );
+            Some(activity.map_or(agents.clone(), |activity| {
+                format!("{activity}{}{agents}", super::style::SEP)
+            }))
+        }
+    }
+}
+
+pub(super) fn render_input(f: &mut Frame, app: &mut AppView, area: Rect) {
+    let hints = !app.settings.hide_hints;
+    let busy = app.is_streaming() || app.is_compacting_current_session();
+    let activity = activity_label(app, hints);
     // The border takes the spinner's color while something runs.
     let border_color = if busy {
         to_color(app.spinner_color())

@@ -660,6 +660,7 @@ async fn memory_tool_guest_reads_writes_and_prefers_own_titles() {
     tools.memory = Some(MemoryCtx {
         db_path: path,
         space_id: "guest".into(),
+        sharing: true,
     });
     let (read, _) = tools
         .run("memory", r#"{"action":"read","chapter":"Career"}"#)
@@ -739,4 +740,215 @@ fn shared_memory_moves_facts_to_home_and_caps_that_space() {
         resolve_fact(&conn, "guest", &other.id).unwrap().space_id,
         "guest"
     );
+}
+
+#[test]
+fn merge_folds_same_titled_chapters_into_one_shared_chapter() {
+    let conn = conn();
+    sharing_spaces(&conn);
+    let keep = add(
+        &conn,
+        "home",
+        "About you",
+        "Lives in Ulaanbaatar",
+        None,
+        None,
+    )
+    .unwrap();
+    add(
+        &conn,
+        "guest",
+        "about you",
+        "lives in ulaanbaatar",
+        Some("who you are"),
+        Some(true),
+    )
+    .unwrap();
+    add(
+        &conn,
+        "guest",
+        "About you",
+        "Prefers short answers",
+        None,
+        None,
+    )
+    .unwrap();
+    let third = add(&conn, "third", "About You", "Studies Japanese", None, None).unwrap();
+    share_chapter(
+        &conn,
+        &third.chapter.id,
+        Share::Spaces(vec!["guest".into()]),
+    )
+    .unwrap();
+    add(&conn, "third", "Unrelated", "keeps its chapter", None, None).unwrap();
+
+    let merged = merge_same_titled(&conn, &keep.chapter).unwrap();
+
+    assert_eq!((merged.moved, merged.duplicates), (2, 1));
+    assert_eq!(merged.from, vec!["guest".to_string(), "third".to_string()]);
+    // The spaces that had a copy, and anyone those copies were shared with, still see it.
+    assert_eq!(
+        merged.chapter.shared_with,
+        Share::Spaces(vec!["guest".into(), "third".into()])
+    );
+    assert!(merged.chapter.pinned);
+    assert_eq!(merged.chapter.description, "who you are");
+    // Moved facts live in the chapter's home space, so each space's editor shows the right ones.
+    let home: Vec<String> = facts(&conn, "home")
+        .unwrap()
+        .into_iter()
+        .map(|f| f.text)
+        .collect();
+    assert_eq!(
+        home,
+        [
+            "Lives in Ulaanbaatar",
+            "Prefers short answers",
+            "Studies Japanese"
+        ]
+    );
+    assert!(facts(&conn, "guest").unwrap().is_empty());
+    assert!(chapters(&conn, "guest").unwrap().is_empty());
+    let left: Vec<String> = chapters(&conn, "third")
+        .unwrap()
+        .into_iter()
+        .map(|c| c.title)
+        .collect();
+    assert_eq!(left, ["Unrelated"]);
+    for space in ["guest", "third"] {
+        assert!(
+            find_visible_chapter(&conn, space, "About you")
+                .unwrap()
+                .is_some()
+        );
+    }
+}
+
+#[test]
+fn widen_keeps_sharing_canonical() {
+    let some = |ids: &[&str]| Share::Spaces(ids.iter().map(ToString::to_string).collect());
+    assert_eq!(
+        widen(&some(&["b"]), &some(&["a", "home", "b"]), "home"),
+        some(&["a", "b"])
+    );
+    assert_eq!(widen(&Share::Private, &Share::All, "home"), Share::All);
+    assert_eq!(
+        widen(&Share::Private, &some(&["home"]), "home"),
+        Share::Private
+    );
+}
+
+#[tokio::test]
+async fn memory_tool_shares_and_merges_by_name() {
+    use crate::db::Db;
+    use crate::tools::{MemoryCtx, ToolBox};
+    let root = std::env::temp_dir().join(format!("nexus-memory-share-tool-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("nexus.db");
+    let db = Db::open(&path).unwrap();
+    sharing_spaces(db.conn());
+    add(
+        db.conn(),
+        "home",
+        "About you",
+        "Lives in Ulaanbaatar",
+        None,
+        Some(true),
+    )
+    .unwrap();
+    add(
+        db.conn(),
+        "third",
+        "About you",
+        "Studies Japanese",
+        None,
+        None,
+    )
+    .unwrap();
+    let mut tools = ToolBox::new(
+        root.join("skills"),
+        None,
+        None,
+        "auto".into(),
+        vec![],
+        None,
+        None,
+        None,
+    );
+    tools.memory = Some(MemoryCtx {
+        db_path: path,
+        space_id: "guest".into(),
+        sharing: true,
+    });
+    let run = |args: serde_json::Value| {
+        let tools = &tools;
+        async move { tools.run("memory", &args.to_string()).await.0 }
+    };
+
+    let overview = run(serde_json::json!({"action":"spaces"})).await;
+    assert!(
+        overview.starts_with("job-search (this space)"),
+        "{overview}"
+    );
+    assert!(
+        overview.contains("  - About you (1 facts, pinned)"),
+        "{overview}"
+    );
+    assert!(
+        overview.contains("\"About you\" in learning, third"),
+        "{overview}"
+    );
+
+    // From another space: the chapter's home must be named, and the error says where it is.
+    let missing =
+        run(serde_json::json!({"action":"share","chapter":"About you","spaces":["all"]})).await;
+    assert!(missing.contains("it lives in learning, third"), "{missing}");
+    let wrong = run(serde_json::json!({"action":"share","chapter":"About you","spaces":["nope"],"space":"learning"})).await;
+    assert!(
+        wrong.contains("no space named \"nope\"; spaces: default, job-search, learning, third"),
+        "{wrong}"
+    );
+
+    let no_list =
+        run(serde_json::json!({"action":"share","chapter":"About you","space":"learning"})).await;
+    assert!(
+        no_list.contains("missing required field: spaces"),
+        "{no_list}"
+    );
+
+    // Names match ignoring case; the list given is the exact new set.
+    let shared = run(serde_json::json!({"action":"share","chapter":"about you","spaces":["Job-Search"],"space":"LEARNING"})).await;
+    assert_eq!(
+        shared,
+        "\"About you\" (home: learning) is now shared with job-search"
+    );
+    let both = run(serde_json::json!({"action":"share","chapter":"About you","spaces":["job-search","third","learning"],"space":"learning"})).await;
+    assert_eq!(
+        both,
+        "\"About you\" (home: learning) is now shared with job-search, third"
+    );
+    let back = run(serde_json::json!({"action":"share","chapter":"About you","spaces":["job-search"],"space":"learning"})).await;
+    assert_eq!(
+        back,
+        "\"About you\" (home: learning) is now shared with job-search"
+    );
+
+    let merged =
+        run(serde_json::json!({"action":"merge","chapter":"About you","space":"learning"})).await;
+    assert_eq!(
+        merged,
+        "merged \"About you\" from third into learning: moved 1 fact, dropped 0 duplicates. \"About you\" (home: learning) is now shared with job-search, third"
+    );
+    let everyone = run(serde_json::json!({"action":"share","chapter":"About you","spaces":["all"],"space":"learning"})).await;
+    assert_eq!(
+        everyone,
+        "\"About you\" (home: learning) is now shared with all spaces, including new ones"
+    );
+    let private = run(serde_json::json!({"action":"share","chapter":"About you","spaces":["none"],"space":"learning"})).await;
+    assert_eq!(
+        private,
+        "\"About you\" (home: learning) is now private to learning"
+    );
+    drop(db);
+    std::fs::remove_dir_all(root).unwrap();
 }

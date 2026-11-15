@@ -46,18 +46,22 @@ pub const MERMAID_PREVIEW_EXAMPLES: &[&str] = &[
 ];
 
 impl App {
-    #[allow(clippy::too_many_lines)]
+    /// Send `text` in the open conversation. While a reply is still being
+    /// written there the message waits in the queue (`app/queue.rs`) instead.
     pub fn send_message(&mut self, text: String) -> Result<()> {
-        if let Some(session) = self.session.as_ref()
-            && let Some(task) = self.chat_task_for_session(&session.id)
-        {
-            self.push_status(format!(
-                "wait — response still streaming in: {}",
-                task.session_title
-            ));
-            self.push_composer_set(&text);
+        let Some(id) = self.session.as_ref().map(|session| session.id.clone()) else {
+            return self.send_now(text);
+        };
+        if self.session_busy(&id) {
+            self.enqueue_message(&id, text);
             return Ok(());
         }
+        let text = self.ahead_of_queue(&id, text);
+        self.send_now(text)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    pub(super) fn send_now(&mut self, text: String) -> Result<()> {
         if self.chat_task_count() >= super::MAX_CHAT_TASKS {
             self.push_status(format!(
                 "chat task limit reached ({})",
@@ -764,6 +768,8 @@ impl App {
     }
 
     pub fn discard_chat_task(&mut self, session_id: &str) {
+        self.queued.remove(session_id);
+        self.background.stop_session(session_id);
         if let Some(task) = self
             .chat_tasks
             .iter()
@@ -828,6 +834,8 @@ impl App {
                 detail: detail.chars().take(240).collect(),
             }
         });
+        let session_id = task.session_id.clone();
+        let hold = stopped || error.is_some();
         let result = self.persist_chat_task_state(task, error, stopped);
         if let Some(mut outcome) = outcome {
             if result.is_err() {
@@ -838,7 +846,8 @@ impl App {
             link.turns.insert(id, Some(outcome));
             link.notify.notify_one();
         }
-        result
+        result?;
+        self.after_turn(&session_id, hold)
     }
 
     #[allow(clippy::too_many_lines)]

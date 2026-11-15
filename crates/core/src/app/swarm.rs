@@ -178,6 +178,7 @@ impl App {
                     .db
                     .upsert_research_stage_message(&id, "swarm", "stopped by user");
                 self.end_subagents(&id, self.swarm.incognito);
+                let _ = self.after_turn(&id, true);
             }
             self.push_status("swarm stopped".to_string());
         } else {
@@ -192,6 +193,9 @@ impl App {
             self.swarm.abort = None;
             if let Some(id) = self.swarm.session.take() {
                 self.end_subagents(&id, self.swarm.incognito);
+                if let Err(error) = self.after_turn(&id, false) {
+                    self.push_status(format!("queued message failed: {error:#}"));
+                }
             }
             return;
         };

@@ -108,6 +108,32 @@ fn chat_prompt_and_tool_defs_fit_the_token_budget() {
     );
 }
 
+/// With two or more spaces the memory tool also offers `spaces`, `share` and
+/// `merge`; a single-space user never pays for them.
+const CHAT_PROMPT_TOKEN_CEILING_WITH_SPACES: usize = CHAT_PROMPT_TOKEN_CEILING + 125;
+
+#[test]
+fn memory_sharing_actions_cost_tokens_only_with_several_spaces() {
+    let mut a = fixture_app();
+    let single = serde_json::to_string(&a.toolbox.defs()).unwrap();
+    assert!(
+        !single.contains("\"merge\""),
+        "one space: no sharing actions"
+    );
+    a.db.create_space("second").unwrap();
+    a.rebuild_toolbox();
+    let defs = serde_json::to_string(&a.toolbox.defs()).unwrap();
+    assert!(
+        defs.contains("\"merge\""),
+        "several spaces: sharing actions offered"
+    );
+    let tokens = (a.system_prompt().chars().count() + defs.chars().count()) / 4;
+    assert!(
+        tokens <= CHAT_PROMPT_TOKEN_CEILING_WITH_SPACES,
+        "with several spaces the chat prompt and tool definitions use {tokens} estimated tokens, exceeding the ceiling of {CHAT_PROMPT_TOKEN_CEILING_WITH_SPACES}"
+    );
+}
+
 const NEXUS_UI_SCHEMA_WORDS: &[&str] = &[
     "version", "title", "state", "view", "body", "actions", "number", "null", "true",
 ];

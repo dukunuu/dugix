@@ -702,3 +702,220 @@ async fn read_only_tools_refuse_writes_and_pass_reads_through() {
         .await;
     assert!(result.contains("kept"), "{result}");
 }
+
+/// Answers only when the test lets a round through.
+struct Gated(tokio::sync::Semaphore);
+
+impl Provider for Gated {
+    fn round<'a>(
+        &'a self,
+        request: Request<'a>,
+    ) -> Pin<Box<dyn Future<Output = Result<Round>> + Send + 'a>> {
+        Box::pin(async move {
+            self.0.acquire().await.unwrap().forget();
+            Ok(reply(
+                &format!("report on {}", request.messages[1].content),
+                Vec::new(),
+            ))
+        })
+    }
+}
+
+const SESSION: &str = "12345678-aaaa-bbbb-cccc-dddddddddddd";
+
+fn background_toolbox(
+    temp: &Temp,
+    gate: &Arc<Gated>,
+) -> (
+    Arc<dyn ToolExecutor>,
+    Arc<Background>,
+    mpsc::UnboundedReceiver<BackgroundMsg>,
+    mpsc::UnboundedReceiver<StreamEvent>,
+) {
+    let (background, messages) = Background::new();
+    let mut toolbox = temp.toolbox();
+    toolbox.background = Some(Arc::clone(&background));
+    let (ctx, turn_events) = context(gate.clone(), ChatParams::default());
+    let toolbox = Arc::new(toolbox).with_subagents(ctx).unwrap();
+    (toolbox, background, messages, turn_events)
+}
+
+async fn started(toolbox: &dyn ToolExecutor, prompt: &str) -> u64 {
+    let (result, status) = toolbox
+        .run(
+            "task",
+            &json!({"prompt": prompt, "background": true}).to_string(),
+        )
+        .await;
+    assert_eq!(status, "Sub-agent started", "{result}");
+    result
+        .strip_prefix("background agent ")
+        .and_then(|rest| rest.split(' ').next())
+        .and_then(|number| number.parse().ok())
+        .unwrap_or_else(|| panic!("no agent number in {result:?}"))
+}
+
+#[tokio::test]
+async fn a_background_task_outlives_its_turn_and_its_report_is_taken_once() {
+    let temp = Temp::new();
+    let gate = Arc::new(Gated(tokio::sync::Semaphore::new(0)));
+    let (toolbox, background, mut messages, turn_events) = background_toolbox(&temp, &gate);
+    assert!(
+        toolbox.defs().iter().any(|def| def.name == "agents"),
+        "the agents tool comes with background tasks"
+    );
+
+    let number = started(&*toolbox, "dig into the parser\nand report").await;
+    assert_eq!(background.running(SESSION), 1);
+    let (list, _) = toolbox.run("agents", r#"{"action":"list"}"#).await;
+    assert_eq!(list, format!("{number} · running · dig into the parser"));
+    assert!(background.take_reports(SESSION).is_empty(), "nothing yet");
+
+    // The turn that started it ends; the run does not.
+    drop(turn_events);
+    drop(toolbox);
+    gate.0.add_permits(1);
+    let mut saw_started = false;
+    loop {
+        match tokio::time::timeout(Duration::from_secs(5), messages.recv())
+            .await
+            .expect("the run reports to the app")
+            .expect("open channel")
+        {
+            BackgroundMsg::Update { session_id, update } => {
+                assert_eq!(session_id, SESSION);
+                assert_eq!(update.number, number);
+                saw_started |= matches!(update.event, SubagentEvent::Started { .. });
+            }
+            BackgroundMsg::Finished { session_id } => {
+                assert_eq!(session_id, SESSION);
+                break;
+            }
+            BackgroundMsg::Stopped { .. } => panic!("it was not stopped"),
+        }
+    }
+    assert!(saw_started, "progress reached /agents");
+    assert_eq!(background.running(SESSION), 0);
+    let reports = background.take_reports(SESSION);
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].number, number);
+    assert_eq!(reports[0].title, "dig into the parser");
+    assert!(
+        reports[0]
+            .text
+            .ends_with("report on dig into the parser\nand report"),
+        "{}",
+        reports[0].text
+    );
+    assert!(background.take_reports(SESSION).is_empty(), "taken once");
+    assert!(background.take_reports("another-session").is_empty());
+}
+
+#[tokio::test]
+async fn agents_wait_collects_reports_so_they_are_not_delivered_again() {
+    let temp = Temp::new();
+    let gate = Arc::new(Gated(tokio::sync::Semaphore::new(0)));
+    let (toolbox, background, _messages, _turn) = background_toolbox(&temp, &gate);
+    let first = started(&*toolbox, "one").await;
+    let second = started(&*toolbox, "two").await;
+
+    let (timed_out, _) = toolbox
+        .run("agents", r#"{"action":"wait","wait_s":1}"#)
+        .await;
+    assert!(
+        timed_out.contains(&format!("agent {first} (one) is still running after 1s")),
+        "{timed_out}"
+    );
+
+    let waiting = {
+        let toolbox = Arc::clone(&toolbox);
+        tokio::spawn(async move { toolbox.run("agents", r#"{"action":"wait"}"#).await.0 })
+    };
+    gate.0.add_permits(2);
+    let reports = tokio::time::timeout(Duration::from_secs(5), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        reports.contains(&format!("agent {first} (one) finished:")),
+        "{reports}"
+    );
+    assert!(reports.contains("report on one"), "{reports}");
+    assert!(
+        reports.contains(&format!("agent {second} (two) finished:")),
+        "{reports}"
+    );
+    assert!(
+        background.take_reports(SESSION).is_empty(),
+        "a report the model read is not sent to the conversation too"
+    );
+    let (none, _) = toolbox.run("agents", r#"{"action":"wait"}"#).await;
+    assert_eq!(none, "no background agents to wait for");
+}
+
+#[tokio::test]
+async fn a_background_agent_can_be_stopped_and_the_limit_is_per_conversation() {
+    let temp = Temp::new();
+    let gate = Arc::new(Gated(tokio::sync::Semaphore::new(0)));
+    let (toolbox, background, mut messages, _turn) = background_toolbox(&temp, &gate);
+    let mut numbers = Vec::new();
+    for index in 0..background::MAX_RUNNING {
+        numbers.push(started(&*toolbox, &format!("job {index}")).await);
+    }
+    let (refused, status) = toolbox
+        .run("task", r#"{"prompt":"one too many","background":true}"#)
+        .await;
+    assert_eq!(status, "blocked");
+    assert!(
+        refused.contains("background agents already running"),
+        "{refused}"
+    );
+
+    let (stopped, _) = toolbox
+        .run(
+            "agents",
+            &json!({"action":"stop","id":numbers[0]}).to_string(),
+        )
+        .await;
+    assert_eq!(
+        stopped,
+        format!("stopped background agent {} (job 0)", numbers[0])
+    );
+    assert_eq!(background.running(SESSION), background::MAX_RUNNING - 1);
+    let (again, status) = toolbox
+        .run(
+            "agents",
+            &json!({"action":"stop","id":numbers[0]}).to_string(),
+        )
+        .await;
+    assert_eq!(status, "blocked", "{again}");
+    loop {
+        match messages.recv().await.unwrap() {
+            BackgroundMsg::Stopped { number, .. } => {
+                assert_eq!(number, numbers[0]);
+                break;
+            }
+            BackgroundMsg::Update { .. } => {}
+            BackgroundMsg::Finished { .. } => panic!("nothing finished"),
+        }
+    }
+    background.stop_session(SESSION);
+    assert_eq!(background.running(SESSION), 0);
+}
+
+#[tokio::test]
+async fn background_tasks_need_the_registry() {
+    let temp = Temp::new();
+    let gate = Arc::new(Gated(tokio::sync::Semaphore::new(0)));
+    let (ctx, _) = context(gate, ChatParams::default());
+    let toolbox = Arc::new(temp.toolbox()).with_subagents(ctx).unwrap();
+    assert!(
+        !toolbox.defs().iter().any(|def| def.name == "agents"),
+        "no agents tool where a run cannot outlive the turn"
+    );
+    let (result, status) = toolbox
+        .run("task", r#"{"prompt":"x","background":true}"#)
+        .await;
+    assert_eq!(status, "blocked");
+    assert!(result.contains("not available here"), "{result}");
+}
