@@ -39,6 +39,7 @@ mod improve_tests;
 #[cfg(test)]
 mod masking_tests;
 mod memory;
+mod mode_note;
 mod models;
 mod panels;
 #[cfg(test)]
@@ -86,6 +87,7 @@ pub use commands::{
     AppCommand, COMMANDS, Command, Match, MemoryAction, command_score, fuzzy_score,
 };
 pub use files::ConvertUpdate;
+pub use mode_note::ModeNote;
 pub use queue::{MAX_QUEUED_MESSAGES, QueueAction, one_line};
 pub use research::{PlanQuestion, ResearchUpdate};
 pub use sessions::session_score;
@@ -1431,8 +1433,10 @@ impl App {
         self.reset_user_command_dir();
         self.work_mode = mode;
         self.workspace = workspace;
+        // No cache-epoch bump: the frozen prompt does not name the mode. The
+        // next message carries a mode note, and only a conversation's first
+        // agent turn rebuilds the prefix (it gains the workspace tools).
         self.refresh_toolbox();
-        self.bump_cache_epoch();
         self.push_status(if mode.is_agent() {
             format!(
                 "{} mode · workspace {}",
@@ -1752,7 +1756,15 @@ impl App {
             toolbox.confine_shell_writes =
                 toolbox.workspace.as_ref().map(|w| w.root().to_path_buf());
         }
-        toolbox.subagent_environment = self.environment_section();
+        // Sub-agents get a fresh prompt per task, so theirs names the workspace.
+        toolbox.subagent_environment = format!(
+            "{}{}",
+            self.environment_section(),
+            self.mode_line()
+                .map(|line| format!("\n{line}"))
+                .unwrap_or_default()
+        );
+        toolbox.offer_workspace_tools = self.offers_workspace_tools();
         toolbox.procs = Arc::clone(&self.procs);
         toolbox.background =
             (self.detached_agents && !self.incognito).then(|| Arc::clone(&self.background));

@@ -108,6 +108,7 @@ impl App {
                 created_at: None,
             });
         }
+        self.note_mode_change(&session_id)?;
         if let Some(hint) = self.memory_hint(&text) {
             self.push_note(&session_id, "recall", hint.to_row())?;
         }
@@ -259,8 +260,10 @@ impl App {
 
     #[allow(clippy::too_many_lines)]
     pub fn start_stream(&mut self) -> Result<()> {
-        if let Some(session) = &self.session {
-            self.ui_repair.messages.remove(&session.id);
+        if let Some(id) = self.session.as_ref().map(|session| session.id.clone()) {
+            self.ui_repair.messages.remove(&id);
+            // A retry after a mode switch has no new message to carry the note.
+            self.note_mode_change(&id)?;
         }
         let Some(model) = self.current_model.clone() else {
             return Ok(());

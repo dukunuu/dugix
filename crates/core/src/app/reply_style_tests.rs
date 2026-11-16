@@ -102,7 +102,7 @@ fn context_estimate_counts_layout_guidance_only_when_it_is_sent() {
 }
 
 #[test]
-fn interactive_style_asks_for_a_card_in_chat_but_not_in_agent_mode() {
+fn interactive_style_asks_for_a_card_and_the_agent_mode_note_asks_for_plain_text() {
     let mut a = app_with_key();
     let interactive = prompt(&mut a, "interactive");
     assert!(interactive.contains(crate::interactive::LAYOUTS));
@@ -110,8 +110,14 @@ fn interactive_style_asks_for_a_card_in_chat_but_not_in_agent_mode() {
     for style in ["auto", "rich", "plain"] {
         assert!(!prompt(&mut a, style).contains("## Interactive-first replies"));
     }
-    a.work_mode = WorkMode::Agent;
+    // The system prompt is the same in every mode, so agent mode turns the
+    // card-first rule off in its own note.
     a.settings.reply_style = "interactive".into();
-    let agent = a.layout_guidance().unwrap();
-    assert_eq!(agent, crate::interactive::LAYOUTS);
+    a.interactive_ui = true;
+    let chat = a.layout_guidance();
+    a.run_command("agent .").unwrap();
+    assert_eq!(a.layout_guidance(), chat);
+    assert!(a.mode_note_text().contains("answer in plain text"));
+    a.settings.reply_style = "auto".into();
+    assert!(!a.mode_note_text().contains("answer in plain text"));
 }

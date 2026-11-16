@@ -237,6 +237,26 @@ pub(super) fn push_skill(
     out.push(Line::from(""));
 }
 
+/// A mode change, where the model was told about it.
+pub(super) fn push_mode(
+    out: &mut Vec<Line<'static>>,
+    content: &str,
+    width: usize,
+    theme: &crate::theme::Theme,
+) {
+    let Some(note) = nexus_core::app::ModeNote::from_row(content) else {
+        return;
+    };
+    let dim = Style::default().fg(theme.fg_dim);
+    let label = match &note.workspace {
+        Some(workspace) => format!("{} mode{}workspace {workspace}", note.mode, style::SEP),
+        None => format!("{} mode", note.mode),
+    };
+    let label = super::popups::chrome::truncate(&label, width.saturating_sub(4));
+    out.push(style::event_head(glyph::TOOL, dim, label, dim));
+    out.push(Line::from(""));
+}
+
 /// A command the user ran with `!`: the command, how it ended, and the head of
 /// its output.
 pub(super) fn push_user_command(

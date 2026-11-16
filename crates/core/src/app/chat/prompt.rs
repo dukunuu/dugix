@@ -1,7 +1,6 @@
 use std::fmt::Write as _;
 
-use crate::app::{App, WorkMode, verbosity_clause};
-use crate::prompts;
+use crate::app::{App, verbosity_clause};
 use crate::provider::ChatMessage;
 
 impl App {
@@ -19,10 +18,10 @@ impl App {
                 parts.push(layouts);
             }
         }
+        // The mode is not here: it changes mid-conversation, and a change to
+        // this text would discard the provider's cache of everything after it.
+        // A mode note in the transcript carries it instead (`app/mode_note.rs`).
         parts.push(self.environment_section());
-        if self.work_mode.is_agent() {
-            parts.push(prompts::render(prompts::AGENT, &[]));
-        }
         if !self.incognito {
             let instructions =
                 std::fs::read_to_string(self.space.instructions_path(&self.active_space.name))
@@ -76,20 +75,6 @@ impl App {
             std::env::consts::OS,
             std::env::consts::ARCH
         );
-        if self.work_mode.is_agent()
-            && let Some(workspace) = &self.workspace
-        {
-            let _ = write!(
-                section,
-                "\n- Mode: {} · workspace {}",
-                if self.work_mode == WorkMode::AgentAuto {
-                    "agent·auto"
-                } else {
-                    "agent"
-                },
-                workspace.root().display()
-            );
-        }
         section
     }
 
@@ -100,7 +85,7 @@ impl App {
         let mut guidance = crate::interactive::LAYOUTS.to_string();
         match self.settings.reply_style.as_str() {
             "rich" => guidance.push_str("\nPrefer a layout for most substantive answers.\n"),
-            "interactive" if !self.work_mode.is_agent() => {
+            "interactive" => {
                 guidance.push('\n');
                 guidance.push_str(crate::interactive::INTERACTIVE_FIRST);
             }

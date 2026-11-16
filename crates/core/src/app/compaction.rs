@@ -413,9 +413,7 @@ impl App {
             + self.resolved_system_prompt_overlay().chars().count()
             + self.environment_section().chars().count()
             + self.now_section().chars().count();
-        if self.work_mode.is_agent() {
-            instructions_chars += prompts::render(prompts::AGENT, &[]).chars().count();
-        }
+        // The agent prompt is a mode note in the conversation, counted there.
         if self.interactive_ui {
             instructions_chars += Self::rendering_section().chars().count()
                 + crate::interactive::instructions().chars().count()
@@ -539,6 +537,9 @@ fn compaction_tail(messages: &[Message], through: usize) -> String {
     messages[through.min(messages.len())..]
         .iter()
         .filter(|m| !App::excluded_from_model_history(m))
+        // A mode note is instructions, not conversation; the next message
+        // after a compaction carries a fresh one.
+        .filter(|m| m.role != "mode")
         .map(|m| format!("{}: {}", m.role, m.content))
         .collect::<Vec<_>>()
         .join("\n\n")

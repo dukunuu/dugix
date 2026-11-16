@@ -14,7 +14,7 @@ use ratatui::widgets::Paragraph;
 
 use super::cards::{
     push_assistant_stored, push_assistant_streaming, push_compaction, push_compaction_pending,
-    push_error, push_recall, push_research_plan, push_research_stage, push_session_link,
+    push_error, push_mode, push_recall, push_research_plan, push_research_stage, push_session_link,
     push_skill, push_survey_section, push_tool_call_with_rows, push_user_card, push_user_command,
 };
 use super::welcome::render_welcome;
@@ -520,6 +520,8 @@ fn sync_cache(app: &mut AppView, width: usize) {
             );
         } else if m.role == "skill" {
             push_skill(&mut c.lines, &m.content, width, &theme);
+        } else if m.role == "mode" {
+            push_mode(&mut c.lines, &m.content, width, &theme);
         } else if m.role == "recall" {
             push_recall(&mut c.lines, &m.content, width, &theme);
         } else if m.role == "user_command" {

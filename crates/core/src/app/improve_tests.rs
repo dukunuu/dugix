@@ -82,10 +82,12 @@ fn assert_improvement(app: &mut App, head: &str) -> PathBuf {
         app.db.session_workspace_mode(&session.id).as_deref(),
         Some("agent")
     );
-    assert_eq!(app.messages.len(), 1);
-    assert_eq!(app.messages[0].role, "user");
+    // The mode note comes first: it is how the model learns it is in agent mode.
+    assert_eq!(app.messages.len(), 2);
+    assert_eq!(app.messages[0].role, "mode");
+    assert_eq!(app.messages[1].role, "user");
     assert_eq!(
-        app.messages[0].content,
+        app.messages[1].content,
         concat!(
             "Improve nexus: Fix stale edits.\nRelevant recent tool failures:\n",
             "fs.edit: stale_edit ×6\nshell.run: exit ×5\n",
@@ -95,8 +97,8 @@ fn assert_improvement(app: &mut App, head: &str) -> PathBuf {
         )
     );
     let saved = app.db.load_messages(&session.id).unwrap();
-    assert_eq!(saved.len(), 1);
-    assert_eq!(saved[0].content, app.messages[0].content);
+    assert_eq!(saved.len(), 2);
+    assert_eq!(saved[1].content, app.messages[1].content);
     let status = app.last_status();
     assert!(status.contains(&branch));
     assert!(status.contains("review and merge yourself"));
@@ -203,7 +205,7 @@ fn repeated_improvements_get_distinct_review_branches_and_worktrees() {
         roots.push(root.clone());
         branches.push(git(&root, &["branch", "--show-current"]));
         assert!(
-            app.messages[0]
+            app.messages[1]
                 .content
                 .contains("Relevant recent tool failures:\n\nAcceptance:")
         );

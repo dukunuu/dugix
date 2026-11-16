@@ -229,6 +229,10 @@ pub struct ToolBox {
     prepared_decisions: Arc<Mutex<HashMap<u64, PreparedDecision>>>,
     next_decision: Arc<AtomicU64>,
     subagents: Option<Arc<crate::subagent::Context>>,
+    /// Offer the workspace tools (and `request_workspace`) whatever the mode,
+    /// so a conversation that has used agent mode keeps one tool list and its
+    /// provider cache across mode changes. Without a workspace they refuse.
+    pub offer_workspace_tools: bool,
     /// App-owned registry of background `task` runs; `None` where a run could
     /// not outlive its turn usefully (incognito, one-shot frontends, sub-agents).
     pub background: Option<Arc<crate::subagent::Background>>,
@@ -1033,6 +1037,7 @@ impl ToolBox {
             prepared_decisions: Arc::default(),
             next_decision: Arc::new(AtomicU64::new(0)),
             subagents: None,
+            offer_workspace_tools: false,
             background: None,
             subagent_workspace: None,
             subagent_environment: String::new(),
@@ -1118,6 +1123,7 @@ impl ToolBox {
             prepared_decisions: self.prepared_decisions.clone(),
             next_decision: self.next_decision.clone(),
             subagents: self.subagents.clone(),
+            offer_workspace_tools: self.offer_workspace_tools,
             background: self.background.clone(),
             subagent_workspace: self.subagent_workspace,
             subagent_environment: self.subagent_environment.clone(),
@@ -1187,6 +1193,7 @@ impl ToolBox {
     pub(crate) fn for_subagent(&self, workspace: Option<Arc<Workspace>>) -> Self {
         let mut toolbox = self.copy(self.decision_parent.clone().expect("bound toolbox"));
         toolbox.subagents = None;
+        toolbox.offer_workspace_tools = false;
         toolbox.background = None;
         toolbox.subagent_workspace = Some(workspace.is_some());
         if let Some(workspace) = workspace {
@@ -1393,7 +1400,8 @@ impl ToolBox {
         }
         defs.push(def(&spec::SEARCH, &search_modes));
         defs.push(def(&spec::FETCH_URL, &["fetch_url"]));
-        if self.workspace.is_some() {
+        let workspace_tools = self.workspace.is_some() || self.offer_workspace_tools;
+        if workspace_tools {
             defs.push(def(
                 &spec::FS,
                 &[
@@ -1409,14 +1417,14 @@ impl ToolBox {
         }
         if self.interactive_ui {
             // `!` lines run only in agent mode, which is when a workspace is open.
-            if self.workspace.is_some() {
+            if workspace_tools {
                 defs.push(def(&spec::PROPOSE_COMMAND, &["propose_command"]));
             }
             if self.files.is_some() {
                 defs.push(def(&spec::PANEL_APP, &["list", "read", "patch"]));
             }
         }
-        if self.workspace.is_none() && self.approver.is_some() {
+        if (self.workspace.is_none() || self.offer_workspace_tools) && self.approver.is_some() {
             defs.push(def(&spec::REQUEST_WORKSPACE, &["request_workspace"]));
         }
         let has_session_sources = self.research_session_id.is_some();

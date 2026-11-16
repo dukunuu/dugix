@@ -209,6 +209,14 @@ impl App {
                 );
                 continue;
             }
+            if m.role == "mode" {
+                // Sent where the mode changed, so the turns before it stay cached.
+                if let Some(text) = Self::mode_note_message(m) {
+                    history.push(ChatMessage::text("user", text));
+                }
+                index += 1;
+                continue;
+            }
             let mut cm = if m.role == "user_command" {
                 ChatMessage::text("user", user_command_replay(&m.content))
             } else if m.role == "skill" {

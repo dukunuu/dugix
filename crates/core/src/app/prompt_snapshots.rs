@@ -61,7 +61,10 @@ fn agent_prompt_snapshot() {
     a.skills.clear();
     a.prompt_datetime = "2026-01-01 00:00 UTC, Thursday".into();
     let workspace = a.workspace.as_ref().unwrap().root().display().to_string();
-    let actual = normalized_prompt(&a).replace(&workspace, "<workspace>");
+    // The system prompt is the same in every mode; agent mode reaches the
+    // model as this note, sent where the mode changed.
+    assert_eq!(normalized_prompt(&a), normalized_prompt(&fixture_app()));
+    let actual = a.mode_note_text().replace(&workspace, "<workspace>") + "\n";
     assert_snapshot("agent.txt", &actual);
     std::fs::remove_dir_all(root).unwrap();
 }

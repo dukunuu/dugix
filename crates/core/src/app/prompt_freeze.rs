@@ -77,14 +77,32 @@ impl Prefix {
 }
 
 impl App {
-    /// What must change the prefix immediately: the model, the mode and
-    /// workspace, and the instructions the user chose.
+    /// Whether this conversation's requests carry the workspace tools: from
+    /// its first agent turn on, in every mode. Tool definitions come first in
+    /// a request, so adding them costs the cache once; keeping them afterwards
+    /// lets later mode changes cost nothing.
+    pub(super) fn offers_workspace_tools(&self) -> bool {
+        if self.work_mode.is_agent() {
+            return true;
+        }
+        let Some(session) = &self.session else {
+            return false;
+        };
+        let has = |prefix: &Prefix| prefix.tools.iter().any(|tool| tool.name == "fs");
+        match self.prefixes.get(&session.id) {
+            Some(prefix) => has(prefix),
+            None => !self.incognito && self.load_prefix(&session.id).is_some_and(|p| has(&p)),
+        }
+    }
+
+    /// What must change the prefix immediately: the model, the instructions
+    /// the user chose, and the first use of agent mode. The mode itself and
+    /// the workspace are not here — a mode note in the transcript carries them.
     fn prefix_identity(&self) -> String {
         hash(
             &serde_json::json!({
                 "model": self.current_model,
-                "mode": format!("{:?}", self.work_mode),
-                "workspace": self.workspace.as_ref().map(|w| w.root().display().to_string()),
+                "agent_tools": self.offers_workspace_tools(),
                 "style": self.settings.reply_style,
                 "verbosity": self.verbosity,
                 "interactive": self.interactive_ui,

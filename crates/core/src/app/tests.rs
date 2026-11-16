@@ -106,7 +106,11 @@ fn auto_refuses_chat_and_restores_its_device_local_mode() {
         Some("auto")
     );
     assert!(app.toolbox.defs().iter().any(|tool| tool.name == "fs"));
-    assert!(app.system_prompt().contains("## Agent mode"));
+    assert!(app.mode_note_text().contains("## Agent mode"));
+    assert!(
+        app.mode_note_text()
+            .contains("- Mode: agent·auto · workspace ")
+    );
     app.new_session();
     app.switch_to_session_by_id(&session.id).unwrap();
     assert_eq!(app.work_mode, WorkMode::AgentAuto);
@@ -1050,7 +1054,7 @@ fn invalid_agent_root_preserves_the_mode_binding_and_cache_epoch() {
     assert_eq!(app.workspace.as_ref().unwrap().root(), root);
     assert_eq!(app.db.session_workspace(&session.id), Some(root));
     assert_eq!(app.cache_epoch, bound_epoch);
-    assert!(bound_epoch > epoch);
+    assert_eq!(bound_epoch, epoch, "a mode change keeps the cached prompt");
     assert!(app.last_status().contains("workspace error"));
     app.run_command("chat").unwrap();
     app.run_command(&format!("agent {}", missing.display()))
@@ -1095,7 +1099,10 @@ async fn pre_session_agent_mode_binds_on_send_and_new_sessions_start_in_chat() {
     let epoch = app.cache_epoch;
     app.run_command("agent .").unwrap();
     assert!(app.session.is_none());
-    assert!(app.cache_epoch > epoch);
+    assert_eq!(
+        app.cache_epoch, epoch,
+        "a mode change keeps the cached prompt"
+    );
     let root = app.workspace.as_ref().unwrap().root().to_path_buf();
     app.send_message("hello".into()).unwrap();
     let id = app.session.as_ref().unwrap().id.clone();
@@ -1114,7 +1121,10 @@ async fn pre_session_agent_mode_binds_on_send_and_new_sessions_start_in_chat() {
     assert_eq!(app.session.as_ref().unwrap().id, id);
     assert!(!app.messages.is_empty());
     assert_eq!(app.db.session_workspace(&id), None);
-    assert!(app.cache_epoch > epoch);
+    assert_eq!(
+        app.cache_epoch, epoch,
+        "leaving agent mode keeps the cached prompt"
+    );
     app.switch_to_session_by_id(&id).unwrap();
     assert_eq!(app.work_mode, WorkMode::Chat);
 }
@@ -1230,29 +1240,117 @@ async fn agent_toolbox_reads_but_blocks_mutations_and_chat_hides_workspace_tools
 }
 
 #[test]
-fn agent_prompt_is_after_environment_and_included_in_context_counts() {
+fn the_system_prompt_never_names_the_mode_and_the_mode_note_carries_the_agent_prompt() {
     let mut app = app_with_key();
     app.system_prompt_overlay = "user additions".into();
+    let chat = app.system_prompt();
     let before = app.context_breakdown().system_tokens;
-    let environment_len = app.environment_section().chars().count();
     app.run_command("agent .").unwrap();
-    let prompt = app.system_prompt();
-    let environment = prompt.find("## Environment").unwrap();
-    let agent = prompt.find("\n\n## Agent mode\n").unwrap();
-    let overlay = prompt.find("\n\nuser additions").unwrap();
-    assert!(environment < agent && agent < overlay);
-    assert!(prompt.contains("- Mode: agent · workspace "));
-    let extra_chars = app.environment_section().chars().count() - environment_len
-        + crate::prompts::render(crate::prompts::AGENT, &[])
-            .chars()
-            .count();
-    let delta = app.context_breakdown().system_tokens - before;
-    let expected = u64::try_from(extra_chars / 4).unwrap();
-    assert!((expected..=expected + 1).contains(&delta));
-    app.run_command("chat").unwrap();
-    assert!(!app.system_prompt().contains("## Agent mode"));
-    assert!(!app.system_prompt().contains("- Mode:"));
+    assert_eq!(
+        app.system_prompt(),
+        chat,
+        "the cached prompt is the same in every mode"
+    );
     assert_eq!(app.context_breakdown().system_tokens, before);
+    let note = app.mode_note_text();
+    assert!(note.starts_with("[The user switched this conversation to agent mode."));
+    assert!(note.contains(&crate::prompts::render(crate::prompts::AGENT, &[])));
+    assert!(note.contains("- Mode: agent · workspace "));
+    app.run_command("chat").unwrap();
+    assert_eq!(app.system_prompt(), chat);
+    let note = app.mode_note_text();
+    assert!(note.contains("switched this conversation to chat mode"));
+    assert!(!note.contains("## Agent mode"));
+}
+
+#[tokio::test]
+async fn a_mode_change_is_a_note_at_the_switch_and_keeps_every_earlier_request_byte() {
+    let mut app = app_with_key();
+    app.current_model = Some("a/one".into());
+    let finish = |app: &mut App| {
+        let task = app.active_chat_task().unwrap().id;
+        app.on_chat_event(task, StreamEvent::Token("ok".into()))
+            .unwrap();
+        app.on_chat_event(task, StreamEvent::Done).unwrap();
+    };
+    let wire = |app: &mut App| -> Vec<(String, String)> {
+        app.build_history()
+            .into_iter()
+            .map(|m| (m.role, m.content))
+            .collect()
+    };
+    let roles =
+        |app: &App| -> Vec<String> { app.messages.iter().map(|m| m.role.clone()).collect() };
+
+    app.send_message("plain question".into()).unwrap();
+    finish(&mut app);
+    assert_eq!(
+        roles(&app),
+        ["user", "assistant"],
+        "chat is the default: no note"
+    );
+    let chat_history = wire(&mut app);
+    let chat_tools = app.active_prefix().unwrap().tools.len();
+    let key = app.prompt_cache_key_for(&app.session.as_ref().unwrap().id.clone());
+
+    // Chat to agent: the system prompt and every earlier message are unchanged.
+    app.run_command("agent .").unwrap();
+    app.run_command("chat").unwrap();
+    app.run_command("agent .").unwrap();
+    app.send_message("now edit the file".into()).unwrap();
+    assert_eq!(
+        roles(&app),
+        ["user", "assistant", "mode", "user"],
+        "one note, however often the mode was toggled in between"
+    );
+    let agent_history = wire(&mut app);
+    assert_eq!(agent_history[..chat_history.len()], chat_history[..]);
+    let note = &agent_history[chat_history.len()];
+    assert_eq!(note.0, "user");
+    assert!(note.1.contains("## Agent mode"), "{}", note.1);
+    // The first agent turn adds the workspace tools: the one rebuild there is.
+    let agent_tools = app.active_prefix().unwrap().tools.clone();
+    assert!(agent_tools.len() > chat_tools);
+    assert!(agent_tools.iter().any(|tool| tool.name == "fs"));
+    let agent_key = app.prompt_cache_key_for(&app.session.as_ref().unwrap().id.clone());
+    assert_ne!(agent_key, key);
+    finish(&mut app);
+
+    // From here every switch is free: same lane, same tools, same bytes.
+    let before = wire(&mut app);
+    for command in ["chat", "agent .", "auto", "chat"] {
+        app.run_command(command).unwrap();
+    }
+    app.send_message("back to talking".into()).unwrap();
+    let after = wire(&mut app);
+    assert_eq!(after[..before.len()], before[..]);
+    assert!(
+        after[before.len()]
+            .1
+            .contains("switched this conversation to chat mode")
+    );
+    let prefix = app.active_prefix().unwrap();
+    assert_eq!(
+        serde_json::to_string(&prefix.tools).unwrap(),
+        serde_json::to_string(&agent_tools).unwrap(),
+        "the tool list stays, so the provider cache does"
+    );
+    assert_eq!(
+        app.prompt_cache_key_for(&app.session.as_ref().unwrap().id.clone()),
+        agent_key
+    );
+    // In chat mode the workspace tools are listed but refuse.
+    let (refused, _) = app
+        .toolbox
+        .run("fs", r#"{"action":"list","path":"."}"#)
+        .await;
+    assert!(refused.contains("needs an agent workspace"), "{refused}");
+    finish(&mut app);
+
+    // Sending again in the same mode adds nothing.
+    app.send_message("still chatting".into()).unwrap();
+    assert_eq!(roles(&app).iter().filter(|role| *role == "mode").count(), 2);
+    app.stop_stream().unwrap();
 }
 
 pub fn app_with_key() -> App {
