@@ -46,6 +46,7 @@ fn rows(buffer: &Buffer) -> Vec<String> {
                 .collect::<String>()
                 .trim()
                 .trim_matches('│')
+                .trim_start_matches('▸')
                 .trim()
                 .to_string()
         })
@@ -75,7 +76,7 @@ fn quiz_pages_questions_marks_choices_and_reveals_answers_in_a_fixed_height() {
             .any(|row| row == "Which lookup is O(1) on average?")
     );
     assert!(first.iter().any(|row| row == "○ Hash map"));
-    assert!(first.iter().any(|row| row == "[ Show answer ]"));
+    assert!(first.iter().any(|row| row == "Show answer"));
     assert!(!first.iter().any(|row| row.contains("Hashing finds")));
     assert!(widgets.focus_latest());
     assert!(matches!(
@@ -98,7 +99,10 @@ fn quiz_pages_questions_marks_choices_and_reveals_answers_in_a_fixed_height() {
     widgets.entries.get_mut(&p.key()).unwrap().focus = 1;
     press(&mut widgets, KeyCode::Enter);
     let revealed = rows(&draw(&mut widgets, &p));
-    assert!(revealed.iter().any(|row| row == "[ Hide answer ]"));
+    assert!(
+        revealed.iter().any(|row| row == "Hide answer"),
+        "{revealed:#?}"
+    );
     assert!(revealed.iter().any(|row| row == "Hash map"));
     assert!(
         revealed
@@ -186,7 +190,6 @@ fn clicking_an_editor_line_places_the_caret_there() {
         .find(|hit| hit.control == Some(0))
         .unwrap()
         .clone();
-    // Row 0 is the label; the gutter is "1 " wide, so x+2+3 is column 3.
     let mouse = MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: hit.rect.x + 2 + 3,
@@ -200,7 +203,7 @@ fn clicking_an_editor_line_places_the_caret_there() {
     let state = session(&widgets, &p).editor(0);
     assert!(state.editing);
     assert_eq!(
-        nexus_core::interactive::line_col(&session(&widgets, &p).value("code"), state.cursor),
+        dugix_core::interactive::line_col(&session(&widgets, &p).value("code"), state.cursor),
         (1, 3)
     );
 }

@@ -9,7 +9,7 @@ struct Space(PathBuf);
 
 impl Space {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!("nexus-assets-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-assets-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("files/decks")).unwrap();
         Self(root)
     }

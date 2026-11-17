@@ -1,7 +1,11 @@
 //! Keyless web search and failover. Endpoints and the Exa budget are shared
 //! by toolbox copies so a parallel research run cannot fan out unboundedly.
 
-use super::*;
+use super::{
+    DUCKDUCKGO_HTML, DiscussionHit, Duration, OpenRouter, SearchHit, ToolBox, brave_search,
+    duckduckgo_search, format_web_results, langsearch_search, rewrite_query_with_domains,
+    searxng_search,
+};
 use crate::provider::BackendTag;
 use serde_json::Value;
 
@@ -93,11 +97,8 @@ impl ToolBox {
             {
                 continue;
             }
-            // Bound each attempt independently: a timeout must still allow
-            // later backends to run and appear in an all-failed diagnostic.
-            // Provider search runs a model, and Exa may first queue for a
-            // permit behind a research run's other searches (its request
-            // has its own 15 s limit), so both get longer.
+            // Bound each attempt independently, so a timeout still lets later
+            // backends run. Provider search and Exa may queue behind a research run.
             let limit = match backend {
                 "provider" | "exa" => 60,
                 _ => 15,
@@ -177,7 +178,7 @@ impl ToolBox {
                     BackendTag::OpenRouter => "OpenRouter web search",
                     BackendTag::Codex => "Codex web search",
                     BackendTag::OpenAi => "OpenAI web search",
-                    BackendTag::OpencodeGo | BackendTag::Local => {
+                    BackendTag::OpencodeGo | BackendTag::Mistral | BackendTag::Local => {
                         anyhow::bail!("session provider has no built-in web search")
                     }
                 });

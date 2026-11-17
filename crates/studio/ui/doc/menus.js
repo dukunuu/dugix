@@ -7,6 +7,9 @@ import { partElement, readRuns, renderRuns, setCaret } from './dom.js';
 import { deleteRange, plainText } from './inline.js';
 import { glyph } from './glyphs.js';
 import { TONE_LABELS } from './blocks.js';
+import { placePopup } from '../popup.js';
+
+export { placePopup };
 
 const el = (tag, className, text) => {
   const node = document.createElement(tag);
@@ -15,19 +18,6 @@ const el = (tag, className, text) => {
   return node;
 };
 const TURN_TARGETS = { text: 'text', title: 'title', h1: 'h1', h2: 'h2', h3: 'h3', quote: 'quote', code: 'code', bullets: 'bullets', numbers: 'numbers', checklist: 'checklist', callout: 'callout:info' };
-
-/** Keep a popup inside the window, below or above its anchor. */
-export function placePopup(node, rect, { prefer = 'below', align = 'left' } = {}) {
-  node.style.left = '0px'; node.style.top = '0px';
-  const { width, height } = node.getBoundingClientRect();
-  const margin = 8, W = innerWidth, H = innerHeight;
-  let top = prefer === 'above' ? rect.top - height - 6 : rect.bottom + 6;
-  if (top + height > H - margin) top = Math.max(margin, rect.top - height - 6);
-  if (top < margin) top = Math.min(margin, H - height - margin);
-  let left = align === 'center' ? rect.left + rect.width / 2 - width / 2 : align === 'right' ? rect.right - width : rect.left;
-  left = Math.max(margin, Math.min(left, W - width - margin));
-  node.style.left = `${Math.round(left)}px`; node.style.top = `${Math.round(top)}px`;
-}
 
 export function menusController(api) {
   const { state, surface, overlay } = api;
@@ -142,6 +132,11 @@ export function menusController(api) {
       const kinds = [['Text', 'text', 'paragraph'], ['Heading 1', 'h1'], ['Heading 2', 'h2'], ['Heading 3', 'h3'], ['Quote', 'quote', 'quote'], ['Callout', 'callout:info'], ['Code', 'code', 'code'], ['Bulleted list', 'bullets', 'list'], ['Numbered list', 'numbers'], ['Checklist', 'checklist']];
       const isOn = target => target === current || (b.kind === 'list' && (target === 'numbers' ? b.ordered : target === 'bullets' ? !b.ordered && !b.items.some(i => i.checked != null) : b.items.some(i => i.checked != null) && target === 'checklist')) || (b.kind === 'callout' && target.startsWith('callout'));
       group('Turn into', kinds.map(([label, target]) => [label, () => api.editor.perform(E.turnInto(state.doc, id, target)), isOn(target)]), true);
+    }
+    // Alignment belongs to the text style, so it changes every block set in it.
+    if (M.TEXT_KINDS.has(b.kind) || b.kind === 'list') {
+      const style = M.blockStyle(b), align = state.doc.theme?.text_styles?.[style]?.align || 'left';
+      group(`Align all ${style} text`, [['Left', 'left'], ['Center', 'center'], ['Right', 'right'], ['Justify', 'justify']].map(([label, side]) => [label, () => api.apply([{ op: 'set_style', style, patch: { align: side } }]), align === side, `align-${side}`]), true);
     }
     if (b.kind === 'callout') group('Tone', Object.entries(TONE_LABELS).map(([tone, label]) => [label, () => api.apply([{ op: 'update_block', id, patch: { tone } }]), b.tone === tone, tone]));
     if (b.kind === 'image') group('Width', ['inline', 'wide', 'full'].map(w => [w[0].toUpperCase() + w.slice(1), () => api.apply([{ op: 'update_block', id, patch: { width: w } }]), (b.width || 'full') === w]));

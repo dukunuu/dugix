@@ -3,7 +3,7 @@ use ratatui::{Terminal, backend::TestBackend};
 
 pub(crate) const COUNTER: &str =
     include_str!("../../../core/tests/fixtures/interactive/counter.json");
-fn placement(source: &str, owner: usize) -> Placement {
+pub(super) fn placement(source: &str, owner: usize) -> Placement {
     Placement {
         row: 0,
         width: 70,
@@ -14,7 +14,11 @@ fn placement(source: &str, owner: usize) -> Placement {
         complete: true,
     }
 }
-fn draw(widgets: &mut Widgets, placements: &[Placement], top: usize) -> Terminal<TestBackend> {
+pub(super) fn draw(
+    widgets: &mut Widgets,
+    placements: &[Placement],
+    top: usize,
+) -> Terminal<TestBackend> {
     let mut terminal = Terminal::new(TestBackend::new(80, 32)).unwrap();
     terminal
         .draw(|f| {
@@ -136,17 +140,12 @@ fn measured_reservations_match_the_drawn_card_at_actual_widths() {
     ] {
         for width in [60, 80, 120] {
             let rendered = crate::ui::markdown::render(
-                &format!("```nexus-ui\n{source}\n```"),
+                &format!("```dugix-ui\n{source}\n```"),
                 width,
                 crate::ui::markdown::MdColors::default(),
             );
             let p = &rendered.widgets[0];
-            let entry = Entry {
-                session: Ok(Session::new(Document::parse(&source).unwrap()).unwrap()),
-                focus: 0,
-                error: String::new(),
-                scroll: 0,
-            };
+            let entry = Entry::new(Ok(Session::new(Document::parse(&source).unwrap()).unwrap()));
             let (canvas, hits) = entry.canvas(
                 u16::try_from(width).unwrap(),
                 &Theme::default(),
@@ -166,8 +165,9 @@ fn measured_reservations_match_the_drawn_card_at_actual_widths() {
                         .collect::<String>()
                 })
                 .collect();
-            assert!(rows.last().unwrap().starts_with('╰'));
-            assert!(rows.last().unwrap().ends_with('╯'));
+            assert!(rows[0].starts_with("  ") && rows[0].contains('⤢'));
+            assert!(rows.last().unwrap().starts_with('─'));
+            assert!(rows.last().unwrap().ends_with('─'));
             if source.contains("supporting content") {
                 assert!(rows.iter().filter(|row| row.contains("supporting")).count() > 1);
             }
@@ -246,7 +246,6 @@ fn pill_tile_input_and_expand_clicks_share_the_keyboard_state() {
         assert!(widgets.expanded);
         widgets.unfocus();
         widgets.focus_latest();
-        // Re-entering keeps the expand control selected.
         widgets.key(KeyCode::Enter.into(), false);
         assert!(widgets.expanded);
     }
@@ -280,8 +279,8 @@ fn pinned_card_keeps_state_hits_and_composer_clear_until_escape_or_session_reset
     terminal.draw(|f| crate::ui::render(f, &mut app)).unwrap();
     let viewport = app.interactive.layout.as_ref().unwrap().0;
     assert_eq!(
-        terminal.backend().buffer()[(viewport.x + 2, viewport.y)].symbol(),
-        "╭"
+        terminal.backend().buffer()[(viewport.x + 4, viewport.y)].symbol(),
+        "C"
     );
     let pinned = text(&terminal);
     assert!(pinned.contains("pinned · Esc to unpin"), "{pinned}");
@@ -318,7 +317,7 @@ fn pinned_card_keeps_state_hits_and_composer_clear_until_escape_or_session_reset
     app.scroll = app.max_scroll;
     terminal.draw(|f| crate::ui::render(f, &mut app)).unwrap();
     focus(&mut app);
-    app.apply_event(&nexus_core::app::AppEvent::ViewportReset);
+    app.apply_event(&dugix_core::app::AppEvent::ViewportReset);
     assert!(app.interactive.focused.is_none());
     assert!(!app.interactive.pinned);
 }
@@ -327,7 +326,7 @@ fn pinned_card_keeps_state_hits_and_composer_clear_until_escape_or_session_reset
 fn enlarged_card_never_covers_the_composer_and_edits_reflow_the_transcript() {
     let mut app = app();
     app.messages[0].content = format!(
-        "```nexus-ui\n{}\n```\n\nAfter the card",
+        "```dugix-ui\n{}\n```\n\nAfter the card",
         COUNTER.replace("Count: {{count}}", "Name: {{name}}")
     );
     app.set_input("keep this draft");
@@ -391,7 +390,7 @@ fn arbitrary_game_artwork_and_controls_use_the_same_renderer() {
             .iter()
             .filter(|hit| hit.control.is_some())
             .count(),
-        5 // Four actions and the expand affordance.
+        5
     );
 }
 
@@ -421,16 +420,16 @@ fn dense_button_groups_reflow_without_losing_controls() {
 }
 
 fn app() -> AppView {
-    let mut app = AppView::new(nexus_core::app::App::new(
-        nexus_core::db::Db::open_in_memory().unwrap(),
+    let mut app = AppView::new(dugix_core::app::App::new(
+        dugix_core::db::Db::open_in_memory().unwrap(),
         None,
-        nexus_core::space::Space {
-            root: std::env::temp_dir().join(format!("nexus-ui-test-{}", uuid::Uuid::new_v4())),
+        dugix_core::space::Space {
+            root: std::env::temp_dir().join(format!("dugix-ui-test-{}", uuid::Uuid::new_v4())),
         },
     ));
-    app.messages.push(nexus_core::db::Message {
+    app.messages.push(dugix_core::db::Message {
         role: "assistant".into(),
-        content: format!("```nexus-ui\n{}\n```", COUNTER.trim()),
+        content: format!("```dugix-ui\n{}\n```", COUNTER.trim()),
         model: None,
         reasoning: None,
         tokens: None,

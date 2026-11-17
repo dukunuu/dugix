@@ -1,8 +1,8 @@
 import { For, Show, createSignal } from "solid-js";
-import type { NexusStore } from "./state";
+import type { DugixStore } from "./state";
 
 /** Session list actions for thin clients; the shell decides where to mount it. */
-export function SessionsPage(props: { store: NexusStore }) {
+export function SessionsPage(props: { store: DugixStore }) {
   const [editing, setEditing] = createSignal<string>();
   const [title, setTitle] = createSignal("");
   const [error, setError] = createSignal("");

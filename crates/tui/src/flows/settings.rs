@@ -1,15 +1,12 @@
-// Casts here are on bounded values: token counts, byte sizes, and
-// selection indices — never on unbounded input. JSON-derived indices in
-// provider/tools go through try_from instead.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
     clippy::cast_precision_loss,
     clippy::cast_sign_loss
 )]
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 
-use nexus_core::app::{
+use dugix_core::app::{
     Popup, SEARCH_PROVIDERS, SETTINGS_GROUPS, SettingsField, SettingsRow, VERBOSITY_LEVELS,
 };
 
@@ -35,8 +32,8 @@ impl AppView {
                 .map(|v| v.to_string())
                 .unwrap_or_default(),
             self.core.settings.compact_threshold.to_string(),
-            self.core.searxng_url.clone(),
-            self.core.langsearch_key.clone(),
+            self.core.search.searxng_url.clone(),
+            self.core.search.langsearch_key.clone(),
             std::fs::read_to_string(
                 self.core
                     .space
@@ -51,8 +48,6 @@ impl AppView {
         self.popup = Popup::Settings;
     }
 
-    /// All currently-visible rows: every group header, plus each group's
-    /// fields when that group isn't collapsed.
     pub fn settings_rows(&self) -> Vec<SettingsRow> {
         let mut rows = Vec::new();
         for (i, g) in SETTINGS_GROUPS.iter().enumerate() {
@@ -71,8 +66,6 @@ impl AppView {
             .unwrap_or(SettingsRow::Group(0))
     }
 
-    /// The field under the cursor, or `None` when a (possibly collapsed)
-    /// group header is selected.
     pub fn settings_field(&self) -> Option<SettingsField> {
         match self.settings_row() {
             SettingsRow::Field(f) => Some(f),
@@ -88,8 +81,6 @@ impl AppView {
         self.settings_selected = (self.settings_selected as i32 + delta).rem_euclid(n) as usize;
     }
 
-    /// Space (or Enter) on a group header collapses/expands it; on a field it
-    /// runs that field's own toggle/cycle behavior.
     pub fn toggle_settings_field(&mut self) {
         match self.settings_row() {
             SettingsRow::Group(i) => {
@@ -117,7 +108,7 @@ impl AppView {
                     self.core.settings.hide_hints = !self.core.settings.hide_hints;
                 }
                 SettingsField::ReplyStyle => {
-                    let styles = nexus_core::app::REPLY_STYLES;
+                    let styles = dugix_core::app::REPLY_STYLES;
                     let i = styles
                         .iter()
                         .position(|&s| s == self.core.settings.reply_style)
@@ -127,7 +118,7 @@ impl AppView {
                         .set_setting("reply_style", styles[(i + 1) % styles.len()]);
                 }
                 SettingsField::ImageViewer => {
-                    let modes = nexus_core::app::IMAGE_VIEWERS;
+                    let modes = dugix_core::app::IMAGE_VIEWERS;
                     let i = modes
                         .iter()
                         .position(|&m| m == self.core.settings.image_viewer)
@@ -135,6 +126,22 @@ impl AppView {
                     let _ = self
                         .core
                         .set_setting("image_viewer", modes[(i + 1) % modes.len()]);
+                }
+                SettingsField::CacheLifetime => {
+                    let value = if self.core.settings.cache_lifetime == "extended" {
+                        "default"
+                    } else {
+                        "extended"
+                    };
+                    let _ = self.core.set_setting("cache_lifetime", value);
+                }
+                SettingsField::CacheLongOpenai => {
+                    let value = if self.core.settings.cache_long_openai {
+                        "off"
+                    } else {
+                        "on"
+                    };
+                    let _ = self.core.set_setting("cache_long_openai", value);
                 }
                 SettingsField::Verbosity => {
                     let i = VERBOSITY_LEVELS
@@ -147,9 +154,9 @@ impl AppView {
                 SettingsField::SearchProvider => {
                     let i = SEARCH_PROVIDERS
                         .iter()
-                        .position(|&p| p == self.core.search_provider)
+                        .position(|&p| p == self.core.search.provider)
                         .unwrap_or(0);
-                    self.core.search_provider =
+                    self.core.search.provider =
                         SEARCH_PROVIDERS[(i + 1) % SEARCH_PROVIDERS.len()].to_string();
                 }
                 SettingsField::ColumnWidth => {
@@ -160,9 +167,6 @@ impl AppView {
         }
     }
 
-    /// Step the conversation column through `auto → full → 100 → 140 → 180 →
-    /// 220 → auto` (`dir` -1 steps back), persisted. A width that isn't one of
-    /// the stops (the user dragged it) steps to `auto`.
     pub fn cycle_column_width(&mut self, dir: i32) -> Result<()> {
         const STOPS: [&str; 6] = ["auto", "full", "100", "140", "180", "220"];
         let next = STOPS
@@ -174,7 +178,6 @@ impl AppView {
         self.core.set_setting("column_width", STOPS[next])
     }
 
-    /// Expand/collapse stored reasoning traces (Ctrl+R), persisted.
     pub fn toggle_reasoning_view(&mut self) -> Result<()> {
         self.core.settings.show_reasoning = !self.core.settings.show_reasoning;
         self.pin_viewport_top = true;
@@ -195,8 +198,6 @@ impl AppView {
         Ok(())
     }
 
-    /// Type into the focused field: digits/`.` for the numeric rows, any
-    /// printable char for the URL row.
     pub fn settings_input_char(&mut self, c: char) {
         let Some(i) = self.text_index() else { return };
         let numeric = !matches!(
@@ -222,7 +223,6 @@ impl AppView {
         }
     }
 
-    /// Parse the edit buffers into settings and persist everything (on Esc).
     pub fn save_settings(&mut self) -> Result<()> {
         self.core.settings.temperature = self.settings_inputs[0].trim().parse().ok();
         self.core.settings.top_p = self.settings_inputs[1].trim().parse().ok();
@@ -231,15 +231,13 @@ impl AppView {
             self.settings_inputs[3].trim().parse().unwrap_or(0).min(100);
 
         let flag = |on: bool| if on { "1" } else { "0" }.to_string();
-        self.core.searxng_url = self.settings_inputs[4]
+        self.core.search.searxng_url = self.settings_inputs[4]
             .trim()
             .trim_end_matches('/')
             .to_string();
-        self.core.langsearch_key = self.settings_inputs[5].trim().to_string();
+        self.core.search.langsearch_key = self.settings_inputs[5].trim().to_string();
 
-        // Write only what changed: every write bumps the row's sync version,
-        // so rewriting untouched settings would make this device win LWW
-        // over edits made elsewhere.
+        // Rewriting unchanged rows bumps sync versions and can overwrite another device's edits.
         let values = [
             ("show_stats", flag(self.core.settings.show_stats)),
             ("show_reasoning", flag(self.core.settings.show_reasoning)),
@@ -251,10 +249,10 @@ impl AppView {
                 "compact_threshold",
                 self.core.settings.compact_threshold.to_string(),
             ),
-            ("searxng_url", self.core.searxng_url.clone()),
+            ("searxng_url", self.core.search.searxng_url.clone()),
             ("verbosity", self.core.verbosity.clone()),
-            ("langsearch_key", self.core.langsearch_key.clone()),
-            ("search_provider", self.core.search_provider.clone()),
+            ("langsearch_key", self.core.search.langsearch_key.clone()),
+            ("search_provider", self.core.search.provider.clone()),
         ];
         let stored: std::collections::HashMap<String, String> =
             self.core.db.load_settings()?.into_iter().collect();
@@ -265,8 +263,6 @@ impl AppView {
                 changed = true;
             }
         }
-        // Per-space (not a db setting): lives next to the space's other
-        // config files so it travels with the space.
         let blocked_path = self
             .core
             .space
@@ -277,7 +273,9 @@ impl AppView {
             .trim()
             != blocked
         {
-            let _ = std::fs::write(&blocked_path, blocked);
+            // Search reads this file, so a failed write must not report "settings saved".
+            std::fs::write(&blocked_path, blocked)
+                .with_context(|| format!("saving blocked domains to {}", blocked_path.display()))?;
             changed = true;
         }
         self.popup = Popup::None;
@@ -293,13 +291,13 @@ impl AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_core::app::App;
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
+    use dugix_core::app::App;
+    use dugix_core::db::Db;
+    use dugix_core::space::Space;
 
     fn test_space() -> Space {
         Space {
-            root: std::env::temp_dir().join(format!("nexus-flow-test-{}", uuid::Uuid::new_v4())),
+            root: std::env::temp_dir().join(format!("dugix-flow-test-{}", uuid::Uuid::new_v4())),
         }
     }
 
@@ -330,10 +328,10 @@ mod tests {
         }
         a.save_settings().unwrap();
 
-        assert_eq!(a.core.searxng_url, "http://localhost:8080"); // trailing slash trimmed
+        assert_eq!(a.core.search.searxng_url, "http://localhost:8080"); // trailing slash trimmed
         // The toolbox sits behind the `ToolExecutor` seam — the URL wiring
         // itself is covered by tools::tests::new_wires_searxng_url_and_langsearch_key.
-        assert!(!a.skills.iter().any(|s| s.name == "web-search")); // /web injects prompt text directly
+        assert!(!a.skills.iter().any(|s| s.name == "web-search")); // retired bundled skill
 
         let reloaded = a.core.db.load_settings().unwrap();
         assert!(
@@ -347,7 +345,7 @@ mod tests {
         // Re-apply persisted settings the way `App::new` would (load_settings is
         // private domain plumbing; the public path is a fresh App over the db).
         b.core.refresh_toolbox();
-        assert_eq!(b.core.searxng_url, "http://localhost:8080");
+        assert_eq!(b.core.search.searxng_url, "http://localhost:8080");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! Golden-task loading and deterministic answer/tool-call checks for `nexus eval`.
+//! Golden-task loading and deterministic answer/tool-call checks for `dugix eval`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,21 +13,15 @@ use crate::tools::classify_tool_result;
 #[derive(Debug, Deserialize)]
 #[serde(try_from = "TaskInput")]
 pub struct EvalTask {
-    /// Display name; defaults to the task file's stem when omitted.
+    /// Defaults to the task file's stem when omitted.
     #[serde(default)]
     pub name: String,
-    /// Question sent to the model.
     pub prompt: String,
     /// Ordered prompts sharing a session, instead of `prompt`.
     pub turns: Vec<String>,
-    /// Fixture directory, resolved inside the eval directory by `load_tasks`.
+    /// Resolved inside the eval directory by `load_tasks`.
     pub workspace: Option<PathBuf>,
-    /// Shell command prefixes permitted in a disposable workspace.
     pub allow_shell: Vec<String>,
-    /// Enable search-first web mode for this task.
-    #[serde(default)]
-    pub web: bool,
-    /// Deterministic expectations for the answer and tool calls.
     #[serde(default)]
     pub check: EvalChecks,
 }
@@ -42,8 +36,6 @@ struct TaskInput {
     workspace: Option<PathBuf>,
     #[serde(default)]
     allow_shell: Vec<String>,
-    #[serde(default)]
-    web: bool,
     #[serde(default)]
     check: EvalChecks,
 }
@@ -63,14 +55,12 @@ impl TryFrom<TaskInput> for EvalTask {
             turns,
             workspace: input.workspace,
             allow_shell: input.allow_shell,
-            web: input.web,
             check: input.check,
         })
     }
 }
 
 impl EvalTask {
-    /// Prompts to send in order in the same session.
     #[must_use]
     pub fn prompts(&self) -> &[String] {
         if self.turns.is_empty() {
@@ -81,7 +71,7 @@ impl EvalTask {
     }
 }
 
-/// Optional checks; at least one effective check is required per task.
+/// At least one effective check is required per task.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct EvalChecks {
@@ -112,7 +102,6 @@ impl EvalChecks {
     }
 }
 
-/// Read the directory's `.toml` tasks, reject invalid tasks, and sort by name.
 pub fn load_tasks(dir: &Path) -> Result<Vec<EvalTask>> {
     let mut tasks = Vec::new();
     for entry in fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
@@ -159,7 +148,6 @@ pub fn load_tasks(dir: &Path) -> Result<Vec<EvalTask>> {
     Ok(tasks)
 }
 
-/// A tool call's raw arguments and returned text.
 #[derive(Debug, Deserialize)]
 pub struct ObservedCall {
     pub name: String,
@@ -167,20 +155,18 @@ pub struct ObservedCall {
     pub result: String,
 }
 
-/// The model's final answer and the calls made across all observed turns.
 #[derive(Debug)]
 pub struct Observed {
     pub answer: String,
     pub calls: Vec<ObservedCall>,
 }
 
-/// Return every unmet expectation as a human-readable failure; empty means pass.
+/// Every unmet expectation as a human-readable failure; empty means pass.
 #[must_use]
 pub fn check(task: &EvalTask, observed: &Observed) -> Vec<String> {
     check_workspace(task, observed, None)
 }
 
-/// Check the final answer, all turns' calls, and files in the disposable copy.
 #[must_use]
 pub fn check_workspace(task: &EvalTask, observed: &Observed, root: Option<&Path>) -> Vec<String> {
     let mut failures = Vec::new();
@@ -298,13 +284,12 @@ impl EvalWorkspace {
     /// Returns filesystem errors or unsupported fixture entry types.
     pub fn copy_from(fixture: &Path) -> Result<Self> {
         let copy = Self {
-            dir: std::env::temp_dir().join(format!("nexus-eval-{}", uuid::Uuid::new_v4())),
+            dir: std::env::temp_dir().join(format!("dugix-eval-{}", uuid::Uuid::new_v4())),
         };
         copy_fixture(fixture, &copy.root())?;
         Ok(copy)
     }
 
-    /// Workspace root, separate from disposable runtime logs.
     #[must_use]
     pub fn root(&self) -> PathBuf {
         self.dir.join("workspace")
@@ -337,7 +322,6 @@ fn copy_fixture(source: &Path, target: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Extract calls from a turn's stored `tool_call` rows, as history replay does.
 #[must_use]
 pub fn observed_from_messages(answer: &str, turn: &[Message]) -> Observed {
     Observed {
@@ -478,7 +462,7 @@ mod tests {
 
     impl TempDir {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!("nexus-eval-{}", uuid::Uuid::new_v4()));
+            let path = std::env::temp_dir().join(format!("dugix-eval-{}", uuid::Uuid::new_v4()));
             fs::create_dir_all(&path).unwrap();
             Self(path)
         }
@@ -495,7 +479,7 @@ mod tests {
         let dir = TempDir::new();
         fs::write(
             dir.0.join("a.toml"),
-            "name = 'zulu'\nprompt = 'Hello'\nweb = true\n[check]\nmax_tool_calls = 0\n",
+            "name = 'zulu'\nprompt = 'Hello'\n[check]\nmax_tool_calls = 0\n",
         )
         .unwrap();
         fs::write(
@@ -508,10 +492,8 @@ mod tests {
         assert_eq!(tasks.len(), 2);
         assert_eq!(tasks[0].name, "bravo");
         assert_eq!(tasks[0].prompt, "Hi");
-        assert!(!tasks[0].web);
         assert_eq!(tasks[0].check.answer_contains, ["hi"]);
         assert_eq!(tasks[1].name, "zulu");
-        assert!(tasks[1].web);
         assert_eq!(tasks[1].check.max_tool_calls, Some(0));
     }
 

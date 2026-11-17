@@ -14,7 +14,7 @@ struct Temp(PathBuf);
 impl Temp {
     fn new() -> Self {
         let path =
-            std::env::temp_dir().join(format!("nexus-subagent-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("dugix-subagent-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(path.join("repo")).unwrap();
         Self(path)
     }
@@ -112,6 +112,7 @@ impl Provider for Fake {
             tools: request.tools.to_vec(),
             final_round: request.final_round,
         });
+        (request.live)("thinking", "");
         Box::pin(std::future::ready(Ok(self
             .replies
             .lock()
@@ -155,6 +156,7 @@ fn context(
             model: "session-model".into(),
             params,
             events,
+            slots: None,
         }),
         rx,
     )
@@ -247,17 +249,62 @@ async fn read_only_task_is_fresh_restricted_capped_accounted_and_traced() {
             .all(|message| message.content.contains("not available in this sub-agent"))
     );
     drop(seen);
-    // The sub-agent's client records its own usage under its own model; none
-    // of it reaches the parent's stream (it would be priced as the session
-    // model and move the parent's context bar).
     let mut statuses = Vec::new();
+    let mut updates = Vec::new();
     while let Ok(event) = events.try_recv() {
         match event {
+            // Tests running at once share the global slots, so a run may wait.
+            StreamEvent::Status(status) if status.starts_with("sub-agent waiting") => {}
             StreamEvent::Status(status) => statuses.push(status),
+            StreamEvent::Subagent(update) => updates.push(*update),
             other => panic!("child output leaked to parent: {other:?}"),
         }
     }
-    assert_eq!(statuses, ["sub-agent: 1/20", "sub-agent: 2/20"]);
+    assert_eq!(statuses.len(), 2);
+    assert!(
+        statuses[0].starts_with("sub-agent ")
+            && statuses[0].ends_with("step 1/20 · /agents to watch")
+    );
+    assert!(statuses[1].contains("step 2/20"));
+    assert!(updates.iter().all(|update| update.id == updates[0].id));
+    let kinds: Vec<_> = updates
+        .iter()
+        .map(|update| match &update.event {
+            SubagentEvent::Started {
+                prompt,
+                model,
+                writable,
+                ..
+            } => {
+                assert_eq!(
+                    (prompt.as_str(), model.as_str(), *writable),
+                    ("find callers", "session-model", false)
+                );
+                "started"
+            }
+            SubagentEvent::Delta { reasoning, .. } => {
+                assert_eq!(reasoning, "thinking");
+                "delta"
+            }
+            SubagentEvent::Round { calls, usage, .. } => {
+                assert_eq!(usage.unwrap().cost, Some(0.125));
+                if calls.is_empty() {
+                    "answer"
+                } else {
+                    assert!(calls[0].1.contains("useful finding"), "{calls:?}");
+                    "calls"
+                }
+            }
+            SubagentEvent::Finished { error, review } => {
+                assert!(error.is_none() && review.is_none());
+                "finished"
+            }
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        ["started", "delta", "calls", "delta", "answer", "finished"]
+    );
     let steps = store.steps_for_session("parent-session").unwrap();
     assert_eq!(steps.len(), 2);
     for id in steps {
@@ -340,7 +387,6 @@ impl Approver for Approval {
 async fn workspace_task_asks_once_and_commits_only_its_worktree_with_a_review_diff() {
     let temp = Temp::new();
     temp.init_git();
-    // Neither staged nor unstaged user changes may enter the helper's commit.
     fs::write(temp.root().join("staged.txt"), "user staged\n").unwrap();
     command(&temp.root(), &["add", "staged.txt"]);
     fs::write(temp.root().join("tracked.txt"), "user unstaged\n").unwrap();
@@ -384,7 +430,7 @@ async fn workspace_task_asks_once_and_commits_only_its_worktree_with_a_review_di
         .split_once(':')
         .unwrap()
         .0;
-    assert!(branch.starts_with("nexus/sub/12345678/"));
+    assert!(branch.starts_with("dugix/sub/12345678/"));
     assert!(review.ends_with("new.txt (+1 −0)"));
     assert!(report.contains("+child change"));
     assert_eq!(
@@ -549,38 +595,327 @@ async fn task_schema_defaults_validation_and_agent_only_availability() {
     assert!(toolbox.defs().iter().all(|tool| tool.name != "task"));
 }
 
-#[test]
-fn read_only_tasks_default_to_the_fast_model_and_workspace_tasks_to_the_session() {
-    let (events, _rx) = mpsc::unbounded_channel();
-    let with_fast = |fast: Option<&str>| Context {
-        provider: Fake::new(Vec::new()),
-        model: "session-model".into(),
-        params: ChatParams {
-            reasoning_effort: Some("xhigh".into()),
-            subagent_fast_model: fast.map(str::to_string),
-            ..ChatParams::default()
-        },
-        events: events.clone(),
+fn role_events(events: &mut mpsc::UnboundedReceiver<StreamEvent>) -> Vec<SubagentEvent> {
+    let mut seen = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        if let StreamEvent::Subagent(update) = event {
+            seen.push(update.event);
+        }
+    }
+    seen
+}
+
+fn bare_toolbox() -> ToolBox {
+    ToolBox::new(
+        PathBuf::new(),
+        None,
+        None,
+        "auto".into(),
+        Vec::new(),
+        None,
+        None,
+        None,
+    )
+}
+
+#[tokio::test]
+async fn a_role_runs_without_a_workspace_and_returns_its_answer_whole() {
+    let long = "x".repeat(REPORT_CAP * 2);
+    let fake = Fake::new(vec![reply(&long, Vec::new())]);
+    let params = ChatParams {
+        prompt_cache_key: Some("swarm:key".into()),
+        ..Default::default()
     };
-    let ctx = with_fast(Some("fast-model"));
-    let (model, params) = route(&ctx, &json!({}), false);
-    assert_eq!(model, "fast-model");
-    // The fast model may not support the session's reasoning effort.
-    assert_eq!(params.reasoning_effort, None);
-    assert_eq!(route(&ctx, &json!({}), true).0, "session-model");
+    let (ctx, mut events) = context(fake.clone(), params);
+    let answer = run_role(
+        &ctx,
+        &bare_toolbox(),
+        Role {
+            title: "Draft A · drafter 1 · which cache?".into(),
+            messages: vec![ChatMessage::text("user", "which cache?")],
+            max_steps: 3,
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(
-        route(&ctx, &json!({"model": "session"}), false).0,
-        "session-model"
+        answer, long,
+        "a role's answer is not capped like a task report"
     );
-    let (model, params) = route(&ctx, &json!({"model": "session"}), false);
+    let seen = fake.seen.lock().unwrap();
+    assert_eq!(seen[0].model, "session-model");
     assert_eq!(
-        (model.as_str(), params.reasoning_effort.as_deref()),
-        ("session-model", Some("xhigh"))
+        seen[0].params.prompt_cache_key.as_deref(),
+        Some("swarm:key"),
+        "roles share the caller's cached prefix"
     );
-    assert_eq!(route(&ctx, &json!({"model": "fast"}), true).0, "fast-model");
-    // No helper on this backend: everything stays on the session model.
+    let events = role_events(&mut events);
+    assert!(matches!(
+        &events[0],
+        SubagentEvent::Started { prompt, writable: false, max_steps: 3, .. }
+            if prompt == "Draft A · drafter 1 · which cache?"
+    ));
+    assert!(matches!(
+        events.last(),
+        Some(SubagentEvent::Finished {
+            error: None,
+            review: None
+        })
+    ));
+}
+
+#[tokio::test]
+async fn an_empty_role_answer_fails_the_run_in_agents() {
+    let fake = Fake::new(vec![reply("  ", Vec::new())]);
+    let (ctx, mut events) = context(fake, ChatParams::default());
+    let error = run_role(
+        &ctx,
+        &bare_toolbox(),
+        Role {
+            title: "Reply · q".into(),
+            messages: vec![ChatMessage::text("user", "q")],
+            max_steps: 0,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("empty answer"), "{error}");
+    assert!(matches!(
+        role_events(&mut events).last(),
+        Some(SubagentEvent::Finished { error: Some(_), .. })
+    ));
+}
+
+#[tokio::test]
+async fn read_only_tools_refuse_writes_and_pass_reads_through() {
+    let temp = Temp::new();
+    fs::write(temp.root().join("notes.txt"), "kept\n").unwrap();
+    let tools = crate::tools::ReadOnly::new(Arc::new(temp.toolbox()));
+    let write = r#"{"action":"write","path":"new.txt","content":"x"}"#;
+    assert!(!tools.is_read_only("fs", write));
+    let (result, status) = tools.run("fs", write).await;
+    assert_eq!(result, crate::tools::READ_ONLY_REFUSAL);
+    assert_eq!(status, "blocked");
+    assert!(!temp.root().join("new.txt").exists());
+    let (result, _) = tools
+        .run("fs", r#"{"action":"read","path":"notes.txt"}"#)
+        .await;
+    assert!(result.contains("kept"), "{result}");
+}
+
+/// Answers only when the test lets a round through.
+struct Gated(tokio::sync::Semaphore);
+
+impl Provider for Gated {
+    fn round<'a>(
+        &'a self,
+        request: Request<'a>,
+    ) -> Pin<Box<dyn Future<Output = Result<Round>> + Send + 'a>> {
+        Box::pin(async move {
+            self.0.acquire().await.unwrap().forget();
+            Ok(reply(
+                &format!("report on {}", request.messages[1].content),
+                Vec::new(),
+            ))
+        })
+    }
+}
+
+const SESSION: &str = "12345678-aaaa-bbbb-cccc-dddddddddddd";
+
+fn background_toolbox(
+    temp: &Temp,
+    gate: &Arc<Gated>,
+) -> (
+    Arc<dyn ToolExecutor>,
+    Arc<Background>,
+    mpsc::UnboundedReceiver<BackgroundMsg>,
+    mpsc::UnboundedReceiver<StreamEvent>,
+) {
+    let (background, messages) = Background::new();
+    let mut toolbox = temp.toolbox();
+    toolbox.background = Some(Arc::clone(&background));
+    let (ctx, turn_events) = context(gate.clone(), ChatParams::default());
+    let toolbox = Arc::new(toolbox).with_subagents(ctx).unwrap();
+    (toolbox, background, messages, turn_events)
+}
+
+async fn started(toolbox: &dyn ToolExecutor, prompt: &str) -> u64 {
+    let (result, status) = toolbox
+        .run(
+            "task",
+            &json!({"prompt": prompt, "background": true}).to_string(),
+        )
+        .await;
+    assert_eq!(status, "Sub-agent started", "{result}");
+    result
+        .strip_prefix("background agent ")
+        .and_then(|rest| rest.split(' ').next())
+        .and_then(|number| number.parse().ok())
+        .unwrap_or_else(|| panic!("no agent number in {result:?}"))
+}
+
+#[tokio::test]
+async fn a_background_task_outlives_its_turn_and_its_report_is_taken_once() {
+    let temp = Temp::new();
+    let gate = Arc::new(Gated(tokio::sync::Semaphore::new(0)));
+    let (toolbox, background, mut messages, turn_events) = background_toolbox(&temp, &gate);
+    assert!(
+        toolbox.defs().iter().any(|def| def.name == "agents"),
+        "the agents tool comes with background tasks"
+    );
+
+    let number = started(&*toolbox, "dig into the parser\nand report").await;
+    assert_eq!(background.running(SESSION), 1);
+    let (list, _) = toolbox.run("agents", r#"{"action":"list"}"#).await;
+    assert_eq!(list, format!("{number} · running · dig into the parser"));
+    assert!(background.take_reports(SESSION).is_empty(), "nothing yet");
+
+    // The turn that started it ends; the run does not.
+    drop(turn_events);
+    drop(toolbox);
+    gate.0.add_permits(1);
+    let mut saw_started = false;
+    loop {
+        match tokio::time::timeout(Duration::from_secs(5), messages.recv())
+            .await
+            .expect("the run reports to the app")
+            .expect("open channel")
+        {
+            BackgroundMsg::Update { session_id, update } => {
+                assert_eq!(session_id, SESSION);
+                assert_eq!(update.number, number);
+                saw_started |= matches!(update.event, SubagentEvent::Started { .. });
+            }
+            BackgroundMsg::Finished { session_id } => {
+                assert_eq!(session_id, SESSION);
+                break;
+            }
+            BackgroundMsg::Stopped { .. } => panic!("it was not stopped"),
+        }
+    }
+    assert!(saw_started, "progress reached /agents");
+    assert_eq!(background.running(SESSION), 0);
+    let reports = background.take_reports(SESSION);
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].number, number);
+    assert_eq!(reports[0].title, "dig into the parser");
+    assert!(
+        reports[0]
+            .text
+            .ends_with("report on dig into the parser\nand report"),
+        "{}",
+        reports[0].text
+    );
+    assert!(background.take_reports(SESSION).is_empty(), "taken once");
+    assert!(background.take_reports("another-session").is_empty());
+}
+
+#[tokio::test]
+async fn agents_wait_collects_reports_so_they_are_not_delivered_again() {
+    let temp = Temp::new();
+    let gate = Arc::new(Gated(tokio::sync::Semaphore::new(0)));
+    let (toolbox, background, _messages, _turn) = background_toolbox(&temp, &gate);
+    let first = started(&*toolbox, "one").await;
+    let second = started(&*toolbox, "two").await;
+
+    let (timed_out, _) = toolbox
+        .run("agents", r#"{"action":"wait","wait_s":1}"#)
+        .await;
+    assert!(
+        timed_out.contains(&format!("agent {first} (one) is still running after 1s")),
+        "{timed_out}"
+    );
+
+    let waiting = {
+        let toolbox = Arc::clone(&toolbox);
+        tokio::spawn(async move { toolbox.run("agents", r#"{"action":"wait"}"#).await.0 })
+    };
+    gate.0.add_permits(2);
+    let reports = tokio::time::timeout(Duration::from_secs(5), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        reports.contains(&format!("agent {first} (one) finished:")),
+        "{reports}"
+    );
+    assert!(reports.contains("report on one"), "{reports}");
+    assert!(
+        reports.contains(&format!("agent {second} (two) finished:")),
+        "{reports}"
+    );
+    assert!(
+        background.take_reports(SESSION).is_empty(),
+        "a report the model read is not sent to the conversation too"
+    );
+    let (none, _) = toolbox.run("agents", r#"{"action":"wait"}"#).await;
+    assert_eq!(none, "no background agents to wait for");
+}
+
+#[tokio::test]
+async fn a_background_agent_can_be_stopped_and_the_limit_is_per_conversation() {
+    let temp = Temp::new();
+    let gate = Arc::new(Gated(tokio::sync::Semaphore::new(0)));
+    let (toolbox, background, mut messages, _turn) = background_toolbox(&temp, &gate);
+    let mut numbers = Vec::new();
+    for index in 0..background::MAX_RUNNING {
+        numbers.push(started(&*toolbox, &format!("job {index}")).await);
+    }
+    let (refused, status) = toolbox
+        .run("task", r#"{"prompt":"one too many","background":true}"#)
+        .await;
+    assert_eq!(status, "blocked");
+    assert!(
+        refused.contains("background agents already running"),
+        "{refused}"
+    );
+
+    let (stopped, _) = toolbox
+        .run(
+            "agents",
+            &json!({"action":"stop","id":numbers[0]}).to_string(),
+        )
+        .await;
     assert_eq!(
-        route(&with_fast(None), &json!({"model": "fast"}), false).0,
-        "session-model"
+        stopped,
+        format!("stopped background agent {} (job 0)", numbers[0])
     );
+    assert_eq!(background.running(SESSION), background::MAX_RUNNING - 1);
+    let (again, status) = toolbox
+        .run(
+            "agents",
+            &json!({"action":"stop","id":numbers[0]}).to_string(),
+        )
+        .await;
+    assert_eq!(status, "blocked", "{again}");
+    loop {
+        match messages.recv().await.unwrap() {
+            BackgroundMsg::Stopped { number, .. } => {
+                assert_eq!(number, numbers[0]);
+                break;
+            }
+            BackgroundMsg::Update { .. } => {}
+            BackgroundMsg::Finished { .. } => panic!("nothing finished"),
+        }
+    }
+    background.stop_session(SESSION);
+    assert_eq!(background.running(SESSION), 0);
+}
+
+#[tokio::test]
+async fn background_tasks_need_the_registry() {
+    let temp = Temp::new();
+    let gate = Arc::new(Gated(tokio::sync::Semaphore::new(0)));
+    let (ctx, _) = context(gate, ChatParams::default());
+    let toolbox = Arc::new(temp.toolbox()).with_subagents(ctx).unwrap();
+    assert!(
+        !toolbox.defs().iter().any(|def| def.name == "agents"),
+        "no agents tool where a run cannot outlive the turn"
+    );
+    let (result, status) = toolbox
+        .run("task", r#"{"prompt":"x","background":true}"#)
+        .await;
+    assert_eq!(status, "blocked");
+    assert!(result.contains("not available here"), "{result}");
 }

@@ -1,7 +1,4 @@
-//! Saved panel state and pinned panel apps: the domain half. The terminal UI
-//! decides which panel is focused and how a pinned app is shown; this half
-//! only talks to the durable db, so `nexus host` and the CLI can list, rename
-//! and unpin apps through the same commands.
+//! Saved panel state and pinned panel apps.
 
 use std::collections::HashMap;
 
@@ -12,16 +9,11 @@ use crate::interactive::PanelSnapshot;
 use crate::panels::{self, Pinned};
 
 impl App {
-    /// Saved panel records of a conversation, by panel key.
-    /// # Errors
-    /// Returns database failures.
     pub fn panel_states(&self, session_id: &str) -> Result<HashMap<String, String>> {
         panels::load_states(self.db.conn(), session_id)
     }
 
-    /// Save one panel's record. Incognito conversations never reach the db.
-    /// # Errors
-    /// Returns database failures.
+    /// Save panel state only for non-incognito conversations.
     pub fn save_panel_state(&self, session_id: &str, panel_key: &str, record: &str) -> Result<()> {
         if self.incognito {
             return Ok(());
@@ -29,24 +21,14 @@ impl App {
         panels::save_state(self.db.conn(), session_id, panel_key, record)
     }
 
-    /// Panels pinned as apps in the active space.
-    /// # Errors
-    /// Returns database failures.
     pub fn pinned_panels(&self) -> Result<Vec<Pinned>> {
         panels::list(self.db.conn(), &self.active_space.id)
     }
 
-    /// A pinned app by id or name.
-    /// # Errors
-    /// Returns database failures.
     pub fn pinned_panel(&self, reference: &str) -> Result<Option<Pinned>> {
         panels::find(self.db.conn(), &self.active_space.id, reference)
     }
 
-    /// Pin a panel's program and state, choosing a free name from its title
-    /// when none is given.
-    /// # Errors
-    /// Rejects incognito conversations, invalid programs and taken names.
     pub fn pin_panel(
         &mut self,
         name: Option<&str>,
@@ -70,33 +52,20 @@ impl App {
         Ok(app)
     }
 
-    /// Save the state a pinned app was left in.
-    /// # Errors
-    /// Returns database failures.
     pub fn save_pinned_state(&self, id: &str, record: &str) -> Result<()> {
         panels::save_pinned_state(self.db.conn(), id, record)
     }
 
-    /// Remove a pinned app.
-    /// # Errors
-    /// Rejects unknown apps.
     pub fn unpin_panel(&mut self, reference: &str) -> Result<()> {
         let app = panels::unpin(self.db.conn(), &self.active_space.id, reference)?;
         self.push_status(format!("unpinned {}", app.name));
         Ok(())
     }
 
-    /// Apply an edit-mode patch to a pinned app (what the model's `panel_app`
-    /// tool does, for frontends that edit by hand).
-    /// # Errors
-    /// Returns the validation failure for an invalid patch.
     pub fn patch_panel(&mut self, reference: &str, patch: &str) -> Result<Pinned> {
         panels::patch(self.db.conn(), &self.active_space.id, reference, patch)
     }
 
-    /// Rename a pinned app.
-    /// # Errors
-    /// Rejects unknown apps and invalid or taken names.
     pub fn rename_panel(&mut self, from: &str, to: &str) -> Result<()> {
         let app = panels::rename(self.db.conn(), &self.active_space.id, from, to)?;
         self.push_status(format!("renamed to {}", app.name));

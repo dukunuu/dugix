@@ -18,8 +18,8 @@ pub fn load(files: &Path, relative: &str) -> Result<Doc> {
     Doc::check(&std::fs::read_to_string(path)?).map_err(|e| anyhow::anyhow!("{e:?}"))
 }
 
-/// Validate before any write, preserve history, and re-anchor the existing
-/// sidecar after saving. Failed operations never call this function.
+/// Validate before writing, preserve history, and re-anchor comments after
+/// saving.
 pub fn save(files: &Path, relative: &str, doc: &Doc, who: crate::deck::history::Who) -> Result<()> {
     let path = confined(files, relative)?;
     let doc = Doc::check(&serde_json::to_string(doc)?).map_err(|e| anyhow::anyhow!("{e:?}"))?;

@@ -1,58 +1,89 @@
-//! The library and the native dialogs: listing the space's decks and docs, the
-//! commands on one of them, and every place studio asks the operating system
-//! for a file (Open, Export, Save a copy, Add template).
-//!
-//! The page never names a path of its own. A library file is addressed by its
-//! path inside the space files, checked against the space (`canvas::files`);
-//! every other path comes from a dialog the user just answered.
+//! The library and its native dialogs; the page never names a path of its own:
+//! a library file is addressed by its path inside the space files.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use nexus_core::canvas::dialogs::{self, Dialogs};
-use nexus_core::canvas::{self, Entry, files, settings};
-use nexus_core::deck::link::Kind as FileKind;
+use dugix_core::canvas::dialogs::{self, Dialogs};
+use dugix_core::canvas::{self, Entry, files, settings};
+use dugix_core::deck::link::Kind as FileKind;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 
-use super::{Backend, Command, Deck, Event, Result, absolute, bail, doc, ensure, read_deck_noted};
+use super::{
+    Backend, Command, Deck, Event, LibraryStamp, Result, absolute, bail, doc, ensure,
+    read_deck_noted,
+};
 
-/// One card of the Library page.
 #[derive(Debug, Serialize)]
 pub struct Item {
     pub kind: FileKind,
-    /// `decks/q3.deck.json`: the file's path inside the space.
+    /// The space the file belongs to, by name.
+    pub space: String,
+    /// `decks/q3.deck.json`: the file's path inside its space.
     pub relative: String,
     pub title: String,
     /// RFC 3339, rendered as "3 hours ago" by the page.
     pub modified: String,
     pub count: usize,
     pub design: Option<String>,
-    /// `/library/<key>.png`, served from the thumbnail cache; `None` when
-    /// there is nothing to draw yet.
+    /// `/library/<key>.png`; `None` when there is nothing to draw yet.
     pub thumb: Option<String>,
-    /// The file open in the window.
     pub current: bool,
 }
 
-/// The URL name of an entry's thumbnail: stable for a file and revision.
-fn thumb_key(entry: &Entry) -> String {
-    let digest = Sha256::digest(entry.relative.as_bytes());
-    let hex = digest.iter().take(6).fold(String::new(), |mut hex, byte| {
-        let _ = write!(hex, "{byte:02x}");
-        hex
-    });
-    format!("{hex}-{}.png", &entry.revision[..8])
+/// One library file with the space it was listed from.
+#[derive(Clone, Debug)]
+pub struct Listed {
+    pub space: String,
+    pub files: PathBuf,
+    pub entry: Entry,
 }
 
-/// The formats of a kind, as the page's Export menu offers them.
-fn deck_format(word: &str) -> Result<nexus_core::deck::export::Format> {
+/// The space files folder `path` lies in, when it is under `<data>/spaces/<name>/files`.
+pub(super) fn space_files_of(data_dir: &Path, path: &Path) -> Option<PathBuf> {
+    let spaces = data_dir.join("spaces").canonicalize().ok()?;
+    let path = absolute(path).ok()?;
+    // A file not written yet is placed by its folder.
+    let path = path
+        .canonicalize()
+        .ok()
+        .or_else(|| Some(path.parent()?.canonicalize().ok()?.join(path.file_name()?)))?;
+    let name = path.strip_prefix(&spaces).ok()?.components().next()?;
+    let files = spaces.join(name).join("files");
+    path.starts_with(&files).then_some(files)
+}
+
+/// The URL name of an entry's thumbnail: stable for a file and revision.
+fn thumb_key(listed: &Listed) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(listed.space.as_bytes());
+    hasher.update([0]);
+    hasher.update(listed.entry.relative.as_bytes());
+    let hex = hasher
+        .finalize()
+        .iter()
+        .take(6)
+        .fold(String::new(), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        });
+    format!("{hex}-{}.png", &listed.entry.revision[..8])
+}
+
+fn deck_format(word: &str) -> Result<dugix_core::deck::export::Format> {
     word.parse()
 }
 
 impl Backend {
-    /// The library path of the open file, when it lives inside the space.
+    /// The open file's space follows it, so its designs and new files are that space's.
+    pub(super) fn follow_space(&mut self) {
+        if let Some(files) = space_files_of(&self.data_dir, &self.path) {
+            self.files_dir = files;
+        }
+    }
+
     fn current_relative(&self) -> Option<String> {
         let root = self.files_dir.canonicalize().ok()?;
         let path = self.path.canonicalize().ok()?;
@@ -61,79 +92,184 @@ impl Backend {
             .map(|p| p.to_string_lossy().replace('\\', "/"))
     }
 
-    /// List the space and remember the listing for thumbnail requests.
-    pub(super) fn library_event(&self, notice: Option<String>, selected: Option<String>) -> Event {
-        let entries = canvas::library(&self.files_dir);
-        let current = self.current_relative();
-        let items = entries
-            .iter()
-            .map(|entry| Item {
-                kind: entry.kind,
-                relative: entry.relative.clone(),
-                title: entry.title.clone(),
-                modified: entry.modified.to_rfc3339(),
-                count: entry.count,
-                design: entry.design.clone(),
-                thumb: entry
-                    .thumbnail
-                    .as_ref()
-                    .map(|_| format!("/library/{}", thumb_key(entry))),
-                current: current.as_deref() == Some(entry.relative.as_str()),
+    /// The name the open file's space goes by in the listing.
+    fn current_space(&self) -> String {
+        let name = |dir: &Path| {
+            dir.parent()
+                .and_then(Path::file_name)
+                .map(|n| n.to_string_lossy().into_owned())
+        };
+        name(&self.files_dir)
+            .or_else(|| self.files_dir.canonicalize().ok().as_deref().and_then(name))
+            .unwrap_or_else(|| "this space".into())
+    }
+
+    /// Every space by name with its files folder: those under `<data>/spaces`,
+    /// and the open file's space when it lives elsewhere.
+    fn spaces(&self) -> Vec<(String, PathBuf)> {
+        let mut spaces: Vec<(String, PathBuf)> = std::fs::read_dir(self.data_dir.join("spaces"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|child| child.file_type().is_ok_and(|t| t.is_dir()))
+            .filter_map(|child| {
+                let name = child.file_name().to_string_lossy().into_owned();
+                let files = child.path().join("files");
+                (!name.starts_with('.') && files.is_dir()).then_some((name, files))
             })
             .collect();
-        *self.listing.borrow_mut() = entries;
+        let current = self.files_dir.canonicalize().ok();
+        let listed = spaces
+            .iter()
+            .any(|(_, files)| files.canonicalize().ok() == current);
+        if !listed {
+            let mut name = self.current_space();
+            while spaces.iter().any(|(other, _)| *other == name) {
+                name.push('\'');
+            }
+            spaces.push((name, self.files_dir.clone()));
+        }
+        spaces.sort_by_key(|a| a.0.to_lowercase());
+        spaces
+    }
+
+    /// The files folder of the space a library command names.
+    fn space_files(&self, space: Option<&str>) -> Result<PathBuf> {
+        let Some(space) = space else {
+            return Ok(self.files_dir.clone());
+        };
+        self.spaces()
+            .into_iter()
+            .find(|(name, _)| name == space)
+            .map(|(_, files)| files)
+            .ok_or_else(|| anyhow::anyhow!("there is no space named {space}"))
+    }
+
+    /// List every space and remember the listing for thumbnail requests.
+    pub(super) fn library_event(
+        &self,
+        notice: Option<String>,
+        selected: Option<(String, String)>,
+    ) -> Event {
+        let spaces = self.spaces();
+        let stamp: LibraryStamp = spaces
+            .iter()
+            .flat_map(|(_, files)| canvas::library_stamp(files))
+            .collect();
+        let unchanged = self.listing_stamp.borrow().as_ref() == Some(&stamp);
+        let mut listed = if unchanged {
+            self.listing.borrow().clone()
+        } else {
+            spaces
+                .iter()
+                .flat_map(|(space, files)| {
+                    canvas::library(files).into_iter().map(|entry| Listed {
+                        space: space.clone(),
+                        files: files.clone(),
+                        entry,
+                    })
+                })
+                .collect()
+        };
+        if !unchanged {
+            listed.sort_by(|a: &Listed, b: &Listed| {
+                b.entry
+                    .modified
+                    .cmp(&a.entry.modified)
+                    .then_with(|| a.space.cmp(&b.space))
+                    .then_with(|| a.entry.relative.cmp(&b.entry.relative))
+            });
+        }
+        *self.listing_stamp.borrow_mut() = Some(stamp);
+        let current = self.current_relative();
+        let current_files = self.files_dir.canonicalize().ok();
+        let items = listed
+            .iter()
+            .map(|listed| {
+                let entry = &listed.entry;
+                Item {
+                    kind: entry.kind,
+                    space: listed.space.clone(),
+                    relative: entry.relative.clone(),
+                    title: entry.title.clone(),
+                    modified: entry.modified.to_rfc3339(),
+                    count: entry.count,
+                    design: entry.design.clone(),
+                    thumb: entry
+                        .thumbnail
+                        .as_ref()
+                        .map(|_| format!("/library/{}", thumb_key(listed))),
+                    current: current.as_deref() == Some(entry.relative.as_str())
+                        && listed.files.canonicalize().ok() == current_files,
+                }
+            })
+            .collect();
+        *self.listing.borrow_mut() = listed;
+        let space = spaces
+            .iter()
+            .find(|(_, files)| files.canonicalize().ok() == current_files)
+            .map_or_else(|| self.current_space(), |(name, _)| name.clone());
+        let (selected_space, selected) = selected.unzip();
         Event::Library {
             items,
             current,
+            space,
+            spaces: spaces.into_iter().map(|(name, _)| name).collect(),
             home: self.home.get(),
             selected,
+            selected_space,
             notice,
         }
     }
 
-    /// The entry a thumbnail URL name belongs to, from the last listing.
-    fn thumbnail_entry(&self, name: &str) -> Result<Entry> {
+    fn thumbnail_entry(&self, name: &str) -> Result<Listed> {
         self.listing
             .borrow()
             .iter()
-            .find(|entry| thumb_key(entry) == name)
+            .find(|listed| thumb_key(listed) == name)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("unknown thumbnail"))
     }
 
-    /// `/library/<key>.png`, drawn on first request. The window serves these
-    /// through [`Backend::thumbnail_job`] without holding the backend.
+    /// `/library/<key>.png`, drawn on first request.
     pub(super) fn serve_thumbnail(&self, name: &str) -> Result<(&'static str, Vec<u8>)> {
-        let entry = self.thumbnail_entry(name)?;
-        let path = canvas::ensure_thumbnail(&self.files_dir, &entry)?;
+        let listed = self.thumbnail_entry(name)?;
+        let path = canvas::ensure_thumbnail(&listed.files, &listed.entry)?;
         Ok(("image/png", std::fs::read(path)?))
     }
 
-    /// What drawing the thumbnail of `uri` takes, so the caller can do it off
-    /// the backend's lock: the space files and the entry.
+    /// What drawing a thumbnail takes, so the caller can do it off the backend's lock.
     pub fn thumbnail_job(&self, uri: &str) -> Result<(PathBuf, Entry)> {
         let path = super::protocol_path(uri)?;
         let name = path
             .strip_prefix("/library/")
             .ok_or_else(|| anyhow::anyhow!("unknown resource"))?;
-        Ok((self.files_dir.clone(), self.thumbnail_entry(name)?))
+        let listed = self.thumbnail_entry(name)?;
+        Ok((listed.files, listed.entry))
     }
 
     /// The window's own library commands. Returns `None` for any other.
     pub(super) fn library_command(&mut self, command: &Command) -> Result<Option<Event>> {
         Ok(Some(match command {
             Command::Library {} => self.library_event(None, None),
-            Command::LibraryOpen { path } => self.library_open(path)?,
-            Command::LibraryReveal { path } => {
-                let (_, file) = files::resolve(&self.files_dir, path)?;
+            Command::LibraryOpen { path, space } => self.library_open(space.as_deref(), path)?,
+            Command::LibraryReveal { path, space } => {
+                let files = self.space_files(space.as_deref())?;
+                let (_, file) = files::resolve(&files, path)?;
                 Self::show_in_folder(&file)?
             }
-            Command::LibraryRename { path, title } => self.library_rename(path, title)?,
-            Command::LibraryDuplicate { path } => {
-                let copy = files::duplicate(&self.files_dir, path)?;
-                self.library_event(Some("Duplicated".into()), Some(copy))
+            Command::LibraryRename { path, title, space } => {
+                self.library_rename(space.as_deref(), path, title)?
             }
-            Command::LibraryDelete { path } => self.library_delete(path)?,
+            Command::LibraryDuplicate { path, space } => {
+                let files = self.space_files(space.as_deref())?;
+                let copy = files::duplicate(&files, path)?;
+                let space = space.clone().unwrap_or_else(|| self.current_space());
+                self.library_event(Some("Duplicated".into()), Some((space, copy)))
+            }
+            Command::LibraryDelete { path, space } => {
+                self.library_delete(space.as_deref(), path)?
+            }
             // The window shows these off the backend's lock (`prepare_dialog`);
             // everything else, tests included, asks and finishes in place.
             _ => match self.dialog_job(command)? {
@@ -146,26 +282,39 @@ impl Backend {
         }))
     }
 
-    /// Open a library file. The file already open stays as it is, with its
-    /// undo history.
-    fn library_open(&mut self, relative: &str) -> Result<Event> {
-        let (_, file) = files::resolve(&self.files_dir, relative)?;
-        if nexus_core::deck::same_file(&file, &self.path) && !self.home.get() {
+    /// The file already open stays as it is, with its undo history.
+    fn library_open(&mut self, space: Option<&str>, relative: &str) -> Result<Event> {
+        let files = self.space_files(space)?;
+        let (_, file) = files::resolve(&files, relative)?;
+        if dugix_core::deck::same_file(&file, &self.path) && !self.home.get() {
             return Ok(self.event());
         }
-        self.execute(Command::Open { path: file })
+        let event = self.execute(Command::Open { path: file })?;
+        // A space outside `<data>/spaces` is not found from the path alone.
+        self.files_dir = files;
+        Ok(event)
     }
 
-    fn library_rename(&mut self, relative: &str, title: &str) -> Result<Event> {
-        let (_, file) = files::resolve(&self.files_dir, relative)?;
-        if !nexus_core::deck::same_file(&file, &self.path) {
-            files::rename(&self.files_dir, relative, title)?;
-            return Ok(self.library_event(None, Some(relative.into())));
+    fn library_rename(
+        &mut self,
+        space: Option<&str>,
+        relative: &str,
+        title: &str,
+    ) -> Result<Event> {
+        let files = self.space_files(space)?;
+        let (_, file) = files::resolve(&files, relative)?;
+        if !dugix_core::deck::same_file(&file, &self.path) {
+            files::rename(&files, relative, title)?;
+            let space = space.map_or_else(|| self.current_space(), Into::into);
+            return Ok(self.library_event(None, Some((space, relative.into()))));
         }
         // The open file changes through the window's own undo history.
         let title = title.trim();
         ensure!(!title.is_empty(), "the title is empty");
-        if self.doc.is_some() {
+        if self.sheet.is_some() {
+            let ops = vec![serde_json::json!({"op": "set_title", "title": title})];
+            self.execute(Command::SheetApply { ops })
+        } else if self.doc.is_some() {
             let ops = vec![serde_json::json!({"op": "set_title", "title": title})];
             self.execute(Command::DocApply { ops })
         } else {
@@ -175,14 +324,15 @@ impl Backend {
         }
     }
 
-    fn library_delete(&mut self, relative: &str) -> Result<Event> {
-        let (_, file) = files::resolve(&self.files_dir, relative)?;
-        let was_open = nexus_core::deck::same_file(&file, &self.path);
+    fn library_delete(&mut self, space: Option<&str>, relative: &str) -> Result<Event> {
+        let files = self.space_files(space)?;
+        let (_, file) = files::resolve(&files, relative)?;
+        let was_open = dugix_core::deck::same_file(&file, &self.path);
         let name = file
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        files::delete(&self.files_dir, relative)?;
+        files::delete(&files, relative)?;
         if was_open {
             self.reset_to_home()?;
         }
@@ -193,13 +343,13 @@ impl Backend {
         Ok(event)
     }
 
-    /// The open file was deleted: the window goes back to an empty,
-    /// not-yet-saved deck behind the library.
+    /// The open file was deleted: back to an empty, not-yet-saved deck behind the library.
     fn reset_to_home(&mut self) -> Result<()> {
         self.doc = None;
+        self.sheet = None;
         self.path = super::new_path(&self.files_dir)?;
         self.deck = Deck::new_from_layouts("Untitled");
-        self.fetcher = nexus_core::remote_image::Fetcher::new(super::asset_root(&self.path)?);
+        self.fetcher = dugix_core::remote_image::Fetcher::new(super::asset_root(&self.path)?);
         self.known_revision = self.deck.revision();
         self.undo.clear();
         self.redo.clear();
@@ -212,13 +362,11 @@ impl Backend {
 
     // -- dialogs ------------------------------------------------------------
     //
-    // A dialog is two steps with the dialog itself in between, so the window
-    // never holds the backend (or the event loop's callback) while one is open:
-    // `dialog_job` works out what to ask, `DialogJob::ask` shows it (the window
-    // does that on a helper thread, which hands the panel to the main thread, as
-    // macOS requires), and `finish_dialog` does the rest with the answer.
+    // A dialog is two steps with the dialog in between, so the window never holds
+    // the backend (or the event loop's callback) while one is open: `dialog_job`
+    // works out what to ask, `DialogJob::ask` shows it on a helper thread (macOS
+    // needs the panel on the main thread), and `finish_dialog` finishes.
 
-    /// Where a dialog starts: the folder this space last exported to.
     fn dialog_start(&self) -> Option<PathBuf> {
         settings::export_dir(&self.data_dir, &self.files_dir)
             .or_else(|| Some(self.files_dir.join("exports")).filter(|p| p.is_dir()))
@@ -229,9 +377,10 @@ impl Backend {
         let _ = settings::remember_export(&self.data_dir, &self.files_dir, exported);
     }
 
-    /// The open file and its kind.
     fn current_file(&self) -> (FileKind, PathBuf) {
-        let kind = if self.doc.is_some() {
+        let kind = if self.sheet.is_some() {
+            FileKind::Sheet
+        } else if self.doc.is_some() {
             FileKind::Doc
         } else {
             FileKind::Deck
@@ -239,7 +388,6 @@ impl Backend {
         (kind, self.path.clone())
     }
 
-    /// The dialog a command needs, or `None` when it is not a dialog command.
     pub fn dialog_job(&mut self, command: &Command) -> Result<Option<DialogJob>> {
         let start_in_space = self.files_dir.canonicalize().ok();
         let (ask, then) = match command {
@@ -270,8 +418,13 @@ impl Backend {
             Command::ExportAs { format, template } => {
                 self.export_job(self.current_file(), format, template.clone())?
             }
-            Command::LibraryExport { path, format } => {
-                let (kind, file) = files::resolve(&self.files_dir, path)?;
+            Command::LibraryExport {
+                path,
+                format,
+                space,
+            } => {
+                let files = self.space_files(space.as_deref())?;
+                let (kind, file) = files::resolve(&files, path)?;
                 self.export_job((kind, file), format, None)?
             }
             Command::SaveCopy {} => self.save_copy_job()?,
@@ -284,14 +437,12 @@ impl Backend {
         }))
     }
 
-    /// The window's entry: a dialog job for a raw IPC message, if it is one.
-    /// An error is the reply to a dialog command that could not even start.
+    /// A dialog job for a raw IPC message, if it is one; an error is the reply.
     pub fn prepare_dialog(&mut self, source: &str) -> Option<Result<DialogJob>> {
         let command: Command = serde_json::from_str(source).ok()?;
         self.dialog_job(&command).transpose()
     }
 
-    /// What the user answered, as the event that replies to the command.
     pub fn finish_dialog(&mut self, answer: Answer) -> Event {
         self.finish(answer).unwrap_or_else(|error| Event::Error {
             message: error.to_string(),
@@ -316,7 +467,6 @@ impl Backend {
         }
     }
 
-    /// Store the image an image dialog returned with the open deck or doc.
     fn import_image(&self, chosen: &Path) -> Result<Event> {
         let src = if self.doc.is_some() {
             let bytes = super::read_bounded(chosen, 8 * 1024 * 1024)?;
@@ -327,8 +477,7 @@ impl Backend {
         Ok(Event::Asset { src })
     }
 
-    /// Open what an Open dialog returned: nexus files as they are, a
-    /// `PowerPoint` file as a new deck, a Word or Markdown file as a new doc.
+    /// dugix files open as they are; `PowerPoint`, Word and Markdown files import.
     fn open_chosen(&mut self, chosen: &Path) -> Result<Event> {
         let chosen = absolute(chosen)?;
         let name = chosen
@@ -339,6 +488,7 @@ impl Backend {
             .extension()
             .map(|e| e.to_string_lossy().to_ascii_lowercase());
         if name.ends_with(".deck.json")
+            || name.ends_with(".sheet.json")
             || name.ends_with(".doc.json")
             || extension.as_deref() == Some("pptx")
         {
@@ -350,15 +500,47 @@ impl Backend {
         if matches!(extension.as_deref(), Some("docx" | "dotx" | "md")) {
             return self.import_document(&chosen);
         }
-        bail!("choose a .deck.json, .doc.json, .pptx, .docx or .md file")
+        if matches!(extension.as_deref(), Some("csv" | "xlsx")) {
+            return self.import_sheet(&chosen);
+        }
+        bail!("choose a .deck.json, .doc.json, .sheet.json, .pptx, .docx, .md, .csv or .xlsx file")
     }
 
-    /// A Word or Markdown file becomes a new doc beside the others, then opens.
+    fn import_sheet(&mut self, source: &Path) -> Result<Event> {
+        let title = source
+            .file_stem()
+            .map_or_else(|| "Imported".into(), |s| s.to_string_lossy().into_owned());
+        let base = self.blank_sheet(&title)?;
+        let bytes = super::read_bounded(source, dugix_core::sheet::validate::MAX_SOURCE)?;
+        let mut sheet = if source
+            .extension()
+            .is_some_and(|s| s.eq_ignore_ascii_case("csv"))
+        {
+            let slug = base.design.as_deref().unwrap_or("dugix");
+            let design = dugix_core::design::load(&self.files_dir, slug)?;
+            dugix_core::sheet::interchange::import_csv(&bytes, &source.to_string_lossy(), &design)?
+        } else {
+            dugix_core::sheet::interchange::import_xlsx(&bytes, &title)?
+        };
+        sheet.title.clone_from(&title);
+        sheet.theme = base.theme;
+        sheet.design = base.design;
+        sheet.design_rev = base.design_rev;
+        let path = self.new_sheet_path(&title)?;
+        super::atomic_write(&path, &serde_json::to_vec_pretty(&sheet)?)?;
+        self.enter_sheet(path, sheet)?;
+        *self.doc_notice.borrow_mut() = Some(format!(
+            "Imported {}",
+            source.file_name().unwrap_or_default().to_string_lossy()
+        ));
+        Ok(self.sheet_event())
+    }
+
     fn import_document(&mut self, source: &Path) -> Result<Event> {
         let docs = doc::docs_dir(&self.files_dir)?;
-        let imported = nexus_core::doc::import::file(source, &docs.join("assets"))?;
+        let imported = dugix_core::doc::import::file(source, &docs.join("assets"))?;
         let stem = {
-            let stem = nexus_core::canvas::files::file_stem_for(&imported.doc.title);
+            let stem = dugix_core::canvas::files::file_stem_for(&imported.doc.title);
             let slug: String = stem
                 .to_lowercase()
                 .split(|c: char| !c.is_ascii_alphanumeric())
@@ -373,7 +555,7 @@ impl Backend {
         };
         let mut target = docs.join(format!("{stem}.doc.json"));
         for index in 2.. {
-            match nexus_core::doc::import::write_new(&imported, &target) {
+            match dugix_core::doc::import::write_new(&imported, &target) {
                 Ok(()) => break,
                 Err(error)
                     if error
@@ -414,8 +596,7 @@ impl Backend {
         self.execute(Command::Open { path: target })
     }
 
-    /// What to ask for an export of `source` in `word` format: the title it is
-    /// named after, and the extension that decides the dialog's filter.
+    /// What to ask for an export of `source` in `word` format.
     fn export_job(
         &self,
         source: (FileKind, PathBuf),
@@ -423,13 +604,17 @@ impl Backend {
         template: Option<String>,
     ) -> Result<(Ask, Then)> {
         let (kind, file) = source;
-        let open = nexus_core::deck::same_file(&file, &self.path);
+        let open = dugix_core::deck::same_file(&file, &self.path);
         let extension = files::export_extension(kind, word)?;
         // The open file's title is read from memory (a not-yet-saved placeholder
         // only exists there); another file's from disk.
         let title = match kind {
             FileKind::Deck if open => self.deck.title.clone(),
             FileKind::Deck => read_deck_noted(&file)?.0.title,
+            FileKind::Sheet => match self.sheet.as_ref().filter(|_| open) {
+                Some(session) => session.sheet.title.clone(),
+                None => files::read_sheet(&file)?.title,
+            },
             FileKind::Doc => match self.doc.as_ref().filter(|_| open) {
                 Some(session) => session.doc.title.clone(),
                 None => doc::read_doc(&file)?.title,
@@ -451,7 +636,6 @@ impl Backend {
         ))
     }
 
-    /// Write an export where the Save dialog said.
     fn export_to(
         &mut self,
         source: &(FileKind, PathBuf),
@@ -461,9 +645,16 @@ impl Backend {
         chosen: PathBuf,
     ) -> Result<Event> {
         let (kind, file) = source;
-        let open = nexus_core::deck::same_file(file, &self.path);
+        let open = dugix_core::deck::same_file(file, &self.path);
         let chosen = files::with_extension(chosen, extension);
         let output = match kind {
+            FileKind::Sheet => {
+                let sheet = match self.sheet.as_ref().filter(|_| open) {
+                    Some(session) => session.sheet.clone(),
+                    None => files::read_sheet(file)?,
+                };
+                files::sheet_output(&sheet, word, None)?
+            }
             FileKind::Deck => {
                 let deck = if open {
                     self.deck.clone()
@@ -475,7 +666,7 @@ impl Backend {
             FileKind::Doc => {
                 let (doc, threads) = match self.doc.as_ref().filter(|_| open) {
                     Some(session) => (session.doc.clone(), session.threads.clone()),
-                    None => (doc::read_doc(file)?, nexus_core::doc::feedback::load(file)?),
+                    None => (doc::read_doc(file)?, dugix_core::doc::feedback::load(file)?),
                 };
                 let images = chosen
                     .parent()
@@ -492,7 +683,6 @@ impl Backend {
         })
     }
 
-    /// What to ask for a copy of the open deck or doc.
     fn save_copy_job(&mut self) -> Result<(Ask, Then)> {
         // A deck that was never written exists only in memory.
         if !self.path.exists() {
@@ -501,13 +691,18 @@ impl Backend {
             }
             self.save()?;
         }
-        let (kind, title) = match self.doc.as_ref() {
-            Some(session) => (FileKind::Doc, session.doc.title.clone()),
-            None => (FileKind::Deck, self.deck.title.clone()),
+        let (kind, title) = if let Some(session) = &self.sheet {
+            (FileKind::Sheet, session.sheet.title.clone())
+        } else {
+            match self.doc.as_ref() {
+                Some(session) => (FileKind::Doc, session.doc.title.clone()),
+                None => (FileKind::Deck, self.deck.title.clone()),
+            }
         };
         let suffix = match kind {
             FileKind::Deck => "deck.json",
             FileKind::Doc => "doc.json",
+            FileKind::Sheet => "sheet.json",
         };
         Ok((
             Ask::Save {
@@ -531,7 +726,6 @@ impl Backend {
     }
 }
 
-/// What a dialog asks.
 enum Ask {
     Open {
         title: String,
@@ -546,7 +740,6 @@ enum Ask {
     },
 }
 
-/// What to do with the answer.
 enum Then {
     Open,
     Template,
@@ -560,8 +753,8 @@ enum Then {
     SaveCopy,
 }
 
-/// A native dialog ready to be shown: owns everything it needs, so it can run
-/// on any thread while the backend stays free.
+/// A native dialog ready to be shown, owning everything it needs so it can run on
+/// any thread while the backend stays free.
 pub struct DialogJob {
     dialogs: Arc<dyn Dialogs>,
     ask: Ask,
@@ -569,7 +762,7 @@ pub struct DialogJob {
 }
 
 impl DialogJob {
-    /// Show the dialog and wait for the answer. `None` is a cancel.
+    /// Show the dialog and wait; `None` is a cancel.
     #[must_use]
     pub fn ask(self) -> Answer {
         let chosen = match &self.ask {
@@ -594,7 +787,6 @@ impl DialogJob {
     }
 }
 
-/// A dialog's answer, with what to do next.
 pub struct Answer {
     then: Then,
     chosen: Option<PathBuf>,

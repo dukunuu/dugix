@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("media workspace uses authenticated blobs and media tools", async ({ page, isMobile }) => {
   const calls: { path: string; body?: unknown }[] = [];
-  await page.route("**/.well-known/nexus", (route) => route.fulfill({ json: { host_id: "media", product: "nexus-chat", version: "test", api: "/v1", authentication: "bearer" } }));
+  await page.route("**/.well-known/dugix", (route) => route.fulfill({ json: { host_id: "media", product: "dugix", version: "test", api: "/v1", authentication: "bearer" } }));
   await page.route("**/v1/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());

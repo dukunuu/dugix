@@ -1,25 +1,5 @@
-//! Deck → SVG → PNG, so the model (and the terminal) can see slides.
-//!
-//! The studio webview draws slides with HTML and CSS; this module draws the
-//! same slide with SVG and rasterizes it with `resvg`, placing every node
-//! where [`super::layout`] puts it and measuring text with the very font
-//! database `resvg` renders with. Both renderers follow the numbers in
-//! [`LAYOUT`]; a studio test checks that the CSS and JS still use them.
-//!
-//! Deliberate differences from the HTML renderer:
-//! - font fallbacks: `system-ui` and `ui-serif` are CSS-only, so the SVG
-//!   stacks name the platform's equivalents instead;
-//! - table borders are 1 CSS pixel in HTML (they stay thin as the slide
-//!   scales) and 1 slide pixel here (they scale);
-//! - the inline-code tint is the light-mode tint, because the HTML tint
-//!   follows the viewer's light or dark mode, not the deck's theme;
-//! - text is placed with real font ascent and descent, so a baseline can sit
-//!   a pixel off a browser's rounding of the same metrics;
-//! - `woff2` deck fonts cannot be loaded here (the font database reads
-//!   `ttf`, `otf` and `ttc`), so text set in one falls back to its next family.
-//!
-//! Remote images are only drawn when `remote_image::Fetcher` already holds
-//! them; nothing here touches the network.
+//! Deck → SVG → PNG, so the model and the terminal can see slides. The studio webview
+//! draws the same slide in HTML/CSS; remote images come only from the fetcher's cache.
 
 #![allow(
     clippy::cast_precision_loss,
@@ -133,8 +113,7 @@ pub(crate) fn chart(
     }
 }
 
-/// The deck image as a PNG data URL, from the deck's own `assets` folder or
-/// the remote-image cache. Never fetches.
+/// The deck image as a PNG data URL, from the deck's `assets` or the remote cache.
 pub(crate) fn image_data(src: &str, assets: Option<&Path>) -> Option<String> {
     let path = image_path(src, assets)?;
     let image = image::load_from_memory(&std::fs::read(path).ok()?).ok()?;
@@ -472,13 +451,12 @@ fn raster(
     Ok(pixmap.encode_png()?)
 }
 
-/// Render a slide to a PNG `width_px` wide. Local images and imported fonts
-/// are skipped; use [`render_slide_at`] to draw a deck's own assets.
+/// Render a slide to a PNG `width_px` wide, without the deck's own assets.
 pub fn render_slide(deck: &Deck, slide_id: &str, width_px: u32) -> Result<Vec<u8>> {
     render_slide_at(deck, slide_id, width_px, None)
 }
 
-/// Render using the deck's already-local `assets` folder. Never downloads.
+/// Render using the deck's local `assets` folder; never downloads.
 pub fn render_slide_at(
     deck: &Deck,
     slide_id: &str,
@@ -511,8 +489,7 @@ pub(super) fn export_slide_at(
     raster(&body, width_px, height, (size.w, size.h), &ts)
 }
 
-/// Every slide as a standalone SVG at the authored pixel size, with the
-/// font database needed to parse them. Used by the vector PDF export.
+/// Every slide as a standalone SVG at the authored pixel size, with its fonts.
 pub(crate) fn export_svgs(
     deck: &Deck,
     assets: Option<&Path>,
@@ -594,8 +571,7 @@ fn file_key(key: &str) -> String {
     })
 }
 
-/// The cache folder for one deck, `<files>/decks/.renders/<stem>`, created on
-/// demand. Refuses a path that passes through a symlink.
+/// The cache folder for one deck, created on demand; refuses symlinked paths.
 pub(crate) fn render_dir(deck_path: &Path, files: &Path) -> Result<PathBuf> {
     let name = deck_path
         .file_name()
@@ -627,10 +603,8 @@ fn relative(files: &Path, output: &Path) -> Result<String> {
         .replace('\\', "/"))
 }
 
-/// Write a render to `<files>/decks/.renders/<deck-stem>/<slide-id>-<revision8>.png`
-/// (a contact sheet when `sheet`, covering `ids`) and return its path relative
-/// to `files`, ready for a `![alt](path)` reference. Older revisions of the
-/// same slide are removed. The folder is a device-local cache.
+/// Write a render (or contact sheet) and return its path relative to `files`,
+/// ready for a `![alt](path)` reference; older revisions are removed once stale.
 pub fn render_cached(
     deck: &Deck,
     deck_path: &Path,
@@ -647,7 +621,9 @@ pub fn render_cached(
     });
     let name = format!("{key}-{}.png", &deck.revision()[..8]);
     let output = directory.join(&name);
-    if !output.is_file() {
+    if output.is_file() {
+        touch_render(&output);
+    } else {
         let assets = deck_path.parent().context("deck folder")?.join("assets");
         let bytes = if sheet {
             sheet_at(deck, ids, 3, Some(&assets))?
@@ -656,20 +632,60 @@ pub fn render_cached(
         };
         super::write_atomic(&output, &bytes)?;
     }
-    for entry in std::fs::read_dir(&directory)?.flatten() {
-        let old = entry.file_name().to_string_lossy().into_owned();
-        if old.starts_with(&format!("{key}-"))
-            && Path::new(&old).extension().is_some_and(|ext| ext == "png")
-            && old != name
-        {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
+    prune_superseded(&directory, |old| {
+        old.starts_with(&format!("{key}-")) && old != name
+    });
     relative(files, &output)
 }
 
-/// Forget the cached renders of one revision of a deck, for when an image it
-/// refers to has arrived since they were drawn.
+/// How long a superseded render stays on disk. A conversation replays the image
+/// behind every earlier `view` result, so deleting it sooner changes the
+/// replayed history and misses the provider's prompt cache from there on.
+const SUPERSEDED_RENDER_TTL: std::time::Duration = std::time::Duration::from_hours(48);
+
+/// Mark a long-lived render that is shown again as just used, so its age
+/// counts from the latest view. Young renders are left alone.
+pub(crate) fn touch_render(output: &Path) {
+    let now = std::time::SystemTime::now();
+    let aging = std::fs::metadata(output)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|modified| now.duration_since(modified).ok())
+        .is_some_and(|age| age >= SUPERSEDED_RENDER_TTL / 2);
+    if aging && let Ok(file) = std::fs::File::options().write(true).open(output) {
+        let _ = file.set_modified(now);
+    }
+}
+
+/// Remove the PNGs in `directory` that `superseded` names, once they are older
+/// than every provider's cache lifetime.
+pub(crate) fn prune_superseded(directory: &Path, superseded: impl Fn(&str) -> bool) {
+    prune_superseded_at(directory, std::time::SystemTime::now(), superseded);
+}
+
+pub(crate) fn prune_superseded_at(
+    directory: &Path,
+    now: std::time::SystemTime,
+    superseded: impl Fn(&str) -> bool,
+) {
+    for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let png = Path::new(&name)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("png"));
+        let expired = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age >= SUPERSEDED_RENDER_TTL);
+        if png && expired && superseded(&name) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Forget one revision's cached renders, for when a referenced image has arrived.
 pub fn invalidate_cached(deck_path: &Path, files: &Path, revision: &str) {
     let Ok(directory) = render_dir(deck_path, files) else {
         return;
@@ -687,9 +703,8 @@ pub fn invalidate_cached(deck_path: &Path, files: &Path, revision: &str) {
     }
 }
 
-/// A durable render of one slide for a conversation message. Unlike
-/// [`render_cached`] it is never pruned, because a past message keeps
-/// referring to it.
+/// A durable render for a conversation message; never pruned, since the message
+/// keeps referring to it.
 pub fn render_snapshot(
     deck: &Deck,
     deck_path: &Path,

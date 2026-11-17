@@ -59,7 +59,7 @@ export function feedbackController(api) {
   function renderLink() {
     const activities = Object.values(state.activities), working = activities.some(a => ['working', 'progress'].includes(a.state)), waiting = activities.filter(a => a.state === 'queued').length;
     const pill = document.querySelector('#link-status');
-    pill.textContent = !state.linked ? 'Not linked' : working ? 'nexus is working' : waiting ? `Linked · ${waiting} waiting` : 'Linked to nexus';
+    pill.textContent = !state.linked ? 'Not linked' : working ? 'dugix is working' : waiting ? `Linked · ${waiting} waiting` : 'Linked to dugix';
     pill.classList.toggle('connected', state.linked); pill.classList.toggle('working', state.linked && working);
   }
   function updateActivities(activities) {
@@ -76,7 +76,7 @@ export function feedbackController(api) {
           setTimeout(renderPins, 4000);
         }
         const thread = state.threads.find(t => t.id === id);
-        if (thread && state.openThread !== id) api.toast(`nexus ${activity.detail || (activity.state === 'done' ? 'finished' : activity.state)}`, () => openThread(thread));
+        if (thread && state.openThread !== id) api.toast(`dugix ${activity.detail || (activity.state === 'done' ? 'finished' : activity.state)}`, () => openThread(thread));
       }
     }
     renderLink();
@@ -87,8 +87,8 @@ export function feedbackController(api) {
     const label = element('div', 'activity-label');
     if (busy(activity)) label.append(element('span', 'activity-dot'));
     if (activity.state === 'done') label.append(icon('check'));
-    const waiting = { draft:'Waiting — you have a draft in nexus', streaming:'Waiting — nexus is answering something else', no_model:'Waiting — no model selected' };
-    const text = activity.state === 'queued' ? (waiting[activity.reason] || 'Waiting for nexus') : ['working', 'progress'].includes(activity.state) ? 'nexus is working…' : activity.state === 'done' ? 'Done' : activity.state === 'stopped' ? 'Stopped' : 'Failed';
+    const waiting = { draft:'Waiting — you have a draft in dugix', streaming:'Waiting — dugix is answering something else', no_model:'Waiting — no model selected' };
+    const text = activity.state === 'queued' ? (waiting[activity.reason] || 'Waiting for dugix') : ['working', 'progress'].includes(activity.state) ? 'dugix is working…' : activity.state === 'done' ? 'Done' : activity.state === 'stopped' ? 'Stopped' : 'Failed';
     label.append(element('span', '', text)); row.append(label);
     if (['working', 'progress'].includes(activity.state)) for (const line of progress[thread.id] || []) row.append(element('div', 'activity-progress', line));
     if (!busy(activity) && activity.detail) {
@@ -108,7 +108,7 @@ export function feedbackController(api) {
   }
   function author(message) {
     const row = element('div', `message-author ${message.role}`), avatar = element('span', 'avatar', message.role === 'model' ? '✦' : '❯');
-    row.append(avatar, element('span', '', message.role === 'model' ? 'nexus' : 'You'), element('time', '', new Date(message.created * 1000).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }))); return row;
+    row.append(avatar, element('span', '', message.role === 'model' ? 'dugix' : 'You'), element('time', '', new Date(message.created * 1000).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }))); return row;
   }
   function iconAction(name, label, className, run) {
     const button = element('button', `card-action ${className}`); button.type = 'button'; button.title = label; button.setAttribute('aria-label', label);
@@ -131,7 +131,7 @@ export function feedbackController(api) {
     if (edit.why && !/^suggested edit\.?$/i.test(edit.why.trim())) {
       const reason = element('p', 'edit-summary'); reason.append(inlineMarkdown(edit.why)); info.append(reason);
     }
-    if (edit.status !== 'pending') info.append(element('span', 'edit-status', edit.status === 'outdated' ? 'Outdated — ask again in nexus' : edit.status === 'applied' ? 'Applied · undo with Cmd+Z' : 'Dismissed'));
+    if (edit.status !== 'pending') info.append(element('span', 'edit-status', edit.status === 'outdated' ? 'Outdated — ask again in dugix' : edit.status === 'applied' ? 'Applied · undo with Cmd+Z' : 'Dismissed'));
     node.append(info); return node;
   }
   function openThread(thread) { clearPreview(); state.openThread = thread.id; state.draftAnchor = null; state.slideId = thread.anchor.slide; state.selected.clear(); api.render(); }
@@ -196,17 +196,17 @@ export function feedbackController(api) {
     if (thread?.resolved) popover.append(element('p', 'hint', 'Resolved. Kept with your deck.'));
     const reply = element('textarea'); reply.maxLength = 2000; reply.placeholder = thread ? 'Reply to this thread…' : 'Add a note or request a change…'; reply.setAttribute('aria-label', thread ? 'Reply to thread' : 'Comment text');
     const draftKey = thread?.id || JSON.stringify(state.draftAnchor); reply.value = state.drafts[draftKey] || ''; reply.oninput = () => state.drafts[draftKey] = reply.value; popover.append(reply);
-    function send(toNexus) {
+    function send(toDugix) {
       if (!reply.value.trim()) { reply.focus(); return; }
       const text = reply.value; delete state.drafts[draftKey];
-      api.command(thread ? { command:'CommentReply', thread:thread.id, text, send:toNexus } : { command:'CommentCreate', anchor:state.draftAnchor, text, send:toNexus }, event => {
+      api.command(thread ? { command:'CommentReply', thread:thread.id, text, send:toDugix } : { command:'CommentCreate', anchor:state.draftAnchor, text, send:toDugix }, event => {
         if (event.event === 'Error') { state.drafts[draftKey] = text; return; }
         state.draftAnchor = null; if (!thread) state.openThread = state.threads.at(-1)?.id; api.render();
       });
     }
-    const actions = element('div', 'thread-actions'), note = element('button', '', 'Note'), ask = element('button', 'primary', 'Send to nexus');
+    const actions = element('div', 'thread-actions'), note = element('button', '', 'Note'), ask = element('button', 'primary', 'Send to dugix');
     note.onclick = () => send(false); ask.prepend(icon('send')); ask.disabled = !state.linked; ask.onclick = () => send(true); actions.append(note, ask); popover.append(actions);
-    if (!state.linked) popover.append(element('p', 'hint', 'Not linked to a conversation — open it from nexus with /studio.'));
+    if (!state.linked) popover.append(element('p', 'hint', 'Not linked to a conversation — open it from dugix with /studio.'));
     if (thread) { const resolve = element('button', '', thread.resolved ? 'Reopen thread' : 'Resolve thread'); resolve.prepend(icon('check')); resolve.style.marginTop = '16px'; resolve.style.fontSize = '11px'; resolve.onclick = () => api.command({ command:thread.resolved ? 'CommentReopen' : 'CommentResolve', thread:thread.id }); popover.append(resolve); }
   }
   function renderComments() {
@@ -214,9 +214,9 @@ export function feedbackController(api) {
     for (const [i, slide] of state.deck.slides.entries()) {
       const threads = state.threads.filter(t => t.anchor.slide === slide.id && Boolean(t.resolved) === (filter === 'resolved')); if (!threads.length) continue;
       comments.append(element('div', 'comments-slide', `Slide ${String(i + 1).padStart(2, '0')}`));
-      for (const thread of threads) { const row = element('button', 'comment-row'), text = element('p'); text.append(inlineMarkdown(thread.messages[0]?.text || '')); row.append(element('span', `severity ${thread.severity}`, thread.severity), text, element('small', '', `${thread.messages.length} ${thread.messages.length === 1 ? 'message' : 'messages'} · ${thread.messages[0]?.role === 'model' ? 'nexus' : 'You'}`)); row.onclick = () => openThread(thread); comments.append(row); }
+      for (const thread of threads) { const row = element('button', 'comment-row'), text = element('p'); text.append(inlineMarkdown(thread.messages[0]?.text || '')); row.append(element('span', `severity ${thread.severity}`, thread.severity), text, element('small', '', `${thread.messages.length} ${thread.messages.length === 1 ? 'message' : 'messages'} · ${thread.messages[0]?.role === 'model' ? 'dugix' : 'You'}`)); row.onclick = () => openThread(thread); comments.append(row); }
     }
-    if (!comments.childNodes.length) comments.append(element('p', 'hint', filter === 'open' ? 'No open comments. Pin a note or ask for a review in nexus.' : 'Resolved threads appear here.'));
+    if (!comments.childNodes.length) comments.append(element('p', 'hint', filter === 'open' ? 'No open comments. Pin a note or ask for a review in dugix.' : 'Resolved threads appear here.'));
   }
   function render() { renderThread(); renderPins(); renderComments(); }
   function clearPreview() { state.preview = null; state.previewTarget = null; document.querySelector('#preview-bar').hidden = true; }

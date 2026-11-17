@@ -1,5 +1,5 @@
 [package]
-name = "nexus-studio"
+name = "dugix-studio"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,7 +7,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
-nexus-chat-core = { path = "../core", features = ["native-dialogs"] }
+dugix-core = { path = "../core", features = ["native-dialogs"] }
 anyhow = { workspace = true }
 image = { workspace = true }
 serde = { workspace = true }

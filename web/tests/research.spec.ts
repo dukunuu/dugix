@@ -18,7 +18,7 @@ test("research activity starts a project and exposes the steering controls", asy
   let started = false;
   let running = false;
   const session = { id: "research-1", title: "Research", model: "test", kind: "research", web_mode: false, created_at: "now" };
-  await page.route("**/.well-known/nexus", (route) => route.fulfill({ json: { host_id: "research", product: "nexus-chat", version: "test", api: "/v1", authentication: "bearer" } }));
+  await page.route("**/.well-known/dugix", (route) => route.fulfill({ json: { host_id: "research", product: "dugix", version: "test", api: "/v1", authentication: "bearer" } }));
   await page.route("**/v1/**", async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === "/v1/snapshot") return route.fulfill({ json: { active_session_id: started ? session.id : null, active_space_id: "space", active_space_name: "Default", sessions: started ? [session] : [], models: [], settings: {}, tasks: running ? [{ id: 1, session_id: session.id, session_title: session.title, status: "streaming", buffer_chars: 0, buffer: "" }] : [], research: {} } });

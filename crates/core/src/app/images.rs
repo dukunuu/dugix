@@ -1,6 +1,3 @@
-// Casts here are on bounded values: token counts, byte sizes, and
-// selection indices — never on unbounded input. JSON-derived indices in
-// provider/tools go through try_from instead.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -11,8 +8,7 @@ use anyhow::{Context, Result};
 
 use super::{App, ImageMeta};
 
-/// Raster formats the app can render inline (plus `svg`, which the system
-/// viewer opens even though the half-block renderer can't draw it).
+/// Image formats supported by the inline or system viewer.
 pub fn is_image_name(name: &str) -> bool {
     let ext = std::path::Path::new(name)
         .extension()
@@ -25,13 +21,10 @@ pub fn is_image_name(name: &str) -> bool {
 }
 
 impl App {
-    /// Read the space's images dir and populate `images_cache` (name, size,
-    /// modified) with **image files only** — the Files tab owns everything
-    /// else. A missing or empty dir produces an empty cache, never an error.
     pub fn refresh_images(&mut self) {
         let dir = self.space.files_dir(&self.active_space.name);
         let _ = std::fs::create_dir_all(&dir);
-        self.images_cache = match std::fs::read_dir(&dir) {
+        self.caches.images = match std::fs::read_dir(&dir) {
             Err(_) => Vec::new(),
             Ok(entries) => entries
                 .flatten()
@@ -58,11 +51,9 @@ impl App {
                 })
                 .collect(),
         };
-        self.images_cache.sort_by(|a, b| a.name.cmp(&b.name));
+        self.caches.images.sort_by(|a, b| a.name.cmp(&b.name));
     }
 
-    /// Remove the image file (if any) and refresh the cache. Returns whether a
-    /// row existed.
     pub fn delete_image_file(&mut self, name: &str) -> Result<bool> {
         let dir = self.space.files_dir(&self.active_space.name);
         let path = dir.join(name);

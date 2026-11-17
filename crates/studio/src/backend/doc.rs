@@ -1,15 +1,12 @@
 //! Doc mode: the studio backend owns one `*.doc.json` the way it owns a deck.
-//!
-//! Every edit is a batch of doc operations (`doc::direct`), written to the file
-//! at once and kept as one undo step; the model's edits reload as one undo step
-//! too. Comments live in the shared sidecar (`doc::feedback`).
+//! Every edit is a batch of operations written at once as one undo step.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 
 use anyhow::Context as _;
-use nexus_core::deck::history::{self, Document as _};
-use nexus_core::doc::{self, Doc, Kind as BlockKind, feedback as comments, layout};
+use dugix_core::deck::history::{self, Document as _};
+use dugix_core::doc::{self, Doc, Kind as BlockKind, feedback as comments, layout};
 use serde::Serialize;
 
 use super::{
@@ -17,7 +14,7 @@ use super::{
     atomic_write, bail, ensure, image_hash, read_bounded, stamp,
 };
 
-/// Pages are drawn this wide in pixels; the UI shows them at fit-width.
+/// Drawn this wide; the UI shows them at fit-width.
 const PAGE_PNG_WIDTH: u32 = 1400;
 
 /// One open document: its text, undo stacks and comment threads.
@@ -29,7 +26,6 @@ pub struct DocSession {
     pages: RefCell<Option<PageCache>>,
 }
 
-/// Paginated pages of one revision, with PNGs drawn when first asked for.
 struct PageCache {
     revision: String,
     pages: Vec<layout::Page>,
@@ -55,7 +51,6 @@ pub struct DesignState {
     pub(super) name: String,
     pub(super) colors: BTreeMap<String, String>,
     pub(super) fonts: BTreeMap<String, String>,
-    /// The design's revision moved since the doc copied it.
     pub(super) update_available: bool,
     pub(super) template: bool,
 }
@@ -73,17 +68,17 @@ pub struct DesignInfo {
 #[derive(Debug, Serialize)]
 pub struct PageInfo {
     pub(super) n: usize,
-    /// Points; the pages share one size, but each is told for safety.
+    /// Points.
     pub(super) width: f64,
     pub(super) height: f64,
     pub(super) src: String,
 }
 
 pub(super) fn is_doc_path(path: &Path) -> bool {
-    nexus_core::deck::link::Kind::of_path(path) == nexus_core::deck::link::Kind::Doc
+    dugix_core::deck::link::Kind::of_path(path) == dugix_core::deck::link::Kind::Doc
 }
 
-fn located(errors: &[nexus_core::deck::CheckError]) -> String {
+fn located(errors: &[dugix_core::deck::CheckError]) -> String {
     errors
         .iter()
         .map(|e| format!("{}: {}", e.path, e.message))
@@ -100,7 +95,6 @@ fn checked(doc: &Doc) -> Result<Doc> {
     Doc::check(&serde_json::to_string(doc)?).map_err(|e| anyhow::anyhow!("{}", located(&e)))
 }
 
-/// Blocks that are new or different in `next`.
 fn changed_blocks(before: &Doc, next: &Doc) -> Vec<String> {
     next.blocks
         .iter()
@@ -134,16 +128,14 @@ pub(super) fn docs_dir(files_dir: &Path) -> Result<PathBuf> {
     Ok(docs)
 }
 
-/// A fresh doc following the space's default design.
 fn blank_doc(files_dir: &Path, title: &str) -> Doc {
-    let slug = nexus_core::design::default_slug(files_dir).unwrap_or_else(|_| "nexus".into());
-    let design = nexus_core::design::load(files_dir, &slug).unwrap_or_default();
+    let slug = dugix_core::design::default_slug(files_dir).unwrap_or_else(|_| "dugix".into());
+    let design = dugix_core::design::load(files_dir, &slug).unwrap_or_default();
     let mut doc = Doc::from_design(title, &design);
     doc.design = Some(slug);
     doc
 }
 
-/// A new doc file for a path that does not exist yet.
 pub(super) fn create_doc_file(files_dir: &Path, path: &Path, title: &str) -> Result<Doc> {
     let doc = checked(&blank_doc(files_dir, title))?;
     atomic_write(path, &serde_json::to_vec_pretty(&doc)?)?;
@@ -151,18 +143,21 @@ pub(super) fn create_doc_file(files_dir: &Path, path: &Path, title: &str) -> Res
 }
 
 impl Backend {
-    /// Whether a doc, not a deck, is open.
     #[cfg(test)]
     pub fn is_doc(&self) -> bool {
         self.doc.is_some()
     }
 
-    /// The open document's title.
     #[must_use]
     pub fn title(&self) -> &str {
-        self.doc
-            .as_ref()
-            .map_or(self.deck.title.as_str(), |s| s.doc.title.as_str())
+        self.sheet.as_ref().map_or_else(
+            || {
+                self.doc
+                    .as_ref()
+                    .map_or(self.deck.title.as_str(), |s| s.doc.title.as_str())
+            },
+            |s| s.sheet.title.as_str(),
+        )
     }
 
     pub(super) fn session(&self) -> Result<&DocSession> {
@@ -179,16 +174,16 @@ impl Backend {
 
     pub(super) fn doc_resolver(
         &self,
-    ) -> impl Fn(&str) -> Result<nexus_core::design::Design> + use<> {
+    ) -> impl Fn(&str) -> Result<dugix_core::design::Design> + use<> {
         let files = self.files_dir.clone();
-        move |slug: &str| nexus_core::design::load(&files, slug)
+        move |slug: &str| dugix_core::design::load(&files, slug)
     }
 
     fn design_state(&self, doc: &Doc) -> DesignState {
         let stored = doc
             .design
             .as_deref()
-            .and_then(|slug| nexus_core::design::load(&self.files_dir, slug).ok());
+            .and_then(|slug| dugix_core::design::load(&self.files_dir, slug).ok());
         DesignState {
             slug: doc.design.clone(),
             template: stored.as_ref().is_some_and(|d| d.source.is_some()),
@@ -204,7 +199,6 @@ impl Backend {
         }
     }
 
-    /// `docs/q3.doc.json` for display; the file name outside the space.
     fn doc_relative(&self) -> String {
         self.files_dir
             .canonicalize()
@@ -247,15 +241,14 @@ impl Backend {
         }
     }
 
-    /// Content hashes of the images and fonts the doc names, so the page can
-    /// cache them by content.
+    /// Content hashes of the doc's images and fonts, so the page can cache by content.
     fn doc_asset_hashes(&self, doc: &Doc) -> BTreeMap<String, String> {
         let root = asset_root(&self.path).ok();
         let local = |src: &str| {
             let root = root.as_ref()?;
             let path = root.join(src.strip_prefix("assets/").unwrap_or(src));
             self.cached_hash(&path, || {
-                self.serve(&format!("nexus://localhost/{src}"))
+                self.serve(&format!("dugix://localhost/{src}"))
                     .ok()
                     .map(|(_, bytes)| bytes)
             })
@@ -300,7 +293,6 @@ impl Backend {
 
     // -- opening ---------------------------------------------------------------
 
-    /// Read a doc from disk and make it the open document.
     pub(super) fn open_doc_file(&mut self, path: PathBuf) -> Result<()> {
         let doc = if path.exists() {
             read_doc(&path)?
@@ -319,11 +311,13 @@ impl Backend {
         let root = asset_root(&path)?;
         atomic_write(&self.recent, &serde_json::to_vec(&path)?)?;
         self.path = path;
-        self.fetcher = nexus_core::remote_image::Fetcher::new(root);
+        self.follow_space();
+        self.fetcher = dugix_core::remote_image::Fetcher::new(root);
         self.known_revision = doc.revision();
         self.deck_stamp = stamp(&self.path);
         self.load_notes.clear();
         self.import_warnings.clear();
+        self.sheet = None;
         self.doc = Some(DocSession::new(doc));
         self.load_doc_feedback()?;
         self.hello();
@@ -344,7 +338,6 @@ impl Backend {
         Ok(())
     }
 
-    /// Re-find anchors and recheck suggestions against the current text.
     pub(super) fn reanchor_threads(&mut self) {
         let resolver = self.doc_resolver();
         if let Some(session) = self.doc.as_mut() {
@@ -365,7 +358,7 @@ impl Backend {
 
     // -- writing ---------------------------------------------------------------
 
-    /// Write the doc file, first keeping the version it replaces in history.
+    /// Write the doc, first keeping the version it replaces in history.
     fn write_doc(&self, doc: &Doc) -> Result<()> {
         self.home.set(false);
         // History is a safety net: failing to keep a version must not block a save.
@@ -377,7 +370,6 @@ impl Backend {
         atomic_write(&self.path, &serde_json::to_vec_pretty(doc)?)
     }
 
-    /// Make `next` the document: one undo step, written at once.
     pub(super) fn replace_doc(&mut self, next: Doc) -> Result<()> {
         if self.session()?.doc != next {
             self.write_doc(&next)?;
@@ -399,8 +391,7 @@ impl Backend {
 
     // -- commands --------------------------------------------------------------
 
-    /// The doc half of `execute`. Commands that only make sense for decks fail
-    /// with a plain sentence rather than touching the doc.
+    /// The doc half of `execute`.
     #[allow(clippy::too_many_lines)]
     pub(super) fn doc_execute(&mut self, command: Command) -> Result<Event> {
         match command {
@@ -418,6 +409,16 @@ impl Backend {
                 return Ok(self.doc_feedback_event(vec![]));
             }
             Command::DocApply { ops } => self.apply_ops(ops)?,
+            Command::DocSource {} => {
+                return Ok(Event::DocSource {
+                    markdown: doc::markdown::render(&self.session()?.doc),
+                    revision: self.session()?.doc.revision(),
+                });
+            }
+            Command::DocApplySource { markdown } => {
+                let next = doc::markdown::apply_source(&self.session()?.doc, &markdown)?;
+                self.replace_doc(next)?;
+            }
             Command::HistoryRestore { id } => {
                 let kept = self.history_doc(&id)?;
                 self.replace_doc(kept)?;
@@ -493,13 +494,12 @@ impl Backend {
         Ok(self.doc_event())
     }
 
-    /// Store an image by content next to the doc; the page gets its `assets/…` name.
     pub(super) fn doc_store_image(&self, bytes: &[u8], label: &str) -> Result<String> {
         let stem = Path::new(label)
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("image");
-        nexus_core::deck::assets::store_image_bytes(
+        dugix_core::deck::assets::store_image_bytes(
             bytes,
             &Path::new(label)
                 .file_name()
@@ -511,7 +511,7 @@ impl Backend {
 
     // -- external changes ------------------------------------------------------
 
-    /// The doc half of `sync`: one external change of the file is one undo step.
+    /// The doc half of `sync`: one external change is one undo step.
     pub(super) fn doc_sync(&mut self) -> Result<(Option<Event>, bool)> {
         let doc_stamp = stamp(&self.path);
         let comments_stamp = stamp(&comments::sidecar(&self.path));
@@ -567,8 +567,8 @@ impl Backend {
     ) -> Result<Event> {
         let format: doc::export::Format = format.parse()?;
         let session = self.session()?;
-        // Markdown names its images beside it, so they are copied into
-        // `exports/assets/` by content, as the canvas tool does.
+        // Markdown names its images beside it, so they are copied by content into
+        // `exports/assets/`.
         let output = self.doc_output(
             &session.doc,
             &session.threads,
@@ -577,7 +577,7 @@ impl Backend {
             template,
             &self.files_dir.join("exports/assets"),
         )?;
-        let path = nexus_core::deck::export::write_export(&output, &self.files_dir, path)?;
+        let path = dugix_core::deck::export::write_export(&output, &self.files_dir, path)?;
         self.exports.push(path.clone());
         Ok(Event::Exported {
             path,
@@ -585,8 +585,8 @@ impl Backend {
         })
     }
 
-    /// A doc as a file in `format`, not yet written anywhere. Markdown's images
-    /// are copied by content into `md_images`.
+    /// A doc as a file in `format`, not yet written; Markdown's images are copied
+    /// into `md_images`.
     pub(super) fn doc_output(
         &self,
         doc: &Doc,
@@ -595,11 +595,10 @@ impl Backend {
         format: doc::export::Format,
         template: Option<&str>,
         md_images: &Path,
-    ) -> Result<nexus_core::deck::export::Export> {
-        // The assets folder is checked (and made) the way every deck and doc
-        // operation does before anything reads from it.
+    ) -> Result<dugix_core::deck::export::Export> {
+        // Check (and make) the assets folder before anything reads from it.
         asset_root(path)?;
-        nexus_core::canvas::files::doc_output(
+        dugix_core::canvas::files::doc_output(
             &self.files_dir,
             doc,
             threads,
@@ -674,8 +673,8 @@ impl Backend {
     fn doc_designs(&self) -> Result<Event> {
         let current = self.session()?.doc.design.clone();
         let mut available = Vec::new();
-        for slug in nexus_core::design::list(&self.files_dir)? {
-            if let Ok(design) = nexus_core::design::load(&self.files_dir, &slug) {
+        for slug in dugix_core::design::list(&self.files_dir)? {
+            if let Ok(design) = dugix_core::design::load(&self.files_dir, &slug) {
                 available.push(DesignInfo {
                     current: current.as_deref() == Some(slug.as_str()),
                     slug,
@@ -694,19 +693,20 @@ impl Backend {
         match message {
             LinkMessage::DocFocus {
                 deck_path, block, ..
-            } if nexus_core::deck::same_file(deck_path, &self.path) => Event::DocFocus {
+            } if dugix_core::deck::same_file(deck_path, &self.path) => Event::DocFocus {
                 block: block.clone(),
             },
             _ => self.doc_event(),
         }
     }
 
-    /// Commands that only make sense with a doc open fail in deck mode.
     pub(super) fn refuse_doc_command(command: &Command) -> Result<()> {
         ensure!(
             !matches!(
                 command,
                 Command::DocApply { .. }
+                    | Command::DocSource {}
+                    | Command::DocApplySource { .. }
                     | Command::DocApplyDesign { .. }
                     | Command::DocExport { .. }
                     | Command::DocCommentCreate { .. }
@@ -727,6 +727,7 @@ impl Backend {
         matches!(
             command,
             Command::DocApply { .. }
+                | Command::DocApplySource { .. }
                 | Command::DocApplyDesign { .. }
                 | Command::ApplyDesign { .. }
                 | Command::Undo {}
@@ -737,17 +738,23 @@ impl Backend {
         )
     }
 
-    /// Switch to another document (`Open`, `NewDoc`, `NewDeck`) from either mode.
-    /// Returns `None` when the command is not a switch.
+    /// Switch to another document; `None` when the command is not a switch.
     pub(super) fn switch_document(&mut self, command: &Command) -> Result<Option<Event>> {
         match command {
+            Command::Open { path } if super::sheet::is_sheet_path(path) => {
+                self.open_sheet_file(absolute(path)?)?;
+            }
+            Command::NewSheet { title } => self.new_sheet(title)?,
             Command::Open { path } if is_doc_path(path) => {
                 self.open_doc_file(absolute(path)?)?;
             }
             Command::NewDoc { title } => self.new_doc(title)?,
-            Command::Open { .. } | Command::NewDeck { .. } if self.doc.is_some() => {
-                // Leaving doc mode: the deck path re-enters deck mode with a clean slate.
+            Command::Open { .. } | Command::NewDeck { .. }
+                if self.doc.is_some() || self.sheet.is_some() =>
+            {
+                // Leaving doc mode: the deck path re-enters it with a clean slate.
                 let leaving = self.doc.take();
+                let leaving_sheet = self.sheet.take();
                 let result = match command {
                     Command::Open { path } => self.open_path(absolute(path)?),
                     Command::NewDeck { title } => self.new_deck_file(title),
@@ -755,12 +762,15 @@ impl Backend {
                 };
                 if let Err(error) = result {
                     self.doc = leaving;
+                    self.sheet = leaving_sheet;
                     return Err(error);
                 }
             }
             _ => return Ok(None),
         }
-        self.known_revision = if let Some(session) = &self.doc {
+        self.known_revision = if let Some(session) = &self.sheet {
+            session.sheet.revision()
+        } else if let Some(session) = &self.doc {
             session.doc.revision()
         } else {
             self.deck.revision()

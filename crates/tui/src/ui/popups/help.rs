@@ -1,6 +1,5 @@
-//! `/help` (or F1): the keybinding reference plus the slash-command catalog.
-//! Commands render straight from `COMMANDS`, so the list can't drift from
-//! what the composer actually accepts.
+//! `/help` (or F1): the keybinding reference plus the slash-command catalog,
+//! rendered straight from `COMMANDS` so the list can't drift.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
@@ -10,9 +9,9 @@ use ratatui::widgets::Paragraph;
 
 use crate::app_view::AppView;
 use crate::theme::Theme;
-use nexus_core::app::{COMMANDS, Popup};
+use dugix_core::app::{COMMANDS, Popup};
 
-use super::chrome;
+use super::chrome::{self, PopupFrame, hint, keys};
 
 /// Keybindings by area: (section, [(keys, what they do)]).
 pub const KEYS: &[(&str, &[(&str, &str)])] = &[
@@ -36,6 +35,28 @@ pub const KEYS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "popups",
+        &[
+            ("↑↓ PgUp PgDn Home End", "move"),
+            ("Enter", "the main action"),
+            ("^D ^D", "delete, then confirm"),
+            ("Esc", "close, go back, cancel, or clear the filter"),
+            ("type", "filter, where a popup has a filter row"),
+        ],
+    ),
+    (
+        "vim keys (on by default; /vim off)",
+        &[
+            ("Esc · i a I A o O", "Normal mode · back to Insert"),
+            ("h j k l · w b e · 0 ^ $", "move by char · word · line"),
+            ("gg G · { }", "first / last line · paragraph"),
+            ("d c y + motion · dd cc yy", "delete · change · yank"),
+            ("x D C J r ~ · p P", "edit · put"),
+            ("v V · u Ctrl+R · .", "select · undo / redo · repeat"),
+            ("Enter · Esc (Normal)", "send · stop the reply or clear"),
+        ],
+    ),
+    (
         "conversation",
         &[
             ("↑/↓", "scroll (at the composer's edge)"),
@@ -54,8 +75,19 @@ pub const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+N", "new session"),
             ("Ctrl+Shift+N", "new incognito session"),
             ("Alt+1–4", "reopen a recent session (start screen)"),
-            ("Ctrl+G", "context breakdown"),
-            ("Ctrl+↑", "live research view (while research runs)"),
+            ("^G", "context breakdown"),
+            (
+                "^↑",
+                "live research view, or this chat's sub-agents (/agents)",
+            ),
+            (
+                "Enter while it answers",
+                "queue the message; it sends when the reply finishes",
+            ),
+            (
+                "↑ on an empty line",
+                "take the newest queued message back to edit (/queue)",
+            ),
         ],
     ),
     (
@@ -67,15 +99,6 @@ pub const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("type · Backspace · Ctrl+V", "edit a focused input"),
             ("p", "pin the focused UI as a mini-app (open it from /apps)"),
             ("Esc", "return to chat; keep local UI state"),
-        ],
-    ),
-    (
-        "popups",
-        &[
-            ("↑/↓ · Enter", "move · pick"),
-            ("wheel · click", "move · select (click again to pick)"),
-            ("type", "filter the list"),
-            ("Esc", "close"),
         ],
     ),
 ];
@@ -122,21 +145,22 @@ pub fn help_lines(theme: &Theme, width: usize) -> Vec<Line<'static>> {
 }
 
 pub fn render(f: &mut Frame, app: &mut AppView) {
-    // Wide: the key column alone is ~28 cells.
-    let area = chrome::popup_area(app, f.area(), "help", (chrome::WIDE.0, chrome::TALL.1));
-    let title = chrome::popup_title(app, "help");
-    let inner = chrome::render_hinted(
+    let area = chrome::popup_area(app, f.area(), "help", chrome::TALL);
+    let inner = chrome::render_popup(
         f,
         area,
-        title,
-        "↑↓/PgUp/PgDn scroll · Esc close",
+        &PopupFrame {
+            title: "Help",
+            count: "",
+            hints: &[hint(keys::MOVE, "scroll"), hint(keys::ESC, "close")],
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
         app,
-        true,
-        chrome::Tone::Normal,
     );
     let lines = help_lines(&app.theme, inner.width as usize);
-    // Clamp here, where the viewport height is known, so scrolling past the
-    // end never leaves a blank pane.
+    // Clamp where the viewport height is known, so scrolling past the end
+    // leaves no blank pane.
     let max = u16::try_from(lines.len())
         .unwrap_or(u16::MAX)
         .saturating_sub(inner.height);
@@ -149,7 +173,7 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) {
     match key.code {
-        KeyCode::Esc | KeyCode::Enter | KeyCode::F(1) | KeyCode::Char('q') => {
+        KeyCode::Esc => {
             app.popup = Popup::None;
         }
         KeyCode::Up | KeyCode::Char('k') => app.help_scroll = app.help_scroll.saturating_sub(1),

@@ -234,3 +234,66 @@ fn semantic_errors_in_arriving_siblings_do_not_blank_valid_content() {
     assert_eq!(document.nodes().len(), 1);
     assert!(matches!(&document.nodes()[0], Node::Text { text, .. } if text == "Visible"));
 }
+
+/// Streams `source` a character at a time and fails on the first frame where
+/// the preview disappears or loses an element it already showed.
+fn assert_stream_never_regresses(source: &str) {
+    let mut parser = StreamParser::default();
+    let mut shown = None;
+    for end in (1..=source.len()).filter(|end| source.is_char_boundary(*end)) {
+        let prefix = &source[..end];
+        let nodes = parser.set(prefix).map(|document| document.nodes().len());
+        let fresh = preview(prefix).map(|document| document.nodes().len());
+        assert_eq!(
+            nodes, fresh,
+            "cached and fresh previews differ at {prefix:?}"
+        );
+        if let Some(shown) = shown {
+            let nodes = nodes.unwrap_or_else(|| panic!("preview vanished at {prefix:?}"));
+            assert!(nodes >= shown, "preview lost an element at {prefix:?}");
+        }
+        shown = nodes.or(shown);
+    }
+}
+
+#[test]
+fn streaming_an_action_does_not_drop_the_buttons_already_shown() {
+    assert_stream_never_regresses(
+        "root = Panel(\"Learn assembly\", [intro, goals])\nintro = Hero(\"Small programs.\", \"What's your goal?\")\ngoals = Buttons([\n  Button(\"Understand CPUs\", @Answer()),\n  Button(\"Reverse-engineer programs\", @Answer())\n])\n",
+    );
+}
+
+#[test]
+fn streaming_an_optional_argument_does_not_blank_the_panel() {
+    assert_stream_never_regresses(
+        "root = Panel(\"Shopping total\", [feedback, takeaway])\nfeedback = Text(\"Adds each price, stops at zero.\", \"success\")\ntakeaway = Callout(\"tip\", \"Counting down saves a compare.\", \"Takeaway\")\n",
+    );
+}
+
+#[test]
+fn streaming_a_half_typed_value_keeps_the_field_on_screen() {
+    assert_stream_never_regresses(
+        "root = Panel(\"Interview prep\", [intro, role])\n$role = \"\"\nintro = Hero(\"Which job?\", \"Share your starting point.\")\nrole = Input($role, \"Target role\", {required: true}, \"e.g. backend engineer\")\n",
+    );
+}
+
+#[test]
+fn streaming_a_table_row_keeps_the_table_on_screen() {
+    assert_stream_never_regresses(
+        "root = Panel(\"Trace\", [result, trace])\nresult = Hero(\"x0 = 12\", \"Addition writes into x0.\")\ntrace = Table([\"After\", \"x0\"], [[\"mov\", \"7\"], [\"add\", \"12\"]])\n",
+    );
+}
+
+#[test]
+fn streaming_a_concatenation_keeps_the_button_on_screen() {
+    assert_stream_never_regresses(
+        "root = Panel(\"Your turn\", [instruction, actions])\n$instruction = \"\"\ninstruction = Input($instruction, \"Instruction\")\nactions = Buttons([Button(\"Check\", @ToAssistant(\"Check: \" + $instruction), true)])\n",
+    );
+}
+
+#[test]
+fn streaming_a_template_keeps_the_button_on_screen() {
+    assert_stream_never_regresses(
+        "root = Panel(\"Drill\", [code, submit])\n$code = \"\"\ncode = Editor($code, \"Solution\", \"python\", 4)\nsubmit = Buttons([Button(\"Submit\", @ToAssistant(\"Grade: {{code}}\"), true)])\n",
+    );
+}

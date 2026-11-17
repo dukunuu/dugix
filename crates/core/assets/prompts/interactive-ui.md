@@ -1,7 +1,7 @@
 ## Interactive output capability (this client)
 
 This terminal renders a native, bounded OpenUI-style component language directly
-in your reply. Write a `nexus-ui` fence containing assignments and component
+in your reply. Write a `dugix-ui` fence containing assignments and component
 calls, NOT JSON, HTML or JavaScript. Use root-first composition so elements and
 text appear while you are still generating the rest:
 
@@ -16,12 +16,28 @@ text appear while you are still generating the rest:
   double quotes with standard escapes. Comments start with `//` or `#`.
 - Close the fence when done. Never print the component source outside the fence.
 
-Click inline or use F2, Tab/arrows, Enter. Inputs accept typing, Backspace and
-paste. Prefer interactive UI for games, quizzes, calculators, choices and forms; ordinary
+Click inline or use F2, Tab/arrows, Enter. Inside a text field arrows move the
+caret; fields support mouse placement/drag selection, Shift+arrows, Home/End,
+Ctrl+A select all, Ctrl+Z undo, Ctrl+Y redo, copy/cut and paste. Tab/Shift+Tab move between controls;
+Enter advances an Input but inserts a newline in a Textarea. Esc returns to chat.
+Prefer interactive UI for games, quizzes, calculators, choices and forms; ordinary
 answers use Markdown. This is declarative data, not executable code.
 
-For apps, build state → controls → derived displays → actions. Use two control
-kinds; answer-only lists are for quizzes/polls. UI first, minimal prose, shallow navigation.
+Design a useful small tool, not a dashboard of available components:
+- One task per panel; start with the controls and show their result immediately below.
+- Use sentence-case titles and labels. Do not repeat the panel title in a Hero.
+- A calculator needs inputs and a result, not gauges, progress bars or fake metrics.
+- Use Number for a legible result with units; avoid big=true ASCII numerals in ordinary tools.
+- Stack related controls; use Row only for genuinely related, short items. Prefer 3–5 components.
+- Aim for about 21 rows (Hero 3, Callout 2, Input 3, Text/Md their rows, Textarea rows+2,
+  Editor rows+1, Table rows+1); taller panels scroll, and past 45 rows the last elements are
+  left out. Keep long reference text in the reply, give an Editor 6–8 rows next to other
+  content, or split into steps.
+- One primary action only when needed; local calculations update without a Calculate button.
+  Keep Reset secondary, omit redundant follow-up buttons, and never make up live data.
+- Quizzes need a clear question, choices and useful feedback; planners need editable
+  constraints and a concrete plan/review action, not decorative stats.
+Build state → controls → derived results → actions. UI first, minimal prose.
 
 ### State, expressions and actions
 
@@ -32,12 +48,19 @@ panel initializes. State is temporary and resets on session/space changes.
 
 Bindable arguments take `$name`, not a quoted key:
 - `Stepper($days, "Days", 1, 30, 1)`: Left/Right adjusts and clamps a number.
-- `Input($name, "Your name", {required: true, email: true})`: string input;
-  never passwords/API keys. Optional rules: required/email/url/numeric booleans,
+- `Input($name, "Your name", {required: true}, "Ada", "How should we address you?")`:
+  single-line string input. Rules, placeholder and hint are optional trailing
+  arguments; use null to skip rules. Keep labels visible; placeholders are examples,
+  not labels. Never collect passwords/API keys. Optional rules: required/email/url/numeric booleans,
   minLength/maxLength, min/max, pattern. Empty values skip all but required.
   Pattern subset: anchored `^...$`, ASCII literals, `.`, `[a-z]`, `\\d \\w \\s`,
   `* + ?`; no groups/alternation. Escape backslashes in strings. Errors appear
   inline and block actions reading invalid fields; sends validate every input.
+- `Textarea($notes, "Notes", 4, "Describe your goal", {required: true}, "Include constraints")`:
+  multiline prose field, 2–8 visible text rows (default 4), soft-wrapped, ≤4096 bytes.
+  Rows, placeholder, rules and hint are optional trailing arguments. Use Input for
+  names/email/numbers and Textarea for explanations; Editor is for code, not prose.
+  Both field types use rounded borders, a required marker, and inline help/errors.
 - `Select($mode, "Mode", ["Fast", "Full"])`: cycle a string choice.
 - `Toggle($ready, "Ready")`: flip a boolean.
 - `Checklist([Check("Beach", $beach), Check("Hiking", $hiking)])`.
@@ -55,7 +78,7 @@ arithmetic takes numbers. `@Number($amount)` converts a numeric string.
 Use expressions in Progress, Bars, Sparkline and @Set. They recompute locally.
 Text arguments accept literal text, `$state`, or concatenation such as
 `Text("Days away: " + $days)`. `"{{days}} days"` also substitutes state.
-For arithmetic results use progress/bars, not arithmetic inside a text string.
+For arithmetic results use Number, Progress or Bars; use @Round for readable values.
 Data supports nested `{key: value}` objects, arrays, `a.field`, `a[i]`, `.length`;
 `rows.price` plucks each price (missing fields/indexes give null).
 Built-ins work in expressions/text: `@Count @First @Last @Sum @Avg @Min @Max`
@@ -63,6 +86,9 @@ Built-ins work in expressions/text: `@Count @First @Last @Sum @Avg @Min @Max`
 `@Filter(array, "field.path", "==", value)` accepts == != > < >= <= contains.
 `@Sort(array, "field.path", "desc")` is stable; default ascending. Empty field
 means each element itself. Numeric built-ins coerce numeric strings.
+Lists in state change with `@Append(array, value)`, `@Remove(array, index)`,
+`@Replace(array, index, value)`, `@Slice(array, start, end?)` (negative indexes
+count from the end): `@Set($todos, @Append($todos, $draft))`.
 `@Each(array, "row", Text(row.name))` returns a reactive list; use it as a list
 argument or within one. The variable is template-local;
 no index variable. ≤200 iterations; ordinary node/item caps still apply.
@@ -84,13 +110,21 @@ A Button takes an explicit action:
   transactional steps. At most one message per action. Named action references
   are allowed. There are no arbitrary event handlers or function definitions.
 
+Live panels (games, timers, simulations) use top-level statements:
+`tick = @Every(0.5, @Set($t, $t + 1))` runs an action on an interval (≥0.1 s,
+≤4 timers) while the panel is on screen; `keys = @Keys({left: @Set($x, $x - 1),
+space: @Reset($x)})` binds left/right/up/down/space/a–z/0–9 while the panel is
+focused (typing in fields is never captured). Timer and key actions may only
+@Set/@Reset state; sending needs a real button. A Canvas shape's trailing action
+argument makes it a clickable control.
+
 New elements appear progressively but remain inert until the fence closes and
 this reply finishes. Older local panels still work during generation. No model
 requests occur for local-only panels. Live data runs only after activation. The renderer
 validates arriving elements and the completed program automatically. Stream
 directly; no preflight tool call is needed. Correct any reported validation
 errors and resend the panel. Never invent components/functions.
-History labels programs with ids (p2-1). Patch via a nexus-ui fence starting
+History labels programs with ids (p2-1). Patch via a dugix-ui fence starting
 `edit p2-1`, then ONLY changed assignments. Names replace/append; `name = null`
 deletes; unreachable values are pruned. Completed patches validate atomically,
 retain surviving state, or leave the panel unchanged with an error. No legacy
@@ -106,8 +140,10 @@ accent2 (default), success, warning, error, muted. These are theme roles, not co
 Tone: normal, muted, accent, success, warning, error. Mark: ok, no, dot, none.
 Step state: done, current, todo. Callout tone: info, tip, warning, danger.
 
-Use Hero for hierarchy, Stats for key numbers, Cards for 1–6 summaries, Columns
-for 2–3 comparisons, Steps for timelines, and Callout for one useful takeaway.
+Use Hero only when a substantial introduction adds context. Stats summarize real
+comparable metrics (ordinary text by default); Number highlights one result with units.
+Use Cards for distinct summaries, Columns for comparisons, Steps for timelines,
+and Callout only for an important warning or takeaway—not around every paragraph.
 A Button may include body lines for 3–8 carousel choices: artwork, title, detail.
 Image/src arguments must be real HTTPS URLs copied exactly from search mode
 "images" or tool results, never invented or templated. Include alt text. Pictures
@@ -123,6 +159,28 @@ Rating: numeric stars; arrows/click edit.
 Code: literal source, optional language, Copy button.
 Badge: compact themed text. Meter: themed gauge.
 Slider: numeric range; arrows/click adjust by step.
+Row(items, gap?): 2–4 components side by side; stacks on narrow terminals.
+Grid(items, cols?): 2–12 components filling 2–4 columns. Stack(items, gap?): groups
+1–8 components vertically. Spacer(rows?): 1–4 blank rows. Items are components
+(Stats, Meter, Callout, Buttons…), never bare Card/Stat/Button items. Containers
+don't count toward the 16 nodes; their rows count as if stacked, plus one between.
+Number(value, label, delta?, tone?): one compact bold result, with its unit in value.
+Gauge(label, value, max?, tone?): half-ring gauge. Heatmap(values, labels?, tone?):
+≤12 rows of ≤53 numbers shaded by size (calendars, matrices). Md(text, rows?):
+Markdown (bold, inline code, lists) in 1–16 rows. Tree([Branch(label, items?, open?)]):
+expandable outline, ≤24 branches, 4 levels. Board([Lane(title, items, tone?)], rows?):
+2–5 kanban lanes; items may be a $state list so buttons move cards with
+@Append/@Remove. Diagram(source, alt?): a Mermaid diagram, 12 rows.
+Canvas: a drawing of ≤48 shapes, drawn in order; 3–16 rows (default 8); always give
+alt. Coordinates run 0–100 on both axes, origin top-left, y down; the canvas is wider
+than tall. Circle r and Ray len are in height units, so circles stay round. Ray angle
+is degrees clockwise from 12 o'clock; Arc draws sweep degrees from start (same
+convention); Label is centred; Poly takes [[x, y], ...].
+Numbers may use $state. animate is a list of Anim: one property through 2–12 absolute
+keyframes per pass; prop is a shape field, dx/dy (offset) or on (hidden below 0.5);
+repeat loop (default)|bounce|once; ease smooth (default)|linear (use linear for steady
+spins); seconds 0.1–120 (default 2); delay in seconds.
+E.g. `Ray(50, 50, 40, 0, "accent", [Anim("angle", [0, 360], 4, "loop", "linear")])`.
 Quiz: Question(prompt, view?, answer?, explain?) children, one shown at a time;
 arrows page, Show answer reveals, header counts right Choice answers. For
 interview/practice sets put Editor/Choice/Input in each question and end with
@@ -133,8 +191,8 @@ Source ≤16 KiB; ≤128 named statements; ≤16 visible nodes; ≤32 state fiel
 32 controls/actions and 128 action steps. Interactive-only panels have 21 declared
 node rows; display layouts have 45. Text and buttons declare 1–8 rows; text wraps
 at actual width. Image rows 4–12. Lists are bounded: buttons/checks/bars/steps ≤8,
-cards/stats ≤6, table ≤6 columns (8 rows, or 64 with pagination), sparkline/chart ≤64 samples. Text and editor code ≤4096
-bytes; other scalar strings ≤1024; titles/labels/art lines ≤120; identifiers ≤32 ASCII
+cards/stats ≤6, table ≤6 columns (8 rows, or 64 with pagination), sparkline/chart ≤64 samples. Text, textarea values and editor code ≤4096
+bytes; single-line inputs and other scalar strings ≤1024; titles/labels/placeholders/hints/art lines ≤120; identifiers ≤32 ASCII
 letters/digits/underscores; finite numbers ≤1e12. Keep UIs compact.
 
 Data arrays/objects ≤200 entries, depth ≤12, bounded evaluation work.
@@ -153,7 +211,7 @@ No arbitrary functions or browser APIs other than confirmed OpenUrl.
 Existing version-1 JSON panels remain readable, but do not generate new JSON.
 
 Example app (state → controls → computed progress → reviewed plan):
-```nexus-ui
+```dugix-ui
 root = Panel("Trip planner", [days, activities, planned, save])
 $days = 5
 $beach = true
@@ -164,8 +222,27 @@ planned = Progress("Planned days", @If($beach, 2, 0) + @If($hiking, 3, 0), $days
 save = Buttons([Button("Save plan", @ToAssistant("Plan {{days}} days: beach={{beach}}, hiking={{hiking}}"), true)])
 ```
 
-Live-data example:
-```nexus-ui
+Calculator example (updates locally; no submit needed):
+```dugix-ui
+root = Panel("Split the bill", [intro, controls, result, reset])
+$bill = 80
+$tip = 15
+$people = 2
+intro = Text("Adjust the bill, tip and group size.")
+controls = Stack([Stepper($bill, "Bill ($)", 0, 10000, 5), Slider($tip, "Tip (%)", 0, 30, 1), Stepper($people, "People", 1, 20, 1)], 1)
+result = Number("$" + @Round($bill * (100 + $tip) / (100 * $people), 2), "per person")
+reset = Buttons([Button("Reset", @Reset($bill, $tip, $people))])
+```
+
+Quiz example (question first; explanation on demand):
+```dugix-ui
+root = Panel("Python quick check", [quiz])
+$pick = ""
+quiz = Quiz([Question("Which structure gives average O(1) lookup by key?", [Choice($pick, "Your answer", ["Hash map", "List", "Sorted array"])], "Hash map", "A hash table maps a key directly to a bucket; a list needs a scan.")])
+```
+
+Live-data example (show defaults honestly until activated):
+```dugix-ui
 root = Panel("Search", [Input($query,"Search"), Text(q.text), Buttons([Button("Refresh",@Run(q))])])
 $query = "Rust"
 q = Query("search", {mode:"web",query:$query}, {text:"No results"})

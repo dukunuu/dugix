@@ -13,8 +13,8 @@ pub(super) struct Options<'a> {
     pub hint: &'a str,
 }
 
-/// Escape controls rather than interpreting or hiding them. Newlines are
-/// escaped too; callers split actual rows before invoking this function.
+/// Escape controls rather than interpreting or hiding them; newlines are escaped
+/// too, so callers split actual rows first.
 pub(super) fn escaped_rows(
     text: &str,
     width: usize,

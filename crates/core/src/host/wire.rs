@@ -1,110 +1,76 @@
-//! Wire types for the `nexus host` `HTTP`/`SSE` API.
-//!
-//! The daemon never leaks domain internals onto the wire: [`AppEvent`]
-//! nests provider ([`StreamEvent`]), research, swarm, and file types that
-//! carry no serde and are free to change shape as the domain evolves.
-//! Everything the host emits is instead this module's [`WireEvent`] — a
-//! serde mirror of the domain event with a stable `JSON` shape. `From`
-//! impls convert in one direction only (domain → wire); the host never
-//! parses events back into domain types.
-//!
-//! [`AppCommand`](crate::app::AppCommand) is the one exception: it is a
-//! plain enum of strings, bools, and optionals with no internals, so the
-//! command seam itself carries the serde derives and `POST /v1/command`
-//! ships it directly.
+//! Wire types for the `dugix host` `HTTP`/`SSE` API: a serde mirror of domain
+//! events with a stable `JSON` shape, converted in one direction only.
 
 use serde::{Deserialize, Serialize};
 
 use crate::app::{
-    AppEvent, GateState, LoginMsg, MemoryOp, OcrUpdate, PlanQuestion, ResearchUpdate, SurveyPhase,
+    AppEvent, ConvertUpdate, GateState, LoginMsg, PlanQuestion, ResearchUpdate, SurveyPhase,
     SwarmUpdate,
 };
-use crate::db::Persona;
 use crate::provider::serve::RuntimeStatus;
 use crate::provider::{
     BackendTag, Model, ModelPricing, PromptConvention, ReasoningEffort, StreamEvent, Usage,
 };
 
-/// One event on the host's `/v1/events` `SSE` feed — the wire mirror of
-/// [`AppEvent`], with every variant mapping 1:1 onto the domain event.
-/// Frames serialize as `{"type": "<snake_case variant>", "payload": …}`;
-/// unit variants carry no `payload` key. A `None` payload means that
-/// source's channel closed (its background task ended).
+/// One event on the host's `/v1/events` `SSE` feed, mirroring [`AppEvent`]; a
+/// `None` payload means the source's channel closed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum WireEvent {
     /// A one-line status update from a domain path.
     Status(String),
-    /// The composer should be replaced with this text (e.g. a send-failure
-    /// path restoring the user's message).
+    /// The composer should be replaced with this text.
     ComposerSet(String),
     /// The composer should be cleared.
     ComposerClear,
-    /// The view should reset its viewport state (scroll, selection,
-    /// pinning baseline) — pushed wherever domain code switches sessions,
-    /// starts a stream, or otherwise invalidates the rendered conversation.
+    /// The view should reset its viewport state (scroll, selection, pinning).
     ViewportReset,
-    /// The wrapped-history render cache must be rebuilt (in-place message
-    /// edits would otherwise leave stale wrapped content).
+    /// The wrapped-history render cache must be rebuilt.
     HistoryInvalidated,
     /// A domain path fell back to "no backend configured" and wants the
     /// login selector shown.
     OpenLoginPopup,
     /// A survey/plan gate armed (`Some`) or cleared (`None`).
     Gate(Option<WireGateState>),
-    /// One chat-frame delta: (task id, stream event) — or `None` when the
-    /// task's channel closed. Carries every frame the stream view renders,
-    /// so the `SSE` bridge needs no separate chat pump.
+    /// One chat-frame delta: (task id, stream event), or `None` when the channel
+    /// closed.
     Stream(Option<(u64, WireStreamEvent)>),
-    /// The model-catalog fetch outcome: the merged per-backend list, or an
-    /// error string.
+    /// The model-catalog fetch outcome, or an error string.
     Models(Option<WireModelsResult>),
     /// A generated session topic: (session id, title, slug).
     Title(Option<(String, String, String)>),
-    /// Extracted memory ops for a space, tagged with the space name so a
-    /// meanwhile space-switch can discard stale results.
-    Memory(Option<(String, Vec<WireMemoryOp>)>),
     /// A compaction digest: (session id, digest, messages covered,
     /// pre-compaction %).
     Compact(Option<(String, String, i64, u64)>),
-    /// `/skills` install outcome: skill name on success, error message on
-    /// failure.
+    /// `/skills` install outcome: skill name or error message.
     SkillInstall(Option<Result<String, String>>),
-    /// A per-page progress or final `OCR` result for one scanned `PDF`, or
-    /// `None` when the batch's channel closed.
-    Ocr(Option<(String, String, WireOcrUpdate)>),
+    /// A progress or final converter result for one file, or `None` when the
+    /// batch closed.
+    Convert(Option<(String, String, WireConvertUpdate)>),
     /// One file's chunk-embedding job finished (or the channel closed).
     Embed(Option<WireEmbedMsg>),
     /// A deep-research pipeline update, or `None` when its channel closed.
     Research(Option<WireResearchMsg>),
-    /// `/research` with no topic: a distilled topic from recent chat, or an
-    /// error.
+    /// `/research` with no topic: a distilled topic or an error.
     ResearchTopic(Option<Result<String, String>>),
-    /// Startup update check: newest published version, or `None` when the
-    /// check failed (offline, index hiccup) — silently ignored by clients.
+    /// Startup update check: newest published version, or `None` on failure.
     UpdateCheck(Option<String>),
     /// Codex subscription login status or final result.
     Login(Option<WireLoginMsg>),
     /// A `/swarm` turn update, or `None` when its channel closed.
     Swarm(Option<WireSwarmMsg>),
-    /// A finished `/local` server survey. [`RuntimeStatus`] needs no mirror:
-    /// like [`AppCommand`](crate::app::AppCommand) it is a flat struct of
-    /// scalars that already carries the serde derives, so its `JSON` shape is
-    /// the wire shape.
+    /// A finished `/local` server survey; `RuntimeStatus` already carries serde.
     LocalServers(Option<Vec<RuntimeStatus>>),
 }
 
-/// The wire mirror of provider [`StreamEvent`] — one chat-frame delta.
-/// Token/reasoning/status are incremental chunks; `ToolCall` is a completed
-/// tool run with its result.
+/// The wire mirror of provider [`StreamEvent`], one chat-frame delta.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum WireStreamEvent {
     /// A chunk of the visible answer.
     Token(String),
     /// A chunk of the model's reasoning/thinking.
     Reasoning(String),
-    /// Exact token counts (arrives near end of stream when usage accounting
-    /// is on).
+    /// Exact token counts, arriving near the end of the stream.
     Usage(WireUsage),
     /// A tool is about to run (e.g. "Searching the web…").
     Status(String),
@@ -120,20 +86,18 @@ pub enum WireStreamEvent {
     Error(String),
 }
 
-/// The wire mirror of provider [`Usage`] — exact token accounting reported
-/// at end of stream.
+/// The wire mirror of provider [`Usage`], reported at end of stream.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct WireUsage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
-    /// Prompt tokens served from the provider's prompt cache (cache reads).
+    /// Prompt tokens served from the provider's cache.
     pub cache_read_tokens: u64,
-    /// Prompt tokens written into the cache on this request (cache writes).
+    /// Prompt tokens written into the cache.
     pub cache_creation_tokens: u64,
-    /// Which prompt-token convention the provider used, so a remote client
-    /// can tell a real 0% from "the provider reported nothing" exactly as the
-    /// local UI does. Defaulted on the wire for older clients.
+    /// Which prompt-token convention the provider used; defaulted for older
+    /// clients.
     #[serde(default)]
     pub prompt_convention: PromptConvention,
     /// Provider-reported request cost in `USD`; `None` when the provider
@@ -141,8 +105,8 @@ pub struct WireUsage {
     pub cost: Option<f64>,
 }
 
-/// The wire mirror of [`GateState`] — which session a parked survey/plan
-/// gate is waiting on, and which phase.
+/// The wire mirror of [`GateState`]: which session a parked gate awaits and its
+/// phase.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WireGateState {
     /// The session the reply must come from.
@@ -151,51 +115,39 @@ pub struct WireGateState {
     pub phase: WireSurveyPhase,
 }
 
-/// What a parked survey gate is waiting for — drives which phase's reply is
-/// routed.
+/// What a parked survey gate is waiting for.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum WireSurveyPhase {
     /// A clarifying-question round (1-based).
     Clarify { round: u8 },
-    /// Approval of a presented artifact; `rework` is true on a
-    /// re-presentation after the user's edits were folded in.
+    /// Approval of a presented artifact; `rework` marks a re-presentation.
     Approve { rework: bool },
 }
 
-/// One memory-extraction op, as emitted by the memory model.
+/// A message from the background converter batch about one file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum WireMemoryOp {
-    Add(String),
-    Update(usize, String),
-    Delete(usize),
-}
-
-/// A message from the background `OCR` batch about one file.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum WireOcrUpdate {
-    /// A human-readable phase ("rendering pages…") shown while nothing is
-    /// countable yet.
+pub enum WireConvertUpdate {
+    /// A human-readable phase shown while nothing is countable yet.
     Stage(String),
     /// (pages done, total pages, pages failed so far).
     Progress(usize, usize, usize),
-    /// Final outcome: (extracted text, per-page errors as (index, reason)),
-    /// or a whole-document error message.
+    /// Final outcome: `(extracted text, per-page errors)`, or a whole-document
+    /// error.
     Done(Result<(String, Vec<(usize, String)>), String>),
 }
 
-/// A deep-research pipeline update: one stage tick, a parked gate, or the
-/// final result.
+/// A deep-research pipeline update: a stage tick, a parked gate, or the final
+/// result.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum WireResearchUpdate {
-    /// Successive updates within one stage share a `label` so the client
-    /// replaces one row in place instead of appending per tick.
+    /// Successive updates within one stage share a `label` so the client replaces
+    /// one row.
     Stage { label: String, detail: String },
-    /// The scoping agent's clarifying questions; the pipeline is parked
-    /// awaiting a chat reply. `round` is 1-based.
+    /// The scoping agent's clarifying questions, parked awaiting a reply; `round`
+    /// is 1-based.
     SurveyReady { questions: Vec<String>, round: u8 },
-    /// The planner finished; the pipeline is parked awaiting a chat reply.
-    /// `rework` is true on a re-presentation after the user's edits were
-    /// folded in.
+    /// The planner finished, parked awaiting a reply; `rework` marks a
+    /// re-presentation.
     PlanReady {
         questions: Vec<WirePlanQuestion>,
         rework: bool,
@@ -217,51 +169,29 @@ pub struct WirePlanQuestion {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum WireLoginMsg {
     Status(String),
-    /// Login succeeded or failed. Credentials are consumed by the local app
-    /// and are deliberately never serialized onto the host event stream.
+    /// Login succeeded or failed; credentials are never serialized onto the event
+    /// stream.
     Done(Result<(), String>),
 }
 
 /// A `/swarm` turn update.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum WireSwarmUpdate {
-    /// The roster was empty, so one was suggested — persist it before the
-    /// conversation's first turn.
-    RosterSuggested(Vec<WirePersona>),
-    /// Status-line progress text.
+    /// Status-line progress text, including each drafting agent's progress.
     Progress(String),
-    /// One persona's reply for the turn just run.
-    Reply {
-        persona: String,
-        model: String,
-        content: String,
-    },
-    /// The moderator decided the conversation needed a new voice — persist
-    /// it to the roster so it shows up in the popup too.
-    PersonaJoined(WirePersona),
-    /// The turn's final synthesis reply — the canonical assistant message.
+    /// The turn's final reply — the canonical assistant message.
     Synthesis(String),
     Error(String),
 }
 
-/// One row of a session's `/swarm` roster: a model + a personality blurb.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WirePersona {
-    pub name: String,
-    pub model: String,
-    pub blurb: String,
-}
-
-/// The wire mirror of provider [`Model`] — one routable model from the
-/// merged per-backend catalog.
+/// The wire mirror of provider [`Model`], one routable model.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WireModel {
-    /// Backend-qualified public id (`openrouter:…`, `openai:…`, etc.).
-    /// Internal favorites/current-model storage may retain legacy bare ids.
+    /// Backend-qualified public id.
     pub id: String,
     pub name: String,
-    /// The reasoning-effort values this model accepts, in cycle order.
-    /// Empty = the model has no reasoning/thinking mode at all.
+    /// Reasoning-effort values this model accepts, in cycle order; empty means
+    /// none.
     pub reasoning_efforts: Vec<WireReasoningEffort>,
     /// Context window size in tokens, if the provider reports it.
     pub context_length: Option<u64>,
@@ -272,7 +202,7 @@ pub struct WireModel {
     /// Whether the model generates video output.
     pub supports_video_generation: bool,
     /// Which backend this model came from — the gateway's routing key.
-    pub backend: WireBackendTag,
+    pub backend: BackendTag,
     /// `USD` per 1M tokens from the catalog; `None` = cost unknown.
     pub pricing: Option<WireModelPricing>,
 }
@@ -287,17 +217,6 @@ pub enum WireReasoningEffort {
     High,
     XHigh,
     Max,
-}
-
-/// Which backend a model routes through — the wire mirror of
-/// [`BackendTag`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum WireBackendTag {
-    OpenRouter,
-    OpenAi,
-    OpencodeGo,
-    Codex,
-    Local,
 }
 
 /// `USD` per 1M tokens from the catalog.
@@ -315,12 +234,10 @@ pub struct WireModelPricing {
 /// The wire mirror of `app::ModelsResult` — the catalog fetch outcome.
 pub type WireModelsResult = Result<Vec<WireModel>, String>;
 
-/// The wire mirror of `app::EmbedMsg`: (space id, file id, (seq, vector)
-/// pairs or error). Plain data, so it passes through unmapped.
+/// The wire mirror of `app::EmbedMsg`; plain data passes through unmapped.
 pub type WireEmbedMsg = (String, String, Result<Vec<(i64, Vec<f32>)>, String>);
 
-/// The wire mirror of `app::ResearchMsg`: (session id, space id, space
-/// name, stage update or final result).
+/// The wire mirror of `app::ResearchMsg`.
 pub type WireResearchMsg = (String, String, String, WireResearchUpdate);
 
 /// The wire mirror of `app::SwarmMsg`: (session id, update).
@@ -343,14 +260,13 @@ impl From<AppEvent> for WireEvent {
                 m.map(|r| r.map(|models| models.into_iter().map(WireModel::from).collect())),
             ),
             AppEvent::Title(t) => Self::Title(t),
-            AppEvent::Memory(m) => Self::Memory(
-                m.map(|(space, ops)| (space, ops.into_iter().map(WireMemoryOp::from).collect())),
-            ),
             AppEvent::Compact(c) => Self::Compact(c),
             AppEvent::SkillInstall(s) => Self::SkillInstall(s),
-            AppEvent::Ocr(o) => Self::Ocr(
-                o.map(|(file, session, update)| (file, session, WireOcrUpdate::from(update))),
-            ),
+            AppEvent::Convert(o) => {
+                Self::Convert(o.map(|(file, session, update)| {
+                    (file, session, WireConvertUpdate::from(update))
+                }))
+            }
             AppEvent::Embed(e) => Self::Embed(e),
             AppEvent::LocalServers(s) => Self::LocalServers(s),
             AppEvent::Research(r) => {
@@ -379,7 +295,7 @@ impl From<StreamEvent> for WireStreamEvent {
             StreamEvent::Token(t) => Self::Token(t),
             StreamEvent::Reasoning(r) => Self::Reasoning(r),
             StreamEvent::Usage(u) => Self::Usage(u.into()),
-            StreamEvent::Status(s) => Self::Status(s),
+            StreamEvent::Status(s) | StreamEvent::Notice(s) => Self::Status(s),
             StreamEvent::ToolCall {
                 name,
                 arguments,
@@ -392,7 +308,25 @@ impl From<StreamEvent> for WireStreamEvent {
             },
             StreamEvent::Done => Self::Done,
             StreamEvent::Error(e) => Self::Error(e),
+            // Thin clients get a status line; the transcript stays in the TUI.
+            StreamEvent::Subagent(update) => Self::Status(subagent_status(&update)),
         }
+    }
+}
+
+/// A sub-agent step as one status line for thin clients.
+fn subagent_status(update: &crate::provider::SubagentUpdate) -> String {
+    let n = update.number;
+    match &update.event {
+        crate::provider::SubagentEvent::Started { .. } => format!("sub-agent {n}: started"),
+        crate::provider::SubagentEvent::Delta { .. } => format!("sub-agent {n}: thinking"),
+        crate::provider::SubagentEvent::Round { step, .. } => {
+            format!("sub-agent {n}: step {}", step + 1)
+        }
+        crate::provider::SubagentEvent::Finished { error, .. } => format!(
+            "sub-agent {n}: {}",
+            if error.is_some() { "failed" } else { "done" }
+        ),
     }
 }
 
@@ -428,22 +362,12 @@ impl From<SurveyPhase> for WireSurveyPhase {
     }
 }
 
-impl From<MemoryOp> for WireMemoryOp {
-    fn from(op: MemoryOp) -> Self {
-        match op {
-            MemoryOp::Add(s) => Self::Add(s),
-            MemoryOp::Update(i, s) => Self::Update(i, s),
-            MemoryOp::Delete(i) => Self::Delete(i),
-        }
-    }
-}
-
-impl From<OcrUpdate> for WireOcrUpdate {
-    fn from(u: OcrUpdate) -> Self {
+impl From<ConvertUpdate> for WireConvertUpdate {
+    fn from(u: ConvertUpdate) -> Self {
         match u {
-            OcrUpdate::Stage(s) => Self::Stage(s),
-            OcrUpdate::Progress(done, total, failed) => Self::Progress(done, total, failed),
-            OcrUpdate::Done(d) => Self::Done(d),
+            ConvertUpdate::Stage(s) => Self::Stage(s),
+            ConvertUpdate::Progress(done, total, failed) => Self::Progress(done, total, failed),
+            ConvertUpdate::Done(d) => Self::Done(d),
         }
     }
 }
@@ -460,6 +384,11 @@ impl From<ResearchUpdate> for WireResearchUpdate {
                 rework,
             },
             ResearchUpdate::Done(d) => Self::Done(d),
+            // Thin clients see each agent as a stage row of its own.
+            ResearchUpdate::Subagent(update) => Self::Stage {
+                label: format!("sub-agent {}", update.number),
+                detail: subagent_status(&update),
+            },
         }
     }
 }
@@ -478,8 +407,8 @@ impl From<PlanQuestion> for WirePlanQuestion {
 impl From<LoginMsg> for WireLoginMsg {
     fn from(m: LoginMsg) -> Self {
         match m {
-            // Device codes and prefilled URLs are short-lived credentials;
-            // the local UI receives them directly, never the host wire.
+            // Device codes and prefilled URLs are short-lived credentials sent to
+            // the local UI, never the host wire.
             LoginMsg::Status(_) => Self::Status("codex login in progress".into()),
             LoginMsg::Done(d) => Self::Done(match d {
                 Ok(_) => Ok(()),
@@ -492,39 +421,16 @@ impl From<LoginMsg> for WireLoginMsg {
 impl From<SwarmUpdate> for WireSwarmUpdate {
     fn from(u: SwarmUpdate) -> Self {
         match u {
-            SwarmUpdate::RosterSuggested(p) => {
-                Self::RosterSuggested(p.into_iter().map(WirePersona::from).collect())
-            }
             SwarmUpdate::Progress(s) => Self::Progress(s),
-            SwarmUpdate::Reply {
-                persona,
-                model,
-                content,
-            } => Self::Reply {
-                persona,
-                model,
-                content,
-            },
-            SwarmUpdate::PersonaJoined(p) => Self::PersonaJoined(p.into()),
+            SwarmUpdate::Subagent(update) => Self::Progress(subagent_status(&update)),
             SwarmUpdate::Synthesis(s) => Self::Synthesis(s),
             SwarmUpdate::Error(e) => Self::Error(e),
         }
     }
 }
 
-impl From<Persona> for WirePersona {
-    fn from(p: Persona) -> Self {
-        Self {
-            name: p.name,
-            model: p.model,
-            blurb: p.blurb,
-        }
-    }
-}
-
-/// The model id exposed to OpenAI-wire clients. Internal model preferences
-/// retain `OpenRouter`'s historical bare ids; the public API must distinguish
-/// identical raw ids from different backends.
+/// The model id exposed to OpenAI-wire clients, distinguishing identical raw ids
+/// from different backends.
 pub(crate) fn public_model_id(model: &Model) -> String {
     let prefix = model.backend.wire_prefix();
     if model.id.starts_with(prefix) {
@@ -548,7 +454,7 @@ impl From<Model> for WireModel {
             supports_images: m.supports_images,
             supports_image_generation: m.supports_image_generation,
             supports_video_generation: m.supports_video_generation,
-            backend: m.backend.into(),
+            backend: m.backend,
             pricing: m.pricing.map(WireModelPricing::from),
         }
     }
@@ -564,18 +470,6 @@ impl From<ReasoningEffort> for WireReasoningEffort {
             ReasoningEffort::High => Self::High,
             ReasoningEffort::XHigh => Self::XHigh,
             ReasoningEffort::Max => Self::Max,
-        }
-    }
-}
-
-impl From<BackendTag> for WireBackendTag {
-    fn from(t: BackendTag) -> Self {
-        match t {
-            BackendTag::OpenRouter => Self::OpenRouter,
-            BackendTag::OpenAi => Self::OpenAi,
-            BackendTag::OpencodeGo => Self::OpencodeGo,
-            BackendTag::Codex => Self::Codex,
-            BackendTag::Local => Self::Local,
         }
     }
 }
@@ -606,7 +500,7 @@ mod tests {
             supports_images: true,
             supports_image_generation: false,
             supports_video_generation: false,
-            backend: WireBackendTag::OpenRouter,
+            backend: BackendTag::OpenRouter,
             pricing: Some(WireModelPricing {
                 prompt: 3.0,
                 completion: 15.0,
@@ -645,21 +539,13 @@ mod tests {
             WireEvent::Models(Some(Err("no backend configured".into()))),
             WireEvent::Models(None),
             WireEvent::Title(Some(("s1".into(), "Hello".into(), "hello".into()))),
-            WireEvent::Memory(Some((
-                "sp1".into(),
-                vec![
-                    WireMemoryOp::Add("alpha".into()),
-                    WireMemoryOp::Update(2, "beta".into()),
-                    WireMemoryOp::Delete(3),
-                ],
-            ))),
             WireEvent::Compact(Some(("s1".into(), "digest".into(), 12, 40))),
             WireEvent::SkillInstall(Some(Ok("python".into()))),
             WireEvent::SkillInstall(Some(Err("no model".into()))),
-            WireEvent::Ocr(Some((
+            WireEvent::Convert(Some((
                 "f1".into(),
                 "s1".into(),
-                WireOcrUpdate::Progress(1, 3, 0),
+                WireConvertUpdate::Progress(1, 3, 0),
             ))),
             WireEvent::Embed(Some((
                 "s1".into(),
@@ -685,11 +571,7 @@ mod tests {
             WireEvent::Login(Some(WireLoginMsg::Done(Ok(())))),
             WireEvent::Swarm(Some((
                 "s1".into(),
-                WireSwarmUpdate::RosterSuggested(vec![WirePersona {
-                    name: "ada".into(),
-                    model: "m1".into(),
-                    blurb: "b".into(),
-                }]),
+                WireSwarmUpdate::Progress("3 agents drafting apart".into()),
             ))),
         ];
         for ev in events {
@@ -776,10 +658,9 @@ mod tests {
             AppEvent::Stream(None),
             AppEvent::Models(None),
             AppEvent::Title(None),
-            AppEvent::Memory(None),
             AppEvent::Compact(None),
             AppEvent::SkillInstall(None),
-            AppEvent::Ocr(None),
+            AppEvent::Convert(None),
             AppEvent::Embed(None),
             AppEvent::Research(None),
             AppEvent::ResearchTopic(None),
@@ -839,6 +720,7 @@ mod tests {
                     id: "call_0".into(),
                     reasoning: None,
                     assistant_content: None,
+                    step_start: true,
                     name: "python".into(),
                     arguments: "print(1)".into(),
                     result: "1".into(),
@@ -892,6 +774,7 @@ mod tests {
                 cache_read: Some(0.3),
                 cache_write: Some(3.0),
             }),
+            aliases: Vec::new(),
         };
         let app = AppEvent::Models(Some(Ok(vec![model])));
         assert_eq!(
@@ -906,40 +789,20 @@ mod tests {
         );
     }
 
-    /// Memory and `OCR` payloads map every op/update shape.
+    /// `OCR` payloads map every update shape.
     #[test]
-    fn from_app_event_maps_memory_and_ocr() {
-        let app = AppEvent::Memory(Some((
-            "sp1".into(),
-            vec![
-                MemoryOp::Add("alpha".into()),
-                MemoryOp::Update(2, "beta".into()),
-                MemoryOp::Delete(3),
-            ],
-        )));
-        assert_eq!(
-            WireEvent::from(app),
-            WireEvent::Memory(Some((
-                "sp1".into(),
-                vec![
-                    WireMemoryOp::Add("alpha".into()),
-                    WireMemoryOp::Update(2, "beta".into()),
-                    WireMemoryOp::Delete(3),
-                ],
-            )))
-        );
-
-        let app = AppEvent::Ocr(Some((
+    fn from_app_event_maps_convert() {
+        let app = AppEvent::Convert(Some((
             "f1".into(),
             "s1".into(),
-            OcrUpdate::Done(Ok(("text".into(), vec![(2, "reason".into())]))),
+            ConvertUpdate::Done(Ok(("text".into(), vec![(2, "reason".into())]))),
         )));
         assert_eq!(
             WireEvent::from(app),
-            WireEvent::Ocr(Some((
+            WireEvent::Convert(Some((
                 "f1".into(),
                 "s1".into(),
-                WireOcrUpdate::Done(Ok(("text".into(), vec![(2, "reason".into())]))),
+                WireConvertUpdate::Done(Ok(("text".into(), vec![(2, "reason".into())]))),
             )))
         );
     }
@@ -1003,27 +866,30 @@ mod tests {
         }
     }
 
-    /// Swarm and login payloads map their nested types (roster personas),
-    /// while login credentials are reduced to a success marker.
+    /// Swarm agents reach thin clients as status lines, while login
+    /// credentials are reduced to a success marker.
     #[test]
     fn from_app_event_maps_swarm_and_login() {
         let app = AppEvent::Swarm(Some((
             "s1".into(),
-            SwarmUpdate::RosterSuggested(vec![Persona {
-                name: "ada".into(),
-                model: "m1".into(),
-                blurb: "b".into(),
-            }]),
+            SwarmUpdate::Subagent(Box::new(crate::provider::SubagentUpdate {
+                id: "run".into(),
+                number: 4,
+                event: crate::provider::SubagentEvent::Round {
+                    step: 1,
+                    reasoning: None,
+                    content: "draft".into(),
+                    calls: Vec::new(),
+                    usage: None,
+                    secs: 0.5,
+                },
+            })),
         )));
         assert_eq!(
             WireEvent::from(app),
             WireEvent::Swarm(Some((
                 "s1".into(),
-                WireSwarmUpdate::RosterSuggested(vec![WirePersona {
-                    name: "ada".into(),
-                    model: "m1".into(),
-                    blurb: "b".into(),
-                }]),
+                WireSwarmUpdate::Progress("sub-agent 4: step 2".into()),
             )))
         );
 

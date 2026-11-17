@@ -1,10 +1,9 @@
 //! Content-based file type detection. Magic bytes and inner structure decide;
-//! the extension is only a hint for formats whose content cannot say (CSV vs
-//! plain text, `.rst` vs `.txt`, which legacy office format an OLE file is).
+//! the extension is only a hint for formats whose content cannot say.
 
 use std::io::Cursor;
 
-/// A detected file type. `label()` is the short name shown in statuses.
+/// A detected file type; `label()` is the short name shown in statuses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Pdf,
@@ -15,8 +14,7 @@ pub enum Kind {
     Ods,
     Odp,
     Epub,
-    /// Office formats only `LibreOffice` reads: legacy doc/xls/ppt (OLE2),
-    /// iWork, Visio, ODF drawings, …
+    /// Office formats only `LibreOffice` reads: legacy doc/xls/ppt (OLE2), iWork, Visio, ODF drawings, …
     Office(&'static str),
     Rtf,
     Png,
@@ -40,7 +38,7 @@ pub enum Kind {
     Mbox,
     Srt,
     Vtt,
-    /// Text markup pandoc reads (rst, org, latex, textile, …); readable raw.
+    /// Text markup pandoc reads (rst, org, latex, …), readable raw.
     Markup(&'static str),
     /// Anything else that is text: prose, source code, config, logs.
     Text,
@@ -48,7 +46,7 @@ pub enum Kind {
     Video(&'static str),
     /// A container nothing here opens (zip, gzip, 7z, …).
     Archive(&'static str),
-    /// Not text and not recognised (label says what it looks like, if known).
+    /// Not text and not recognised; the label says what it looks like, if known.
     Binary(&'static str),
 }
 
@@ -95,8 +93,8 @@ impl Kind {
         }
     }
 
-    /// Still pictures the OCR / caption pipeline can read.
-    pub const fn is_ocr_image(self) -> bool {
+    /// Still image files supported for direct embedding.
+    pub const fn is_image_file(self) -> bool {
         matches!(
             self,
             Self::Png | Self::Jpeg | Self::Gif | Self::Webp | Self::Bmp | Self::Tiff
@@ -104,7 +102,7 @@ impl Kind {
     }
 
     pub const fn is_image(self) -> bool {
-        self.is_ocr_image() || matches!(self, Self::Heic | Self::Avif)
+        self.is_image_file() || matches!(self, Self::Heic | Self::Avif)
     }
 
     /// The kinds that are text on disk (decoded, never treated as binary).
@@ -172,11 +170,9 @@ impl Kind {
     }
 }
 
-/// How much of a file the content sniffers look at.
 pub const SNIFF_BYTES: usize = 64 * 1024;
 
-/// Detect by content, with `name`'s extension as a hint. Zip containers are
-/// opened to tell docx / pptx / xlsx / odf / epub apart.
+/// Detect by content, with `name`'s extension as a hint; zip containers are opened to tell docx / pptx / xlsx / odf / epub apart.
 pub fn detect(bytes: &[u8], name: &str) -> Kind {
     let head = &bytes[..bytes.len().min(SNIFF_BYTES)];
     let ext = extension(name);
@@ -188,8 +184,7 @@ pub fn detect(bytes: &[u8], name: &str) -> Kind {
     detect_head(head, name)
 }
 
-/// Like [`detect`] from a file's first bytes only: a zip is reported as an
-/// archive (enough to route PDFs and images without reading the file).
+/// Like [`detect`] from a file's first bytes only: a zip is reported as an archive.
 pub fn detect_head(head: &[u8], name: &str) -> Kind {
     let ext = extension(name);
     if let Some(kind) = signature(head, &ext) {
@@ -198,7 +193,6 @@ pub fn detect_head(head: &[u8], name: &str) -> Kind {
     sniff_text(head, &ext)
 }
 
-/// Lowercased extension of `name` (no dot).
 pub fn extension(name: &str) -> String {
     std::path::Path::new(name)
         .extension()
@@ -207,8 +201,7 @@ pub fn extension(name: &str) -> String {
         .unwrap_or_default()
 }
 
-/// MIME type for the still-image formats a vision model accepts, judged by
-/// content. `None` for everything else (including images models reject).
+/// MIME type for the still-image formats a vision model accepts, judged by content.
 pub fn vision_mime(bytes: &[u8]) -> Option<&'static str> {
     match detect_head(&bytes[..bytes.len().min(64)], "") {
         Kind::Png => Some("image/png"),
@@ -221,7 +214,10 @@ pub fn vision_mime(bytes: &[u8]) -> Option<&'static str> {
 
 fn probe_zip(bytes: &[u8], ext: &str) -> Option<Kind> {
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).ok()?;
-    let names: Vec<String> = zip.file_names().map(str::to_string).collect();
+    let names: Vec<String> = zip
+        .file_names()
+        .filter_map(|n| n.ok().map(std::borrow::Cow::into_owned))
+        .collect();
     let has = |n: &str| names.iter().any(|x| x == n);
     let starts = |p: &str| names.iter().any(|x| x.starts_with(p));
     // ODF and EPUB put their MIME type in a stored `mimetype` entry.
@@ -413,9 +409,7 @@ fn id3_header(h: &[u8]) -> bool {
         && h[6..10].iter().all(|b| b & 0x80 == 0)
 }
 
-/// An MPEG layer III frame header (`FF Ex`) with sane version / bitrate /
-/// sample-rate bits. Layer III only: `FF FE`, a UTF-16 byte-order mark, must
-/// never read as audio.
+/// An MPEG layer III frame header with sane bits; `FF FE` is a UTF-16 BOM and must never read as audio.
 fn mpeg_audio_frame(h: &[u8]) -> bool {
     h.len() >= 3
         && h[0] == 0xFF
@@ -427,8 +421,7 @@ fn mpeg_audio_frame(h: &[u8]) -> bool {
         && (h[2] >> 2) & 3 != 3
 }
 
-/// A DOS `MZ` header whose PE pointer lands on `PE\0\0` (or beyond what we
-/// sniffed): rules out text that merely starts with those letters.
+/// A DOS `MZ` header whose PE pointer lands on `PE\0\0`, so text starting with those letters is not an exe.
 fn is_pe(h: &[u8]) -> bool {
     if h.len() < 0x40 {
         return false;
@@ -440,7 +433,6 @@ fn is_pe(h: &[u8]) -> bool {
     }
 }
 
-/// How a text file is encoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Encoding {
     Utf8,
@@ -448,8 +440,7 @@ pub enum Encoding {
     Utf16Be,
 }
 
-/// The encoding of a text file, or `None` when the bytes are binary.
-/// UTF-16 requires a BOM so arbitrary binary is never read as source code.
+/// The encoding of a text file, or `None` when the bytes are binary; UTF-16 requires a BOM.
 pub fn text_encoding(h: &[u8]) -> Option<Encoding> {
     if h.starts_with(&[0xEF, 0xBB, 0xBF]) {
         return Some(Encoding::Utf8);
@@ -471,8 +462,7 @@ pub fn text_encoding(h: &[u8]) -> Option<Encoding> {
     (control * 50 <= h.len()).then_some(Encoding::Utf8)
 }
 
-/// Decode a whole text file: BOMs stripped, UTF-16 transcoded, invalid UTF-8
-/// replaced rather than rejected.
+/// Decode a whole text file: BOMs stripped, UTF-16 transcoded, invalid UTF-8 replaced.
 pub fn decode_text(bytes: &[u8], enc: Encoding) -> String {
     match enc {
         Encoding::Utf8 => String::from_utf8_lossy(bytes)
@@ -497,8 +487,7 @@ pub fn decode_text(bytes: &[u8], enc: Encoding) -> String {
     }
 }
 
-/// Extensions of template / source files that merely contain markup; they
-/// are indexed as the code they are.
+/// Extensions of template / source files that merely contain markup; they are indexed as the code they are.
 const CODE_EXTS: &[&str] = &[
     "php",
     "vue",
@@ -554,7 +543,7 @@ fn sniff_text(h: &[u8], ext: &str) -> Kind {
     if h.is_empty() {
         return Kind::Text;
     }
-    // Look at the start of the decoded text (lossy is fine for sniffing).
+    // Look at the start of the decoded text; lossy is fine for sniffing.
     let decoded = decode_text(&h[..h.len().min(8192)], enc);
     let start = decoded.trim_start();
     let lower: String = start.chars().take(4096).collect::<String>().to_lowercase();
@@ -675,8 +664,7 @@ fn is_eml(text: &str) -> bool {
         && (head.contains("\nto:") || head.contains("\nsubject:") || head.contains("\ndate:"))
 }
 
-/// A consistent delimiter across the first lines marks CSV / TSV even
-/// without a telling extension.
+/// A consistent delimiter across the first lines marks CSV / TSV without a telling extension.
 fn delimited(text: &str) -> Option<Kind> {
     let lines: Vec<&str> = text
         .lines()

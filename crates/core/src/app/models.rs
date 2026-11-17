@@ -10,8 +10,6 @@ use super::{App, ModelPickTarget, Popup};
 
 const ROUTER_MODEL_IDS: &[&str] = &["typesafe/jev-router", "openrouter/auto"];
 
-/// Split a model id around its first version number: `openai/gpt-6.1-luna`
-/// → (`openai/gpt-`, `6.1`, `-luna`). `None` when the id has no digits.
 fn split_version(id: &str) -> Option<(&str, &str, &str)> {
     let start = id.find(|c: char| c.is_ascii_digit())?;
     let len = id[start..]
@@ -22,7 +20,6 @@ fn split_version(id: &str) -> Option<(&str, &str, &str)> {
     Some((&id[..start], version, &id[end..]))
 }
 
-/// A version string as comparable numbers: `6.10` sorts above `6.9`.
 fn version_key(version: &str) -> Vec<u64> {
     version
         .split('.')
@@ -31,27 +28,20 @@ fn version_key(version: &str) -> Vec<u64> {
 }
 
 impl App {
-    /// Rebuild every backend from the on-disk saved credentials (after boot,
-    /// or after a settings change). Keeps `saved` and `backends` in sync.
     pub fn rebuild_all_backends(&mut self) {
         self.experiments = self.saved.experiments.clone();
         self.backends = super::Backends::default();
-        if let Some(k) = self.saved.openrouter_key.clone() {
-            self.backends
-                .set(BackendTag::OpenRouter, OpenRouter::openrouter_flavor(k));
+        for tag in BackendTag::ALL {
+            if let Some(key) = self.saved.key(tag) {
+                self.backends
+                    .set(tag, OpenRouter::with_key(tag, key.to_string()));
+            }
         }
         if let Some(config) = self.saved.local.clone() {
             match OpenRouter::configured_local(config) {
                 Ok(provider) => self.backends.set(BackendTag::Local, provider),
                 Err(error) => self.push_status(format!("local inference: {error}")),
             }
-        }
-        if let Some(k) = self.saved.openai_key.clone() {
-            self.backends.set(BackendTag::OpenAi, OpenRouter::openai(k));
-        }
-        if let Some(k) = self.saved.opencode_key.clone() {
-            self.backends
-                .set(BackendTag::OpencodeGo, OpenRouter::opencode_go(k));
         }
         if let Some(c) = self.saved.codex.clone() {
             self.backends
@@ -62,10 +52,6 @@ impl App {
         }
     }
 
-    /// `/local` — apply a runtime spec, or report the current setting when
-    /// it's empty (the TUI opens its picker for that case instead). Parse
-    /// and persistence failures land on the status line: a typo'd runtime
-    /// must not take the app down.
     pub fn configure_local(&mut self, spec: &str) {
         if spec.trim().is_empty() {
             let status = match &self.saved.local {
@@ -87,20 +73,15 @@ impl App {
         }
     }
 
-    /// `/local start|stop|restart|status [<runtime>]` — manage the local
-    /// provider's own inference server. Every verb ends in a fresh survey, so
-    /// the reported state is measured rather than assumed.
     pub fn manage_local_server(&mut self, verb: &str, runtime: &str) {
         if let Err(error) = self.local_server_action(verb, runtime) {
             self.push_status(format!("local server: {error}"));
             return;
         }
-        self.local_status_announce = true;
+        self.local.status_announce = true;
         self.refresh_local_status();
     }
 
-    /// The verb itself. Split out so every failure path is one `?` and lands
-    /// on the status line with the same prefix.
     fn local_server_action(&mut self, verb: &str, runtime: &str) -> Result<()> {
         if verb == "status" {
             return Ok(());
@@ -122,15 +103,13 @@ impl App {
             .port()
             .context("the configured endpoint has no port to serve on")?;
         if matches!(verb, "stop" | "restart") {
-            // A restart waits for the port back before rebinding it.
-            self.local_servers.stop(runtime, port, verb == "restart")?;
+            self.local.servers.stop(runtime, port, verb == "restart")?;
             self.push_status(format!("{} server stopped", runtime.label()));
             if verb == "stop" {
                 return Ok(());
             }
         }
-        // mlx-lm and edge0 serve exactly one model, so they launch with the
-        // selected one; the composite id carries a `local:` prefix.
+        // mlx-lm and edge0 require a single model at server launch.
         let model = self
             .current_model
             .as_deref()
@@ -141,7 +120,8 @@ impl App {
             kv_cache_q8: config.kv_cache_q8,
         };
         let argv = self
-            .local_servers
+            .local
+            .servers
             .start(runtime, model.as_deref(), port, options)?;
         self.push_status(format!(
             "{} starting: {argv} — /local status when it answers",
@@ -150,55 +130,49 @@ impl App {
         Ok(())
     }
 
-    /// Probe every local runtime in the background: which endpoints answer,
-    /// what their process trees cost, and whether that is over budget. One
-    /// survey at a time; the picker and the verbs share the result.
     pub fn refresh_local_status(&mut self) {
-        if self.local_status_rx.is_some() {
+        if self.local.status_rx.is_some() {
             return;
         }
-        self.local_servers.reap();
+        self.local.servers.reap();
         let configured = self.saved.local.clone();
         let managed: Vec<(LocalRuntime, Option<u32>)> = self
-            .local_servers
+            .local
+            .servers
             .managed_runtimes()
             .into_iter()
-            .map(|runtime| (runtime, self.local_servers.pid(runtime)))
+            .map(|runtime| (runtime, self.local.servers.pid(runtime)))
             .collect();
-        // A survey shells out and talks to the network, so it needs a
-        // reactor. `cfg(test)` cannot express this: core is a dependency of
-        // the TUI's test binary, where it compiles with tests off. Asking the
-        // runtime directly is what actually holds, in every frontend and test.
+        // Synchronous frontends may lack the reactor required by the survey.
         let Ok(handle) = tokio::runtime::Handle::try_current() else {
             return;
         };
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        self.local_status_rx = Some(rx);
+        self.local.status_rx = Some(rx);
         handle.spawn(async move {
             let _ = tx.send(crate::provider::serve::survey(configured.as_ref(), &managed).await);
         });
     }
 
-    /// A finished survey: cache it for the picker, report it when the user
-    /// asked, and warn about anything over budget. Nothing is stopped here —
-    /// the budget is advisory, so a server mid-reply is never yanked.
+    /// Report local runtime health without interrupting servers over their advisory budget.
     pub fn on_local_status(&mut self, result: Option<Vec<RuntimeStatus>>) {
-        self.local_status_rx = None;
+        self.local.status_rx = None;
         let Some(statuses) = result else {
             return;
         };
-        let announce = std::mem::take(&mut self.local_status_announce);
-        self.local_status = statuses;
+        let announce = std::mem::take(&mut self.local.status_announce);
+        self.local.status = statuses;
         if announce {
             let line = self
-                .local_status
+                .local
+                .status
                 .iter()
                 .map(RuntimeStatus::summary)
                 .collect::<Vec<_>>()
                 .join("  ·  ");
             self.push_status(format!("local: {line}"));
         }
-        if let Some(over) = self.local_status.iter().find(|status| status.over_budget) {
+        if let Some(over) = self.local.status.iter().find(|status| status.over_budget) {
             let budget = over
                 .budget_kb
                 .map(crate::provider::serve::format_kb)
@@ -214,18 +188,10 @@ impl App {
         }
     }
 
-    /// Stop every local server Nexus started. The exit path calls this so
-    /// quitting never leaves a multi-gigabyte server behind.
     pub async fn stop_local_servers(&mut self) {
-        self.local_servers.stop_all().await;
+        self.local.servers.stop_all().await;
     }
 
-    /// Persist and activate (or clear) the local runtime, then refresh the
-    /// model catalog. The `[local]` block is machine-local, so this only ever
-    /// touches this device's config file.
-    ///
-    /// # Errors
-    /// Invalid settings, or a config file that can't be written.
     pub fn set_local_runtime(&mut self, config: Option<LocalConfig>) -> Result<()> {
         if let Some(config) = &config {
             config.validate()?;
@@ -241,9 +207,7 @@ impl App {
         };
         self.saved.local = config;
         if self.saved.local.is_none() {
-            // `fetch_models` can't clear these: with no provider left it
-            // returns early, and a stale `local:` selection would fail to
-            // route on the next send.
+            // With no providers, `fetch_models` returns before clearing stale local selections.
             self.models
                 .retain(|model| model.backend != BackendTag::Local);
             if self
@@ -264,20 +228,15 @@ impl App {
         self.backends.resolve(id)
     }
 
-    /// The model every background job runs on: the picked `helper_model`, or
-    /// "auto" when it is blank. Auto is the cheap model of the backend the
-    /// session is on (`OpenRouter::default_helper_for`), or the session's own
-    /// model there when that backend has no cheap option. It never moves to
-    /// another backend on its own.
-    pub fn helper_backend(&self) -> Option<(OpenRouter, String)> {
-        self.resolve_utility_model_backend(&self.helper_model)
-            .map(|(p, model)| (self.usage_provider(p, "helper"), model))
+    /// Use the session's own model for background work.
+    pub fn session_backend(&self) -> Option<(OpenRouter, String)> {
+        self.current_model
+            .as_deref()
+            .and_then(|id| self.resolve_model_backend(id))
+            .map(|(p, model)| (self.usage_provider(p, "background"), model))
     }
 
-    /// The default generation model of the active backend (`default` is
-    /// `default_image_gen_model` or `default_video_gen_model`), or `None` when
-    /// that backend has none or is a local runtime. Generation follows the
-    /// session's backend and never silently reaches for another provider.
+    /// Resolve media generation on the session's backend without a cross-provider fallback.
     pub fn generation_backend(
         &self,
         default: fn(&OpenRouter) -> &'static str,
@@ -295,7 +254,6 @@ impl App {
         })
     }
 
-    /// The provider of the session's model, else the first configured backend.
     fn active_provider(&self) -> Option<OpenRouter> {
         self.current_model
             .as_deref()
@@ -308,19 +266,6 @@ impl App {
             })
     }
 
-    /// Resolve a feature (non-session) model that may be a bare wire id or a
-    /// composite id. Feature models default to the session provider's
-    /// research-class default; a composite id picks its own backend.
-    pub fn resolve_utility_model_backend(
-        &self,
-        configured_id: &str,
-    ) -> Option<(OpenRouter, String)> {
-        self.resolve_feature_model_backend(configured_id, OpenRouter::default_utility_model)
-    }
-
-    /// Resolve a feature model by name for a backend that may not be
-    /// `OpenRouter` (used for image/video gen where the user may have picked a
-    /// non-OpenRouter model).
     pub fn resolve_feature_model_backend(
         &self,
         configured_id: &str,
@@ -336,8 +281,7 @@ impl App {
 
         let provider = self.active_provider()?;
         if provider.backend_tag() == BackendTag::Local {
-            // Local runtimes do not have cloud default model names. Only use
-            // an installed model, preferring the current chat selection.
+            // Local runtimes require installed models, not cloud defaults.
             let raw = self
                 .current_model
                 .as_deref()
@@ -358,8 +302,7 @@ impl App {
         let listed =
             self.models.is_empty() || self.models.iter().any(|m| m.backend == tag && m.id == auto);
         if auto.is_empty() || !listed {
-            // No cheap option here (or the catalog no longer lists it): use
-            // the session's own model on this same backend, if it has one.
+            // Model ids are provider-specific; fallback must stay on this backend.
             if let Some(raw) = self
                 .current_model
                 .as_deref()
@@ -373,11 +316,7 @@ impl App {
         (!auto.is_empty()).then(|| (provider, auto.to_string()))
     }
 
-    /// `base` upgraded to the newest version of its family that `tag`'s live
-    /// catalog lists: same text around the version number, higher number
-    /// (`gpt-6-luna` → `gpt-6.1-luna` or `gpt-7-luna`, never `gpt-6-luna-pro`).
-    /// Built-in defaults go stale between releases; this keeps auto current.
-    /// Returns `base` unchanged when nothing newer is listed.
+    /// Upgrade a default model within its version family using the live catalog.
     pub fn newest_listed(&self, tag: BackendTag, base: &str) -> String {
         let Some((prefix, version, suffix)) = split_version(base) else {
             return base.to_string();
@@ -395,9 +334,6 @@ impl App {
             .map_or_else(|| base.to_string(), |(_, id)| id.clone())
     }
 
-    /// Whether a resolved feature model id actually exists in the catalog
-    /// (or the catalog is empty/unknown — never silently drop a feature just
-    /// because the catalog isn't fetched yet).
     fn resolved_model_looks_valid(
         &self,
         original_id: &str,
@@ -405,10 +341,7 @@ impl App {
         raw: &str,
     ) -> bool {
         if self.models.is_empty() {
-            // The classic bad state is a legacy OpenRouter id like
-            // `google/gemini-*` being resolved against OpenAI/Codex/Go because
-            // OpenRouter is not configured. Those backends' built-in defaults
-            // do not contain `/`, so treat slashy bare ids as OpenRouter-only.
+            // Slashed bare ids are OpenRouter defaults, not ids for other cloud backends.
             return backend != BackendTag::Local
                 && (backend == BackendTag::OpenRouter || !original_id.contains('/'));
         }
@@ -417,22 +350,14 @@ impl App {
             .any(|m| m.backend == backend && m.id == raw)
     }
 
-    /// Fetch every configured backend's catalog concurrently and merge them
-    /// into one list. A backend that fails is dropped from the merge (its
-    /// error is only surfaced if *every* backend failed) — one flaky login
-    /// shouldn't blank out the models of the others. Public so the view layer
-    /// can re-trigger a fetch from the model picker.
+    /// Merge backend catalogs, retaining successful results when others fail.
     pub fn fetch_models(&mut self) {
-        let providers: Vec<OpenRouter> = [
-            self.backends.openrouter.clone(),
-            self.backends.openai.clone(),
-            self.backends.opencode.clone(),
-            self.backends.codex.clone(),
-            self.backends.local.clone(),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+        let providers: Vec<OpenRouter> = self
+            .backends
+            .configured_tags()
+            .into_iter()
+            .filter_map(|tag| self.backends.get(tag).cloned())
+            .collect();
         if providers.is_empty() {
             return;
         }
@@ -456,13 +381,13 @@ impl App {
                 Err(errors.join("; "))
             } else {
                 merged.sort_by(|a, b| a.id.cmp(&b.id));
+                crate::provider::openrouter::price_mistral_models(&mut merged);
                 Ok(merged)
             };
             let _ = tx.send(result);
         });
     }
 
-    /// Context window of the active model, if known.
     pub fn context_limit(&self) -> Option<u64> {
         let id = self.current_model.as_deref()?;
         self.models
@@ -471,16 +396,10 @@ impl App {
             .and_then(|m| m.context_length)
     }
 
-    /// Tokens used by the current session: the provider's latest exact count
-    /// plus an estimate of only what was added since it (a streaming reply,
-    /// tool results). Estimating the whole conversation instead overshot on
-    /// JSON-heavy tool rows and then snapped back to the exact count every
-    /// turn. With no exact count yet (new session, model or prompt switch)
-    /// the whole conversation is estimated, scaled by the last exact/estimate
-    /// ratio so the switch-over doesn't jump.
+    /// Estimate context growth relative to the provider's latest exact count.
     pub fn context_used(&self) -> u64 {
         let streaming = self.is_streaming();
-        if let (Some(total), Some(basis)) = (self.context_total, self.context_basis)
+        if let (Some(total), Some(basis)) = (self.meter.total, self.meter.basis)
             && total == basis.exact
         {
             if !streaming && self.messages.len() == basis.messages {
@@ -490,29 +409,24 @@ impl App {
             let tokens = total as f64 + self.calibrated(delta / 4.0);
             return tokens.max(0.0).round() as u64;
         }
-        if !streaming && let Some(total) = self.context_total {
+        if !streaming && let Some(total) = self.meter.total {
             return total;
         }
         let estimate = self.calibrated(self.context_chars() as f64 / 4.0) as u64;
-        // Do not let a fresh estimate make the bar shrink at the start of a
-        // request: the previous completed request is a better lower bound
-        // until this one reports exact usage.
+        // An estimate must not shrink the bar before the provider reports exact usage.
         if streaming {
-            self.context_total
+            self.meter
+                .total
                 .map_or(estimate, |total| total.max(estimate))
         } else {
             estimate
         }
     }
 
-    /// Scale a ~4-chars/token estimate by what the provider last reported.
     fn calibrated(&self, tokens: f64) -> f64 {
-        tokens * self.context_ratio.unwrap_or(1.0)
+        tokens * self.meter.ratio.unwrap_or(1.0)
     }
 
-    /// What the next request will carry, in characters: the system/memory
-    /// prompt, the compaction digest (if any), a forced skill's body, the
-    /// effective conversation tail, and the reply streaming now.
     pub(crate) fn context_chars(&self) -> usize {
         let mut chars = self.system_prompt().chars().count();
         if let Some(s) = self
@@ -535,23 +449,21 @@ impl App {
         chars
     }
 
-    /// Record an exact count reported by one of `task`'s requests. Within a
-    /// turn the conversation only grows, so a smaller count from the same
-    /// task is a nested request (a `task` sub-agent's own prompt) and must
-    /// not move the bar; the first count of a turn is always taken.
+    /// Record context usage without letting a nested sub-agent's smaller prompt move the bar.
     pub(crate) fn observe_context(&mut self, task: super::ChatTaskId, total: u64) {
         if self
-            .context_basis
+            .meter
+            .basis
             .is_some_and(|basis| basis.task == task && total < basis.exact)
         {
             return;
         }
         let chars = self.context_chars();
         if chars > 0 && total > 0 {
-            self.context_ratio = Some((total as f64 / (chars as f64 / 4.0)).clamp(0.5, 2.0));
+            self.meter.ratio = Some((total as f64 / (chars as f64 / 4.0)).clamp(0.5, 2.0));
         }
-        self.context_total = Some(total);
-        self.context_basis = Some(super::ContextBasis {
+        self.meter.total = Some(total);
+        self.meter.basis = Some(super::ContextBasis {
             exact: total,
             chars,
             messages: self.messages.len(),
@@ -559,7 +471,6 @@ impl App {
         });
     }
 
-    /// Whether the active model accepts image input (unknown model → false).
     pub fn current_model_supports_images(&self) -> bool {
         self.current_model.as_deref().is_some_and(|id| {
             self.models
@@ -573,10 +484,7 @@ impl App {
         self.effort_accepted(id, effort).then_some(effort)
     }
 
-    /// Whether `effort` is in `model`'s accepted reasoning set, so a stored
-    /// value is only sent when the model actually accepts it. Unknown models
-    /// (not in the loaded catalog) accept anything — never silently drop a
-    /// stored value just because the catalog isn't fetched yet.
+    /// Validate reasoning effort when the model catalog is available.
     pub fn effort_accepted(&self, model: &str, effort: &str) -> bool {
         self.models
             .iter()
@@ -584,19 +492,15 @@ impl App {
             .is_none_or(|m| m.reasoning_efforts.iter().any(|e| e.as_str() == effort))
     }
 
-    /// Set the active model (or a feature model, per the pick target).
     pub fn pick_model(&mut self, id: &str) -> Result<()> {
         match self.model_pick_target {
             ModelPickTarget::Session => {
-                if self.current_model.as_deref() != Some(id) {
+                let model_changed = self.current_model.as_deref() != Some(id);
+                if model_changed {
                     self.bump_cache_epoch();
                 }
-                let before = self.active_provider().map(|p| p.backend_tag());
                 self.current_model = Some(id.to_string());
-                let backend_changed = before != self.active_provider().map(|p| p.backend_tag());
-                if backend_changed && !self.is_streaming() {
-                    // Media generation and the helper model follow the
-                    // session's backend, so the toolbox is rebuilt for it.
+                if model_changed && !self.is_streaming() {
                     self.refresh_toolbox();
                 }
                 if let Some(session) = &self.session {
@@ -608,62 +512,36 @@ impl App {
                 self.push_status(format!("model: {id}"));
                 if !self.router_note_shown && ROUTER_MODEL_IDS.contains(&id) {
                     self.router_note_shown = true;
-                    self.push_status("router models pick a model per request · prompt caching is less effective · compare with nexus eval --compare-model first");
+                    self.push_status("router models pick a model per request · prompt caching is less effective · compare with dugix eval --compare-model first");
                 }
             }
-            ModelPickTarget::Helper => {
-                self.helper_model = id.to_string();
-                self.db.set_setting("helper_model", id)?;
-                self.push_status(format!("helper model: {id}"));
-            }
             ModelPickTarget::SwarmPersona(row) => {
-                if let Some(p) = self.swarm_cache.get_mut(row) {
+                if let Some(p) = self.swarm.cache.get_mut(row) {
                     p.model = id.to_string();
                 }
                 if let Some(session) = &self.session {
-                    let _ = self.db.save_swarm_personas(&session.id, &self.swarm_cache);
+                    let _ = self.db.save_swarm_personas(&session.id, &self.swarm.cache);
                 }
-                self.push_status(format!("persona model: {id}"));
+                self.push_status(format!("drafter model: {id}"));
             }
         }
         if self.work_mode == super::WorkMode::AgentAuto
-            && matches!(
-                self.model_pick_target,
-                ModelPickTarget::Session | ModelPickTarget::Helper
-            )
+            && self.model_pick_target == ModelPickTarget::Session
         {
             self.refresh_toolbox();
         }
         Ok(())
     }
 
-    /// The popup a confirmed pick should return to, given the pick target —
-    /// view-layer helper (the picker opens from `/config` for feature models).
     pub fn popup_after_pick(target: ModelPickTarget) -> Popup {
         match target {
             ModelPickTarget::Session => Popup::None,
-            ModelPickTarget::Helper => Popup::Settings,
             ModelPickTarget::SwarmPersona(_) => Popup::Swarm,
         }
     }
 
-    /// Return the helper model to auto (Backspace on its row in `/config`).
-    pub fn clear_helper_model(&mut self) -> Result<()> {
-        self.helper_model.clear();
-        self.db.set_setting("helper_model", "")?;
-        self.push_status("helper model: auto".to_string());
-        if self.work_mode == super::WorkMode::AgentAuto {
-            self.refresh_toolbox();
-        }
-        Ok(())
-    }
-
-    /// `/login`: start the `OpenAI` Codex device-code login (the only backend
-    /// without a plain API key): spawns the task and owns the result channel.
     pub fn start_codex_login(&mut self) {
-        // A previous login task can be left around after cancellation/timeout while
-        // the UI has no useful way to resume it. Starting again should replace the
-        // receiver instead of trapping the user behind a stale "already running" gate.
+        // Cancelled or timed-out device logins cannot be resumed through the UI.
         self.login_rx = None;
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         self.login_rx = Some(rx);
@@ -715,7 +593,7 @@ mod router_tests {
     fn router_note_is_once_per_run_and_only_for_session_selection() {
         for router in ["typesafe/jev-router", "openrouter/auto"] {
             let mut app = crate::app::tests::app_with_key();
-            app.model_pick_target = ModelPickTarget::Helper;
+            app.model_pick_target = ModelPickTarget::SwarmPersona(0);
             app.pick_model(router).unwrap();
             assert!(!app.router_note_shown);
             app.model_pick_target = ModelPickTarget::Session;
@@ -744,7 +622,7 @@ mod router_tests {
             assert_eq!(notes.len(), 1);
             assert_eq!(
                 notes[0],
-                "router models pick a model per request · prompt caching is less effective · compare with nexus eval --compare-model first"
+                "router models pick a model per request · prompt caching is less effective · compare with dugix eval --compare-model first"
             );
             let root = app.space.root.clone();
             drop(app);

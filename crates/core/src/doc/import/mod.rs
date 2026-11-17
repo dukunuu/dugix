@@ -104,6 +104,36 @@ fn read_file(source: &Path, assets: &Path, files: Option<&Path>) -> Result<Impor
         _ => bail!("expected .docx, .dotx or .md"),
     }
 }
+/// A doc from generated Markdown: the first level-one heading becomes the title
+/// (else `fallback_title`), and an image that is not a usable HTTPS address stays
+/// as a link.
+pub fn from_markdown(files: &Path, markdown: &str, fallback_title: &str) -> Result<Doc> {
+    let mut parsed = super::markdown::parse_document(markdown, false);
+    let title = super::markdown::take_title(&mut parsed.blocks)
+        .unwrap_or_else(|| fallback_title.to_string());
+    let slug = crate::design::default_slug(files)?;
+    let design = crate::design::load(files, &slug)?;
+    let mut doc = Doc::from_design(&title, &design);
+    doc.design = Some(slug);
+    doc.blocks = parsed.blocks;
+    doc.footnotes = parsed.footnotes;
+    for block in &mut doc.blocks {
+        if let Kind::Image { src, alt, .. } = &block.kind
+            && crate::remote_image::validate_url(src).is_err()
+        {
+            let label = if alt.is_empty() {
+                src.clone()
+            } else {
+                alt.clone()
+            };
+            block.kind = Kind::Paragraph {
+                text: format!("[{label}](<{src}>)"),
+            };
+        }
+    }
+    Doc::check(&serde_json::to_string(&doc)?).map_err(|e| anyhow::anyhow!("{e:?}"))
+}
+
 /// Write a new document and its comments, never replacing an existing file.
 pub fn write_new(imported: &Imported, target: &Path) -> Result<()> {
     ensure!(

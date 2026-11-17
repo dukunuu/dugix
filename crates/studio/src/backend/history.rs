@@ -2,19 +2,18 @@
 //! a read-only preview of one, and restoring one as a new write.
 
 use anyhow::{Context as _, Result};
-use nexus_core::deck::{self, Deck, history};
-use nexus_core::doc::Doc;
+use dugix_core::deck::{self, Deck, history};
+use dugix_core::doc::Doc;
 use serde::Serialize;
 
 use super::{Backend, Event};
 
-/// One kept version, newest first on the wire. Each is the document as it was
-/// just before an edit; `who` made that edit and `summary` says what it changed.
+/// One kept version: the document as it was just before an edit.
 #[derive(Debug, Serialize)]
 pub struct Version {
-    /// The kept file's stem, unique within the document's history.
+    /// The kept file's stem.
     pub id: String,
-    /// When the edit that replaced this version was made, RFC 3339 UTC.
+    /// RFC 3339 UTC.
     pub at: String,
     /// `user` or `model`.
     pub who: String,
@@ -46,7 +45,6 @@ fn rfc3339(stamp: &str) -> String {
     }
 }
 
-/// What differs between two versions of a doc, in a few words.
 fn describe_doc_change(from: &Doc, to: &Doc) -> String {
     let mut parts = Vec::new();
     if from.title != to.title {
@@ -108,7 +106,33 @@ impl Backend {
     pub(super) fn history_event(&self) -> Result<Event> {
         let entries = self.history_entries()?;
         let mut versions = Vec::with_capacity(entries.len());
-        if let Some(session) = &self.doc {
+        if let Some(session) = &self.sheet {
+            let loaded: Vec<Option<dugix_core::sheet::Sheet>> =
+                entries.iter().map(|e| e.load_for().ok()).collect();
+            for (i, entry) in entries.iter().enumerate() {
+                let next = loaded
+                    .get(i + 1)
+                    .and_then(Option::as_ref)
+                    .unwrap_or(&session.sheet);
+                let summary = loaded[i].as_ref().map_or_else(
+                    || "unreadable version".into(),
+                    |kept| {
+                        let count = dugix_core::sheet::read::changed_cells(kept, next).len();
+                        if count == 0 && kept.title != next.title {
+                            "Renamed it".into()
+                        } else {
+                            format!("Changed {count} cells")
+                        }
+                    },
+                );
+                versions.push(Version {
+                    id: id_of(entry),
+                    at: rfc3339(&entry.stamp),
+                    who: entry.who.clone(),
+                    summary,
+                });
+            }
+        } else if let Some(session) = &self.doc {
             let loaded: Vec<Option<Doc>> =
                 entries.iter().map(|e| e.load_for::<Doc>().ok()).collect();
             for (i, entry) in entries.iter().enumerate() {
@@ -157,20 +181,29 @@ impl Backend {
         Ok(Event::History { versions })
     }
 
-    /// One kept version, read-only, for the page to show in place of the current one.
+    /// One kept version, for the page to show in place of the current one.
     pub(super) fn history_preview(&self, id: &str) -> Result<Event> {
         let entry = self.history_entry(id)?;
-        if self.doc.is_some() {
+        if self.sheet.is_some() {
+            Ok(Event::HistoryPreview {
+                id: id.into(),
+                deck: None,
+                doc: None,
+                sheet: Some(entry.load_for()?),
+            })
+        } else if self.doc.is_some() {
             Ok(Event::HistoryPreview {
                 id: id.into(),
                 deck: None,
                 doc: Some(entry.load_for::<Doc>()?),
+                sheet: None,
             })
         } else {
             Ok(Event::HistoryPreview {
                 id: id.into(),
                 deck: Some(entry.load()?),
                 doc: None,
+                sheet: None,
             })
         }
     }
@@ -180,7 +213,10 @@ impl Backend {
         self.history_entry(id)?.load()
     }
 
-    /// The kept doc to restore.
+    pub(super) fn history_sheet(&self, id: &str) -> Result<dugix_core::sheet::Sheet> {
+        self.history_entry(id)?.load_for()
+    }
+
     pub(super) fn history_doc(&self, id: &str) -> Result<Doc> {
         self.history_entry(id)?.load_for::<Doc>()
     }

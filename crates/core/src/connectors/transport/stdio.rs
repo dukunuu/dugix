@@ -1,8 +1,5 @@
-//! stdio: a child process speaking newline-delimited JSON-RPC on stdin and
-//! stdout. The command is an argv array (never a shell string); provider
-//! keys are scrubbed from its environment; stderr is appended to a
-//! per-connector log, rotated at 1 MB, with known secrets masked. The child
-//! (and its process group) is killed when the transport is dropped.
+//! stdio: a child process speaking newline-delimited JSON-RPC on stdin and stdout.
+//! The command is an argv array (never a shell string) and its process group is killed on drop.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -18,7 +15,6 @@ use super::{McpError, Signals};
 use crate::connectors::protocol::{self, MAX_MESSAGE_BYTES, METHOD_NOT_FOUND, Message};
 use crate::connectors::secrets::redact_value;
 
-/// How a child is started.
 #[derive(Clone)]
 pub struct StdioSpec {
     pub argv: Vec<String>,
@@ -56,14 +52,10 @@ impl Drop for Inner {
     }
 }
 
-/// A running child process.
 pub struct StdioTransport {
     inner: Arc<Inner>,
 }
 
-/// The child's command line and environment: the argv as given, the
-/// parent's environment minus provider credentials, then the configured
-/// variables on top.
 fn build_command(spec: &StdioSpec) -> Result<Command, McpError> {
     let (program, args) = spec
         .argv
@@ -86,10 +78,7 @@ fn build_command(spec: &StdioSpec) -> Result<Command, McpError> {
 }
 
 impl StdioTransport {
-    /// Start the process and its reader tasks (needs a tokio runtime).
-    ///
-    /// # Errors
-    /// The command is empty or could not be started.
+    /// Start the process and its reader tasks; needs a tokio runtime.
     pub fn spawn(spec: &StdioSpec, signals: Arc<Signals>) -> Result<Self, McpError> {
         let mut command = build_command(spec)?;
         let program = &spec.argv[0];
@@ -134,7 +123,6 @@ impl StdioTransport {
             .map_err(|_| McpError::Closed("the process is not accepting input".into()))
     }
 
-    /// Send a request and wait for the response with the same id.
     pub async fn request(&self, id: u64, message: &Value) -> Result<Value, McpError> {
         let (sender, receiver) = oneshot::channel();
         self.inner
@@ -155,12 +143,10 @@ impl StdioTransport {
             .unwrap_or_else(|_| Err(McpError::Closed("the process exited".into())))
     }
 
-    /// Send a notification.
     pub async fn notify(&self, message: &Value) -> Result<(), McpError> {
         self.write(message).await
     }
 
-    /// Stop waiting for `id`.
     pub fn forget(&self, id: u64) {
         self.inner.pending.lock().expect("pending").remove(&id);
     }
@@ -177,8 +163,7 @@ impl Drop for Forget<'_> {
     }
 }
 
-/// Read one line of at most `MAX_MESSAGE_BYTES`. `Ok(None)` is end of file;
-/// an over-long line is skipped to its end and reported as `Err(TooLarge)`.
+/// Read one line of at most `MAX_MESSAGE_BYTES`; an over-long line is skipped and reported as `Err(TooLarge)`.
 async fn read_line<R: tokio::io::AsyncBufRead + Unpin>(
     reader: &mut R,
     line: &mut Vec<u8>,
@@ -231,8 +216,7 @@ async fn read_stdout(inner: std::sync::Weak<Inner>, stdout: tokio::process::Chil
         let Some(inner) = inner.upgrade() else {
             return;
         };
-        // Servers and launchers print banners; anything that is not JSON-RPC
-        // is not ours.
+        // Servers and launchers print banners; anything that is not JSON-RPC is not ours.
         let Ok(value) = serde_json::from_slice::<Value>(&line) else {
             continue;
         };
@@ -266,8 +250,7 @@ async fn dispatch(inner: &Arc<Inner>, message: Message) {
             }
         }
         Message::Request { id, method } => {
-            // We advertise no capabilities, so the only request a polite
-            // server sends is `ping`.
+            // We advertise no capabilities, so the only request a polite server sends is `ping`.
             let reply = if method == "ping" {
                 protocol::response_ok(&id, serde_json::json!({}))
             } else {
@@ -286,7 +269,6 @@ async fn dispatch(inner: &Arc<Inner>, message: Message) {
 const LOG_LIMIT: u64 = 1024 * 1024;
 const LOG_LINE_LIMIT: usize = 4096;
 
-/// Append stderr lines to the log, rotating to `<file>.1` past 1 MB.
 async fn log_stderr(
     mut stderr: tokio::process::ChildStderr,
     path: Option<PathBuf>,
@@ -337,7 +319,7 @@ impl LogSink {
         Self { path }
     }
 
-    /// Append one line (a timestamp is added; secrets are masked).
+    /// Append one line with a timestamp; secrets are masked.
     pub fn write(&mut self, line: &str, redact: &[String]) {
         use std::io::Write as _;
         let mut text =
@@ -426,7 +408,7 @@ mod tests {
 
     #[test]
     fn the_log_rotates_at_one_megabyte_and_masks_secrets() {
-        let dir = std::env::temp_dir().join(format!("nexus-conn-log-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-conn-log-{}", uuid::Uuid::new_v4()));
         let path = dir.join("logs").join("demo.log");
         let mut sink = LogSink::new(path.clone());
         sink.write("token=hunter2hunter2 ok", &["hunter2hunter2".to_string()]);

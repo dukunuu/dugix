@@ -1,7 +1,7 @@
-# nexus-chat
+# dugix
 
-[![crates.io](https://img.shields.io/crates/v/nexus-chat.svg)](https://crates.io/crates/nexus-chat)
-[![docs.rs](https://docs.rs/nexus-chat/badge.svg)](https://docs.rs/nexus-chat)
+[![crates.io](https://img.shields.io/crates/v/dugix.svg)](https://crates.io/crates/dugix)
+[![docs.rs](https://docs.rs/dugix/badge.svg)](https://docs.rs/dugix)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A local-first terminal chat app for deep research and multi-agent work. Rust +
@@ -11,68 +11,71 @@ space directories, model-created web apps served from localhost.
 ## Install
 
 ```sh
-cargo install nexus-chat
+cargo install dugix
 ```
 
-This provides the `nexus` command. Requires Rust 1.91+ (edition 2024).
+This provides the `dugix` command. Requires Rust 1.91+ (edition 2024).
 
 To run from a checkout instead:
 
 ```sh
 cargo build --release
-./target/release/nexus
+./target/release/dugix
 ```
 
 ### CLI
 
-`nexus` with no arguments launches the TUI. Subcommands work headless
+`dugix` with no arguments launches the TUI. Subcommands work headless
 from the shell — everything they write (sessions, usage, reports) lands in
 the same local state the TUI reads, so you can mix both freely:
 
 ```sh
-nexus ask "summarize the EU AI Act in 5 bullets"      # one-shot chat, streams to stdout
-nexus ask --model deepseek/deepseek-v3 --web "..."    # pick a model, search-grounded
-cat brief.md | nexus ask "summarize this"             # prompt from stdin
-nexus ask --space new:research "..."                  # create-and-use a space
-nexus ask --json --quiet "..."                        # structured output for scripting
-nexus clip                                             # explain text currently in the OS clipboard
-nexus clip --web --copy "Explain this and list surprising facts" # browser-text shortcut
-nexus chat                                             # bare REPL, one session
-nexus research "impact of EU AI Act on startups"       # deep research (survey + plan gates)
-nexus research --approve "..."                        # skip the gates, run unattended
-nexus watch list                                       # standing research watches
-nexus watch run                                        # run the due watches (cron-friendly)
-nexus watch run <id> --all                             # force-run one / every watch
-nexus usage [--range 24h|7d|30d|all] [--by-day]        # token/cache/cost analytics
-nexus usage --json                                     # same, machine-readable
-nexus usage --session <id> [--json]                     # every request and session total
-nexus sessions [--space <name>] [--json]               # list sessions
-nexus sessions rm <id|slug>                            # delete one session
-nexus sessions prune --keep 20 --days 90 --dry-run     # delete old sessions
-nexus spaces [--json]                                  # list spaces
-nexus export <id|slug>                                 # print a session's latest report + sources
-nexus export <id> --transcript -o chat.md              # the whole conversation
-nexus backup [-o file.zip]                             # zip db + spaces + skills
-nexus restore file.zip --yes                           # restore a backup (overwrites)
-nexus memory [--space] [--edit]                        # print/edit a space's memory
-nexus instructions [--space] [--edit]                  # print/edit a space's instructions
-nexus files [--space]                                  # list imported files
-nexus models [--backend openrouter]                    # fetch + list model catalogs
-nexus login openrouter sk-... [--check]                # save a provider key
-nexus skills list                                      # installed skills
-nexus skills install owner/repo[/path]                 # install a skill from GitHub
-nexus open <id|slug>                                   # launch the TUI inside that session
-nexus --continue                                       # launch the TUI inside the latest session
-nexus --selection-chat                                 # analyze Linux primary selection, or continue
-nexus update                                           # update to the latest release (cargo install)
-nexus status                                           # paths, providers configured, db stats
-nexus doctor [--network]                               # db integrity, config, tools
-nexus host [--port 8643]                               # local HTTP/SSE daemon + gateway
-nexus host --tunnel                                     # reuse named tunnel, or quick tunnel + QR
-nexus host --setup                                      # provision a named tunnel with CF_API_TOKEN
+dugix ask "summarize the EU AI Act in 5 bullets"      # one-shot chat, streams to stdout
+dugix ask --model deepseek/deepseek-v3 "..."          # pick a model
+cat brief.md | dugix ask "summarize this"             # prompt from stdin
+dugix ask --space new:research "..."                  # create-and-use a space
+dugix ask --json --quiet "..."                        # structured output for scripting
+dugix clip                                             # explain text currently in the OS clipboard
+dugix clip --copy "Explain this and list surprising facts" # browser-text shortcut
+dugix chat                                             # bare REPL, one session
+dugix research "impact of EU AI Act on startups"       # deep research (survey + plan gates)
+dugix research --approve "..."                        # skip the gates, run unattended
+dugix jobs list                                      # agent and research jobs
+dugix jobs run <id>                                   # run a job now
+dugix jobs run-due                                    # run due jobs (cron-friendly)
+dugix jobs daemon                                    # schedule repeating jobs
+dugix usage [--range 24h|7d|30d|all] [--by-day]        # token/cache/cost analytics
+dugix usage --json                                     # same, machine-readable
+dugix usage --session <id> [--json]                     # every request and session total
+dugix sessions [--space <name>] [--json]               # list sessions
+dugix sessions rm <id|slug>                            # delete one session
+dugix sessions prune --keep 20 --days 90 --dry-run     # delete old sessions
+dugix spaces [--json]                                  # list spaces
+dugix export <id|slug>                                 # print a session's latest report + sources
+dugix export <id> --transcript -o chat.md              # the whole conversation
+dugix backup [-o file.zip]                             # zip db + spaces + skills
+dugix restore file.zip --yes                           # restore a backup (overwrites)
+dugix memory [--space] [--edit]                        # print/edit a space's memory
+dugix memory share <CHAPTER> (--with <SPACE>... | --all | --none) [--space <NAME>]
+dugix memory shares [--space <NAME>]                   # list shared chapters
+dugix instructions [--space] [--edit]                  # print/edit a space's instructions
+dugix files [--space]                                  # list imported files
+dugix models [--backend openrouter]                    # fetch + list model catalogs
+dugix login openrouter sk-... [--check]                # save a provider key
+dugix skills list                                      # installed skills
+dugix skills install owner/repo[/path]                 # install a skill from GitHub
+dugix open <id|slug>                                   # launch the TUI inside that session
+dugix --continue                                       # launch the TUI inside the latest session
+dugix --selection-chat                                 # analyze Linux primary selection, or continue
+dugix update                                           # update to the latest release (cargo install)
+dugix status                                           # paths, providers configured, db stats
+dugix doctor [--network]                               # db integrity, config, tools
+dugix host [--port 8643]                               # local HTTP/SSE daemon + gateway
+dugix host --tunnel                                     # reuse named tunnel, or quick tunnel + QR
+dugix host --setup                                      # provision a named tunnel with CF_API_TOKEN
 ```
 
-`nexus ask`/`clip`/`chat`/`research` use your most recently used model (or
+`dugix ask`/`clip`/`chat`/`research` use your most recently used model (or
 `--model`), run the same search/tool pipelines as the TUI, and save
 conversations as normal sessions — tool status and token usage go to
 stderr, answers to stdout. `clip` reads text through the OS clipboard
@@ -84,7 +87,7 @@ clipboard, submits a protected web-mode turn into the TUI, and behaves like
 `--continue` when the selection is empty. A running TUI accepts later
 selection requests over its per-user runtime socket, so the shortcut reuses
 one instance. Bind it with a terminal command such as
-`foot -e nexus --selection-chat`; use the equivalent `-e` option for your
+`foot -e dugix --selection-chat`; use the equivalent `-e` option for your
 terminal emulator. `research` without `--approve` parks at the
 survey/plan checkpoints: interactive when stdin is a terminal, an error
 otherwise (`--approve` runs unattended, like `/research!`). The read-only
@@ -93,7 +96,7 @@ commands (`usage`, `sessions`, `spaces`, `export`, `status`, `doctor`,
 
 ### Golden-task evals
 
-`nexus eval [DIR] [--model MODEL] [--filter SUBSTR] [--json]` runs the golden
+`dugix eval [DIR] [--model MODEL] [--filter SUBSTR] [--json]` runs the golden
 TOML tasks in `./evals` against a real backend in incognito (no saved sessions).
 It reports checks, tool calls, invalid-call rate, tokens and cost; exit status is
 0 only when all selected tasks pass. This manual command requires keys/network
@@ -102,23 +105,24 @@ for the task format and held-out-task policy.
 
 ### Hosting
 
-`nexus host` runs the same core on a loopback HTTP/SSE daemon. It exposes
+`dugix host` runs the same core on a loopback HTTP/SSE daemon. It exposes
 `/v1/snapshot`, `/v1/models`, `/v1/backends`, `/v1/events`,
 `/v1/sessions/<id>/messages`, `/v1/command`, `/v1/sync`, hash-checked
 `GET`/`PUT /v1/sync/blob`, `/v1/tools`, and an
 OpenAI-compatible `/v1/chat/completions` gateway. `/v1/tools/run` uses a
 JSON-RPC 2.0 envelope, for example
 `{"jsonrpc":"2.0","id":1,"method":"tools/run","params":{"name":"read_file","arguments":{...}}}`.
+Devices must run the same dugix version to sync.
 Sync clients POST metadata first, then upload/download each manifest blob by
 `space_id`, `name`, and `hash`. The host token is generated once and stored in
-`~/.config/nexus-chat/config.toml` as `[provider].host_token`; provider API
+`config.toml` (see [Configuration](#configuration)) as `[provider].host_token`; provider API
 keys remain on the machine and are never sent to clients.
 
 ```sh
-nexus host --port 8643
+dugix host --port 8643
 curl -H "Authorization: Bearer <host-token>" http://127.0.0.1:8643/v1/snapshot
-nexus host --tunnel                         # requires cloudflared
-CF_API_TOKEN=… nexus host --setup           # creates/reuses named tunnel + DNS CNAME
+dugix host --tunnel                         # requires cloudflared
+CF_API_TOKEN=… dugix host --setup           # creates/reuses named tunnel + DNS CNAME
 # non-interactive setup can also set CF_ACCOUNT_ID, CF_ZONE_ID,
 # CF_HOSTNAME, and CF_TUNNEL_NAME
 ```
@@ -131,9 +135,9 @@ returns an OpenAI-compatible `data` list with backend-qualified ids such as
 chat-completions request into a native Responses call and re-emits the
 Responses event stream as `chat.completion.chunk` frames, so every listed
 backend is reachable through one OpenAI-wire endpoint. Named tunnel setup is persisted and reused by later
-`nexus host --tunnel` runs when its local cloudflared files still exist.
+`dugix host --tunnel` runs when its local cloudflared files still exist.
 `--no-sleep-guard` disables `caffeinate`/`systemd-inhibit` if desired.
-For optional per-user startup, use `nexus host --install-service` (or
+For optional per-user startup, use `dugix host --install-service` (or
 `--uninstall-service`); it writes a systemd user unit on Linux or a launchd
 agent on macOS and prints the activation command.
 
@@ -142,8 +146,7 @@ agent on macOS and prints the activation command.
 - Rust 1.91+ (only needed to build/install — no runtime dependency)
 - A modern terminal (truecolor recommended)
 - Extra tooling, all optional:
-  - `tesseract` (with `poppler`) — local OCR for scanned PDFs and images; without
-    it the helper model reads them
+  - `poppler` (`pdftoppm`) — render PDF pages for the model to view
   - `ffmpeg` — video transforms for `media`; with `ffprobe` and a local
     `whisper`, audio/video files get metadata and transcripts
   - `pandoc`, `libreoffice` (`soffice`), `antiword`/`catdoc` — richer reads of
@@ -164,15 +167,25 @@ Add your own converter per extension or MIME type in `config.toml`:
 ### Configuration
 
 Keys come from the config file or env (`OPENROUTER_API_KEY`,
-`OPENAI_API_KEY`, `OPENCODE_API_KEY`), or `/login` in-app. On first launch a
-key is enough; models are fetched from the catalogs.
+`OPENAI_API_KEY`, `OPENCODE_API_KEY`, `MISTRAL_API_KEY`), or `/login` in-app. On
+first launch a key is enough; models are fetched from the catalogs.
 
-| What | Where |
-|---|---|
-| credentials & settings | `~/.config/nexus-chat/config.toml` |
-| system prompt overrides | `~/.config/nexus-chat/system_prompt.md` |
-| custom banner | `~/.config/nexus-chat/banner.txt` |
-| spaces (db, files, scripts, apps, media) | `~/.local/share/nexus-chat/spaces/<space>/` |
+**Mistral Vibe plan.** Create a key under *Code > Vibe CLI* in Le Chat and pick
+*Mistral Vibe* in `/login` (or `dugix login mistral <key>`). The plan's budget
+meters the Vibe CLI's model names, `mistral-vibe-cli-latest` (the main coding
+model) and `mistral-vibe-cli-fast` (a faster, lighter one); they're listed under
+`mistral:` alongside the rest of Mistral's tool-calling catalog. Other models
+bill as pay-as-you-go on the same key. A console key works the same way.
+
+| What | macOS | Linux |
+|---|---|---|
+| credentials & settings | `~/Library/Application Support/dugix/config.toml` | `~/.config/dugix/config.toml` |
+| system prompt overrides | `…/dugix/system_prompt.md` (same folder) | `~/.config/dugix/system_prompt.md` |
+| custom banner | `…/dugix/banner.txt` (same folder) | `~/.config/dugix/banner.txt` |
+| database (`dugix.db`, `cache.db`) | `~/Library/Application Support/dugix/` | `~/.local/share/dugix/` |
+| spaces (files, scripts, apps, media) | `…/dugix/spaces/<space>/` | `~/.local/share/dugix/spaces/<space>/` |
+
+`dugix status` prints the folders this machine uses.
 
 ### Web search: zero setup
 
@@ -182,51 +195,24 @@ the session backend's built-in search, DuckDuckGo, then Brave, continuing past
 errors and empty results. `/config` also offers explicit `exa` and `provider`
 choices; the LangSearch key and SearXNG URL are optional extras.
 
-The provider fallback stays on your session's backend and uses its auto helper
-model (upgraded to the newest listed version, or the session model if needed).
+The provider fallback uses your session's own model and backend.
 OpenRouter web search costs **$0.007 per request plus model tokens**; reported
-usage/cost is recorded with other helper calls. Codex uses your ChatGPT
+usage/cost is recorded with other background calls. Codex uses your ChatGPT
 subscription; OpenAI Responses web search is billed at OpenAI's search/tool
-and token rates. OpenCode Go and local runtimes have no built-in search and
-are skipped. Exa has no recency filter: when requested, the result header says
+and token rates. OpenCode Go, Mistral and local runtimes have no built-in
+search and are skipped. Exa has no recency filter: when requested, the result header says
 it was not applied. HTML scrapers remain last-resort fallbacks and may return
 bot challenges.
 
-**One model setting.** `/config` has a single model row, the *helper model*
-(`helper_model` over the host settings API). It runs every background job that
-needs a model: memory, compaction summaries, image descriptions, vision OCR and
-the auto-approval judge. It starts on `auto` (Enter picks one, Backspace goes
-back to `auto`). Auto is a cheap model on the backend your session is using and
-never moves to another provider:
-
-| Active backend | Auto helper model |
-|---|---|
-| OpenRouter | `openai/gpt-6-luna` |
-| OpenAI | `gpt-6-luna` |
-| Codex | `gpt-6-luna` |
-| OpenCode Go | `gpt-6-luna` |
-| Local | your session's installed model (a local runtime has no cheap default) |
-
-These are floors: when the backend's live catalog lists a newer version of the
-same model (`gpt-6.1-luna`, `gpt-7-luna`), auto uses that instead, so it keeps
-up between nexus releases. When a backend's catalog lists neither, auto uses the
-session's own model there. Everything else is automatic: embeddings (local
-EmbeddingGemma 2 when Ollama has it, else the backend's embedding model, else
-keyword search), OCR (`tesseract` when installed, else the helper model's
-vision) and image/video generation (the active backend's default generation
-model; backends without one, such as Codex, have no `media` generation). The
-per-feature model settings of older builds (`memory_model`, `transcriber_model`,
-`ocr_model`, `ocr_engine`, `local_ocr_model`, `embedding_model`,
-`image_gen_model`, `video_gen_model`) are ignored if present and rejected by the
-settings API; a `memory_model` you had chosen carries over to `helper_model`
-once.
+Background jobs (titles, compaction, the approval judge) run on the session's
+own model.
 
 ## Local inference (experimental)
 
 Pick a runtime from inside the TUI with `/local` (also the last row of
 `/login`), or name one directly: `/ollama`, `/llama-cpp`, `/mlx`, `/mlx-serve`,
 `/lmstudio`, `/edge0`, `/local mlx-serve http://localhost:11234/v1`, `/local off`. Either way the choice is
-written to `~/.config/nexus-chat/config.toml` and the catalog reloads
+written to `config.toml` and the catalog reloads
 immediately — no restart.
 
 The same block can be written by hand:
@@ -242,7 +228,7 @@ provider = "ollama" # or "llama_cpp", "mlx", "mlx_serve", "lmstudio", "edge0"
 ```
 
 `context_length` is reported for every model discovered through this runtime,
-enabling automatic compaction. Ollama defaults to 32,768 tokens; Nexus passes
+enabling automatic compaction. Ollama defaults to 32,768 tokens; Dugix passes
 that window as `OLLAMA_CONTEXT_LENGTH` when starting its server, and passes a
 set `context_length` to llama.cpp as `--ctx-size` (unset, llama.cpp uses each
 model's own window). Other runtimes have no assumed window: set this key to
@@ -263,7 +249,7 @@ by default. Set `parallel_tool_calls = true` to allow parallel calls, or `tier =
 head-and-tail capped to one eighth of the context window (2,000–8,000
 characters; 4,000 if unknown); stored results and hosted requests are unchanged.
 
-Nexus warns once per prompt-cache epoch if the system prompt plus tool
+Dugix warns once per frozen prompt prefix if the system prompt plus tool
 definitions alone use more than half the known context window. The estimate is
 advisory and never blocks a request.
 
@@ -271,7 +257,7 @@ Switching runtimes from `/local` drops a custom `endpoint`/`list_command` and
 context/KV-cache and model-profile settings, since those are written for one
 runtime; re-selecting the active runtime keeps them.
 
-Nexus runs the runtime's discovery command when loading/refreshing `/model`:
+Dugix runs the runtime's discovery command when loading/refreshing `/model`:
 
 | Runtime | Discovery | Default inference URL |
 | --- | --- | --- |
@@ -319,13 +305,13 @@ the discovery command looks—configure that command/runtime accordingly.
 
 ### Managed servers
 
-Inference needs a server running behind the endpoint. Nexus can start one for
+Inference needs a server running behind the endpoint. Dugix can start one for
 you and tell you what it costs:
 
 | Command | What it does |
 | --- | --- |
 | `/local start [runtime]` | start that runtime's server (`/serve` is the same command) |
-| `/local stop [runtime]` | stop a server **Nexus started** |
+| `/local stop [runtime]` | stop a server **Dugix started** |
 | `/local restart [runtime]` | stop then start, to pick up a new model |
 | `/local status` | probe every runtime: which answer, what they cost, what is over budget |
 
@@ -344,15 +330,15 @@ What gets launched:
 | `edge0` | `edge0 serve <selected>` | yes |
 
 mlx-lm and edge0 serve exactly one model, taken from your `/model` selection at
-launch — switching models in Nexus does not restart them, so use
+launch — switching models in Dugix does not restart them, so use
 `/local restart`. Ollama, mlx-serve and LM Studio load models through their own API.
-If `mlx-serve run <model>` is already serving on port 11234, Nexus can use it
+If `mlx-serve run <model>` is already serving on port 11234, Dugix can use it
 without taking ownership; `mlx-serve serve` is the managed, on-demand mode.
 
-**Ownership is explicit.** A server Nexus started is stopped by `/local stop`
-and when Nexus exits, so quitting never strands a multi-gigabyte process. A
+**Ownership is explicit.** A server Dugix started is stopped by `/local stop`
+and when Dugix exits, so quitting never strands a multi-gigabyte process. A
 server already answering on the endpoint — one you started in another terminal,
-or a system service — is detected and used, but never stopped by Nexus.
+or a system service — is detected and used, but never stopped by Dugix.
 
 **Memory is advisory.** `/local status` reports the resident memory of the
 listener's whole process tree, which is what you want: Ollama's weights live in
@@ -367,7 +353,7 @@ provider = "edge0"
 memory_budget_mb = 8000 # optional; default is 70% of physical RAM
 ```
 
-Reading memory needs `ps`, and `lsof` for servers Nexus did not start; without
+Reading memory needs `ps`, and `lsof` for servers Dugix did not start; without
 them liveness still works and the size column is simply blank.
 
 The server's API must accept the discovered model ID. Model downloads,
@@ -392,16 +378,17 @@ ollama pull embeddinggemma-2       # multimodal tag
 
 **Selecting it.** There is no embedding setting; the choice is automatic. If
 Ollama answers on `http://127.0.0.1:11434` (or the endpoint in `[local]` when
-the runtime is Ollama) and has one of those two tags installed, Nexus uses it
+the runtime is Ollama) and has one of those two tags installed, Dugix uses it
 (`embeddinggemma-2:270m` is preferred). Otherwise it uses the signed-in
-backend's own embedding model (OpenRouter and OpenAI have one), and where the
-backend has none (Codex, OpenCode Go) search is keyword-only. `/files` shows
+backend's own embedding model (OpenRouter uses `google/gemini-embedding-2` to
+embed text and image files directly; OpenAI uses text-only `text-embedding-3-small`),
+and where the backend has none (Codex, OpenCode Go, Mistral) search is keyword-only. `/files` shows
 which. A `local:` choice never falls back to a cloud embedder; if Ollama is
 down, search degrades to keywords with the reason, and `/files` shows
 `embeddings: not reachable — is `ollama serve` running?`.
 
 **What is embedded.** Text, code, PDFs and office documents are embedded from
-the text Nexus already extracts, in windows of at most about 1,000 tokens
+the text Dugix already extracts, in windows of at most about 1,000 tokens
 (estimated conservatively, with overlap) using the model's own prefixes
 (`task: search result | query: …` for queries, `title: … | text: …` for
 documents). When the runtime reports image support, image files are embedded
@@ -409,13 +396,10 @@ directly (downscaled to at most 768 px, up to 20 MiB) and returned by
 `files search` as `image · name · score` hits the model can look at. Audio and
 video are not embedded yet.
 
-**OCR and captions are optional now.** While images are embedded directly,
-Nexus no longer queues OCR or a vision caption for new images just to make them
-searchable. `Ctrl+F` in `/files` still runs OCR on a chosen file, and the
-`ocr_images` host setting (`true`/`false`, blank for automatic) overrides the
-default. Text extraction for reading and keyword search is unchanged. When OCR
-does run, scanned PDFs use `tesseract` if it is installed and the helper model's
-vision otherwise; images try `tesseract`, then the helper model describes them.
+With an image-capable embedder, images and up to 30 pages of a scanned PDF
+are embedded as images, so search finds them by content. The model views any
+imported PDF page with `files(action=pdf_page)`, rendered on demand using
+poppler's `pdftoppm`.
 
 **Switching and updating.** Each vector records the model's identity: backend,
 model, weights digest, dimension, prefix scheme and preprocessing version.
@@ -450,16 +434,38 @@ Chat search is available in chat and agent mode, never in research searcher tool
 ## Features
 
 - **Chat** over any configured backend: OpenRouter, OpenAI, OpenCode Zen/Go,
-  and Codex — one merged model list, per-model reasoning-effort control
+  Codex, and Mistral (Vibe plan) — one merged model list, per-model reasoning-effort control
 - **Deep research** (`/research <topic>`): a conversational scoping survey →
   a plan of questions with why/angles/sources briefs → parallel searcher
   agents → synthesis → critic → verifier → writer, with a live activity view
-  and `/steer` mid-run. `/research! <topic>` runs ungated
-- **Swarm** (`/swarm`): a moderator-conducted multi-persona roundtable that
-  iterates toward consensus
-- **Watches** (`/watch`): standing research jobs that re-run daily
+  and `/steer` mid-run. `/research! <topic>` runs ungated. Both create a one-off
+  research job listed in `/jobs`; press `r` there to run it again. The finished report
+  is saved as `research-<topic>-<time>.md` in the space files and as a doc in
+  the **Library**, so it opens in studio to edit, comment on and export
+- **Swarm** (`/swarm`): several agents answer each message independently
+  (read-only, with tools), a reviewer checks their claims, and a writer replies
+  from what held up, keeping a minority view the others missed. Every agent is a
+  sub-agent run in `/agents`; the roster sets each drafter's focus and model
+  (three plain drafts on the session model without one)
+- **Watches** (`/watch <topic>`): research jobs that start immediately and repeat daily
+  through `dugix jobs daemon` (or `dugix jobs run-due` from cron). `/watch` opens
+  `/jobs`, where `w` toggles a research job between one-off and daily repeats
 - **Spaces**: per-project context (instructions, memory, imported files,
   scripts, apps) with embeddings-backed semantic file search
+- **Memory**: a book per space — chapters of short facts the model saves with
+  its `memory` tool, behind a table of contents in every chat; pinned chapters
+  are listed in full, and matching chapters and docs are named on the message
+  they relate to. `/memory` edits it in `$EDITOR`, `/memory tidy` asks the chat
+  model to review and clean the memory with its own tool, in the conversation.
+  Chapters are private by default. `/memory share <chapter> with all|none|<space>[, <space>…]`
+  shares a chapter with all or chosen spaces, or makes it private again; `/memory share`
+  lists both directions. Shared chapters show their home space, and the model can read
+  and edit their facts from any recipient space. You can also just ask in chat — "share
+  About you with every space", "merge my About you chapters": the model's `memory` tool
+  lists every space's chapters (`spaces`), can `share` a chapter with chosen spaces, all
+  of them or none, and can `merge` same-titled chapters from every space into one shared
+  chapter — only when you ask, and only once you have more than one space. The editor
+  still edits only the current space's own chapters. Memory lives in `dugix.db` and syncs
 - **Skills**: Agent Skills-compatible instruction packs (`SKILL.md`) with
   progressive disclosure, project/user/global discovery, bundled resources,
   sandboxed Python virtualenvs, and chat installation
@@ -498,11 +504,11 @@ terminal UI,” “Quiz me,” or “Give me an interactive calculator.” The T
 its capabilities and asks models to prefer interactive output when useful and
 representable. There are no game-specific commands or built-in game rules.
 
-A model-authored `nexus-ui` fence uses a native Rust, OpenUI-style component
+A model-authored `dugix-ui` fence uses a native Rust, OpenUI-style component
 language—not a JSON tree. A root-first layout fills in as named elements and
 even unfinished text stream in:
 
-```nexus-ui
+```dugix-ui
 root = Panel("Your next adventure", [heading, highlights, next])
 heading = Hero("A little further from ordinary", "Three days. A fresh perspective.", "WEEKEND EDIT")
 highlights = Stats([Stat("3", "days away"), Stat("2", "new places"), Stat("1", "great escape")])
@@ -518,8 +524,45 @@ highlighted code `Editor` with line numbers (Enter to edit, Esc to stop, Tab
 indents), a `Choice` list that marks right and wrong once you pick, and an
 answer you reveal on request. “Grade my answers” sends everything, code
 included, for review.
+A `Canvas` draws circles, boxes, lines, rays, polygons and labels in braille
+dots on a 0–100 grid, and `Anim` keyframes move them: a spinning clock hand, a
+bouncing ball, an orbit diagram. Animations run at about 15 frames a second
+only while the canvas is on screen and the terminal has focus; shapes can also
+follow panel state, so a slider can drive a drawing.
+Panels use quiet sentence-case headings, compact result values and slim slider
+tracks. Related actions stay together in reading and keyboard order; the model
+gets working calculator, quiz and planner examples rather than a dashboard recipe.
+Panels are laid out with `Row`, `Grid` and `Stack`, which stack on narrow
+terminals. Bars and meters glide to new values, and charts draw in the first
+time a panel appears; `/motion off` turns all panel motion off (canvases then
+hold their first frame) and `/motion on` brings it back.
+Panels can also run on their own: `@Every` timers, `@Keys` bindings for the
+arrows, space, letters and digits, and clickable canvas shapes make small
+games, timers and simulations possible. Timers and keys can only change the
+panel's own state; sending anything still takes a real button press.
+More components: `Number` (one big headline figure), `Gauge`, `Heatmap`,
+`Md` (Markdown text), `Tree` (an expandable outline), `Board` (kanban lanes
+that can follow a list in panel state) and `Diagram` (Mermaid, drawn as an
+image where the terminal supports it).
 Click controls directly, or press `F2` to focus the newest visible panel and use
-Tab/arrows + Enter. `Esc`/`Ctrl+C` returns to chat without changing your draft.
+Tab/arrows + Enter (inside a text field, arrows move the caret). `Esc` returns to chat without changing your draft; `Ctrl+C`
+copies a field's selected text, or returns to chat when nothing is selected.
+Text fields have rounded borders, persistent labels, placeholders and inline
+help/errors. Click to place the caret, drag or Shift+arrows to select, use
+Home/End or Ctrl/Alt+arrows to navigate, and Ctrl+A/Z/Y to select all/undo/redo.
+Tab/Shift+Tab move between controls; PageUp/PageDown scroll the chat except inside a
+textarea. `Input` is single-line (Enter advances);
+`Textarea` is soft-wrapped prose (Enter inserts a newline), distinct from the code editor:
+
+```dugix-ui
+root = Panel("Contact", [email, notes, save])
+$email = ""
+$notes = ""
+email = Input($email, "Email", {required: true, email: true}, "you@example.com")
+notes = Textarea($notes, "What do you need?", 4, "Describe your goal", null, "Include any constraints")
+save = Buttons([Button("Review message", @ToAssistant("Contact request"), true)])
+```
+
 New panels display progressively but activate only when the reply finishes.
 Text reflows at the available width; streamed previews never execute actions.
 Validation happens automatically, with no preflight tool call.
@@ -544,20 +587,19 @@ presentations (`decks/*.deck.json`). Both copy the space's default design;
 slides can use named layouts. Documents support block edits, anchored comments,
 suggestions, history and export to DOCX, PDF, Markdown and HTML. `/studio` opens
 the doc or deck studio showed last in the studio window (`/studio docs/q3.doc.json`
-names one, and `nexus-studio docs/q3.doc.json` opens it standalone); with no file
+names one, and `dugix-studio docs/q3.doc.json` opens it standalone); with no file
 yet it opens the library. A doc opens as a
 calm writing page: an outline on the left, comments in the margin, formatting
 over selected text, `/` for blocks, tracked-change suggestions from the model,
 a page preview and an export menu. Older `deck` tool calls remain supported as
-an alias. See [the canvas design](docs/docs-canvas.md) and
-[studio](docs/studio.md).
+an alias.
 
 Find your decks and docs in the **Library**: studio opens on it when it starts
 with no file (and from the **Library** button or Cmd/Ctrl+O), as a grid of cards
 with thumbnails, filters and search, and a menu to open, reveal, duplicate, rename,
 export or delete (a delete moves the file to `.trash/` in the space files). In the
 terminal, `/library` lists the same files (Enter opens one in studio, `e` exports
-it, `d` deletes it after a confirm) and `nexus library [--kind deck|doc] [--json]`
+it, `d` deletes it after a confirm) and `dugix library [--kind deck|doc] [--json]`
 prints them. Open…, Export…, Save a copy… and Add template… use the system's own
 file dialogs, so you choose where files go: Export starts in the folder you last
 exported to, and "Save to exports/ without asking" keeps the old one-click export
@@ -565,8 +607,8 @@ into `exports/`.
 
 Add a company template with **Design → Add template…** in studio, or drop a
 `.pptx`, `.potx`, `.docx` or `.dotx` onto the window, then choose **Use for this
-doc/deck**. From the CLI: `nexus design import brand.potx --name Corporate`,
-then `nexus design list`. A file already uploaded to `/files` can be imported
+doc/deck**. From the CLI: `dugix design import brand.potx --name Corporate`,
+then `dugix design list`. A file already uploaded to `/files` can be imported
 with `canvas {action:"design", op:"import", from:"brand.potx"}`. Use its slug
 with `create {design:"corporate"}` or `apply_design`. Templates are retained in
 `templates/`, with extracted tokens, styles and slide layouts under `design/`.
@@ -586,20 +628,24 @@ Type `/` in the composer for autocomplete. Aliases in parentheses.
 | `/space` (`project`, `workspace`) | switch spaces |
 | `/model` (`llm`) | pick a model, set reasoning effort |
 | `/login` (`key`) | log into a backend |
-| `/research <topic>` | conversational deep research (see above) |
+| `/research <topic>` | create and run a one-off research job, listed in `/jobs` |
 | `/research! <topic>` | same, no survey/approval gates |
-| `/watch` | standing research, re-runs every 24h |
-| `/swarm` (`panel`) | multi-persona roundtable |
+| `/watch [topic]` | create and run a daily research job; blank opens `/jobs` (`w` toggles daily) |
+| `/swarm` (`panel`) | independent drafts, checked, then one reply; roster of drafters |
 | `/files` (`images`, `scripts`, …) | browse space files / images / scripts; `Ctrl+N` imports through the system Open panel, `/` finds files on this machine (Spotlight on macOS, `~/` for a path), and files dropped on it import at once |
 | `/apps` (`webapps`) | view web apps and pinned interactive panels |
 | `/pin-panel [name]` (`pin`) | keep the focused panel as a reusable mini-app |
-| `/studio [file]` (`deck`, `slides`) | open the last doc or deck (or the named one) in the studio window linked to this conversation; with none yet, open the library (see `docs/studio.md`) |
+| `/studio [file]` (`deck`, `slides`) | open the last doc or deck (or the named one) in the studio window linked to this conversation; with none yet, open the library |
+| `/agents` (`subagents`) | this conversation's `task` sub-agents: status, model, steps, tokens and cost; Enter opens a run's transcript (prompt, reasoning, tool calls, answer, review diff), live while it runs (`t` tool bodies, `r` reasoning, ←→ other runs). Ctrl+↑ opens it while the chat has sub-agents. The reply's cost includes its sub-agents. A task started with `background: true` keeps working after the reply ends: the model collects it with `agents` wait (or lists/stops it), and a report nobody collected comes back as a message when the conversation is idle. `proc` wait blocks on a background command until a line appears or it exits, instead of polling |
+| `/fleet` (`herd`) | run Claude Code, Codex, pi or OpenCode inside Dugix. `/fleet` opens the board; `n` (or an empty board) opens the new-agent form: ←→ picks the agent, type a job or leave it empty, ↓ moves to an optional model field (in that CLI's own naming), Ctrl+T switches between its own worktree and your tree, and Enter starts it and opens it full-window — you type straight into the agent, Shift+PgUp scrolls back, Ctrl+] returns to the board. In a git repository each agent works on its own branch in a worktree under `.dugix/worktrees` (cargo builds share `.dugix/target`), so several can edit at once without touching your files; there each starts in its CLI's supervised auto mode (Claude `--permission-mode auto`, Codex `--sandbox workspace-write --approve-for-me`, OpenCode `--auto`; pi has no permissions) so it works without stopping to ask, while an agent in your own tree keeps asking. The board shows who is working, idle, exited, or blocked on a permission prompt (those sort first, and the status line says so), with each agent's branch, what it changed and its last check; Enter reopens an agent, `s` sends a follow-up without opening it, `d` reviews its diff, `c` runs the project's check in its worktree (`scripts/check.sh`, `make check`/`test`, `npm test`, `cargo test`, `go test` or pytest, whichever the project has), `m` merges its changes into your tree staged for you to commit (lines your own commits also changed get conflict markers to resolve; uncommitted edits to the same files must be committed or stashed first), and Ctrl+D twice stops it — unmerged work stays on its branch. The review screen has Diff and Check tabs (Tab switches, `c` checks, `m` merges, `r` reloads). Agents use their own logins and permissions and stop when Dugix exits. In agent mode the model can run a fleet too with the `fleet` tool: it splits a task into jobs, starts an agent per job (one approval covers the batch), waits (holding while you answer a blocked agent in `/fleet`), reads each diff, runs the check, sends fixes back, and tells you which are ready — merging stays yours, and it cannot answer an agent's permission prompts. `/fleet <agent> [job]`, `/fleet send <n> <text>`, `/fleet check <n>`, `/fleet merge <n>` and `/fleet stop <n>` remain as shortcuts |
+| `/queue [send \| edit [n] \| drop <n> \| clear]` (`queued`) | messages you sent while a reply was still being written. They wait above the composer and go out one by one as each reply finishes; `↑` on an empty composer takes the newest back for editing. Stopping a reply (Esc) or an error holds the rest until you press Enter on an empty composer or send something new (which goes behind them). A background agent's report arrives through the same queue |
 | `/library` (`decks`, `lib`) | list the space's decks and docs: Enter opens in studio, `e` exports through the Save dialog, `d` deletes (to `.trash/`) |
 | `/skills` | manage skills (app + project/user/global Agent Skills) |
-| `/usage` (`analytics`, `costs`) | token/cache/cost analytics by backend & model (←/→ for 24h/7d/30d/all windows) |
+| `/usage` (`analytics`, `costs`) | token/cache/cost analytics by backend & model, with both the share served from cache and the share reused (of what the provider had already seen), plus why requests missed (←/→ for 24h/7d/30d/all windows) |
 | `/compact` (`summarize`) | summarize old messages into a digest |
-| `/config` (`settings`, `stats`) | settings, footer toggles, sampling params, the helper model |
-| `/web` | toggle search-first cited answering |
+| `/refresh` | rebuild this chat's frozen prompt (memory, files, skills, tools) at the cost of one cache miss; a chat otherwise keeps its prompt prefix byte-identical for provider prompt caching, and `prompt frozen · …` says when something changed since |
+| `/memory` (`remember`) | edit this space's memory in `$EDITOR`; `/memory tidy` asks the chat model to review and clean the memory with its own tool, in the conversation |
+| `/config` (`settings`, `stats`) | settings, footer toggles, sampling params |
 | `/export` (`save-report`) | write the research report + sources to a file |
 | `/incognito` | toggle no-persistence mode |
 | `/help` (`keys`, `shortcuts`; also `F1`) | keybinding + command reference |
@@ -634,19 +680,51 @@ Type `/` in the composer for autocomplete. Aliases in parentheses.
 While a research survey or plan approval is pending, Enter in that session
 answers the gate; a reply with edits is folded in once by the approval agent.
 
+### Vim keys and syntax colors
+
+Every text input edits with vim keys: the composer, dugix-ui `Input` and
+`Textarea` fields, and code `Editor`s. They are on by default; `/vim off`
+switches to the plain keys above, and `/vim on` brings vim back.
+
+- **Modes:** each input starts in Insert mode, so typing works as usual.
+  `Esc` switches to Normal mode, and a second `Esc` does what `Esc` does
+  without vim (stop the reply, clear the composer, leave a panel). In Normal
+  mode, `Enter` sends.
+- **Keys:**
+  - motions: `h j k l`, `w b e`, `W B E`, `0 ^ $`, `gg G`, `{ }`;
+  - inserting: `i a I A o O`;
+  - operators `d c y` over any motion, and `dd cc yy`;
+  - editing: `x X D C s S Y`, `p P`, `J`, `r`, `~`;
+  - selecting: `v` / `V`;
+  - undo and redo: `u`, `Ctrl+R`;
+  - counts, and `.` to repeat the last change.
+- **Mode display:** the composer's border shows the mode, and a panel's hint
+  line does the same for its fields.
+
+Code is colored by tree-sitter in Bash, C, C++, CSS, Go, HTML, Java,
+JavaScript, JSON, Markdown, Python, Ruby, Rust, TOML, TypeScript/TSX and
+YAML. That covers code blocks in replies and file reads, the composer while
+you type (Markdown, with each fenced block in its own language, and `!`
+commands as Bash), and dugix-ui fields. In studio docs, code blocks take
+the design's palette in the editor, page previews, PDF, HTML and DOCX. A
+doc's **Markdown source** view (⇧⌘M, or More › Markdown source) edits the
+whole document as Markdown with the same vim keys and colors. Its "vim on"
+toggle is remembered per device. Edits apply after a pause, each one as a
+single undo step.
+
 ## Architecture
 
 Two-crate workspace: the engine and the terminal frontend.
 
 ```
-crates/core/        nexus-chat-core (lib crate `nexus_core`) — domain only, zero TUI deps; drives TUI + CLI + the future host API
+crates/core/        dugix-core (lib crate `dugix_core`) — domain only, zero TUI deps; drives TUI + CLI + the future host API
 ├── src/app/        the state machine (one module per feature)
 │   ├── mod.rs      App struct (domain fields only), gates, commands, boot, snapshot, event stream
 │   ├── commands.rs AppCommand seam + the /-command catalog (COMMANDS, fuzzy_score)
 │   ├── chat.rs     request lifecycle: history build, streaming, tool loop
 │   ├── research.rs the research pipeline: survey → plan → searchers → …
-│   ├── swarm.rs    multi-persona roundtable
-│   ├── watches.rs  standing research jobs
+│   ├── swarm.rs    independent drafts → review → reply
+│   ├── research_jobs.rs  repeating research jobs and report diffs
 │   ├── usage.rs    usage/cost analytics
 │   ├── sessions.rs, spaces.rs, models.rs, backends.rs, memory.rs
 │   ├── files.rs, images.rs, scripts.rs, apps.rs   space artifacts
@@ -665,7 +743,7 @@ crates/core/        nexus-chat-core (lib crate `nexus_core`) — domain only, ze
 │                     Cloudflare setup, tunnel and sleep-guard lifecycle
 ├── src/markdown.rs pure to_plain copy path + the shared GFM table splitter
 └── src/config.rs, space.rs   credentials, spaces
-crates/tui/         nexus-chat — the `nexus` binary
+crates/tui/         dugix — the `dugix` binary
 └── src/            main.rs bootstrap, cli.rs subcommands, events.rs loop,
                     app_view.rs (AppView: composer, popup chrome, render state —
                     wraps App via Deref), flows/ (popup flow methods), composer.rs,
@@ -687,12 +765,12 @@ skill is explicitly activated.
 scripts/check.sh          # fmt + clippy (-D warnings, pedantic) + cargo-audit + tests
 cargo test --workspace    # 500+ tests, no network needed
 npm --prefix web ci
-npm --prefix web run build  # production client served by nexus host
+npm --prefix web run build  # production client served by dugix host
 npm --prefix web test       # Chromium desktop/mobile + mocked SSE tests
 ```
 
-Open `http://127.0.0.1:8643` after starting `nexus host` from the repository root.
-For installed hosts, set `NEXUS_WEB_DIR` to the absolute web build directory.
+Open `http://127.0.0.1:8643` after starting `dugix host` from the repository root.
+For installed hosts, set `DUGIX_WEB_DIR` to the absolute web build directory.
 See [web setup and API documentation](web/README.md) for development and browser setup.
 
 The pre-commit hook runs `scripts/check.sh` on every commit — a merge-ready
@@ -705,11 +783,6 @@ the release binary). Release notes are generated from the conventional commits
 since the last tag (`scripts/release-notes.sh`), so the GitHub release always
 shows what changed. Manual `v*` tag pushes publish the same way. Details in
 `.github/workflows/`.
-
-## Roadmap
-
-Multi-device (web + mobile) via a sync mesh, no 24/7 backend — see
-[`docs/roadmap.md`](docs/roadmap.md).
 
 ## Known limitations
 

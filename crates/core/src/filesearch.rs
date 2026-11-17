@@ -1,6 +1,5 @@
-//! Finding files on this machine to import into a space: the newest files in
-//! the usual drop folders, Spotlight (`mdfind`) on macOS with a bounded walk
-//! of home as the fallback, and completion for typed `/…` and `~/…` paths.
+//! Finding files on this machine to import into a space: the newest files in the
+//! drop folders, Spotlight (or a bounded walk of home), and path completion.
 
 use std::io::{BufRead as _, BufReader};
 use std::path::{Path, PathBuf};
@@ -14,17 +13,14 @@ pub struct Found {
     pub is_dir: bool,
 }
 
-/// Folders `recent` lists, relative to home.
 const DROP_FOLDERS: &[&str] = &["Downloads", "Desktop", "Documents"];
 /// How long the fallback walk looks before returning what it has.
 const WALK_BUDGET: Duration = Duration::from_millis(1500);
 /// Candidates read from Spotlight or the walk before ranking.
 const CANDIDATES_MAX: usize = 2000;
-/// Entries one completed directory may contribute.
 const COMPLETIONS_MAX: usize = 500;
 
-/// The newest `max` files directly inside home's Downloads, Desktop and
-/// Documents, newest first. Hidden files are skipped.
+/// The newest `max` files directly inside home's drop folders, newest first.
 #[must_use]
 pub fn recent(home: &Path, max: usize) -> Vec<Found> {
     let mut files: Vec<(SystemTime, PathBuf)> = DROP_FOLDERS
@@ -50,11 +46,8 @@ pub fn recent(home: &Path, max: usize) -> Vec<Found> {
         .collect()
 }
 
-/// Up to `max` files under `home` whose names contain every word of `query`
-/// (case-insensitive), best first: names starting with the first word, then
-/// shallower paths. Spotlight answers when `spotlight` is set and it finds
-/// anything; otherwise a gitignore-aware walk looks for a moment. Hidden
-/// paths and `~/Library` are left out either way.
+/// Up to `max` files under `home` whose names contain every word of `query`,
+/// best first: names starting with the first word, then shallower paths.
 #[must_use]
 pub fn search(home: &Path, query: &str, max: usize, spotlight: bool) -> Vec<Found> {
     let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
@@ -86,10 +79,8 @@ pub fn search(home: &Path, query: &str, max: usize, spotlight: bool) -> Vec<Foun
         .collect()
 }
 
-/// Entries completing a typed path (`~/Doc`, `/tmp/a`): the directory part
-/// is listed and the entries whose names start with the rest are kept
-/// (case-insensitive), directories first. Hidden entries show only once the
-/// rest starts with a dot.
+/// Entries completing a typed path, directories first; hidden entries show only
+/// once the rest starts with a dot.
 #[must_use]
 pub fn complete(input: &str, home: &Path) -> Vec<Found> {
     let expanded = expand(input, home);
@@ -129,7 +120,6 @@ pub fn complete(input: &str, home: &Path) -> Vec<Found> {
     found
 }
 
-/// `~` and `~/…` expanded against `home`; any other input unchanged.
 #[must_use]
 pub fn expand(input: &str, home: &Path) -> String {
     match input.strip_prefix('~') {
@@ -139,7 +129,6 @@ pub fn expand(input: &str, home: &Path) -> String {
     }
 }
 
-/// `path` for display, with `home` shown as `~`.
 #[must_use]
 pub fn tilde(path: &Path, home: &Path) -> String {
     match path.strip_prefix(home) {
@@ -175,8 +164,7 @@ fn visible(path: &Path, home: &Path) -> bool {
             .all(|part| !hidden(&part.as_os_str().to_string_lossy()))
 }
 
-/// Spotlight's file-name matches for the longest word (the rest are checked
-/// while ranking); `None` when `mdfind` can't run.
+/// Spotlight's file-name matches for the longest word; `None` when `mdfind` can't run.
 fn spotlight_search(home: &Path, words: &[String]) -> Option<Vec<PathBuf>> {
     let longest = words.iter().max_by_key(|word| word.len())?;
     let mut child = Command::new("mdfind")
@@ -201,8 +189,8 @@ fn spotlight_search(home: &Path, words: &[String]) -> Option<Vec<PathBuf>> {
     Some(paths)
 }
 
-/// Files under `home` whose names hold every word, from a walk that skips
-/// hidden and gitignored paths and `~/Library`, and stops after a moment.
+/// Files under `home` whose names hold every word, skipping hidden, gitignored and
+/// `~/Library` paths.
 fn walk(home: &Path, words: &[String]) -> Vec<PathBuf> {
     let started = Instant::now();
     let library = home.join("Library");
@@ -235,7 +223,7 @@ mod tests {
     impl TempHome {
         fn new(files: &[&str]) -> Self {
             let root =
-                std::env::temp_dir().join(format!("nexus-filesearch-{}", uuid::Uuid::new_v4()));
+                std::env::temp_dir().join(format!("dugix-filesearch-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&root).unwrap();
             let root = root.canonicalize().unwrap();
             for file in files {

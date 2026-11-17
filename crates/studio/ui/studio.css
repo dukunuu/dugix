@@ -1,6 +1,6 @@
 :root {
   color-scheme:dark;
-  /* Built-in nexus ANSI palette. The backend replaces these with the active terminal theme. */
+  /* Built-in dugix ANSI palette. The backend replaces these with the active terminal theme. */
   --bg:#000000; --surface:#000000; --raised:#303030; --control:#444444; --hairline:#7f7f7f;
   --text:#ffffff; --muted:#7f7f7f; --faint:#7f7f7f; --accent:#00cdcd; --accent2:#cd00cd; --accent-soft:#4e4e4e;
   --success:#00cd00; --warning:#cdcd00; --danger:#cd0000; --canvas:var(--bg); --on-accent:var(--bg); --code:var(--raised);

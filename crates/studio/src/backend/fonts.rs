@@ -2,7 +2,7 @@
 
 use super::{Backend, absolute, asset_root, atomic_write, checked, hash_bytes, read_bounded};
 use anyhow::{Context as _, Result, ensure};
-use nexus_core::deck::{FontFile, text};
+use dugix_core::deck::{FontFile, text};
 use std::{fs, path::Path};
 
 impl Backend {
@@ -46,7 +46,7 @@ impl Backend {
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
             .collect();
         let metadata = text::imported_font_info(bytes);
-        // WOFF2 is intentionally webview-only; fontdb cannot decompress it.
+        // WOFF2 is webview-only; fontdb cannot decompress it.
         ensure!(
             if extension == "woff2" {
                 valid_woff2(bytes)

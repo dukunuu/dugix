@@ -1,9 +1,9 @@
 //! Local comments share the model tool's sidecar; Send uses only the link.
 
 use anyhow::{Context as _, Result, ensure};
-use nexus_core::deck;
-use nexus_core::deck::feedback::{self, Anchor, Edit, EditStatus, Message, Role, Severity, Thread};
-use nexus_core::deck::link::Message as LinkMessage;
+use dugix_core::deck;
+use dugix_core::deck::feedback::{self, Anchor, Edit, EditStatus, Message, Role, Severity, Thread};
+use dugix_core::deck::link::Message as LinkMessage;
 use uuid::Uuid;
 
 use super::{Backend, Event, stamp};
@@ -20,6 +20,9 @@ impl Backend {
     }
 
     pub(super) fn feedback_event(&self, notes: Vec<String>) -> Event {
+        if self.sheet.is_some() {
+            return self.sheet_feedback_event(notes);
+        }
         if self.doc.is_some() {
             return self.doc_feedback_event(notes);
         }
@@ -45,7 +48,7 @@ impl Backend {
         );
         ensure!(
             !send || self.linked,
-            "Not linked to a conversation — open it from nexus with /studio"
+            "Not linked to a conversation — open it from dugix with /studio"
         );
         ensure!(
             self.feedback.len() < 200,
@@ -80,7 +83,7 @@ impl Backend {
         );
         ensure!(
             !send || self.linked,
-            "Not linked to a conversation — open it from nexus with /studio"
+            "Not linked to a conversation — open it from dugix with /studio"
         );
         let thread = self
             .feedback
@@ -126,7 +129,7 @@ impl Backend {
         let edit = self.edit(owner, id)?;
         ensure!(
             edit.status == EditStatus::Pending,
-            "Outdated — ask again in nexus"
+            "Outdated — ask again in dugix"
         );
         Ok(Event::Preview {
             deck: deck::apply(&self.deck, &edit.proposal.ops)?,
@@ -136,7 +139,7 @@ impl Backend {
         let edit = self.edit(owner, id)?;
         ensure!(
             edit.status == EditStatus::Pending,
-            "Outdated — ask again in nexus"
+            "Outdated — ask again in dugix"
         );
         let next = deck::apply(&self.deck, &edit.proposal.ops)?;
         self.replace(next)?;

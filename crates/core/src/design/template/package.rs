@@ -49,8 +49,8 @@ pub(super) fn text<'a>(parts: &'a Parts, name: &str) -> Result<&'a str> {
     .map_err(Into::into)
 }
 
-/// Byte ranges of complete elements, including self-closing ones. XML is already
-/// checked by the bounded reader; quotes/comments/processing instructions are skipped.
+/// Byte ranges of complete elements, including self-closing ones; quotes, comments
+/// and processing instructions are skipped.
 pub(super) fn ranges(source: &str, local: &str) -> Vec<Range<usize>> {
     let mut stack = Vec::new();
     let mut out = Vec::new();
@@ -163,7 +163,7 @@ pub(super) fn relationship(id: &str, kind: &str, target: &str) -> String {
 }
 
 /// Merge content types by part name, preserving template defaults and untouched
-/// overrides. A generated override replaces only the corresponding written part.
+/// overrides; a generated override replaces only the corresponding written part.
 pub(super) fn content_types(
     base: &str,
     generated: &str,

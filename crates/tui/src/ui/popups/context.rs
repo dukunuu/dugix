@@ -5,16 +5,15 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app_view::AppView;
-use nexus_core::app::Popup;
+use dugix_core::app::Popup;
 
-use super::chrome;
+use super::chrome::{self, PopupFrame, hint, keys};
 
 #[cfg(test)]
 #[path = "context_tests.rs"]
 mod tests;
 
-/// Context breakdown popup (Ctrl+G): estimated tokens spent on system
-/// instructions, memory, skills, tools, and conversation, plus what the
+/// Context breakdown popup (Ctrl+G): estimated tokens per bucket, plus what the
 /// session has spent so far.
 pub fn render(f: &mut Frame, app: &AppView) {
     let b = app.context_breakdown();
@@ -66,57 +65,36 @@ pub fn render(f: &mut Frame, app: &AppView) {
             dim,
         )));
     }
-    lines.push(Line::from(""));
     let limit_s = b
         .limit
         .map_or_else(|| "unknown window".to_string(), crate::ui::humanize);
-    lines.push(Line::from(vec![
-        Span::styled(
-            "Total        ",
-            Style::default()
-                .fg(app.theme.fg)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("{} / {}", crate::ui::humanize(total), limit_s),
-            Style::default().fg(app.theme.warning),
-        ),
-    ]));
+    let count = format!("{} of {limit_s}", crate::ui::humanize(total));
 
     lines.extend(cache_lines(app));
     lines.extend(session_lines(app));
 
-    let hint = if b.compacted {
-        "v digest · Esc close"
-    } else {
-        "Ctrl+G toggle · Esc close"
-    };
-    // Sized to the content rather than a fixed share of the screen.
-    let screen = f.area();
-    let width = (screen.width * chrome::SMALL.0 / 100).clamp(40.min(screen.width), screen.width);
-    let height = u16::try_from(lines.len() + 2)
-        .unwrap_or(u16::MAX)
-        .min(screen.height);
-    let area = ratatui::layout::Rect::new(
-        screen.x + (screen.width - width) / 2,
-        screen.y + (screen.height - height) / 2,
-        width,
-        height,
-    );
-    let inner = chrome::render_hinted(
+    let mut hints = Vec::new();
+    if b.compacted {
+        hints.push(hint("v", "digest"));
+    }
+    hints.push(hint(keys::ESC, "close"));
+    let area = chrome::popup_area_fit(app, f.area(), "context", chrome::SMALL, lines.len());
+    let inner = chrome::render_popup(
         f,
         area,
-        chrome::popup_title(app, "context"),
-        hint,
+        &PopupFrame {
+            title: "Context",
+            count: &count,
+            hints: &hints,
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
         app,
-        true,
-        chrome::Tone::Normal,
     );
     f.render_widget(Paragraph::new(lines), inner);
 }
 
 /// What the session has spent so far: cost and requests, then tokens.
-/// Per-request figures already sit on each message.
 fn session_lines(app: &AppView) -> Vec<Line<'static>> {
     let dim = Style::default().fg(app.theme.fg_dim);
     let label = Span::styled(
@@ -144,7 +122,7 @@ fn session_lines(app: &AppView) -> Vec<Line<'static>> {
             ];
         }
     };
-    let t = nexus_core::app::usage::SessionUsageTotals::from_rows(&rows);
+    let t = dugix_core::app::usage::SessionUsageTotals::from_rows(&rows);
     let cost = match t.cost {
         Some(c) if t.unknown_cost_requests > 0 => {
             format!("${c:.4} + {} unpriced", t.unknown_cost_requests)
@@ -180,11 +158,11 @@ fn session_lines(app: &AppView) -> Vec<Line<'static>> {
 /// The turn's and the last request's cache hit rates, when either is known.
 fn cache_lines(app: &AppView) -> Vec<Line<'static>> {
     let dim = Style::default().fg(app.theme.fg_dim);
-    // Cache detail lives here, where the two figures can be labelled apart:
-    // the status line shows the turn, this shows the request behind it.
-    let turn = app.turn_cache;
+    // The two figures can be labelled apart here; the status line shows only
+    // the turn.
+    let turn = app.meter.turn_cache;
     let mut lines = Vec::new();
-    if turn.rate().is_some() || app.last_cache_rate.is_some() {
+    if turn.rate().is_some() || app.meter.last_cache_rate.is_some() {
         lines.push(Line::from(""));
         let pct = |rate: Option<f64>| {
             rate.map_or_else(|| "—".to_string(), |r| format!("{:.0}%", r * 100.0))
@@ -200,7 +178,10 @@ fn cache_lines(app: &AppView) -> Vec<Line<'static>> {
                 format!("{} this turn", pct(turn.rate())),
                 Style::default().fg(app.theme.success),
             ),
-            Span::styled(format!(" · {} last request", pct(app.last_cache_rate)), dim),
+            Span::styled(
+                format!(" · {} last request", pct(app.meter.last_cache_rate)),
+                dim,
+            ),
         ]));
         if turn.is_partial() {
             lines.push(Line::from(Span::styled(

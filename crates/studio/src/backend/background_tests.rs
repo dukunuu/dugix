@@ -3,7 +3,7 @@ use serde_json::json;
 
 #[test]
 fn background_images_have_frontend_routes_cache_hashes_and_source_checks() {
-    let root = std::env::temp_dir().join(format!("nexus-background-{}", Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-background-{}", Uuid::new_v4()));
     let mut backend = Backend::start(None, &root.join("files"), &root.join("data")).unwrap();
     let remote = "https://example.com/background.png";
     backend.deck = Deck::check(
@@ -30,7 +30,7 @@ fn background_images_have_frontend_routes_cache_hashes_and_source_checks() {
     assert_eq!(images["assets/local.png"], hash_bytes(&png));
     assert_eq!(
         backend
-            .serve("nexus://localhost/assets/local.png")
+            .serve("dugix://localhost/assets/local.png")
             .unwrap()
             .1,
         png
@@ -42,19 +42,19 @@ fn background_images_have_frontend_routes_cache_hashes_and_source_checks() {
     };
     assert_eq!(images[&format!("/asset/{route}")], hash_bytes(&png));
     let (fetcher, source) = backend
-        .remote_image(&format!("nexus://localhost/asset/{route}"))
+        .remote_image(&format!("dugix://localhost/asset/{route}"))
         .unwrap();
     assert_eq!(source, remote);
     assert_eq!(fs::read(fetcher.cached(&source).unwrap()).unwrap(), png);
     assert!(
         backend
-            .remote_image("nexus://localhost/asset/not-in-this-deck")
+            .remote_image("dugix://localhost/asset/not-in-this-deck")
             .is_err()
     );
     backend.deck.slides[0].background = None;
     assert!(
         backend
-            .remote_image(&format!("nexus://localhost/asset/{route}"))
+            .remote_image(&format!("dugix://localhost/asset/{route}"))
             .is_err()
     );
     let Event::Deck { images, .. } = backend.event() else {

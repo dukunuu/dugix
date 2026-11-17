@@ -1,10 +1,10 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import type { NexusStore } from "./state";
+import type { DugixStore } from "./state";
 import type { Citation, Gate, PlanQuestion, ResearchEvent, ResearchSnapshot, ResearchStage } from "./types";
 import { markdown } from "./markdown";
 
 /** Full research workspace: reconnectable stages, gates, steering and report sources. */
-export function ResearchPage(props: { store: NexusStore; sessionId: string | null }) {
+export function ResearchPage(props: { store: DugixStore; sessionId: string | null }) {
   const state = props.store.state;
   const [steer, setSteer] = createSignal("");
   const [topic, setTopic] = createSignal("");

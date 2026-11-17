@@ -7,7 +7,7 @@ export interface KnownDevice {
   lastSeen: string;
 }
 
-const STORAGE_KEY = "nexus.known-hosts";
+const STORAGE_KEY = "dugix.known-hosts";
 
 export function knownDevices(): KnownDevice[] {
   try {

@@ -9,7 +9,7 @@ const DOTX: &[u8] = include_bytes!("../../../tests/fixtures/templates/brand.dotx
 struct Temp(PathBuf);
 impl Temp {
     fn new() -> Self {
-        Self(std::env::temp_dir().join(format!("nexus-template-{}", uuid::Uuid::new_v4())))
+        Self(std::env::temp_dir().join(format!("dugix-template-{}", uuid::Uuid::new_v4())))
     }
 }
 impl Drop for Temp {
@@ -122,7 +122,7 @@ fn potx_extracts_brand_styles_slots_art_and_exports_real_placeholders() {
     let sheet = contact_sheet(&temp.0, &imported).unwrap().unwrap();
     let png = image::open(&sheet).unwrap();
     assert!(png.width() > 100 && png.height() > 100);
-    if let Ok(directory) = std::env::var("NEXUS_RENDER_OUT") {
+    if let Ok(directory) = std::env::var("DUGIX_RENDER_OUT") {
         std::fs::create_dir_all(&directory).unwrap();
         std::fs::copy(&sheet, Path::new(&directory).join("p4-contact.png")).unwrap();
     }
@@ -432,7 +432,7 @@ fn template_section_ids_are_not_remapped_with_generated_hyperlinks() {
     let parts = package::open(&output.bytes).unwrap();
     let source = package::text(&parts, "word/document.xml").unwrap();
     assert!(source.contains("w:headerReference w:type=\"default\" r:id=\"rId1\""));
-    assert!(source.contains("w:hyperlink r:id=\"nexusrId1\""));
+    assert!(source.contains("w:hyperlink r:id=\"dugixrId1\""));
     relationships_valid(&parts);
 }
 
@@ -462,6 +462,48 @@ fn entry_and_file_limits_are_enforced_before_import() {
             .contains("250 MB")
     );
     assert!(!temp.0.join("templates").exists());
+}
+
+#[test]
+fn word_paragraph_justification_imports_and_exports() {
+    let mut parts = package::open(DOTX).unwrap();
+    let source = package::text(&parts, "word/styles.xml").unwrap().replace(
+        "<w:name w:val=\"Normal\"/>",
+        "<w:name w:val=\"Normal\"/><w:pPr><w:jc w:val=\"both\"/></w:pPr>",
+    );
+    let source = source.replace(
+        "<w:name w:val=\"Title\"/>",
+        "<w:name w:val=\"Title\"/><w:pPr><w:jc w:val=\"center\"/></w:pPr>",
+    );
+    parts.insert("word/styles.xml".into(), source.into_bytes());
+    let bytes = deck::export::zip(parts.into_iter().collect()).unwrap();
+    let temp = Temp::new();
+    let imported = import_bytes(&temp.0, Path::new("thesis.dotx"), &bytes, None).unwrap();
+    let styles = &imported.design.doc.text_styles;
+    assert_eq!(styles["body"].align, Some(deck::Align::Justify));
+    assert_eq!(styles["title"].align, Some(deck::Align::Center));
+    assert!(
+        !imported
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("Normal:") && w.contains("omitted")),
+        "alignment is mapped, not omitted: {:?}",
+        imported.warnings
+    );
+    let doc = Doc::check(&serde_json::json!({"version":1,"title":"Thesis","theme":doc::model::Theme::from_design(&imported.design),"blocks":[{"id":"b1","kind":"paragraph","text":"Body"}]}).to_string()).unwrap();
+    let docx = doc::export::export(&doc, None, &[], doc::export::Format::Docx).unwrap();
+    let styles = package::text(&package::open(&docx.bytes).unwrap(), "word/styles.xml")
+        .unwrap()
+        .to_string();
+    let normal = &styles[styles.find("w:styleId=\"Normal\"").unwrap()..];
+    let normal = &normal[..normal.find("</w:style>").unwrap()];
+    assert!(normal.contains("<w:jc w:val=\"both\"/>"), "{normal}");
+    let html = doc::export::export(&doc, None, &[], doc::export::Format::Html).unwrap();
+    assert!(
+        String::from_utf8(html.bytes)
+            .unwrap()
+            .contains("text-align:justify")
+    );
 }
 
 #[test]

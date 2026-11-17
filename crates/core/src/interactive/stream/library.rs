@@ -17,7 +17,7 @@ const COMPONENTS: &[(&str, &str, &str)] = &[
     ("Item", "", "text mark?"),
     ("Cards", "cards", "items"),
     ("Card", "", "title text badge? tone? image? alt?"),
-    ("Stats", "stats", "items"),
+    ("Stats", "stats", "items big?"),
     ("Stat", "", "value label delta? tone?"),
     ("Steps", "steps", "items"),
     ("Step", "", "title text? state?"),
@@ -26,7 +26,12 @@ const COMPONENTS: &[(&str, &str, &str)] = &[
     ("Divider", "divider", "label?"),
     ("Buttons", "buttons", "items rows?"),
     ("Button", "", "label action primary? body? image? alt?"),
-    ("Input", "input", "key label rules?"),
+    ("Input", "input", "key label rules? placeholder? hint?"),
+    (
+        "Textarea",
+        "input",
+        "key label rows? placeholder? rules? hint?",
+    ),
     ("Kv", "kv", "items"),
     (
         "Table",
@@ -48,6 +53,29 @@ const COMPONENTS: &[(&str, &str, &str)] = &[
     ("Section", "", "title view open?"),
     ("Chart", "chart", "kind series labels? rows?"),
     ("Series", "", "name values tone?"),
+    ("Row", "row", "items gap?"),
+    ("Grid", "grid", "items cols?"),
+    ("Stack", "stack", "items gap?"),
+    ("Spacer", "spacer", "rows?"),
+    ("Number", "number", "value label delta? tone?"),
+    ("Gauge", "gauge", "label value max? tone?"),
+    ("Heatmap", "heatmap", "values labels? tone?"),
+    ("Md", "md", "text rows?"),
+    ("Tree", "tree", "items"),
+    ("Branch", "", "label items? open?"),
+    ("Board", "board", "items rows?"),
+    ("Lane", "", "title items tone?"),
+    ("Diagram", "diagram", "source alt?"),
+    ("Canvas", "canvas", "shapes rows? alt?"),
+    ("Circle", "circle", "x y r tone? fill? animate? action?"),
+    ("Rect", "rect", "x y w h tone? fill? animate? action?"),
+    ("Line", "line", "x1 y1 x2 y2 tone? animate? action?"),
+    ("Ray", "ray", "x y len angle tone? animate? action?"),
+    ("Arc", "arc", "x y r start sweep tone? animate? action?"),
+    ("Dot", "dot", "x y tone? animate? action?"),
+    ("Poly", "poly", "points tone? fill? animate? action?"),
+    ("Label", "label", "text x y tone? animate? action?"),
+    ("Anim", "", "prop values seconds? repeat? ease? delay?"),
     ("Form", "form", "title fields submit_label action"),
     ("Timeline", "timeline", "items"),
     ("Event", "", "time title text? tone?"),
@@ -75,15 +103,28 @@ pub(super) fn signatures() -> String {
         .join("\n")
 }
 
+/// How strictly a program is turned into a document.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Mode {
+    /// Every statement must resolve and validate.
+    Strict,
+    /// A program still arriving: unfinished or invalid pieces are left out,
+    /// and timers and keys stay inert.
+    Streaming,
+    /// A finished program with mistakes: broken pieces are left out, the rest
+    /// (timers and keys included) runs.
+    Salvage,
+}
+
 pub(super) fn materialize(
     symbols: &BTreeMap<String, Expr>,
-    partial: bool,
+    mode: Mode,
     current: Option<&Map<String, Value>>,
     results: Option<&Map<String, Value>>,
 ) -> Result<Value> {
     let mut context = Context {
         symbols,
-        partial,
+        partial: mode != Mode::Strict,
         visiting: BTreeSet::new(),
         budget: 4096,
         actions: Map::new(),
@@ -171,22 +212,58 @@ pub(super) fn materialize(
         .lower(&root, 0)?
         .ok_or_else(|| anyhow::anyhow!("root is not available yet"))?;
     ensure!(value.get("view").is_some(), "root must be a Panel");
+    let play = context.play_in(mode, symbols)?;
     value["version"] = 1.into();
     value["state"] = state.into();
     value["actions"] = context.actions.into();
     value["calls"] = calls.into();
-    if partial {
-        retain_valid_nodes(&mut value);
+    let all_actions = context.partial.then(|| retain_valid_nodes(&mut value));
+    if let Some((timers, keys)) = play {
+        attach_play(&mut value, all_actions.as_ref(), timers, keys);
     }
     Ok(value)
 }
 
+// A strict panel takes its timers and keys as they are. A salvaged one (which
+// passes every action it had) keeps them only if they validate with the
+// elements that survived; otherwise they are left out too.
+fn attach_play(value: &mut Value, salvaged: Option<&Value>, timers: Value, keys: Value) {
+    let Some(actions) = salvaged else {
+        value["timers"] = timers;
+        value["keys"] = keys;
+        return;
+    };
+    let mut with = value.clone();
+    let names = timers
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|timer| timer["action"].as_str())
+        .chain(
+            keys.as_object()
+                .into_iter()
+                .flatten()
+                .filter_map(|(_, a)| a.as_str()),
+        );
+    for name in names {
+        if let Some(action) = actions.get(name) {
+            with["actions"][name] = action.clone();
+        }
+    }
+    with["timers"] = timers;
+    with["keys"] = keys;
+    if crate::interactive::Document::check_value(with.clone()).is_ok() {
+        *value = with;
+    }
+}
+
 // Validate each arriving sibling against the same runtime contract. A malformed
 // component or not-yet-declared binding cannot blank already valid elements.
-fn retain_valid_nodes(value: &mut Value) {
+// Returns every action the panel had, before unused ones were dropped.
+fn retain_valid_nodes(value: &mut Value) -> Value {
     let nodes = value["view"].take();
     let Some(nodes) = nodes.as_array() else {
-        return;
+        return value["actions"].clone();
     };
     let actions = value["actions"].take();
     value["view"] = Value::Array(Vec::new());
@@ -201,11 +278,22 @@ fn retain_valid_nodes(value: &mut Value) {
         }
     }
     value["actions"] = used_actions(&value["view"], &actions);
+    actions
 }
 
 fn used_actions(view: &Value, actions: &Value) -> Value {
     let mut used = Map::new();
     for node in view.as_array().into_iter().flatten() {
+        // Layout containers hold nodes directly: their buttons' actions count.
+        if matches!(node["type"].as_str(), Some("row" | "grid" | "stack")) {
+            used.extend(
+                used_actions(&node["items"], actions)
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .map(|(k, v)| (k.clone(), v.clone())),
+            );
+        }
         for child in node["items"].as_array().into_iter().flatten() {
             used.extend(
                 used_actions(&child["view"], actions)
@@ -544,6 +632,9 @@ impl Context<'_> {
         if !tag.is_empty() && *tag != "panel" {
             object.insert("type".into(), (*tag).into());
         }
+        if name == "Textarea" {
+            object.insert("rows".into(), 4.into());
+        }
         for (index, field) in fields.iter().enumerate() {
             let key = field.trim_end_matches('?');
             let optional = field.ends_with('?');
@@ -572,8 +663,12 @@ impl Context<'_> {
                     | "time"
                     | "name"
                     | "explain"
-            ) || matches!((name, key), ("Stat", "value") | ("Question", "answer"))
-            {
+                    | "placeholder"
+                    | "hint"
+            ) || matches!(
+                (name, key),
+                ("Stat" | "Number", "value") | ("Question", "answer")
+            ) {
                 self.template(expression, depth + 1)?
             } else if key == "rules" {
                 self.lower(expression, depth + 1)?
@@ -588,29 +683,109 @@ impl Context<'_> {
                 }
                 return Ok(None);
             };
-            if matches!(name, "Button" | "Form") && key == "action" {
-                let steps = if value.get("op").is_some() {
-                    vec![value]
-                } else {
-                    value
-                        .as_array()
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "Button action must be @Set, @Answer, @ToAssistant or Action"
-                            )
-                        })?
-                        .clone()
-                };
-                let id = format!("action_{}", self.actions.len());
-                self.actions.insert(id.clone(), steps.into());
-                value = id.into();
+            if key == "action"
+                && matches!(
+                    name,
+                    "Button"
+                        | "Form"
+                        | "Circle"
+                        | "Rect"
+                        | "Line"
+                        | "Ray"
+                        | "Arc"
+                        | "Dot"
+                        | "Poly"
+                        | "Label"
+                )
+            {
+                value = self.register_action(value)?.into();
             }
             object.insert(key.into(), value);
         }
+        if name == "Textarea" {
+            ensure!(
+                object["rows"]
+                    .as_u64()
+                    .is_some_and(|rows| (2..=8).contains(&rows)),
+                "Textarea rows must be 2–8"
+            );
+        }
         Ok(Some(object.into()))
+    }
+    /// Store lowered steps (one step or an `Action` list) as a named action.
+    fn register_action(&mut self, value: Value) -> Result<String> {
+        let steps = if value.get("op").is_some() {
+            vec![value]
+        } else {
+            value
+                .as_array()
+                .ok_or_else(|| {
+                    anyhow::anyhow!("an action must be @Set, @Answer, @ToAssistant or Action")
+                })?
+                .clone()
+        };
+        let id = format!("action_{}", self.actions.len());
+        self.actions.insert(id.clone(), steps.into());
+        Ok(id)
+    }
+    /// Timers and keys for this mode: required when strict, best effort when
+    /// salvaging, and none (inert) while streaming.
+    fn play_in(
+        &mut self,
+        mode: Mode,
+        symbols: &BTreeMap<String, Expr>,
+    ) -> Result<Option<(Value, Value)>> {
+        Ok(match mode {
+            Mode::Strict => Some(self.play(symbols)?),
+            Mode::Salvage => self.play(symbols).ok(),
+            Mode::Streaming => None,
+        })
+    }
+    /// Timers and key bindings: top-level `@Every` / `@Keys` statements.
+    fn play(&mut self, symbols: &BTreeMap<String, Expr>) -> Result<(Value, Value)> {
+        let mut timers = Vec::new();
+        let mut keys = Map::new();
+        for (id, expression) in symbols {
+            let Expr::Call(kind, args) = expression else {
+                continue;
+            };
+            match kind.as_str() {
+                "@Every" => {
+                    ensure!(!id.starts_with('$'), "@Every needs a plain statement name");
+                    ensure!(args.len() == 2, "@Every expects (seconds, action)");
+                    let seconds = self.lower(&args[0], 0)?.unwrap_or(Value::Null);
+                    let seconds = crate::interactive::eval(&seconds, &self.state, &mut 4096)?;
+                    let action = self
+                        .lower(&args[1], 0)?
+                        .ok_or_else(|| anyhow::anyhow!("@Every needs an action"))?;
+                    let action = self.register_action(action)?;
+                    timers.push(json!({"seconds": seconds, "action": action}));
+                }
+                "@Keys" => {
+                    ensure!(!id.starts_with('$'), "@Keys needs a plain statement name");
+                    let [Expr::Object(fields)] = args.as_slice() else {
+                        bail!("@Keys expects one object of key: action");
+                    };
+                    for (key, expression) in fields {
+                        let action = self
+                            .lower(expression, 0)?
+                            .ok_or_else(|| anyhow::anyhow!("key {key} needs an action"))?;
+                        let action = self.register_action(action)?;
+                        keys.insert(key.clone(), action.into());
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok((timers.into(), keys.into()))
     }
     #[allow(clippy::too_many_lines)]
     fn function(&mut self, name: &str, args: &[Expr], depth: usize) -> Result<Option<Value>> {
+        if matches!(name, "@Every" | "@Keys") {
+            bail!(
+                "{name} is a statement, not a value: name it at top level, e.g. tick = @Every(1, @Set($n, $n + 1))"
+            );
+        }
         if name == "@Each" {
             ensure!(args.len() == 3, "@Each expects 3 arguments");
             let array = self.lower(&args[0], depth + 1)?.unwrap_or(Value::Null);

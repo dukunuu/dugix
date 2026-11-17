@@ -11,11 +11,11 @@ several files at once.
 ```sh
 scripts/check.sh              # THE gate: fmt --check + clippy (-D warnings -W pedantic) + cargo audit + tests
 scripts/check.sh --fix        # auto-fix fmt/clippy first, then run the gate
-cargo run                     # launch the TUI (binary: nexus)
+cargo run                     # launch the TUI (binary: dugix)
 cargo test --workspace        # full suite; hermetic, no network
-cargo test -p nexus-chat-core <name>   # core crate, tests matching <name>
-cargo test -p nexus-chat <name>        # TUI crate (package nexus-chat, binary nexus)
-cargo test -p nexus-chat-core app::tests::parse_topic_extracts_and_slugifies -- --exact
+cargo test -p dugix-core <name>   # core crate, tests matching <name>
+cargo test -p dugix <name>        # TUI crate (package dugix, binary dugix)
+cargo test -p dugix-core app::tests::parse_topic_extracts_and_slugifies -- --exact
 ```
 
 The pre-commit hook runs `scripts/check.sh`; a commit that fails it is rejected.
@@ -24,16 +24,15 @@ Never disable the hook and never land code that fails clippy pedantic. CI
 green PR. Pushing to `master` auto-bumps the patch version, tags `vX.Y.Z`, and
 publishes to crates.io + GitHub.
 
-Crate naming trips people up: the workspace members are `nexus-chat-core`
-(lib target `nexus_core`, so imports are `use nexus_core::…`) and `nexus-chat`
-(binary `nexus`).
+Crate naming: the workspace members are `dugix-core` (lib target
+`dugix_core`, so imports are `use dugix_core::…`) and `dugix` (binary `dugix`).
 
 ## Architecture
 
 Two crates with a hard seam: `crates/core` is domain-only with **zero TUI
 dependencies**, and `crates/tui` is the terminal frontend plus the headless CLI.
-Core drives three frontends — the TUI, `nexus <subcommand>` (`crates/tui/src/cli.rs`),
-and the `nexus host` HTTP/SSE daemon (`crates/core/src/host/`). Anything added to
+Core drives three frontends — the TUI, `dugix <subcommand>` (`crates/tui/src/cli.rs`),
+and the `dugix host` HTTP/SSE daemon (`crates/core/src/host/`). Anything added to
 core must work for all three; pulling `ratatui` into core breaks the seam.
 
 Four seams carry everything across that boundary:
@@ -62,10 +61,10 @@ Four seams carry everything across that boundary:
 Other structural facts worth knowing before editing:
 
 - **One provider client.** `provider/openrouter.rs` serves every OpenAI-wire
-  backend (OpenRouter, OpenAI, OpenCode Zen/Go, Codex); `provider/mod.rs` holds
+  backend (OpenRouter, OpenAI, OpenCode Zen/Go, Codex, Mistral); `provider/mod.rs` holds
   the message shapes, tool-call wire format, and `StreamEvent`. Backend
   differences are flags in that one client, not new clients.
-- **One db, two halves.** There is a single durable `nexus.db` at the data root
+- **One db, two halves.** There is a single durable `dugix.db` at the data root
   (`space.rs:db_path`) with rows scoped by `space_id` — *not* one db per space,
   whatever the prose in README/AGENTS says. Beside it sits a device-local,
   disposable `cache.db`, ATTACHed as schema `cache` (`db::open_attached`);
@@ -75,8 +74,9 @@ Other structural facts worth knowing before editing:
   append-only tables by UUID union and a small mutable surface by `updated_at`
   LWW — a new durable table needs a registry entry there. Every connection is
   opened through `db::open_conn` so it gets WAL plus a busy timeout; the TUI,
-  `nexus host`, and per-call tool connections all share the file.
-- **`nexus_core::boot()`** is the single bootstrap (credentials → space → db →
+  `dugix host`, and per-call tool connections all share the file.
+  Schema changes are new steps appended in `crates/core/src/db/migrations.rs`; a shipped step is never edited; regenerate `crates/core/tests/fixtures/schema-snapshots/` with `DUGIX_UPDATE_SNAPSHOTS=1` and review it.
+- **`dugix_core::boot()`** is the single bootstrap (credentials → space → db →
   appserver → toolbox) shared by `main.rs`, `cli.rs`, and the host. Don't
   hand-roll app construction in a new frontend path.
 - **Research is a staged pipeline** (`app/research.rs`): survey → plan →
@@ -111,12 +111,12 @@ is the skill-discovery pack. Skills are `SKILL.md` directories with sandboxed
 Python virtualenvs (`src/skills.rs`), discovered from the app-managed root, then
 project `.agents/skills` (plus Claude/Codex/pi/OpenCode adapter roots), then user
 roots; earlier, more-specific roots win duplicate names.
-Assembled prompts and tool definitions are snapshotted in crates/core/tests/fixtures/prompt-snapshots/; after an intended change, regenerate with NEXUS_UPDATE_SNAPSHOTS=1 cargo test -p nexus-chat-core prompt_snapshots and review the diff.
+Assembled prompts and tool definitions are snapshotted in crates/core/tests/fixtures/prompt-snapshots/; after an intended change, regenerate with DUGIX_UPDATE_SNAPSHOTS=1 cargo test -p dugix-core prompt_snapshots and review the diff.
 
 ## Secrets and agent tooling
 
-Keys come from `~/.config/nexus-chat/config.toml` or `OPENROUTER_API_KEY` /
-`OPENAI_API_KEY` / `OPENCODE_API_KEY` — never hardcoded, never in snapshots,
+Keys come from `config.toml` (`~/.config/dugix/` on Linux, `~/Library/Application Support/dugix/` on macOS) or `OPENROUTER_API_KEY` /
+`OPENAI_API_KEY` / `OPENCODE_API_KEY` / `MISTRAL_API_KEY` — never hardcoded, never in snapshots,
 events, or app URLs (registered app UUIDs are the public capability; the host
 bearer token is not). `.claude/`, `.superpowers/`, and `.pi-subagents/` are
 gitignored — keep them out of commits.

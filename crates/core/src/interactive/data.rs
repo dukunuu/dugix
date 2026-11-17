@@ -20,6 +20,10 @@ pub(super) fn builtin(name: &str) -> Option<&'static str> {
         "@Abs" => "abs",
         "@Floor" => "floor",
         "@Ceil" => "ceil",
+        "@Append" => "append",
+        "@Remove" => "remove",
+        "@Replace" => "replace",
+        "@Slice" => "slice",
         _ => return None,
     })
 }
@@ -27,8 +31,10 @@ pub(super) fn builtin(name: &str) -> Option<&'static str> {
 pub(super) fn arity(op: &str, count: usize) -> Result<()> {
     let valid = match op {
         "filter" => count == 4,
-        "sort" => (2..=3).contains(&count),
+        "sort" | "slice" => (2..=3).contains(&count),
         "round" => (1..=2).contains(&count),
+        "append" | "remove" => count == 2,
+        "replace" => count == 3,
         "count" | "first" | "last" | "sum" | "avg" | "min" | "max" | "abs" | "floor" | "ceil" => {
             count == 1
         }
@@ -235,6 +241,57 @@ pub(super) fn evaluate(op: &str, args: &[Value]) -> Result<Value> {
             });
             items.into()
         }
+        "append" | "remove" | "replace" | "slice" => edit_list(op, items, args),
         _ => unreachable!("checked data operator"),
     })
+}
+
+fn edit_list(op: &str, items: &[Value], args: &[Value]) -> Value {
+    match op {
+        "append" => {
+            let mut items = items.to_vec();
+            items.push(args[1].clone());
+            items.into()
+        }
+        "remove" => {
+            let mut items = items.to_vec();
+            if let Some(index) = position(&args[1], items.len()) {
+                items.remove(index);
+            }
+            items.into()
+        }
+        "replace" => {
+            let mut items = items.to_vec();
+            if let Some(index) = position(&args[1], items.len()) {
+                items[index] = args[2].clone();
+            }
+            items.into()
+        }
+        "slice" => {
+            let len = items.len();
+            let bound = |value: Option<&Value>, default: usize| {
+                value.map_or(default, |value| {
+                    #[allow(clippy::cast_possible_truncation)]
+                    let n = numeric(value).trunc() as i64;
+                    let len = i64::try_from(len).unwrap_or(i64::MAX);
+                    usize::try_from(if n < 0 { (len + n).max(0) } else { n.min(len) }).unwrap_or(0)
+                })
+            };
+            let (start, end) = (bound(args.get(1), 0), bound(args.get(2), len));
+            items[start.min(end)..end].to_vec().into()
+        }
+        _ => unreachable!("checked list operator"),
+    }
+}
+
+/// An array index; negative counts from the end, out of range is `None`.
+fn position(value: &Value, len: usize) -> Option<usize> {
+    #[allow(clippy::cast_possible_truncation)]
+    let n = numeric(value).trunc() as i64;
+    let len = i64::try_from(len).ok()?;
+    let index = if n < 0 { len + n } else { n };
+    (0..len)
+        .contains(&index)
+        .then(|| usize::try_from(index).ok())
+        .flatten()
 }

@@ -1,0 +1,34 @@
+<!doctype html>
+<!-- Dugix component library. Every preview is a real renderer export painted
+     cell by cell; this page never reimplements a widget in HTML. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Dugix Components</title>
+<link rel="stylesheet" href="./library.css">
+</head>
+<body>
+<header class="bar">
+  <span class="brand">dugix <span>/ components</span></span>
+  <span class="chip">Chart direction · real renderer output</span>
+  <div class="bar-tools">
+    <div class="seg" role="group" aria-label="Cell size">
+      <button id="size-12" data-size="12" aria-pressed="false">12px</button>
+      <button id="size-14" data-size="14" aria-pressed="true">14px</button>
+      <button id="size-16" data-size="16" aria-pressed="false">16px</button>
+    </div>
+  </div>
+</header>
+<div class="shell">
+  <aside class="side" aria-label="Components">
+    <label class="search"><input id="search" type="search" placeholder="Find a component" aria-label="Find a component"></label>
+    <button class="all" id="show-all" aria-pressed="true">All components <span id="count"></span></button>
+    <nav id="list"></nav>
+  </aside>
+  <main id="stage"></main>
+</div>
+<script type="module" src="./library.js"></script>
+</body>
+</html>

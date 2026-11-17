@@ -1,12 +1,7 @@
 use super::*;
 
 fn entry(source: &str) -> Entry {
-    Entry {
-        session: Ok(Session::new(Document::parse(source).unwrap()).unwrap()),
-        focus: 0,
-        error: String::new(),
-        scroll: 0,
-    }
+    Entry::new(Ok(Session::new(Document::parse(source).unwrap()).unwrap()))
 }
 fn lines(buffer: &Buffer) -> Vec<String> {
     (0..buffer.area.height)
@@ -41,7 +36,9 @@ fn validated_form_snapshot_and_reviewed_payload() {
         .filter(|line| line.contains("Email") || line.contains("Required"))
         .map(|line| line.trim_matches([' ', '│']).trim())
         .collect();
-    assert_eq!(fields, ["Email", "Required"]);
+    assert_eq!(fields.len(), 2);
+    assert_eq!(fields[0], "Email *");
+    assert_eq!(fields[1], "Required");
     assert!(entry.activate(1, true, true).is_none());
     assert!(entry.error.contains("Required"));
     entry

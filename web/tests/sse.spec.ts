@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { NexusApi } from "../src/api";
+import { DugixApi } from "../src/api";
 
 test("SSE decodes split UTF-8, CRLF, heartbeats and multiple data lines", async () => {
   const originalFetch = globalThis.fetch;
@@ -10,7 +10,7 @@ test("SSE decodes split UTF-8, CRLF, heartbeats and multiple data lines", async 
   };
   try {
     const events: unknown[] = [];
-    await new NexusApi("http://host.invalid", "test-token").events(new AbortController().signal, (event) => events.push(event));
+    await new DugixApi("http://host.invalid", "test-token").events(new AbortController().signal, (event) => events.push(event));
     expect(events).toEqual([{ type: "status", payload: "你好" }, { type: "stream", payload: [1, { Token: "answer" }] }]);
   } finally { globalThis.fetch = originalFetch; }
 });

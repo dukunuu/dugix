@@ -16,10 +16,8 @@ fn source(days: i32) -> String {
 
 fn entry(source: &str) -> Entry {
     Entry {
-        session: Ok(Session::new(Document::parse(source).unwrap()).unwrap()),
         focus: 1,
-        error: String::new(),
-        scroll: 0,
+        ..Entry::new(Ok(Session::new(Document::parse(source).unwrap()).unwrap()))
     }
 }
 
@@ -32,25 +30,30 @@ fn row(buffer: &Buffer, y: u16) -> String {
 #[test]
 fn stepper_renders_one_row_at_80_columns_with_dim_label_and_bound_arrows() {
     let theme = Theme::default();
-    for (days, expected, left, right) in [
-        (5, "5", theme.fg, theme.fg),
-        (1, "1", theme.fg_dim, theme.fg),
-        (7, "7", theme.fg, theme.fg_dim),
+    for (days, expected, minus, plus) in [
+        (5, "5", theme.fg_dim, theme.fg_dim),
+        (1, "1", theme.border_dim, theme.fg_dim),
+        (7, "7", theme.fg_dim, theme.border_dim),
     ] {
         let entry = entry(&source(days));
         let (buffer, hits) = entry.canvas(80, &theme, false, true);
-        assert!(row(&buffer, 4).contains(&format!("Days  ◀ {expected} ▶")));
+        assert!(row(&buffer, 4).contains(&format!("Days   − {expected} +")));
         assert_eq!(buffer[(2, 4)].fg, theme.fg_dim);
-        assert_eq!(buffer[(8, 4)].fg, left);
-        assert_eq!(buffer[(12, 4)].fg, right);
-        assert!(buffer[(10, 4)].modifier.contains(Modifier::BOLD));
+        assert_eq!(buffer[(9, 4)].fg, minus);
+        assert_eq!(buffer[(13, 4)].fg, plus);
+        assert_eq!(buffer[(11, 4)].bg, theme.control);
+        assert!(buffer[(11, 4)].modifier.contains(Modifier::BOLD));
         assert_eq!(hits[1], (Rect::new(2, 4, 76, 1), 1));
     }
     let entry = entry(&source(1));
     let (buffer, _) = entry.canvas(80, &theme, true, true);
-    assert_eq!(buffer[(8, 4)].fg, theme.fg_dim);
-    assert_eq!(buffer[(12, 4)].fg, theme.accent);
-    assert!(buffer[(10, 4)].modifier.contains(Modifier::UNDERLINED));
+    assert_eq!(buffer[(9, 4)].fg, theme.border_dim);
+    assert_eq!(buffer[(13, 4)].fg, theme.accent);
+    assert_eq!(buffer[(11, 4)].bg, theme.selection);
+    assert!(!buffer[(11, 4)].modifier.contains(Modifier::UNDERLINED));
+    assert_eq!(buffer[(2, 4)].fg, theme.accent);
+    assert!(buffer[(2, 4)].modifier.contains(Modifier::BOLD));
+    assert_eq!(buffer[(0, 4)].symbol(), "▸");
 }
 
 fn placement() -> Placement {
@@ -144,7 +147,7 @@ fn clicks_only_adjust_on_arrows_inline_and_in_the_expanded_view() {
     let mut widgets = Widgets::default();
     draw(&mut widgets, &p);
     let screen = Rect::new(0, 0, 82, 32);
-    for (offset, expected) in [(0, "5"), (8, "5"), (10, "7"), (10, "7"), (6, "5")] {
+    for (offset, expected) in [(0, "5"), (9, "5"), (11, "7"), (12, "7"), (6, "5")] {
         click(&mut widgets, offset, screen);
         assert_eq!(days(&widgets, &p), expected);
         assert_eq!(widgets.entries[&p.key()].focus, 1);
@@ -175,8 +178,8 @@ fn reserved_height_matches_drawing_even_for_narrow_steppers() {
 
 #[test]
 fn prompt_app_has_an_80_column_render_and_state_driven_progress() {
-    let source = nexus_core::interactive::INSTRUCTIONS
-        .split("```nexus-ui\n")
+    let source = dugix_core::interactive::INSTRUCTIONS
+        .split("```dugix-ui\n")
         .nth(1)
         .unwrap()
         .split("\n```")
@@ -184,25 +187,25 @@ fn prompt_app_has_an_80_column_render_and_state_driven_progress() {
         .unwrap();
     let mut entry = entry(source);
     let (buffer, _) = entry.canvas(80, &Theme::default(), false, true);
-    let card_row = |content: &str| format!("│{content:<78}│");
+    let card_row = |content: &str| format!("  {content:<78}");
     let expected = [
-        format!("╭─ Trip planner {} ⤢ ╮", "─".repeat(60)),
+        format!("  {:<75}⤢  ", "Trip planner"),
         card_row(""),
-        card_row(" Days  ◀ 5 ▶"),
+        card_row(&format!("{:<14} − 5 +", "Days")),
         card_row(""),
-        card_row(" ● Beach (2 days)"),
-        card_row(" ○ Hiking (3 days)"),
+        card_row(" ✓  Beach (2 days)"),
+        card_row("    Hiking (3 days)"),
         card_row(""),
         card_row(&format!(
-            " {:<26}{}{:>32}",
+            "{:<14}{}{}  2 / 5",
             "Planned days",
-            "▍".repeat(18),
-            "2/5"
+            "━".repeat(22),
+            "─".repeat(33)
         )),
         card_row(""),
-        card_row("  Save plan ↵ "),
+        card_row("  Save plan ↵"),
         card_row(""),
-        format!("╰{} F2 keyboard ╯", "─".repeat(65)),
+        format!("{} F2 keyboard ──", "─".repeat(65)),
     ];
     assert_eq!(buffer.area.height, 12);
     let actual: Vec<_> = (0..buffer.area.height).map(|y| row(&buffer, y)).collect();
@@ -212,6 +215,6 @@ fn prompt_app_has_an_80_column_render_and_state_driven_progress() {
     session.toggle("hiking").unwrap();
     session.step(0, true).unwrap();
     let (updated, _) = entry.canvas(80, &Theme::default(), false, true);
-    assert!(row(&updated, 2).contains("Days  ◀ 6 ▶"));
-    assert!(row(&updated, 7).contains("5/6"));
+    assert!(row(&updated, 2).contains("− 6 +"));
+    assert!(row(&updated, 7).contains("5 / 6"));
 }

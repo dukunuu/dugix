@@ -152,9 +152,8 @@ fn slug(title: &str) -> String {
     }
 }
 
-/// Write an export under `<files>/exports`, or to an explicitly supplied absolute
-/// path. Existing names get ` (2)`, ` (3)`, …; the default exports directory
-/// cannot be a symlink. Explicit user-selected parent directories are trusted.
+/// Write an export under `<files>/exports` or to an explicit absolute path; existing
+/// names get ` (2)`, ` (3)`, … and the default folder cannot be a symlink.
 pub fn write_export(output: &Export, files: &Path, path: Option<&Path>) -> Result<PathBuf> {
     let requested = if let Some(path) = path {
         ensure!(
@@ -270,7 +269,7 @@ pub(super) fn visible_nodes(slide: &super::Slide) -> Vec<&super::Node> {
     out
 }
 
-/// Plain text of Markdown-ish slide text (kept for the import round-trip tests).
+/// Plain text of Markdown-ish slide text, for the import round-trip tests.
 #[cfg(test)]
 pub(super) fn plain(text: &str) -> String {
     use super::text::{Row, classify, inline};

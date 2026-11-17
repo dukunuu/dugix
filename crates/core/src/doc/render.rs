@@ -176,21 +176,14 @@ pub fn view(doc: &Doc, path: &Path, files: &Path, blocks: &[String]) -> Result<S
             !output.is_symlink(),
             "render cache must not contain symlinks"
         );
-        if !output.is_file() {
+        if output.is_file() {
+            crate::deck::render::touch_render(&output);
+        } else {
             crate::deck::write_atomic(&output, &bytes)?;
         }
-        for entry in std::fs::read_dir(&directory)? {
-            let entry = entry?;
-            let old = entry.file_name().to_string_lossy().into_owned();
-            if old.starts_with(&format!("{key}-"))
-                && Path::new(&old)
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("png"))
-                && old != name
-            {
-                std::fs::remove_file(entry.path())?;
-            }
-        }
+        crate::deck::render::prune_superseded(&directory, |old| {
+            old.starts_with(&format!("{key}-")) && old != name
+        });
         let _ = writeln!(
             out,
             "![{label}]({})",

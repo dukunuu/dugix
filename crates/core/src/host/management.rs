@@ -1,8 +1,5 @@
-//! Synchronous management operations used by the web host.
-//!
-//! The HTTP actor owns an [`App`] and calls these functions while it is the
-//! only mutable owner.  Keeping the validation here makes the web surface
-//! obey the same space and session boundaries as the TUI.
+//! Synchronous management operations used by the web host, enforcing the same
+//! space and session boundaries as the TUI.
 
 use std::fs;
 
@@ -10,7 +7,8 @@ use anyhow::{Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::app::App;
-use crate::db::{Persona, Watch};
+use crate::db::Persona;
+use crate::jobs::Job;
 
 /// A persona row accepted by the management API.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -59,13 +57,13 @@ impl From<Persona> for PersonaInput {
     }
 }
 
-impl From<Watch> for WatchInfo {
-    fn from(value: Watch) -> Self {
+impl From<Job> for WatchInfo {
+    fn from(value: Job) -> Self {
         Self {
             id: value.id,
             space_id: value.space_id,
-            topic: value.topic,
-            interval_hours: value.interval_hours,
+            topic: value.spec.topic.unwrap_or(value.spec.prompt),
+            interval_hours: value.spec.interval_minutes / 60,
             session_id: value.session_id,
             last_run_at: value.last_run_at,
         }
@@ -98,7 +96,7 @@ pub fn swarm_state(app: &App, session_id: &str) -> Result<SwarmState> {
     Ok(SwarmState {
         session_id: session.id,
         enabled: session.swarm_mode,
-        running: app.swarm_session.as_deref() == Some(session_id),
+        running: app.swarm.session.as_deref() == Some(session_id),
         personas: personas(app, session_id)?,
     })
 }
@@ -137,13 +135,12 @@ pub fn save_swarm_roster(
         .as_ref()
         .is_some_and(|session| session.id == session_id)
     {
-        app.swarm_cache.clone_from(&personas);
+        app.swarm.cache.clone_from(&personas);
     }
     swarm_state(app, session_id)
 }
 
-/// Toggle swarm mode for a session.  The running state is intentionally left
-/// to the app's existing start/stop lifecycle.
+/// Toggle swarm mode; the running state follows the app's start/stop lifecycle.
 pub fn set_swarm_mode(
     app: &mut App,
     space_id: &str,
@@ -163,8 +160,7 @@ pub fn set_swarm_mode(
     swarm_state(app, session_id)
 }
 
-/// Start a turn for the active session. Swarm streaming is owned by App and
-/// is therefore deliberately not duplicated in the HTTP layer.
+/// Start a turn for the active session; streaming stays in App.
 pub fn start_swarm(app: &mut App, space_id: &str, session_id: &str) -> Result<SwarmState> {
     session_in_space(app, session_id, space_id)?;
     if app
@@ -181,7 +177,7 @@ pub fn start_swarm(app: &mut App, space_id: &str, session_id: &str) -> Result<Sw
 /// Stop the currently running swarm when it belongs to `session_id`.
 pub fn stop_swarm(app: &mut App, space_id: &str, session_id: &str) -> Result<SwarmState> {
     session_in_space(app, session_id, space_id)?;
-    if app.swarm_session.as_deref() == Some(session_id) {
+    if app.swarm.session.as_deref() == Some(session_id) {
         app.stop_swarm();
     }
     swarm_state(app, session_id)
@@ -265,13 +261,18 @@ pub fn install_skill(app: &mut App, space_id: &str, source: &str) -> Result<()> 
 pub fn list_watches(app: &App) -> Result<Vec<WatchInfo>> {
     Ok(app
         .db
-        .list_watches(&app.active_space.id)?
+        .list_jobs()?
         .into_iter()
+        .filter(|job| {
+            job.space_id == app.active_space.id
+                && job.spec.kind == "research"
+                && job.spec.trigger_kind == "interval"
+        })
         .map(Into::into)
         .collect())
 }
 
-/// Create a watch and point it at an existing session in the active space.
+/// Create a repeating research job and start its first run in the active space.
 pub fn create_watch(
     app: &mut App,
     space_id: &str,
@@ -288,23 +289,15 @@ pub fn create_watch(
     if !(1..=8_760).contains(&interval_hours) {
         bail!("interval must be between 1 and 8760 hours")
     }
-    let before: std::collections::HashSet<String> = app
-        .db
-        .list_watches(space_id)?
+    let before: std::collections::HashSet<String> = list_watches(app)?
         .into_iter()
         .map(|watch| watch.id)
         .collect();
-    app.create_watch(topic);
-    let watch = app
-        .db
-        .list_watches(space_id)?
+    app.repeat_research_every(topic, interval_hours * 60);
+    list_watches(app)?
         .into_iter()
         .find(|watch| !before.contains(&watch.id) && watch.topic == topic)
-        .ok_or_else(|| anyhow!("watch was not persisted"))?;
-    if watch.interval_hours != interval_hours {
-        app.db.set_watch_interval(&watch.id, interval_hours)?;
-    }
-    Ok(watch.into())
+        .ok_or_else(|| anyhow!("watch was not persisted"))
 }
 
 /// Delete a watch only when it belongs to the active space.
@@ -312,16 +305,10 @@ pub fn delete_watch(app: &mut App, space_id: &str, id: &str) -> Result<bool> {
     if space_id != app.active_space.id {
         bail!("management operations require the active space")
     }
-    if !app
-        .db
-        .list_watches(&app.active_space.id)?
-        .iter()
-        .any(|watch| watch.id == id)
-    {
+    if !list_watches(app)?.iter().any(|watch| watch.id == id) {
         return Ok(false);
     }
-    app.db.delete_watch(id)?;
-    app.watches_cache.retain(|watch| watch.id != id);
+    app.execute(crate::app::AppCommand::DeleteJob { id: id.into() })?;
     Ok(true)
 }
 
@@ -330,26 +317,19 @@ pub fn run_watch(app: &mut App, space_id: &str, id: &str) -> Result<bool> {
     if space_id != app.active_space.id {
         bail!("management operations require the active space")
     }
-    let Some(watch) = app
-        .db
-        .list_watches(&app.active_space.id)?
-        .into_iter()
-        .find(|watch| watch.id == id)
-    else {
+    let Some(watch) = app.db.list_jobs()?.into_iter().find(|job| {
+        job.id == id
+            && job.space_id == app.active_space.id
+            && job.spec.kind == "research"
+            && job.spec.trigger_kind == "interval"
+    }) else {
         return Ok(false);
     };
-    Ok(app.run_one_watch(&watch))
+    Ok(app.run_research_job(&watch))
 }
 
-/// Dispatch the management surface used by the host actor.
-///
-/// Contract: `GET /v1/swarm?session_id=...`, `PUT /v1/swarm/roster`,
-/// `POST /v1/swarm/mode|start|stop`; `GET /v1/skills`,
-/// `GET /v1/skills/:name?detail=1`, `POST /v1/skills/arm|install`,
-/// `DELETE /v1/skills/:name`; `GET /v1/watches`, `POST /v1/watches`,
-/// `DELETE /v1/watches/:id`, and `POST /v1/watches/:id/run`.
-/// Bodies are JSON and responses are JSON values.  Session and watch
-/// mutations are always checked against the active space.
+/// Dispatch the management surface used by the host actor; session and watch
+/// mutations are checked against the active space.
 pub fn dispatch(
     app: &mut App,
     method: &str,
@@ -521,11 +501,15 @@ fn dispatch_watch_item(
 }
 
 #[cfg(test)]
+#[path = "research_jobs_tests.rs"]
+mod research_jobs_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     fn test_app() -> App {
-        let root = std::env::temp_dir().join(format!("nexus-management-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-management-{}", uuid::Uuid::new_v4()));
         App::new(
             crate::db::Db::open_in_memory().expect("db"),
             None,

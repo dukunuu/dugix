@@ -109,9 +109,9 @@ impl JobSpec {
         ensure!(
             matches!(
                 self.trigger_kind.as_str(),
-                "interval" | "once" | "until_done"
+                "manual" | "interval" | "once" | "until_done"
             ),
-            "trigger must be interval, once or until_done"
+            "trigger must be manual, interval, once or until_done"
         );
         ensure!(self.interval_minutes > 0, "interval must be positive");
         if self.trigger_kind == "once" {
@@ -172,8 +172,8 @@ fn parse_time(value: &str) -> Option<DateTime<Utc>> {
         .map(|at| at.with_timezone(&Utc))
 }
 
-/// Pure scheduling: only enabled jobs belonging to `device_id` can be due.
-/// Until-done is a single bounded run, rather than an unbounded interval.
+/// Only enabled jobs belonging to `device_id` can be due; until-done is a single
+/// bounded run, not an unbounded interval. Manual jobs are only run on request.
 pub fn due(jobs: &[Job], now: DateTime<Utc>, device_id: &str) -> Vec<Job> {
     jobs.iter()
         .filter(|job| {
@@ -205,5 +205,7 @@ pub fn due(jobs: &[Job], now: DateTime<Utc>, device_id: &str) -> Vec<Job> {
 
 #[cfg(test)]
 mod judging_tests;
+#[cfg(test)]
+mod research_job_tests;
 #[cfg(test)]
 mod tests;

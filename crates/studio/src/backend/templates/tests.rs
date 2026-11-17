@@ -24,7 +24,7 @@ fn send(backend: &mut Backend, command: serde_json::Value) -> Event {
 #[test]
 fn chooser_path_and_drop_bytes_import_offer_apply_and_export_both_kinds() {
     let temp =
-        Temp(std::env::temp_dir().join(format!("nexus-studio-template-{}", uuid::Uuid::new_v4())));
+        Temp(std::env::temp_dir().join(format!("dugix-studio-template-{}", uuid::Uuid::new_v4())));
     fs::create_dir_all(&temp.0).unwrap();
     let mut backend = Backend::start(None, &temp.0.join("files"), &temp.0.join("data")).unwrap();
     let source = temp.0.join("brand.potx");
@@ -71,7 +71,7 @@ fn chooser_path_and_drop_bytes_import_offer_apply_and_export_both_kinds() {
         ),
         Event::Doc { .. }
     ));
-    let saved = nexus_core::doc::Doc::check(&fs::read_to_string(&backend.path).unwrap()).unwrap();
+    let saved = dugix_core::doc::Doc::check(&fs::read_to_string(&backend.path).unwrap()).unwrap();
     assert_eq!(saved.design.as_deref(), Some("word"));
     let Event::Designs { available } = send(&mut backend, json!({"command":"Designs"})) else {
         panic!("designs");

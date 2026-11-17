@@ -1,7 +1,5 @@
-//! Tiny always-on static file server for model-created apps. Serves
-//! `GET /<space>/<app>/<path…>` from `spaces/<space>/apps/<app>/<path…>`,
-//! localhost only, GET/HEAD only. Hand-rolled on tokio — no framework dep
-//! for ~150 lines of static serving.
+//! Tiny always-on static file server for model-created apps: localhost only,
+//! `GET /<space>/<app>/<path…>` from `spaces/<space>/apps/<app>/<path…>`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -13,16 +11,11 @@ use tokio::net::TcpListener;
 /// Preferred fixed port so links stay stable across restarts.
 const PORT: u16 = 8642;
 
-// ---------------------------------------------------------------------------
-// App registry — maps UUID ↔ (space, name), persisted to spaces_root/_apps.json
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AppEntry {
     pub space: String,
     pub name: String,
-    /// Subdirectory the app's files are served from (e.g. "dist" after a
-    /// framework build). None = served from the app root (classic apps).
+    /// Subdirectory the app's files are served from (e.g. "dist" after a framework build).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub served_from: Option<String>,
 }
@@ -40,8 +33,7 @@ impl AppRegistry {
             Ok(json) => serde_json::from_str(&json).unwrap_or_default(),
             Err(_) => HashMap::new(),
         };
-        // Scan for orphan apps (app dirs not yet in the registry) and assign
-        // UUIDs so old space-name URLs keep working.
+        // Orphan app dirs get UUIDs at load so old space-name URLs keep working.
         if let Ok(rd) = std::fs::read_dir(spaces_root) {
             for entry in rd.filter_map(std::result::Result::ok) {
                 let space_path = entry.path();
@@ -120,9 +112,7 @@ impl AppRegistry {
             .map(|(u, _)| u.clone())
     }
 
-    /// Remove a single registered app capability after its directory is
-    /// deleted. Public URLs are opaque capabilities and must not outlive the
-    /// app they reference.
+    /// Public URLs are opaque capabilities and must not outlive the app they reference.
     pub fn remove(&self, space: &str, name: &str) {
         let mut map = self.inner.write().unwrap();
         map.retain(|_, entry| !(entry.space == space && entry.name == name));
@@ -130,8 +120,6 @@ impl AppRegistry {
         let _ = self.save();
     }
 
-    /// Record that an app's served files live under `subdir` (e.g. "dist")
-    /// after a successful framework build.
     pub fn set_served_from(&self, uuid: &str, subdir: &str) {
         {
             let mut map = self.inner.write().unwrap();
@@ -162,10 +150,6 @@ impl AppRegistry {
     }
 }
 
-// ---------------------------------------------------------------------------
-// App server
-// ---------------------------------------------------------------------------
-
 #[derive(Clone)]
 pub struct AppServer {
     port: u16,
@@ -174,8 +158,8 @@ pub struct AppServer {
 }
 
 impl AppServer {
-    /// Bind (preferring 8642, falling back to an ephemeral port) and start
-    /// serving `spaces_root` in a background task. None if even `:0` fails.
+    /// Bind (preferring 8642, else an ephemeral port) and serve `spaces_root` in a
+    /// background task; `None` if even `:0` fails.
     pub async fn start(spaces_root: PathBuf) -> Option<Self> {
         let listener = match TcpListener::bind(("127.0.0.1", PORT)).await {
             Ok(l) => l,
@@ -207,8 +191,8 @@ impl AppServer {
         self.port
     }
 
-    /// Set the externally reachable base URL used in generated app links.
-    /// `None` restores the local URL. The value is trimmed of trailing `/`.
+    /// Set the externally reachable base URL used in generated app links; `None`
+    /// restores the local URL.
     pub fn set_public_base(&mut self, base: Option<String>) {
         self.public_base = base.map(|value| {
             value
@@ -219,9 +203,8 @@ impl AppServer {
         });
     }
 
-    /// The app URL for a registry UUID. A host/tunnel base uses the public
-    /// capability `/apps/<uuid>/` route; local links keep the historical
-    /// direct app-server shape.
+    /// The app URL for a registry UUID: the public capability route under a host
+    /// base, else the local app server.
     pub fn app_url(&self, uuid: &str) -> String {
         self.public_base.as_ref().map_or_else(
             || format!("http://127.0.0.1:{}/{}/", self.port(), uuid),
@@ -229,7 +212,6 @@ impl AppServer {
         )
     }
 
-    /// The public base currently used in generated links, if any.
     pub fn public_base(&self) -> Option<&str> {
         self.public_base.as_deref()
     }
@@ -333,9 +315,8 @@ async fn handle(
     }
 }
 
-/// Map a request path to a file under `spaces_root`. The first path segment
-/// is either a UUID (looked up in the registry) or a space name (with the
-/// second segment as the app name).
+/// The first path segment is either a registry UUID or a space name with the app
+/// name second.
 fn resolve(spaces_root: &Path, registry: &AppRegistry, raw_path: &str) -> Option<PathBuf> {
     let path = raw_path.split(['?', '#']).next().unwrap_or("");
     let decoded = percent_decode(path);
@@ -350,7 +331,6 @@ fn resolve(spaces_root: &Path, registry: &AppRegistry, raw_path: &str) -> Option
         }
     }
 
-    // API route: /<uuid>/_api/...
     if segs.len() >= 2 && segs[1] == "_api" {
         let entry = registry.lookup(segs[0])?;
         let app_dir = spaces_root
@@ -379,9 +359,8 @@ fn resolve(spaces_root: &Path, registry: &AppRegistry, raw_path: &str) -> Option
     };
     let mut file = spaces_root.join(&space).join("apps").join(&app);
     if let Some(sub) = served_from {
-        // User data written to the app root by copy_images (_images/) and
-        // the upload API (_uploads/) stays there even when the app is
-        // served from dist/ after a framework build.
+        // copy_images (_images/) and upload (_uploads/) data stays in the app root
+        // even when the app is served from dist/.
         let root_data = segs
             .get(path_start)
             .is_some_and(|s| matches!(*s, "_images" | "_uploads"));
@@ -395,8 +374,8 @@ fn resolve(spaces_root: &Path, registry: &AppRegistry, raw_path: &str) -> Option
     if file.is_dir() || path_start >= segs.len() {
         file.push("index.html");
     }
-    // Backstop against traversal tricks the segment filter missed: the
-    // canonical path must stay under the canonical spaces root.
+    // Backstop against traversal tricks the segment filter missed: the canonical
+    // path must stay under the canonical spaces root.
     let canon = file.canonicalize().ok()?;
     let root = spaces_root.canonicalize().ok()?;
     canon.starts_with(&root).then_some(canon)
@@ -433,9 +412,8 @@ async fn respond(
     stream.shutdown().await
 }
 
-/// The public host route for an app UUID under a base. Query and fragment
-/// components are intentionally discarded: host bearer credentials never
-/// belong in generated app URLs.
+/// Query and fragment are discarded: host bearer credentials never belong in
+/// generated app URLs.
 pub(crate) fn public_app_url(base: &str, uuid: &str) -> String {
     let base = base
         .split_once(['?', '#'])
@@ -587,10 +565,8 @@ async fn handle_upload(
         return respond(stream, 400, "text/plain", b"empty boundary", false).await;
     }
 
-    // Scanned as bytes, not as a string: the part payload is arbitrary binary
-    // (images, PDFs, zips), so decoding the whole body as UTF-8 first would
-    // reject every non-text upload. Only the part headers are decoded, and
-    // those are ASCII by the multipart grammar.
+    // Scanned as bytes: part payloads are arbitrary binary (images, PDFs, zips), so
+    // decoding the body as UTF-8 first would reject every non-text upload.
     let part_header = format!("--{boundary}\r\n").into_bytes();
     let part_end = format!("\r\n--{boundary}").into_bytes();
 
@@ -667,7 +643,6 @@ async fn handle_upload(
     respond(stream, 200, "application/json", body_out.as_bytes(), false).await
 }
 
-/// First index of `needle` in `haystack` (byte-exact, no UTF-8 assumptions).
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || haystack.len() < needle.len() {
         return None;
@@ -701,8 +676,7 @@ pub(crate) fn mime_for(path: &Path) -> &'static str {
     }
 }
 
-/// Decode %XX escapes (space names may contain spaces). Invalid escapes pass
-/// through literally.
+/// Invalid escapes pass through literally.
 fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -722,7 +696,6 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Encode a path segment for a URL (space names may contain spaces).
 #[cfg(test)]
 pub(crate) fn encode(seg: &str) -> String {
     seg.bytes()
@@ -740,7 +713,7 @@ mod tests {
     use super::*;
 
     fn setup() -> PathBuf {
-        let tmp = std::env::temp_dir().join(format!("nexus-appserver-{}", uuid::Uuid::new_v4()));
+        let tmp = std::env::temp_dir().join(format!("dugix-appserver-{}", uuid::Uuid::new_v4()));
         let app = tmp.join("default").join("apps").join("deck");
         std::fs::create_dir_all(&app).unwrap();
         std::fs::write(app.join("index.html"), "<h1>slides</h1>").unwrap();
@@ -754,12 +727,10 @@ mod tests {
         let reg = AppRegistry::load(root);
         let f = resolve(root, &reg, "/default/deck/style.css").unwrap();
         assert!(f.ends_with("default/apps/deck/style.css"));
-        // dir root → index.html
         let f = resolve(root, &reg, "/default/deck/").unwrap();
         assert!(f.ends_with("deck/index.html"));
         let f = resolve(root, &reg, "/default/deck").unwrap();
         assert!(f.ends_with("deck/index.html"));
-        // traversal + malformed rejected
         assert!(resolve(root, &reg, "/default/deck/../../secret").is_none());
         assert!(resolve(root, &reg, "/default/%2e%2e/apps/deck/index.html").is_none());
         assert!(resolve(root, &reg, "/default").is_none());
@@ -785,13 +756,10 @@ mod tests {
     #[test]
     fn resolve_uses_served_from_after_build() {
         let root = &setup();
-        // Simulate a built app: the real files live in dist/.
         let dist = root.join("default/apps/deck/dist");
         std::fs::create_dir_all(&dist).unwrap();
         std::fs::write(dist.join("index.html"), "<h1>built</h1>").unwrap();
         let reg = AppRegistry::load(root);
-        // Use the entry the load-time orphan scan created — assign() would
-        // add a second UUID for the same app (test-only artifact).
         let uuid = reg.resolve("default", "deck").unwrap();
         reg.set_served_from(&uuid, "dist");
 
@@ -799,12 +767,8 @@ mod tests {
         assert!(f.ends_with("deck/dist/index.html"), "{f:?}");
         let f = resolve(root, &reg, "/default/deck/").unwrap();
         assert!(f.ends_with("deck/dist/index.html"), "{f:?}");
-        // Source files outside dist aren't served.
         assert!(resolve(root, &reg, "/default/deck/style.css").is_none());
-        // The KV API still resolves to the app root.
         assert!(resolve(root, &reg, &format!("/{uuid}/_api/")).is_some());
-        // copy_images (_images/) and upload (_uploads/) user data stay in
-        // the app root and keep resolving in both URL forms.
         let images = root.join("default/apps/deck/_images");
         std::fs::create_dir_all(&images).unwrap();
         std::fs::write(images.join("pic.png"), "x").unwrap();
@@ -827,7 +791,6 @@ mod tests {
             reloaded.lookup(&uuid).unwrap().served_from.as_deref(),
             Some("dist")
         );
-        // Classic apps round-trip with served_from unset.
         let classic = reg.assign("default", "plain");
         let reloaded = AppRegistry::load(root);
         assert_eq!(reloaded.lookup(&classic).unwrap().served_from, None);
@@ -839,7 +802,6 @@ mod tests {
         let reg = AppRegistry::load(root);
         let uuid = reg.assign("default", "deck");
 
-        // API route returns the app directory path
         let f = resolve(root, &reg, &format!("/{uuid}/_api/"));
         assert!(f.is_some());
     }
@@ -959,7 +921,6 @@ mod tests {
         let base = format!("http://127.0.0.1:{}", srv.port());
         let c = reqwest::Client::new();
 
-        // PUT
         let r = c
             .put(format!("{base}/{uuid}/_api/kv/hello"))
             .body("world")
@@ -968,7 +929,6 @@ mod tests {
             .unwrap();
         assert_eq!(r.status(), 200);
 
-        // GET
         let r = c
             .get(format!("{base}/{uuid}/_api/kv/hello"))
             .send()
@@ -977,7 +937,6 @@ mod tests {
         assert_eq!(r.status(), 200);
         assert_eq!(r.text().await.unwrap(), "world");
 
-        // DELETE
         let r = c
             .delete(format!("{base}/{uuid}/_api/kv/hello"))
             .send()
@@ -985,7 +944,6 @@ mod tests {
             .unwrap();
         assert_eq!(r.status(), 200);
 
-        // GET after delete = 404
         let r = c
             .get(format!("{base}/{uuid}/_api/kv/hello"))
             .send()
@@ -1071,8 +1029,6 @@ mod tests {
         let c = reqwest::Client::new();
         let base = format!("http://127.0.0.1:{}", srv.port());
 
-        // A PNG header plus bytes that are not valid UTF-8 — the shape of
-        // every real upload an app would make.
         let file: Vec<u8> = vec![
             0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xfe, 0x00, 0x80, 0xc3, 0x28,
         ];

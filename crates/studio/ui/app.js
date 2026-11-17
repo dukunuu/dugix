@@ -18,7 +18,7 @@ const state = { deck:null, revision:'', hashes:{}, images:{}, slideId:null, sele
 // One right sidebar: properties, comments, history or design. The two older
 // flags read and write it, so the panel modules keep asking the same question.
 for (const tab of ['properties', 'comments']) Object.defineProperty(state, tab, { get:() => state.side === tab, set:on => { if (on) state.side = tab; else if (state.side === tab) state.side = null; } });
-try { state.leftHidden = localStorage.getItem('nexus-deck-left') === 'hidden'; } catch { state.leftHidden = false; }
+try { state.leftHidden = localStorage.getItem('dugix-deck-left') === 'hidden'; } catch { state.leftHidden = false; }
 const queue = []; let pending = null, toastTimer, focusTimer, lastFocus = '', flashTimer;
 function applyTheme(colors) {
   const roles = { bg:'bg', surface:'bg', raised:'raised', control:'control', hairline:'border_dim', text:'fg', muted:'fg_dim', faint:'fg_dim', accent:'accent', accent2:'accent2', 'accent-soft':'selection', success:'success', warning:'warning', danger:'error', canvas:'bg', 'on-accent':'bg', code:'raised', present:'bg' };
@@ -48,7 +48,7 @@ function pump() {
 }
 function command(build, complete) { queue.push({ build:typeof build === 'function' ? build : () => build, complete, barrier:typeof build === 'function' || !['Focus','ListFonts','Load'].includes(build.command) }); pump(); }
 // The library sends through whichever mode is live (doc mode has its own queue).
-const library = libraryController({ command:(cmd, complete) => (docUi ? docUi.api.command(cmd, complete) : command(cmd, complete)), toast });
+const library = libraryController({ command:(cmd, complete) => ((docUi || sheetUi) ? (docUi || sheetUi).api.command(cmd, complete) : command(cmd, complete)), toast });
 let gesture, authoritative;
 function rollback() {
   gesture = null; state.scrubbing = false;
@@ -129,7 +129,7 @@ function renderAncillary() {
 }
 function renderLabels() {
   $('#deck-title-label').textContent = state.deck.title;
-  $('#link-status').title = state.linked ? 'Comments go to your nexus conversation' : 'Not linked to a conversation — open it from nexus with /studio';
+  $('#link-status').title = state.linked ? 'Comments go to your dugix conversation' : 'Not linked to a conversation — open it from dugix with /studio';
   const saving = Boolean(pending?.ops || queue.some(item => item.ops));
   $('#dirty').textContent = saving ? 'Saving…' : 'Saved'; $('#save').classList.toggle('busy', saving);
   renderStatusDot(saving);
@@ -149,7 +149,7 @@ function render() {
   for (const mode of ['edit','comment']) $(`#${mode}-mode`).setAttribute('aria-pressed', String(state.mode === mode));
   for (const node of document.querySelectorAll('#canvas .block')) node.classList.toggle('external-flash', state.flash.includes(node.dataset.id));
   feedback.renderLink();
-  $('#link-status').title = state.linked ? 'Comments go to your nexus conversation' : 'Not linked to a conversation — open it from nexus with /studio';
+  $('#link-status').title = state.linked ? 'Comments go to your dugix conversation' : 'Not linked to a conversation — open it from dugix with /studio';
   for (const tab of ['design','animate']) $(`#tab-${tab}`).setAttribute('aria-selected',String(state.panelTab === tab));
   feedback.renderPins(); animationPanel.badges(); focusChanged(); playback.refresh();
   renderSidebar();
@@ -227,25 +227,46 @@ function handleEvent(event, reply) {
   }
   finished?.complete?.(event); pump();
 }
-// Doc mode lives in ./doc/doc.js, loaded when the backend opens a doc. Its
-// events go there; a deck event brings the deck UI back.
-const DOC_EVENTS = new Set(['Doc', 'DocFeedback', 'DocPreview', 'DocFocus', 'Pages']);
+// Doc mode lives in ./doc/doc.js and sheet mode in ./sheet/sheet.js, each loaded when the
+// backend opens a file of that kind. Their events go there; a deck event brings the deck UI back.
+const DOC_EVENTS = new Set(['Doc', 'DocFeedback', 'DocPreview', 'DocFocus', 'Pages', 'Highlights', 'DocSource']);
+const SHEET_EVENTS = new Set(['Sheet', 'SheetValues', 'SheetFeedback', 'SheetFocus']);
 const SHARED_EVENTS = new Set(['Asset', 'Exported', 'Saved', 'Revealed', 'Error', 'Theme', 'Designs', 'TemplateImported', 'Library', 'Idle', 'History', 'HistoryPreview']);
-let docUi = null, docQueue = Promise.resolve();
+let docUi = null, sheetUi = null, docQueue = Promise.resolve();
+/** Run mode work in order. A failed step is reported and the queue goes on: a rejected
+ * chain would silently drop every later event, the library's included. */
+function enqueue(job) {
+  docQueue = docQueue.then(job).catch(error => {
+    console.warn(error);
+    const message = `Studio hit an error: ${error?.message || error}`;
+    // The open mode shows it the way it shows a backend error; the deck's status bar is hidden there.
+    try { const ui = docUi || sheetUi; if (ui) ui.handle({ event: 'Error', message }, false); else toast(message); } catch { toast(message); }
+  });
+}
+function leaveDoc() { docUi?.unmount(); docUi = null; document.body.classList.remove('doc-mode'); }
+function leaveSheet() { sheetUi?.unmount(); sheetUi = null; document.body.classList.remove('sheet-mode'); }
 function route(event, reply) {
-  if (docUi && event.event === 'Deck') {
-    docQueue = docQueue.then(() => { docUi?.unmount(); docUi = null; document.body.classList.remove('doc-mode'); handleEvent(event, reply); });
+  if ((docUi || sheetUi) && event.event === 'Deck') {
+    enqueue(() => { leaveDoc(); leaveSheet(); handleEvent(event, reply); });
     return;
   }
-  if (DOC_EVENTS.has(event.event) || (docUi && SHARED_EVENTS.has(event.event))) {
+  const isDoc = DOC_EVENTS.has(event.event), isSheet = SHEET_EVENTS.has(event.event);
+  if (isDoc || isSheet || ((docUi || sheetUi) && SHARED_EVENTS.has(event.event))) {
     if (reply) pending = null;
-    docQueue = docQueue.then(async () => {
-      if (!docUi) {
+    enqueue(async () => {
+      if (isDoc && sheetUi) leaveSheet();
+      if (isSheet && docUi) leaveDoc();
+      if (isDoc && !docUi) {
         const module = await import('./doc/doc.js');
         docUi = module.mount({ applyTheme, ask, library });
         document.body.classList.add('doc-mode');
       }
-      docUi.handle(event, reply);
+      if (isSheet && !sheetUi) {
+        const module = await import('./sheet/sheet.js');
+        sheetUi = module.mount({ applyTheme, ask, library });
+        document.body.classList.add('sheet-mode');
+      }
+      (docUi || sheetUi).handle(event, reply);
     });
     return;
   }
@@ -292,7 +313,7 @@ $('#more-properties').onclick = () => { moreMenu(false); openSide('properties');
 function toggleLeft() {
   if (matchMedia('(max-width: 899px)').matches) { $('#strip-pane').classList.toggle('open'); return; }
   state.leftHidden = !state.leftHidden;
-  try { localStorage.setItem('nexus-deck-left', state.leftHidden ? 'hidden' : ''); } catch { /* storage may be unavailable */ }
+  try { localStorage.setItem('dugix-deck-left', state.leftHidden ? 'hidden' : ''); } catch { /* storage may be unavailable */ }
   renderSidebar(); applyViewport();
 }
 $('#toggle-left').onclick = toggleLeft;
@@ -343,7 +364,7 @@ function renderHistory() {
   let day = '';
   for (const v of state.versions) {
     const d = dayOf(v.at); if (d !== day) { day = d; pane.append(element('div', 'side-eyebrow', d)); }
-    pane.append(versionRow(`${clockOf(v.at)} · ${v.who === 'model' ? 'nexus' : 'You'}`, v.summary, v.who === 'model' ? 'model' : '', state.preview?.history === v.id, () => command({ command:'HistoryPreview', id:v.id })));
+    pane.append(versionRow(`${clockOf(v.at)} · ${v.who === 'model' ? 'dugix' : 'You'}`, v.summary, v.who === 'model' ? 'model' : '', state.preview?.history === v.id, () => command({ command:'HistoryPreview', id:v.id })));
   }
   pane.append(element('p', 'side-note', 'Each version is the deck before that edit. Restoring makes a new version, so it can be undone too.'));
 }
@@ -352,7 +373,7 @@ function showVersion(versionId, deck) {
   const slideId = deck.slides.some(s => s.id === state.slideId) ? state.slideId : deck.slides[0]?.id;
   state.preview = { deck, slideId, before:false, history:versionId }; state.previewTarget = null; state.slideId = slideId || state.slideId;
   $('#preview-bar').hidden = false;
-  $('#preview-bar strong').textContent = version ? `Before ${version.who === 'model' ? 'nexus\u2019s' : 'your'} edit at ${clockOf(version.at)}` : 'An earlier version';
+  $('#preview-bar strong').textContent = version ? `Before ${version.who === 'model' ? 'dugix\u2019s' : 'your'} edit at ${clockOf(version.at)}` : 'An earlier version';
   $('#preview-toggle').textContent = 'That version · B for now';
   $('#preview-apply').textContent = 'Restore this version';
   $('#preview-apply').onclick = () => { feedback.clearPreview(); command({ command:'HistoryRestore', id:versionId }, event => { if (event.event !== 'Error') toast('Restored that version', null, [['Undo', () => command({ command:'Undo' })]]); }); };
@@ -434,6 +455,7 @@ pathDialog.addEventListener('close', () => { if (pathDialog.returnValue === 'ok'
 $('#rename-deck').onclick = () => { deckMenu(false); ask('Rename deck', 'Title', 'Give this project a name.', state.deck.title, value => { const title = value.trim(); if (title) command(() => ({ command:'Save', deck:{ ...state.deck, title } })); }); };
 $('#open-deck').onclick = () => { deckMenu(false); command({ command:'OpenDialog' }); };
 $('#new-doc').onclick = () => { deckMenu(false); ask('New doc', 'Title', 'Created in your active space’s files/docs folder.', 'Untitled', title => command({ command:'NewDoc', title })); };
+$('#new-sheet').onclick = () => { deckMenu(false); ask('New sheet', 'Title', 'Created in your active space’s files/sheets folder.', 'Untitled', title => command({ command:'NewSheet', title })); };
 $('#save-copy').onclick = () => { deckMenu(false); command({ command:'SaveCopy' }); };
 $('#open-library').onclick = () => library.show();
 $('#new-deck').onclick = () => { deckMenu(false); ask('New deck', 'Title', 'Created in your active space’s files/decks folder.', 'Untitled', title => command({ command:'NewDeck', title })); };
@@ -448,12 +470,12 @@ $('#add-image').onclick = () => { const slide = api.slide(), one = state.selecte
 $('#speaker-notes').onchange = event => { const slide = api.slide(), notes = event.target.value; if (slide) apply(() => [{ op:'set_notes', slide:slide.id, notes }]); };
 let plainFile = false;
 // "Save to exports/ without asking": the quick export, remembered on this device.
-const quickExport = () => { try { return localStorage.getItem('nexus-quick-export') === '1'; } catch { return false; } };
+const quickExport = () => { try { return localStorage.getItem('dugix-quick-export') === '1'; } catch { return false; } };
 const exportCommand = format => ({ command:quickExport() ? 'Export' : 'ExportAs', format, ...(plainFile ? { template:'none' } : {}) });
 $('#add-template').onclick = () => chooseTemplate(command);
-templateDrop(command, toast, undefined, () => !docUi);
+templateDrop(command, toast, undefined, () => !docUi && !sheetUi);
 $('#export-template').onclick = () => { plainFile = !plainFile; $('#export-template').setAttribute('aria-checked', String(state.template && !plainFile)); };
-$('#export-quick').onclick = () => { try { localStorage.setItem('nexus-quick-export', quickExport() ? '0' : '1'); } catch { /* storage may be unavailable */ } syncQuick(); };
+$('#export-quick').onclick = () => { try { localStorage.setItem('dugix-quick-export', quickExport() ? '0' : '1'); } catch { /* storage may be unavailable */ } syncQuick(); };
 function syncQuick() { $('#export-quick').setAttribute('aria-checked', String(quickExport())); }
 syncQuick();
 function exportMenu(open, focus = false) {
@@ -476,7 +498,7 @@ document.addEventListener('keydown', event => {
   } else if (event.key === 'Tab') exportMenu(false);
 });
 document.addEventListener('keydown', event => {
-  if (docUi) return; // doc mode has its own keys
+  if (docUi || sheetUi) return; // doc and sheet modes have their own keys
   if (playback.key(event)) return;
   const key = event.key.toLowerCase(), mod = event.metaKey || event.ctrlKey, editingField = event.target.closest('input,textarea,select,[contenteditable]');
   if (mod && key === '\\') { event.preventDefault(); if (event.shiftKey) toggleLeft(); else properties(); return; }

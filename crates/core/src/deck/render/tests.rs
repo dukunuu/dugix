@@ -222,6 +222,71 @@ fn narrower_boxes_wrap_into_more_lines_using_real_glyph_widths() {
 }
 
 #[test]
+fn justified_deck_text_ends_flush_except_the_last_line() {
+    if !has_fonts() {
+        return;
+    }
+    let theme = Theme::default();
+    let mut text = Typesetter::new(&theme, None);
+    let family = font_stack(&theme, "body");
+    let set = |align| Setting {
+        family: &family,
+        weight: 400,
+        italic: false,
+        em: 30.0,
+        line_height: 1.3,
+        align,
+        spacing: 0.0,
+        transform: Transform::None,
+    };
+    let runs = inline(
+        "Justified slide text spreads the slack of each full line over its gaps so both edges line up.",
+    );
+    let width = 500.0;
+    let lines = text.wrap(&runs, &set(Align::Justify), width);
+    assert!(lines.len() > 2);
+    // (y, x) of every drawn word, grouped by line.
+    let words = |svg: &str| {
+        let mut rows: Vec<(String, Vec<f64>)> = Vec::new();
+        for tag in svg.split("<text ").skip(1) {
+            let attr = |name: &str| {
+                let start = tag.find(&format!("{name}=\"")).unwrap() + name.len() + 2;
+                tag[start..start + tag[start..].find('"').unwrap()].to_string()
+            };
+            let (x, y) = (attr("x").parse::<f64>().unwrap(), attr("y"));
+            match rows.last_mut() {
+                Some((row, xs)) if *row == y => xs.push(x),
+                _ => rows.push((y, vec![x])),
+            }
+        }
+        rows
+    };
+    let draw = |text: &mut Typesetter<'_>, align| {
+        let mut svg = String::new();
+        text.paragraph(&mut svg, &runs, (0.0, 0.0, width), &set(align), "#000");
+        words(&svg)
+    };
+    let (left, justified) = (
+        draw(&mut text, Align::Left),
+        draw(&mut text, Align::Justify),
+    );
+    assert_eq!(left.len(), lines.len());
+    for (index, ((_, a), (_, b))) in left.iter().zip(&justified).enumerate() {
+        assert!(
+            a[0].abs() < 1e-9 && b[0].abs() < 1e-9,
+            "line {index} starts flush left"
+        );
+        let last = lines[index].last().unwrap();
+        let end = b.last().unwrap() + last.fit;
+        if index + 1 < lines.len() {
+            assert!((end - width).abs() < 0.01, "line {index} ends at {end}");
+        } else {
+            assert_eq!(a, b, "the last line stays ragged");
+        }
+    }
+}
+
+#[test]
 fn overflow_stays_visible_below_a_fixed_box() {
     if !has_fonts() {
         return;
@@ -297,14 +362,14 @@ fn imported_deck_fonts_are_registered_under_their_family() {
     let usvg::fontdb::Source::File(source) = &face.source else {
         return;
     };
-    let root = std::env::temp_dir().join(format!("nexus-fonts-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-fonts-{}", uuid::Uuid::new_v4()));
     let fonts = root.join("assets/fonts");
     std::fs::create_dir_all(&fonts).unwrap();
     let name = format!("brand.{}", source.extension().unwrap().to_string_lossy());
     std::fs::copy(source, fonts.join(&name)).unwrap();
     let mut deck = Deck::titled("Fonts");
     deck.theme.font_files = vec![crate::deck::FontFile {
-        family: "Nexus Test Brand".into(),
+        family: "Dugix Test Brand".into(),
         file: format!("assets/fonts/{name}"),
         weight: 400,
         italic: false,
@@ -314,12 +379,12 @@ fn imported_deck_fonts_are_registered_under_their_family() {
     assert!(
         imported
             .faces()
-            .any(|f| f.families.iter().any(|(n, _)| n == "Nexus Test Brand"))
+            .any(|f| f.families.iter().any(|(n, _)| n == "Dugix Test Brand"))
     );
     assert!(
         !system_fonts()
             .faces()
-            .any(|f| f.families.iter().any(|(n, _)| n == "Nexus Test Brand")),
+            .any(|f| f.families.iter().any(|(n, _)| n == "Dugix Test Brand")),
         "the shared system database is left alone"
     );
     // And a file outside assets, or an unreadable one, is skipped.
@@ -328,13 +393,13 @@ fn imported_deck_fonts_are_registered_under_their_family() {
     assert!(
         !skipped
             .faces()
-            .any(|f| f.families.iter().any(|(n, _)| n == "Nexus Test Brand"))
+            .any(|f| f.families.iter().any(|(n, _)| n == "Dugix Test Brand"))
     );
     // Rendering with the imported family draws something.
     deck.theme.font_files[0].file = format!("assets/fonts/{name}");
     deck.theme
         .fonts
-        .insert("body".into(), "Nexus Test Brand".into());
+        .insert("body".into(), "Dugix Test Brand".into());
     let png = render_slide_at(&deck, "s1", 800, Some(&root.join("assets"))).unwrap();
     assert!(inked(
         &rgba(&png),
@@ -350,8 +415,8 @@ fn imported_deck_fonts_are_registered_under_their_family() {
 }
 
 #[test]
-fn cache_names_by_revision_prunes_old_ones_and_keeps_snapshots() {
-    let root = std::env::temp_dir().join(format!("nexus-render-{}", uuid::Uuid::new_v4()));
+fn cache_names_by_revision_prunes_stale_old_ones_and_keeps_snapshots() {
+    let root = std::env::temp_dir().join(format!("dugix-render-{}", uuid::Uuid::new_v4()));
     let files = root.join("files");
     let path = files.join("decks/a.deck.json");
     let mut deck = Deck::classic_fixture("Cache");
@@ -366,7 +431,25 @@ fn cache_names_by_revision_prunes_old_ones_and_keeps_snapshots() {
     deck.title = "Changed".into();
     let second = render_cached(&deck, &path, &files, &["s1".into()], false).unwrap();
     assert_ne!(first, second);
-    assert!(!files.join(&first).exists(), "old revision is pruned");
+    assert!(
+        files.join(&first).is_file(),
+        "a superseded render stays while conversations may still replay it"
+    );
+    assert!(files.join(&second).is_file());
+    let directory = files.join(&second).parent().unwrap().to_path_buf();
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(3 * 24 * 60 * 60);
+    let second_name = Path::new(&second)
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    prune_superseded_at(&directory, later, |old| {
+        !old.starts_with("snap-") && old != second_name
+    });
+    assert!(
+        !files.join(&first).exists(),
+        "a stale old revision is pruned"
+    );
     assert!(files.join(&second).is_file());
     assert!(files.join(&snapshot).is_file(), "snapshots are durable");
     let sheet = render_cached(&deck, &path, &files, &["s1".into(), "s2".into()], true).unwrap();
@@ -374,12 +457,12 @@ fn cache_names_by_revision_prunes_old_ones_and_keeps_snapshots() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-/// `NEXUS_RENDER_OUT=<dir> cargo test -p nexus-chat-core write_fixture_renders`
+/// `DUGIX_RENDER_OUT=<dir> cargo test -p dugix-core write_fixture_renders`
 /// writes the migrated classic deck and an auto-layout deck, to compare with
 /// the HTML renderer. Does nothing unless the variable is set.
 #[test]
 fn write_fixture_renders() {
-    let Some(out) = std::env::var_os("NEXUS_RENDER_OUT") else {
+    let Some(out) = std::env::var_os("DUGIX_RENDER_OUT") else {
         return;
     };
     let out = PathBuf::from(out);

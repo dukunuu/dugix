@@ -1,7 +1,7 @@
 //! The start screen: banner, greeting, clock, and the recent-session table.
 
-// Casts here are on terminal-bounded values (u16/u32 dims, byte colors,
-// glyph counts) — never on unbounded user data.
+// Casts here are on terminal-bounded values (dims, byte colors, glyph counts),
+// never on unbounded user data.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -22,12 +22,10 @@ use crate::app_view::AppView;
 /// Widest the start screen's panel gets (it never exceeds the column).
 const WELCOME_MAX: u16 = 110;
 
-/// The empty start screen: a rounded panel holding the gradient banner, a
-/// random greeting, a live clock, quick-start chips, and the most recent
-/// sessions.
+/// The empty start screen: banner, greeting, clock, quick-start chips, and the
+/// most recent sessions.
 pub(super) fn render_welcome(f: &mut Frame, app: &mut AppView, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
-    // Per-line gradient across the accent ramp: accent -> accent2.
     let banner_lines: Vec<&str> = app.banner.lines().collect();
     let n = banner_lines.len().max(1);
     for (i, l) in banner_lines.into_iter().enumerate() {
@@ -53,7 +51,6 @@ pub(super) fn render_welcome(f: &mut Frame, app: &mut AppView, area: Rect) {
             .to_string(),
         &app.theme,
     )));
-    // What a message sent from here goes to: model and space.
     let model = app.current_model.as_deref().map_or_else(
         || "pick a model with /model".to_string(),
         super::short_model_label,
@@ -135,19 +132,15 @@ fn chip_row(cmds: &[&str], theme: &crate::theme::Theme) -> Line<'static> {
     Line::from(spans)
 }
 
-/// The recent-sessions table (click a row or press Alt+1…4). Returns each
-/// row's line index and session id, to map clicks back after layout.
+/// The recent-sessions table; returns each row's line index and session id so
+/// clicks map back after layout.
 fn push_recent(lines: &mut Vec<Line<'static>>, app: &AppView, area: Rect) -> Vec<(usize, String)> {
     let mut recent_rows: Vec<(usize, String)> = Vec::new();
     if let Ok(sessions) = app.db.list_sessions(&app.active_space.id) {
         let recent: Vec<_> = sessions.into_iter().take(4).collect();
         if !recent.is_empty() {
             lines.push(Line::from(""));
-            // The panel is at most `WELCOME_MAX` wide; the rule spans the table below
-            // it, so both center on the same axis.
             let inner_w = area.width.min(WELCOME_MAX).saturating_sub(4) as usize;
-            // One fixed-width table, centered as a block: numbers, titles,
-            // and right-aligned dates line up instead of zigzagging.
             let row_w = inner_w.min(60);
             rule_line(lines, "recent", row_w, &app.theme);
             for (i, s) in recent.iter().enumerate() {

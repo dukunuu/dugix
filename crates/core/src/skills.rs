@@ -1,9 +1,5 @@
-//! Agent Skills on disk.
-//!
-//! A skill is a directory containing a `SKILL.md` with YAML frontmatter. The
-//! loader follows the Agent Skills layout and progressive-disclosure model:
-//! startup reads only the name and description, while the body and bundled
-//! resources are read only after the model explicitly loads the skill.
+//! Agent Skills on disk: a directory with a `SKILL.md` carrying YAML frontmatter.
+//! Startup reads only the name and description; the body loads on demand.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -15,18 +11,13 @@ pub struct Skill {
     pub dir: PathBuf,
 }
 
-/// The app-managed skill directory for a data directory.
 pub fn skills_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("skills")
 }
 
-/// Return the skill roots used by a normal application bootstrap.
-///
-/// The app-managed directory is always included. For a real Nexus data
-/// directory, project and user Agent Skills directories are added as
-/// read-mostly roots. Deliberately omitting external roots for ad-hoc data
-/// directories keeps `App::new` test fixtures and embedded callers hermetic.
-/// The order is precedence order: an earlier root wins a duplicate name.
+/// The skill roots used by a normal application bootstrap, in precedence order:
+/// an earlier root wins a duplicate name. Ad-hoc data directories deliberately
+/// omit external roots, which keeps `App::new` test fixtures hermetic.
 pub fn app_skill_roots(data_dir: &Path) -> Vec<PathBuf> {
     let local = skills_dir(data_dir);
     let is_default_data_dir =
@@ -38,21 +29,15 @@ pub fn app_skill_roots(data_dir: &Path) -> Vec<PathBuf> {
     }
 }
 
-/// Return the standard project and user Agent Skills roots.
-///
-/// Supported layouts include the portable `.agents/skills` convention and the
-/// common Claude, Codex, pi, and `OpenCode` adapter directories. Project roots
-/// are searched from the current directory towards the filesystem root;
-/// user-level roots are searched afterwards. `.system/` is treated as a
-/// namespace containing skills by tools that use that layout (not as a skill
-/// itself).
+/// The standard project and user Agent Skills roots: project roots from the current
+/// directory towards the filesystem root, then user-level roots.
 pub fn skill_search_paths(data_dir: &Path) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     let cwd = std::env::current_dir().ok();
     let home = home_dir();
     add_project_roots(&mut roots, cwd.as_deref());
-    // Nexus's managed root is explicit user state, so it outranks adapter
-    // roots but remains below project-specific skills.
+    // Dugix's managed root is explicit user state, so it outranks adapter roots
+    // but stays below project-specific skills.
     push_skill_root(&mut roots, &skills_dir(data_dir));
     add_user_roots(&mut roots, home.as_deref());
     roots
@@ -76,8 +61,8 @@ fn add_project_roots(roots: &mut Vec<PathBuf>, cwd: Option<&Path>) {
 }
 
 fn add_user_roots(roots: &mut Vec<PathBuf>, home: Option<&Path>) {
-    // These environment variables are used by the corresponding agent
-    // ecosystems and are more authoritative than their conventional defaults.
+    // These are used by the corresponding agent ecosystems and are more
+    // authoritative than their conventional defaults.
     for variable in ["AGENTS_HOME", "CODEX_HOME"] {
         if let Some(value) = std::env::var_os(variable) {
             push_skill_root(roots, &PathBuf::from(value).join("skills"));
@@ -86,13 +71,13 @@ fn add_user_roots(roots: &mut Vec<PathBuf>, home: Option<&Path>) {
     if let Some(value) = std::env::var_os("PI_AGENT_DIR") {
         push_skill_root(roots, &PathBuf::from(value).join("skills"));
     }
-    if let Some(value) = std::env::var_os("NEXUS_SKILLS_DIR") {
+    if let Some(value) = std::env::var_os("DUGIX_SKILLS_DIR") {
         push_skill_root(roots, &PathBuf::from(value));
     }
 
     let Some(home) = home else { return };
-    // `.agents/skills` is the portable Agent Skills location. The adapter
-    // roots let Nexus consume skills installed by other agent runtimes too.
+    // `.agents/skills` is the portable location; the adapter roots let Dugix
+    // consume skills installed by other agent runtimes too.
     for relative in [
         ".agents/skills",
         ".codex/skills",
@@ -112,7 +97,6 @@ fn home_dir() -> Option<PathBuf> {
         .or_else(|| directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf()))
 }
 
-/// Add a skill root and its optional `.system` namespace once.
 fn push_skill_root(roots: &mut Vec<PathBuf>, root: &Path) {
     push_unique(roots, root.to_path_buf());
     push_unique(roots, root.join(".system"));
@@ -126,29 +110,8 @@ fn push_unique(paths: &mut Vec<PathBuf>, path: PathBuf) {
 
 const FIND_SKILLS_SKILL: &str = include_str!("../assets/find-skills-SKILL.md");
 
-const LEGACY_WEB_SEARCH_SKILL: &str = r"---
-name: web-search
-description: Search the web for current information and cite sources inline, Perplexity-style.
----
-Call the `web_search` tool with a focused query. You may call it more than
-once with refined queries if the first results are insufficient.
-
-Each result comes back numbered `[1]`, `[2]`, ... with a title, URL, and
-snippet. When you use a fact from a result, cite it inline immediately after
-the sentence as `[n]` — do not bunch all citations at the end of a paragraph.
-
-Finish your answer with a `Sources:` section listing every citation you used,
-one per line, as `[n] title — url` (a bare URL, not a markdown link — this
-terminal can't follow markdown link targets, only plain URLs are clickable).
-
-Do not fabricate sources. If a claim isn't backed by a search result, don't
-cite it.
-";
-
-/// Write the built-in skills on first run. Never overwrites — once installed
-/// they're normal files the user can edit or delete like any other.
+/// Never overwrites: once installed they are normal files the user can edit or delete.
 pub fn install_builtin(dir: &Path) {
-    remove_legacy_web_search_skill(dir);
     for (name, md) in [("find-skills", FIND_SKILLS_SKILL)] {
         let path = dir.join(name).join("SKILL.md");
         if path.exists() {
@@ -161,19 +124,7 @@ pub fn install_builtin(dir: &Path) {
     }
 }
 
-/// `web-search` used to be a bundled skill, but `/web` now injects those
-/// instructions directly into the system prompt. Remove only the exact bundled
-/// file; if the user edited/replaced it, leave it alone.
-fn remove_legacy_web_search_skill(dir: &Path) {
-    let skill_dir = dir.join("web-search");
-    let path = skill_dir.join("SKILL.md");
-    if std::fs::read_to_string(&path).ok().as_deref() == Some(LEGACY_WEB_SEARCH_SKILL) {
-        let _ = std::fs::remove_dir_all(skill_dir);
-    }
-}
-
-/// Load every immediate `<dir>/*/SKILL.md` that satisfies the Agent Skills
-/// metadata rules. Missing or unreadable directories are treated as empty.
+/// Missing or unreadable directories are treated as empty.
 pub fn load_skills(dir: &Path) -> Vec<Skill> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -197,7 +148,7 @@ pub fn load_skills(dir: &Path) -> Vec<Skill> {
             let md = std::fs::read_to_string(skill_file).ok()?;
             let (name, description) = parse_frontmatter(&md)?;
             // The standard requires the metadata name to match the containing
-            // directory. This also prevents ambiguous slash-command names.
+            // directory; it also prevents ambiguous slash-command names.
             (name == directory_name).then_some(Skill {
                 name,
                 description,
@@ -209,9 +160,8 @@ pub fn load_skills(dir: &Path) -> Vec<Skill> {
     skills
 }
 
-/// Load skills from several roots, keeping the first valid definition of a
-/// duplicate name. `roots` must be ordered from most-specific to least-
-/// specific; this is the same precedence used by `skill_search_paths`.
+/// Keep the first valid definition of a duplicate name; `roots` must be ordered
+/// from most-specific to least-specific.
 pub fn load_skills_from_dirs(roots: &[PathBuf]) -> Vec<Skill> {
     let mut by_name = BTreeMap::new();
     for root in roots {
@@ -222,7 +172,6 @@ pub fn load_skills_from_dirs(roots: &[PathBuf]) -> Vec<Skill> {
     by_name.into_values().collect()
 }
 
-/// Whether `name` satisfies the portable Agent Skills name grammar.
 #[must_use]
 pub fn valid_skill_name(name: &str) -> bool {
     let length = name.chars().count();
@@ -243,11 +192,8 @@ pub fn valid_skill_name(name: &str) -> bool {
     true
 }
 
-/// Pull `name`/`description` out of a YAML frontmatter block.
-///
-/// The opening and closing `---` lines are mandatory. Unknown frontmatter
-/// fields are accepted (for example `license`, `compatibility`, and
-/// `metadata`) so skills from other Agent Skills runtimes remain portable.
+/// The opening and closing `---` lines are mandatory; unknown frontmatter fields
+/// are accepted so skills from other runtimes remain portable.
 pub fn parse_frontmatter(md: &str) -> Option<(String, String)> {
     let md = strip_bom(md);
     let mut lines = md.lines();
@@ -307,7 +253,6 @@ fn strip_bom(md: &str) -> &str {
     md.strip_prefix('\u{feff}').unwrap_or(md)
 }
 
-/// Find the byte offset immediately after a valid-looking closing delimiter.
 fn frontmatter_body_start(md: &str) -> Option<usize> {
     let mut lines = md.split_inclusive('\n');
     let first = lines.next()?;
@@ -324,8 +269,8 @@ fn frontmatter_body_start(md: &str) -> Option<usize> {
     None
 }
 
-/// Everything after the closing `---` of valid frontmatter, trimmed. If the
-/// file is not a valid skill document, the whole file is returned as body.
+/// Everything after the closing `---` of valid frontmatter, trimmed; a file that
+/// is not a valid skill document is returned whole.
 pub fn skill_body(md: &str) -> &str {
     let md = strip_bom(md);
     if parse_frontmatter(md).is_some()
@@ -336,9 +281,8 @@ pub fn skill_body(md: &str) -> &str {
     md.trim()
 }
 
-/// Parse `owner/repo/path/to/skill` (or bare `owner/repo` for a skill at the
-/// repo root) into its three parts. Only safe GitHub path components are
-/// accepted; this value is used in both API URLs and local destination paths.
+/// `owner/repo/path/to/skill` (or bare `owner/repo`) in three parts. Only safe
+/// GitHub path components are accepted: the value lands in API URLs and local paths.
 pub fn parse_gh_shorthand(s: &str) -> Option<(String, String, String)> {
     let value = s.trim();
     if value.is_empty() || value.starts_with('/') || value.ends_with('/') {
@@ -377,7 +321,6 @@ struct GhEntry {
     download_url: Option<String>,
 }
 
-/// Find a loaded skill directory by its canonical name.
 pub fn resolve_skill_dir(roots: &[PathBuf], name: &str) -> Result<PathBuf, String> {
     if !valid_skill_name(name) {
         return Err(format!("invalid skill name: {name:?}"));
@@ -389,9 +332,8 @@ pub fn resolve_skill_dir(roots: &[PathBuf], name: &str) -> Result<PathBuf, Strin
         .ok_or_else(|| format!("unknown skill: {name}"))
 }
 
-/// Resolve a file inside a loaded skill, rejecting traversal and symlinks that
-/// point outside that skill directory. A missing final file is returned so the
-/// caller can produce a useful `no such file` message.
+/// Reject traversal and symlinks that point outside the skill directory; a missing
+/// final file is returned so the caller can produce a useful `no such file` message.
 pub fn resolve_skill_file(roots: &[PathBuf], name: &str, file: &str) -> Result<PathBuf, String> {
     let dir = resolve_skill_dir(roots, name)?;
     if !valid_relative_path(file) {
@@ -422,9 +364,8 @@ fn valid_relative_path(path: &str) -> bool {
             .all(|component| matches!(component, std::path::Component::Normal(_)))
 }
 
-/// Whether a skill came from the app-managed root and may be removed by the
-/// `/skills` UI. External agent roots remain available for reading but are not
-/// deleted by Nexus.
+/// Only app-managed skills may be removed by the `/skills` UI; external agent roots
+/// stay readable but are never deleted by Dugix.
 #[must_use]
 pub fn is_app_managed(skill: &Skill, data_dir: &Path) -> bool {
     skill
@@ -433,9 +374,9 @@ pub fn is_app_managed(skill: &Skill, data_dir: &Path) -> bool {
         .is_some_and(|parent| parent == skills_dir(data_dir))
 }
 
-/// Fetch `SKILL.md` (and sibling files, one directory deep) from
-/// `github.com/<owner>/<repo>/<path>` into `dest_root/<skill-name>/`.
-/// Fails (and cleans up any partial download) unless a valid SKILL.md is found.
+/// Fetch `SKILL.md` and sibling files (one directory deep) into
+/// `dest_root/<skill-name>/`, cleaning up a partial download unless a valid SKILL.md
+/// is found.
 pub async fn install_from_github(
     client: &reqwest::Client,
     owner: &str,
@@ -461,7 +402,7 @@ pub async fn install_from_github(
     };
     let skill_md = client
         .get(skill_url)
-        .header("User-Agent", "nexus-chat")
+        .header("User-Agent", "dugix")
         .send()
         .await?
         .error_for_status()?
@@ -478,9 +419,8 @@ pub async fn install_from_github(
         let _ = std::fs::remove_dir_all(&dest);
         return Err(error);
     }
-    // Validate before declaring success — a SKILL.md with bad/missing
-    // frontmatter or a mismatched directory name must not become invisible to
-    // the loader.
+    // Validate before declaring success: a SKILL.md with bad frontmatter or a
+    // mismatched directory name must not become invisible to the loader.
     let md = match std::fs::read_to_string(dest.join("SKILL.md")) {
         Ok(md) => md,
         Err(error) => {
@@ -510,7 +450,7 @@ async fn fetch_gh_contents(
     let url = format!("https://api.github.com/repos/{owner}/{repo}/contents/{path}");
     let resp = client
         .get(&url)
-        .header("User-Agent", "nexus-chat")
+        .header("User-Agent", "dugix")
         .send()
         .await?
         .error_for_status()?
@@ -527,9 +467,8 @@ fn valid_entry_name(name: &str) -> bool {
         && name != ".."
 }
 
-/// Download a GitHub contents listing into `dest`, recursing into
-/// subdirectories up to `depth_left` levels (skill resource folders are
-/// small and shallow — no need to go further).
+/// Download a GitHub contents listing into `dest`, recursing up to `depth_left`
+/// levels: skill resource folders are small and shallow.
 fn download_gh_entries<'a>(
     client: &'a reqwest::Client,
     entries: &'a [GhEntry],
@@ -554,7 +493,7 @@ fn download_gh_entries<'a>(
                     };
                     let bytes = client
                         .get(url)
-                        .header("User-Agent", "nexus-chat")
+                        .header("User-Agent", "dugix")
                         .send()
                         .await?
                         .error_for_status()?
@@ -607,28 +546,11 @@ mod tests {
 
     #[test]
     fn install_builtin_writes_find_skills_without_overwriting() {
-        let dir = temp_dir("nexus-skills");
+        let dir = temp_dir("dugix-skills");
         install_builtin(&dir);
         let names: Vec<String> = load_skills(&dir).iter().map(|s| s.name.clone()).collect();
         assert_eq!(names, vec!["find-skills"]);
 
-        // The old bundled web-search skill is removed on refresh; user-edited
-        // skills with the same name are left alone.
-        let legacy = dir.join("web-search/SKILL.md");
-        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-        std::fs::write(&legacy, LEGACY_WEB_SEARCH_SKILL).unwrap();
-        install_builtin(&dir);
-        assert!(!legacy.exists());
-        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-        std::fs::write(
-            &legacy,
-            "---\nname: web-search\ndescription: mine\n---\ncustom",
-        )
-        .unwrap();
-        install_builtin(&dir);
-        assert!(legacy.exists());
-
-        // never overwrites: user edits survive a re-run
         std::fs::write(
             dir.join("find-skills/SKILL.md"),
             "---\nname: mine\ndescription: d\n---\nx",
@@ -703,7 +625,7 @@ mod tests {
 
     #[test]
     fn mismatched_directory_names_are_not_loaded() {
-        let root = temp_dir("nexus-skill-strict");
+        let root = temp_dir("dugix-skill-strict");
         write_skill(&root, "folder", "different", "d", "body");
         assert!(load_skills(&root).is_empty());
         let _ = std::fs::remove_dir_all(root);
@@ -711,8 +633,8 @@ mod tests {
 
     #[test]
     fn roots_are_merged_with_specific_root_precedence() {
-        let first = temp_dir("nexus-skills-first");
-        let second = temp_dir("nexus-skills-second");
+        let first = temp_dir("dugix-skills-first");
+        let second = temp_dir("dugix-skills-second");
         write_skill(&first, "shared", "shared", "first", "one");
         write_skill(&second, "shared", "shared", "second", "two");
         write_skill(&second, "other", "other", "other", "three");
@@ -777,7 +699,7 @@ mod tests {
 
     #[test]
     fn confined_skill_files_support_external_roots() {
-        let root = temp_dir("nexus-skills-confined");
+        let root = temp_dir("dugix-skills-confined");
         write_skill(&root, "t", "t", "d", "x");
         std::fs::write(root.join("t/readme.md"), "resource").unwrap();
         let roots = vec![root.clone()];

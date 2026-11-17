@@ -2,7 +2,7 @@
  "doc": {
   "version": 1,
   "title": "Q3 strategy",
-  "design": "nexus",
+  "design": "dugix",
   "design_rev": "abc",
   "theme": {
    "colors": {
@@ -216,7 +216,7 @@
     "id": "b10",
     "kind": "callout",
     "tone": "info",
-    "text": "Everything here follows the **Nexus** design, so the deck and this doc share one look."
+    "text": "Everything here follows the **Dugix** design, so the deck and this doc share one look."
    },
    {
     "id": "b11",

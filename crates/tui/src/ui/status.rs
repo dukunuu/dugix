@@ -1,8 +1,8 @@
-//! The status bar (model, status line, context meter) and the completed-
-//! task toasts that float above the composer.
+//! The status bar (model, status line, context meter) and the completed-task
+//! toasts that float above the composer.
 
-// Casts here are on terminal-bounded values (u16/u32 dims, byte colors,
-// glyph counts) — never on unbounded user data.
+// Casts here are on terminal-bounded values (dims, byte colors, glyph counts),
+// never on unbounded user data.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -22,15 +22,15 @@ use crate::app_view::AppView;
 #[cfg(test)]
 mod auto_mode_tests {
     use super::*;
-    use nexus_core::app::{App, WorkMode};
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
+    use dugix_core::app::{App, WorkMode};
+    use dugix_core::db::Db;
+    use dugix_core::space::Space;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
     #[test]
     fn auto_badge_visibly_reports_unavailable_confinement() {
-        let root = std::env::temp_dir().join(format!("nexus-auto-status-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-auto-status-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let mut app = AppView::new(App::new(
             Db::open_in_memory().unwrap(),
@@ -40,7 +40,7 @@ mod auto_mode_tests {
             },
         ));
         app.workspace = Some(std::sync::Arc::new(
-            nexus_core::workspace::Workspace::open(&root, vec![]).unwrap(),
+            dugix_core::workspace::Workspace::open(&root, vec![]).unwrap(),
         ));
         app.work_mode = WorkMode::AgentAuto;
         for (available, expected) in [(true, "agent·auto ·"), (false, "agent·auto (no sandbox) ·")]
@@ -66,25 +66,23 @@ mod auto_mode_tests {
 
 /// Green → yellow → red gradient for `t` in 0.0..=1.0.
 fn gradient(t: f64) -> Color {
-    // Two linear segments: green→yellow (0..0.5), yellow→red (0.5..1).
     let (r, g) = if t < 0.5 {
         let k = t / 0.5;
-        ((40.0 + k * 190.0) as u8, 200u8) // 40→230 red, green steady
+        ((40.0 + k * 190.0) as u8, 200u8)
     } else {
         let k = (t - 0.5) / 0.5;
-        (230u8, (200.0 - k * 190.0) as u8) // red steady, green 200→10
+        (230u8, (200.0 - k * 190.0) as u8)
     };
     Color::Rgb(r, g, 40)
 }
 
 #[allow(clippy::too_many_lines)] // status badges, layout, and context meter
 pub(super) fn render_status(f: &mut Frame, app: &AppView, area: Rect) {
-    use nexus_core::db::DEFAULT_SPACE;
+    use dugix_core::db::DEFAULT_SPACE;
     let theme = &app.theme;
     let dim = Style::default().fg(theme.fg_dim);
     let sep = || super::style::sep(theme);
 
-    // Left: the model (accent), then the quiet mode tags.
     let model = app
         .current_model
         .as_deref()
@@ -116,7 +114,7 @@ pub(super) fn render_status(f: &mut Frame, app: &AppView, area: Rect) {
                 root.chars().skip(len - max_root + 1).collect::<String>()
             );
         }
-        let mode = if app.work_mode == nexus_core::app::WorkMode::AgentAuto {
+        let mode = if app.work_mode == dugix_core::app::WorkMode::AgentAuto {
             if app.auto_sandbox_available {
                 "agent·auto"
             } else {
@@ -127,11 +125,11 @@ pub(super) fn render_status(f: &mut Frame, app: &AppView, area: Rect) {
         };
         tags.push(format!("{} {mode} · {root}", glyph::TOOL));
     }
-    if app.web_mode {
-        tags.push(format!("{} web", glyph::WEB));
-    }
     if app.incognito {
         tags.push(format!("{} incognito", glyph::INCOGNITO));
+    }
+    if app.memory_tidy_due() > 0 && !app.incognito {
+        tags.push(format!("{} memory tidy", glyph::DIGEST));
     }
     if app.training_enabled() {
         tags.push(format!("{} training", glyph::DOT));
@@ -162,7 +160,19 @@ pub(super) fn render_status(f: &mut Frame, app: &AppView, area: Rect) {
         left.push(Span::styled(format!("{procs} procs"), dim));
     }
 
-    // Right: the context meter and numbers, when the window is known.
+    let agents = app.fleet.live();
+    if agents > 0 {
+        left.push(sep());
+        left.push(Span::styled(format!("{agents} fleet"), dim));
+        let blocked = app.fleet.blocked();
+        if blocked > 0 {
+            left.push(Span::styled(
+                format!(" {} {blocked} need you", crate::ui::style::glyph::WARN),
+                Style::default().fg(theme.warning),
+            ));
+        }
+    }
+
     let mut right: Vec<Span> = Vec::new();
     if app.settings.show_stats
         && let Some(limit) = app.context_limit()
@@ -170,10 +180,14 @@ pub(super) fn render_status(f: &mut Frame, app: &AppView, area: Rect) {
         right.extend(context_meter(app, limit, 10));
         right.push(Span::raw(" "));
         right.push(Span::styled(context_numbers(app, limit), dim));
-    } else if let Some(rate) = app.turn_cache.rate() {
-        let partial = if app.turn_cache.is_partial() { "~" } else { "" };
+    } else if let Some(rate) = app.meter.turn_cache.reuse_rate() {
+        let partial = if app.meter.turn_cache.is_partial() {
+            "~"
+        } else {
+            ""
+        };
         right.push(Span::styled(
-            format!("{partial}{:.0}% cached", rate * 100.0),
+            format!("{partial}{:.0}% reused", rate * 100.0),
             dim,
         ));
     }
@@ -214,8 +228,13 @@ pub(super) fn render_status(f: &mut Frame, app: &AppView, area: Rect) {
     }
 }
 
-/// `▰▰▰▱▱▱▱▱` — how full the context window is, each filled cell colored by
-/// its position along a green → yellow → red ramp.
+/// `▌▌▌▌▌▌▌▌` — how full the context window is, each filled cell colored by its
+/// position along the ramp. A half block per cell leaves a gap between
+/// segments; block elements are drawn by the terminal itself at exactly one
+/// cell, unlike geometric shapes (`▰▱`), which fall back to wider fonts and
+/// overlap their neighbours.
+const METER_CELL: &str = "▌";
+
 fn context_meter(app: &AppView, limit: u64, cells: usize) -> Vec<Span<'static>> {
     let ratio = if limit > 0 {
         (app.context_used() as f64 / limit as f64).clamp(0.0, 1.0)
@@ -227,17 +246,17 @@ fn context_meter(app: &AppView, limit: u64, cells: usize) -> Vec<Span<'static>> 
         .map(|x| {
             if x < filled {
                 let t = x as f64 / (cells - 1).max(1) as f64;
-                Span::styled("▰", Style::default().fg(gradient(t)))
+                Span::styled(METER_CELL, Style::default().fg(gradient(t)))
             } else {
-                Span::styled("▱", Style::default().fg(app.theme.border_dim))
+                Span::styled(METER_CELL, Style::default().fg(app.theme.border_dim))
             }
         })
         .collect()
 }
 
-/// `34% 44k/128k · 82% cached`. The cache rate covers the whole turn, not
-/// its last request: a tool loop's final request sits on the longest cached
-/// prefix, so reporting it alone would flatter the number. `~` marks a turn
+/// `34% 44k/128k · 99% reused`. The rate is the share of the tokens the provider
+/// had already seen that it served from cache, over the whole turn rather than
+/// its last request; omitted while nothing was reusable yet. `~` marks a turn
 /// some provider did not fully account for.
 fn context_numbers(app: &AppView, limit: u64) -> String {
     let used = app.context_used();
@@ -247,18 +266,22 @@ fn context_numbers(app: &AppView, limit: u64) -> String {
         0.0
     };
     let mut label = format!("{pct:.0}% {}/{}", humanize(used), humanize(limit));
-    if let Some(rate) = app.turn_cache.rate() {
-        let partial = if app.turn_cache.is_partial() { "~" } else { "" };
+    if let Some(rate) = app.meter.turn_cache.reuse_rate() {
+        let partial = if app.meter.turn_cache.is_partial() {
+            "~"
+        } else {
+            ""
+        };
         let _ = std::fmt::Write::write_fmt(
             &mut label,
-            format_args!(" · {partial}{:.0}% cached", rate * 100.0),
+            format_args!(" · {partial}{:.0}% reused", rate * 100.0),
         );
     }
     label
 }
 
-/// `prefix` + `model` within `max` chars. A too-long label shortens the model
-/// name but keeps its ` · backend` tag, which is the part that disambiguates.
+/// `prefix` + `model` within `max` chars; a too-long label shortens the model
+/// name but keeps its ` · backend` tag, which is what disambiguates.
 pub(super) fn fit_badge(prefix: &str, model: &str, max: usize) -> String {
     let full = format!("{prefix}{model}");
     if crate::ui::style::width(&full) <= max {
@@ -274,13 +297,17 @@ pub(super) fn fit_badge(prefix: &str, model: &str, max: usize) -> String {
     format!("{prefix}{}{tag}", popups::chrome::truncate(name, room))
 }
 
-/// The status-bar name for a model id: the last path segment, with the
-/// backend named when it isn't `OpenRouter` — `local:org/Model-7B` reads as
-/// `Model-7B · local`. `OpenRouter` ids may contain `:` (`…:free`), so only a
-/// known backend prefix is split off.
+/// The status-bar name for a model id: its last path segment, plus the backend
+/// when it isn't `OpenRouter`. `OpenRouter` ids may contain `:` (`…:free`), so
+/// only a known backend prefix is split off.
 pub(crate) fn short_model_label(id: &str) -> String {
     let (backend, rest) = match id.split_once(':') {
-        Some((tag, rest)) if matches!(tag, "openai" | "opencode" | "go" | "codex" | "local") => {
+        Some((tag, rest))
+            if matches!(
+                tag,
+                "openai" | "opencode" | "go" | "codex" | "mistral" | "local"
+            ) =>
+        {
             (Some(tag), rest)
         }
         _ => (None, id),
@@ -297,9 +324,8 @@ pub(crate) fn short_model_label(id: &str) -> String {
     }
 }
 
-/// Persistent, direct-click targets for completed chat tasks. The queue keeps
-/// every completion; only the newest five are painted to avoid covering a
-/// small terminal.
+/// Persistent, direct-click targets for completed chat tasks; only the newest
+/// five are painted, so they can't cover a small terminal.
 pub(super) fn render_notifications(f: &mut Frame, app: &mut AppView, area: Rect) {
     app.notification_areas.clear();
     let rows = app.notifications.len().min(5) as u16;
@@ -316,8 +342,6 @@ pub(super) fn render_notifications(f: &mut Frame, app: &mut AppView, area: Rect)
         } else {
             (glyph::FAIL, app.theme.error)
         };
-        // A toast: colored rail and glyph, the session in bold, the outcome
-        // dimmed — clicking it opens that session.
         let bg = Style::default().bg(app.theme.raised);
         let line = popups::chrome::fit_line(
             Line::from(vec![
@@ -339,8 +363,7 @@ pub(super) fn render_notifications(f: &mut Frame, app: &mut AppView, area: Rect)
             ]),
             width as usize,
         );
-        // The toast hugs its content at the pane's right edge, clear of the
-        // scrollbar gutter; the rect is also its click target.
+        // Clear of the scrollbar gutter; the rect is also its click target.
         let w = u16::try_from(line.width()).unwrap_or(width).min(width);
         let rect = Rect {
             x: area.x + area.width.saturating_sub(w + 1),

@@ -1,8 +1,5 @@
-//! Space-scoped media and script operations for thin host clients.
-//!
-//! The HTTP router owns authentication and parsing.  This module owns the
-//! filesystem policy: every name is one safe path component, every mutation
-//! resolves an explicit space id, and symlinks are rejected.
+//! Space-scoped media and script operations for thin host clients; every name is
+//! one safe path component and symlinks are rejected.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -162,17 +159,6 @@ pub fn dispatch(
                         .ok_or_else(|| anyhow!("name is required"))?,
                     action.args.as_deref().unwrap_or(&[]),
                 )?)?),
-                "ocr" => {
-                    queue_ocr(
-                        app,
-                        &space_id,
-                        action
-                            .name
-                            .as_deref()
-                            .ok_or_else(|| anyhow!("name is required"))?,
-                    )?;
-                    Ok(serde_json::json!({ "queued": true }))
-                }
                 _ => bail!("invalid media action"),
             }
         }
@@ -490,9 +476,8 @@ pub fn write_script(
     std::fs::write(path, content).context("writing script")
 }
 
-/// Validate and prepare a selected script for execution outside the app actor.
-/// The host must enforce its own timeout and output cap while running this
-/// job; this helper deliberately never starts a child process.
+/// Validate and prepare a script to run outside the app actor; never starts a
+/// child process.
 pub fn prepare_script(app: &App, space_id: &str, name: &str, args: &[String]) -> Result<ScriptJob> {
     if args.len() > 64 || args.iter().any(|arg| arg.len() > 4096) {
         bail!("too many or oversized script arguments");
@@ -518,24 +503,13 @@ pub fn prepare_script(app: &App, space_id: &str, name: &str, args: &[String]) ->
     })
 }
 
-/// Queue the same OCR flow exposed by the TUI for an active-space file.
-pub fn queue_ocr(app: &mut App, space_id: &str, name: &str) -> Result<()> {
-    if space_id != app.active_space.id {
-        bail!("ocr can only run for the active space");
-    }
-    let (root, path) = target(app, space_id, "file", name)?;
-    checked_file(&path, &root)?;
-    app.reocr_file(name);
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{db::Db, space::Space};
 
     fn app() -> App {
-        let root = std::env::temp_dir().join(format!("nexus-media-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-media-{}", uuid::Uuid::new_v4()));
         App::new(Db::open_in_memory().expect("db"), None, Space { root })
     }
 

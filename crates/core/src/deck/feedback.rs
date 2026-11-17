@@ -12,8 +12,7 @@ use uuid::Uuid;
 use super::suggest::Suggestion;
 use super::{Deck, Op};
 
-/// A point on a slide, in slide pixels, optionally attached to a node (the
-/// field is still called `block`, as in version 1).
+/// A point on a slide, in slide pixels, optionally attached to a node.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Anchor {
@@ -21,8 +20,7 @@ pub struct Anchor {
     pub block: Option<String>,
     pub x: i32,
     pub y: i32,
-    /// False only in sidecars written for version-1 grid decks, whose points
-    /// were grid cells; [`load`] converts those.
+    /// False only in old grid-cell sidecars, which [`load`] converts.
     #[serde(default)]
     pub px: bool,
 }
@@ -123,7 +121,7 @@ pub fn now() -> u64 {
 }
 
 impl Message {
-    /// Construct a deck reply, preserving the original default type.
+    /// Construct a deck reply.
     #[must_use]
     pub fn new(role: Role, text: String, edits: Vec<Edit>) -> Self {
         Self::new_for(role, text, edits)
@@ -355,7 +353,7 @@ mod tests {
 
     #[test]
     fn version_one_grid_anchors_become_pixels_on_load() {
-        let dir = std::env::temp_dir().join(format!("nexus-anchor-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-anchor-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("a.deck.json");
         std::fs::write(
@@ -373,7 +371,7 @@ mod tests {
 
     #[test]
     fn the_sidecar_round_trips_beside_the_deck_and_refuses_symlinks() {
-        let dir = std::env::temp_dir().join(format!("nexus-feedback-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-feedback-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("a.deck.json");
         assert!(load(&path).unwrap().is_empty());

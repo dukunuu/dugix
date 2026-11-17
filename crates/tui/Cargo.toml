@@ -1,5 +1,5 @@
 [package]
-name = "nexus-chat"
+name = "dugix"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,15 +11,15 @@ categories.workspace = true
 readme = "../../README.md"
 
 [[bin]]
-name = "nexus"
+name = "dugix"
 path = "src/main.rs"
 
 [dependencies]
 # `version` is required for `cargo publish` (path-only deps can't be
 # rewritten for the registry). It is pinned exactly to the workspace
 # version: a caret `0.1` let a fresh `cargo install` resolve an older
-# nexus-chat-core and fail to compile. version-bump.yml rewrites the pin.
-nexus-chat-core = { path = "../core", version = "=0.1.42", features = ["native-dialogs"] }
+# dugix-core and fail to compile. version-bump.yml rewrites the pin.
+dugix-core = { path = "../core", version = "=1.0.0", features = ["native-dialogs"] }
 anyhow = { workspace = true }
 arboard = { workspace = true }
 chrono = { workspace = true }

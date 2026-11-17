@@ -1,7 +1,7 @@
 //! Word design extraction, resolving style inheritance by id and built-in names.
 use crate::{
     deck::{
-        Font,
+        Align, Font,
         import::{pptx::package::Package, xml::El},
     },
     design::{Design, derive_styles},
@@ -38,9 +38,24 @@ pub(super) fn monospace(name: &str) -> bool {
         .any(|m| name.to_ascii_lowercase().contains(m))
 }
 
+/// A paragraph style's `w:jc`, so a justified template stays justified.
+fn alignment(style: &El) -> Option<Align> {
+    match style.kid("pPr").and_then(|p| val(p, "jc"))? {
+        "both" | "distribute" | "lowKashida" | "mediumKashida" | "highKashida"
+        | "thaiDistribute" => Some(Align::Justify),
+        "center" => Some(Align::Center),
+        "right" | "end" => Some(Align::Right),
+        _ => Some(Align::Left),
+    }
+}
+
 fn font(style: &El, design: &Design) -> Font {
+    let align = alignment(style);
     let Some(run) = style.kid("rPr") else {
-        return Font::default();
+        return Font {
+            align,
+            ..Font::default()
+        };
     };
     let family = run.kid("rFonts").and_then(|f| {
         f.attr_local("ascii").map(str::to_string).or_else(|| {
@@ -89,6 +104,7 @@ fn font(style: &El, design: &Design) -> Font {
                         .map(|v| format!("#{v}"))
                 })
         }),
+        align,
         ..Font::default()
     }
 }
@@ -231,10 +247,11 @@ pub(super) fn extract(bytes: &[u8]) -> Result<(Design, Vec<String>)> {
                 r.kids
                     .iter()
                     .any(|k| !matches!(k.name.as_str(), "rFonts" | "sz" | "b" | "i" | "color"))
-            }) || style
-                .kid("pPr")
-                .is_some_and(|p| p.kids.iter().any(|k| k.name != "spacing"))
-            {
+            }) || style.kid("pPr").is_some_and(|p| {
+                p.kids
+                    .iter()
+                    .any(|k| !matches!(k.name.as_str(), "spacing" | "jc"))
+            }) {
                 warnings.push(format!("{name}: additional style properties are retained in Word, but omitted from preview"));
             }
         } else {

@@ -30,8 +30,8 @@ fn sources(doc: &Doc) -> BTreeSet<&str> {
         .collect()
 }
 
-/// Prepare up to five independent suggestions, each at most 40 operations,
-/// and reject any image source not already present, including transient ones.
+/// Prepare up to five independent suggestions of at most 40 operations each,
+/// rejecting new image sources.
 #[must_use]
 pub fn prepare(base: &Doc, raw: Vec<RawSuggestion>) -> (Vec<Suggestion>, Vec<CheckError>) {
     prepare_with_resolver(base, raw, None)

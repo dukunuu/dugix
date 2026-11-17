@@ -1,35 +1,9 @@
-//! Harmony-format demultiplexing for local `gpt-oss` servers.
-//!
-//! `gpt-oss` speaks `OpenAI`'s Harmony format: every message it writes is
-//! wrapped in control tokens naming a channel — `analysis` for the
-//! chain-of-thought, `final` for the answer, `commentary` for tool calls and
-//! preambles. Hosted backends parse that server-side and hand back the usual
-//! `content` / `reasoning` / `tool_calls` fields. Several local runtimes
-//! (`mlx_lm.server` among them) do not: they stream the raw template text
-//! through `content`, so the transcript fills with
-//! `<|channel|>analysis<|message|>…` and the *next* request is rejected
-//! outright — the server refuses to re-tokenize its own framing:
-//!
-//! ```text
-//! request failed (404 Not Found): You have passed a message containing
-//! <|channel|> tags in the content field.
-//! ```
-//!
-//! [`Demux`] splits the channels apart as deltas arrive, so nothing framed
-//! ever reaches the transcript; [`sanitize_history`] repairs assistant turns
-//! recorded before that existed, which is what unwedges a session already
-//! carrying framed text. A recorded tool call wedges a session the same way
-//! — the server re-parses its arguments and fails the request with
-//! `404 … Unterminated string` — so unparsable arguments are repaired there
-//! too, and a truncated call never reaches the transcript at all. Both are wired in for local endpoints only
-//! (`OpenRouter::is_local`) — a hosted model quoting a `<|channel|>` tag is
-//! discussing Harmony, not speaking it.
+//! Harmony-format demultiplexing for local `gpt-oss` servers that stream raw
+//! template text through `content`, which their next request then rejects.
 
 use super::{ChatMessage, ToolCall};
 
-/// Control tokens that can *open* a Harmony stream. Content that does not
-/// start with one is passed through untouched, so a local model that writes
-/// about the format mid-answer keeps its text.
+/// Control tokens that can open a Harmony stream; other content passes through.
 const OPENERS: [&str; 2] = ["<|start|>", "<|channel|>"];
 
 /// Framing that marks already-recorded content as raw Harmony text.
@@ -251,13 +225,9 @@ impl Demux {
     }
 }
 
-/// Arguments in the form a local runtime will accept back. `mlx_lm.server`
-/// re-renders every recorded tool call through the Harmony template and
-/// `json.loads` its arguments, so one unparsable call fails *every* later
-/// request — `404 … Unterminated string starting at: line 1 column 99` —
-/// wedging the session exactly the way framed `content` does. Empty
-/// arguments are a no-arg call and become `{}`; anything else that does not
-/// parse is unrecoverable, and `None` says so.
+/// Arguments a local runtime will accept back: `mlx_lm.server` re-renders every
+/// recorded call and fails every later request on one unparsable call. Empty
+/// arguments become `{}`; anything else that does not parse is unrecoverable.
 fn replayable(arguments: &str) -> Option<String> {
     let trimmed = arguments.trim();
     if trimmed.is_empty() {
@@ -299,11 +269,8 @@ pub fn sanitize(content: &str) -> Option<String> {
     Some(text.trim().to_string())
 }
 
-/// Repair a replayed history: assistant turns holding raw Harmony framing
-/// are rewritten to their visible text, and recorded tool calls whose
-/// arguments do not parse are reduced to `{}` — a local server rejects the
-/// whole request over either one. `None` when nothing needs repairing, so
-/// the usual path clones nothing.
+/// Repair a replayed history: strip raw Harmony framing and reduce unparsable
+/// tool arguments to `{}`, either of which a local server rejects.
 #[must_use]
 pub fn sanitize_history(messages: &[ChatMessage]) -> Option<Vec<ChatMessage>> {
     let broken = |m: &ChatMessage| {
@@ -329,10 +296,8 @@ pub fn sanitize_history(messages: &[ChatMessage]) -> Option<Vec<ChatMessage>> {
     )
 }
 
-/// Rewrite a recorded turn's unparsable tool arguments. The call itself is
-/// kept — dropping it would orphan the `tool` result that answers its id,
-/// which the server rejects just as hard — so the arguments become `{}` and
-/// the already-recorded result stands. `None` when every call replays.
+/// Rewrite a recorded turn's unparsable tool arguments to `{}`, keeping the
+/// call so its recorded tool result is not orphaned.
 fn repair_calls(message: &ChatMessage) -> Option<Vec<ToolCall>> {
     let calls = message.tool_calls.as_ref()?;
     if calls
@@ -510,11 +475,8 @@ mod tests {
         assert!(sanitize_history(&[call("{\"calls\":[]}")]).is_none());
     }
 
-    /// Verbatim captures from `mlx_lm.server` 0.32.0 streaming
-    /// `gpt-oss-20b`, one request apart. The first call spaces the
-    /// recipient off from `<|constrain|>` and the second does not — and
-    /// neither is closed by `<|call|>`, because the server stops *on* that
-    /// token and never emits it, so every call resolves in `finish`.
+    /// Verbatim `mlx_lm.server` captures: the recipient is spaced in one and
+    /// fused in the other, and neither call is closed by `<|call|>`.
     #[test]
     fn real_mlx_captures_yield_the_same_call_either_way() {
         const SPACED: &str = "<|channel|>analysis<|message|>We need to search web. Use \

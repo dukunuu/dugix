@@ -2,22 +2,25 @@ use anyhow::{Context, Result, ensure};
 use chrono::Utc;
 use tokio::sync::watch;
 
-use super::{Job, JobRun};
+use super::{Job, JobRun, JobSpec};
 use crate::app::{App, AppEvent, ResearchUpdate};
-use crate::db::Watch;
 
-pub(crate) fn watch(job: &Job) -> Watch {
-    Watch {
-        id: job.id.clone(),
-        space_id: job.space_id.clone(),
-        topic: job
-            .spec
-            .topic
-            .clone()
-            .unwrap_or_else(|| job.spec.prompt.clone()),
-        interval_hours: job.spec.interval_minutes / 60,
-        session_id: job.session_id.clone(),
-        last_run_at: job.last_run_at.clone(),
+pub(crate) fn spec(topic: &str, interval_minutes: Option<i64>) -> JobSpec {
+    let topic = topic.trim();
+    JobSpec {
+        kind: "research".into(),
+        topic: Some(topic.into()),
+        name: topic.into(),
+        prompt: topic.into(),
+        trigger_kind: if interval_minutes.is_some() {
+            "interval"
+        } else {
+            "manual"
+        }
+        .into(),
+        interval_minutes: interval_minutes.unwrap_or(1440),
+        notify: "on_change".into(),
+        ..JobSpec::default()
     }
 }
 
@@ -96,24 +99,12 @@ pub(super) async fn run(
     job: &Job,
     cancelled: &mut watch::Receiver<bool>,
 ) -> Result<JobRun> {
-    let mut watch = watch(job);
-    if app.db.get_session(&watch.session_id)?.is_none() {
-        watch.session_id = app
-            .db
-            .create_session(
-                &job.spec.name,
-                app.current_model.as_deref().unwrap_or_default(),
-                &job.space_id,
-                "research",
-            )?
-            .id;
-    }
     // Research uses the ordinary space toolbox, never an agent worktree.
     app.workspace = None;
     app.work_mode = crate::app::WorkMode::Chat;
-    app.job_approver = None;
+    app.approvals.job_approver = None;
     app.refresh_toolbox();
-    ensure!(app.run_one_watch(&watch), "research job could not start");
+    ensure!(app.run_research_job(job), "research job could not start");
     let mut run = app
         .db
         .list_job_runs()?
@@ -163,10 +154,9 @@ pub(super) async fn run(
 }
 
 pub(crate) async fn event(app: &mut App, event: &crate::app::ResearchMsg) {
-    if let (session, _, _, ResearchUpdate::Done(result)) = event {
-        if let Err(error) = completed(app, session, result).await {
-            app.push_status(format!("could not finish research job: {error}"));
-        }
-        app.research_job_lock = None;
+    if let (session, _, _, ResearchUpdate::Done(result)) = event
+        && let Err(error) = completed(app, session, result).await
+    {
+        app.push_status(format!("could not finish research job: {error}"));
     }
 }

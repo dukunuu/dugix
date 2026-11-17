@@ -212,8 +212,7 @@ impl Theme {
         self.colors.get(name).copied()
     }
 
-    /// The color a `solidFill`-like element names (`srgbClr`, `schemeClr`, …),
-    /// with its modifiers applied. `element` is the element holding the color.
+    /// The color a `solidFill`-like element names, with its modifiers applied.
     pub fn color(&self, element: &El) -> Option<Rgba> {
         let node = element.kids.iter().find(|k| {
             matches!(
@@ -276,8 +275,7 @@ impl Theme {
         Some(color)
     }
 
-    /// The family a typeface reference names: a literal family, or a theme
-    /// font reference (`+mj-lt`, `+mn-lt`) looked up here.
+    /// The family a typeface reference names, resolving `+mj-lt` and `+mn-lt` here.
     pub fn font_ref(&self, typeface: &str) -> Option<String> {
         match typeface {
             "+mj-lt" => self.major.clone(),

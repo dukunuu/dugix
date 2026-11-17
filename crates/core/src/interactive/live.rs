@@ -69,7 +69,6 @@ pub struct Call {
 pub struct Outcome {
     /// Compact text for the normal conversation tool card.
     pub text: String,
-    /// Whether the tool completed successfully.
     pub success: bool,
     value: Value,
 }
@@ -108,8 +107,7 @@ impl Panel {
         })
     }
 
-    /// Last successful query results, for persistence. Mutation status is
-    /// transient and never saved.
+    /// Last successful query results; mutation status is transient and never saved.
     pub fn query_data(&self, definitions: &[Definition]) -> BTreeMap<String, Value> {
         definitions
             .iter()
@@ -307,8 +305,7 @@ fn query_allowed(tool: &str, args: &str, executor: &dyn ToolExecutor) -> bool {
 }
 
 /// Execute a budgeted call with the existing tool and approval seams.
-/// Queries accept only the advertised read-only allow-list. Mutations always
-/// ask the person, except for free read-only calls; grants never skip this ask.
+/// Queries accept only the advertised read-only allow-list; mutations always ask.
 pub async fn execute(
     call: &Call,
     panel: &str,

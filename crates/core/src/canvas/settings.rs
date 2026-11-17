@@ -1,6 +1,5 @@
-//! Studio's small, per-device settings: the folder each space last exported to.
-//! They live in `studio-settings.json` at the data root (beside
-//! `studio-recent.json`), are never synced and are safe to delete.
+//! Studio's per-device settings: the folder each space last exported to. They live
+//! in `studio-settings.json` at the data root, are never synced and are safe to delete.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -10,7 +9,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Default, Deserialize, Serialize)]
 struct Settings {
-    /// Space files folder (as text) to the folder its last export went to.
     #[serde(default)]
     export_dirs: BTreeMap<String, PathBuf>,
 }
@@ -26,7 +24,6 @@ fn load(data_root: &Path) -> Settings {
         .unwrap_or_default()
 }
 
-/// The folder this space last exported to, if it still exists.
 #[must_use]
 pub fn export_dir(data_root: &Path, files: &Path) -> Option<PathBuf> {
     load(data_root)
@@ -35,7 +32,6 @@ pub fn export_dir(data_root: &Path, files: &Path) -> Option<PathBuf> {
         .filter(|dir| dir.is_dir())
 }
 
-/// Remember the folder of a file just exported for `files`.
 pub fn remember_export(data_root: &Path, files: &Path, exported: &Path) -> Result<()> {
     let Some(dir) = exported.parent().filter(|d| d.is_absolute()) else {
         return Ok(());

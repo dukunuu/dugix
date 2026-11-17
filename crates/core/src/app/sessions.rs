@@ -11,14 +11,8 @@ impl App {
         self.switch_to_session_by_id(&notification.session_id)
     }
 
-    // --- commands ---
-
-    /// Clear back to a blank conversation. Doesn't touch the db — a session
-    /// row is only created lazily on the first message actually sent (same as
-    /// the very first message of the app), so `/new` without typing anything
-    /// doesn't leave an empty "new chat" behind in the session list.
+    /// Start a blank conversation without persisting an empty session.
     pub fn new_session(&mut self) {
-        // Session-scoped connector grants and promoted tools end with the chat.
         self.connectors.reset_session();
         self.session = None;
         self.reset_work_mode();
@@ -26,17 +20,13 @@ impl App {
         self.messages.clear();
         self.mask_through = 0;
         self.refresh_memory_snapshot();
-        // A selection points into the old session's wrapped lines — a stale
-        // one would mis-highlight the new chat and resolve links against the
-        // wrong messages; the view clears it on `ViewportReset`.
-        self.context_total = None;
+        self.meter.total = None;
         self.push_viewport_reset();
         self.cleanup_incognito_images();
         self.push_status("new chat — send a message to start it".to_string());
     }
 
-    /// Back to chat with no workspace: a new or different conversation never
-    /// inherits the previous one's directory.
+    // Workspace access must not leak across conversations.
     pub(super) fn reset_work_mode(&mut self) {
         self.work_mode = WorkMode::Chat;
         self.workspace = None;
@@ -73,14 +63,11 @@ impl App {
         }
     }
 
-    /// Switch to a session by its id. Used by session-link navigation (Ctrl+O),
-    /// notification clicks, the `ResolveSession` command, and the session
-    /// picker's confirm (via the view layer).
     pub fn switch_to_session_by_id(&mut self, id: &str) -> Result<()> {
         let Some(s) = self
             .db
             .get_session(id)?
-            .or_else(|| self.sessions_cache.iter().find(|s| s.id == id).cloned())
+            .or_else(|| self.caches.sessions.iter().find(|s| s.id == id).cloned())
         else {
             self.push_status(format!("session not found: {id}"));
             return Ok(());
@@ -95,21 +82,16 @@ impl App {
         self.notifications.retain(|n| n.session_id != s.id);
         self.push_status(format!("switched to: {}", s.title));
         self.current_model = Some(s.model.clone());
-        self.web_mode = s.web_mode;
         self.session = Some(s);
         self.restore_work_mode();
         self.refresh_memory_snapshot();
         self.backfill_compaction_row();
         self.restore_survey_gate_prompt();
         self.refresh_toolbox();
-        self.context_total = None;
-        // Selection + scroll point into the previous session's lines; the
-        // view resets them on `ViewportReset`.
+        self.meter.total = None;
         self.push_viewport_reset();
         self.cleanup_incognito_images();
-        // Opening an old session should be enough to trigger auto-compaction
-        // once its catalog/context window is available. `on_models_result`
-        // repeats this check when the model fetch races the session switch.
+        // Catalog arrival repeats this check if it races the session switch.
         self.maybe_compact();
         Ok(())
     }
@@ -125,7 +107,7 @@ mod procs_tests {
 
     #[tokio::test]
     async fn headless_ask_cleans_up_even_on_error_and_allows_another_turn() {
-        let root = std::env::temp_dir().join(format!("nexus-procs-ask-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-procs-ask-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let mut app = App::new(
             Db::open_in_memory().unwrap(),
@@ -142,7 +124,7 @@ mod procs_tests {
                 .action(
                     Context {
                         workspace: &workspace,
-                        db_path: Some(&root.join("nexus.db")),
+                        db_path: Some(&root.join("dugix.db")),
                         confinement: None,
                         session_id: "session",
                         allow_unparseable: false,
@@ -186,7 +168,7 @@ mod procs_tests {
     #[tokio::test]
     async fn processes_survive_new_switches_and_toolbox_refreshes() {
         let root =
-            std::env::temp_dir().join(format!("nexus-procs-sessions-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("dugix-procs-sessions-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let data = root.join("data");
         let workspace_root = root.join("workspace");
@@ -212,7 +194,7 @@ mod procs_tests {
                 .action(
                     Context {
                         workspace: &workspace,
-                        db_path: Some(&root.join("nexus.db")),
+                        db_path: Some(&root.join("dugix.db")),
                         confinement: None,
                         session_id: session,
                         allow_unparseable: false,
@@ -238,7 +220,6 @@ mod procs_tests {
     }
 }
 
-/// Best fuzzy score of `needle` against a session's title, slug, and uuid.
 pub fn session_score(s: &Session, needle: &str) -> Option<i32> {
     use crate::app::fuzzy_score;
     let mut best = fuzzy_score(&s.title, needle);
@@ -254,8 +235,6 @@ pub fn session_score(s: &Session, needle: &str) -> Option<i32> {
     best
 }
 
-/// Parse the model's topic reply into `(topic, slug)`. Tolerates surrounding prose
-/// or code fences by extracting the first `{...}` and reading the two fields.
 pub fn parse_topic(text: &str) -> Option<(String, String)> {
     let start = text.find('{')?;
     let end = text.rfind('}')?;
@@ -269,7 +248,6 @@ pub fn parse_topic(text: &str) -> Option<(String, String)> {
     Some((topic.to_string(), slugify(raw_slug)))
 }
 
-/// Normalise to a short kebab-case slug: lowercase, `[a-z0-9-]`, max 5 words.
 pub fn slugify(s: &str) -> String {
     let slug = s
         .to_lowercase()

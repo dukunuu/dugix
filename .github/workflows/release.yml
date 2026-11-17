@@ -67,14 +67,14 @@ jobs:
       - name: Publish to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        # nexus-chat-core first — the TUI crate depends on it. Both packages
+        # dugix-core first — the TUI crate depends on it. Both packages
         # ride the same workspace version, so a single tag covers both.
         run: |
-          cargo publish -p nexus-chat-core
-          cargo publish -p nexus-chat
+          cargo publish -p dugix-core
+          cargo publish -p dugix
 
       - name: Build release binary
-        run: cargo build --release --bin nexus
+        run: cargo build --release --bin dugix
 
       # GitHub's own auto-notes are PR-based; this repo commits straight to
       # master, so they come out empty. Generate notes from the git history
@@ -86,5 +86,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag_name || github.ref_name }}
-          files: target/release/nexus
+          files: target/release/dugix
           body_path: RELEASE_NOTES.md

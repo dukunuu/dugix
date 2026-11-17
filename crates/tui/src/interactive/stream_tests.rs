@@ -141,31 +141,22 @@ fn refined_cards_and_badges_use_theme_surfaces_not_hardcoded_colors() {
     let source = "root = Panel(\"Demo\", [Hero(\"Explore\", null, \"NEW\"), Cards([Card(\"Stay curious\", \"One small discovery every day\", \"TIP\")])])";
     let session = Session::new(Document::parse(source).unwrap()).unwrap();
     let theme = Theme::default();
-    let entry = Entry {
-        session: Ok(session),
-        focus: 0,
-        error: String::new(),
-        scroll: 0,
-    };
+    let entry = Entry::new(Ok(session));
     let (buffer, _) = entry.canvas(80, &theme, false, true);
+    assert!(buffer.content.iter().any(|cell| cell.symbol() == "N"
+        && cell.bg == theme.accent2
+        && cell.fg == theme.on(theme.accent2)));
     assert!(
-        buffer
-            .content
-            .iter()
-            .any(|cell| cell.symbol() == "N" && cell.bg == theme.accent2 && cell.fg == theme.bg)
-    );
-    assert!(
-        buffer
-            .content
-            .iter()
-            .any(|cell| cell.symbol() == "T" && cell.bg == theme.accent2 && cell.fg == theme.bg),
+        buffer.content.iter().any(|cell| cell.symbol() == "T"
+            && cell.bg == theme.accent2
+            && cell.fg == theme.on(theme.accent2)),
         "card badges keep their own foreground/background inside the grid"
     );
     assert!(
         buffer
             .content
             .iter()
-            .any(|cell| cell.symbol() == "╭" && cell.bg == theme.raised)
+            .any(|cell| cell.symbol() == "▎" && cell.bg == theme.raised)
     );
     assert!(
         buffer
@@ -173,4 +164,111 @@ fn refined_cards_and_badges_use_theme_surfaces_not_hardcoded_colors() {
             .iter()
             .any(|cell| cell.symbol() == "S" && cell.bg == theme.raised)
     );
+}
+
+const BROKEN: &str = r#"root = Panel("Trip planner", [heading, chart, actions])
+$count = 0
+heading = Hero("Make room for adventure")
+chart = PieChart([1, 2, 3])
+actions = Buttons([Button("Add a day", @Set($count, $count + 1), true)])"#;
+
+#[test]
+fn a_finished_panel_with_a_broken_piece_renders_the_rest_and_says_so() {
+    let mut terminal = Terminal::new(TestBackend::new(82, 20)).unwrap();
+    let mut widgets = Widgets::default();
+    let placement = Placement {
+        row: 0,
+        width: 80,
+        owner: 7,
+        ordinal: 0,
+        height: block_height(BROKEN, true, 80),
+        source: BROKEN.into(),
+        complete: true,
+    };
+    terminal
+        .draw(|frame| {
+            widgets.begin_frame(true);
+            widgets.paint(
+                frame,
+                frame.area(),
+                0,
+                std::slice::from_ref(&placement),
+                &Theme::default(),
+                true,
+            );
+        })
+        .unwrap();
+    let rendered = text(terminal.backend().buffer());
+    assert!(rendered.contains("Make room for adventure"), "{rendered}");
+    assert!(rendered.contains("Add a day"), "{rendered}");
+    assert!(
+        rendered.contains("left out: unknown component PieChart"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("unavailable"), "{rendered}");
+    let entry = widgets.entries.values_mut().next().unwrap();
+    let theme = Theme::default();
+    let (canvas, _) = entry.canvas(80, &theme, false, true);
+    assert_eq!(
+        canvas.area.height, placement.height,
+        "reserved rows match the drawing"
+    );
+    assert_eq!(entry.activate(0, true, true), None);
+    assert_eq!(entry.session.as_ref().unwrap().value("count"), "1");
+}
+
+#[test]
+fn tab_on_a_panel_taller_than_the_screen_keeps_the_focused_control_in_view() {
+    let names: Vec<String> = (1..=14).map(|n| format!("o{n}")).collect();
+    let mut source = format!("root = Panel(\"Settings\", [{}])", names.join(", "));
+    for (index, name) in names.iter().enumerate() {
+        source.push_str(&format!(
+            "\n${name} = false\n{name} = Toggle(${name}, \"Option {}\")",
+            index + 1
+        ));
+    }
+    let placement = Placement {
+        row: 0,
+        width: 60,
+        owner: 3,
+        ordinal: 0,
+        height: block_height(&source, true, 60),
+        source,
+        complete: true,
+    };
+    let mut terminal = Terminal::new(TestBackend::new(62, 10)).unwrap();
+    assert!(placement.height > 10, "the panel is taller than the screen");
+    let mut widgets = Widgets::default();
+    let mut draw = |widgets: &mut Widgets| {
+        terminal
+            .draw(|frame| {
+                widgets.begin_frame(true);
+                widgets.paint(
+                    frame,
+                    frame.area(),
+                    0,
+                    std::slice::from_ref(&placement),
+                    &Theme::default(),
+                    true,
+                );
+            })
+            .unwrap();
+        text(terminal.backend().buffer())
+    };
+    assert!(!draw(&mut widgets).contains("Option 14"));
+    assert!(widgets.focus_latest());
+    for _ in 0..13 {
+        widgets.key(KeyCode::Tab.into(), true);
+        draw(&mut widgets);
+    }
+    let shown = draw(&mut widgets);
+    assert!(shown.contains("Option 14"), "{shown}");
+    assert!(shown.contains("pinned"), "{shown}");
+    assert!(
+        widgets.hits.iter().any(|hit| hit.control == Some(13)),
+        "the focused control can be clicked where it is drawn"
+    );
+    widgets.key(KeyCode::Enter.into(), true);
+    let entry = widgets.entries.values().next().unwrap();
+    assert_eq!(entry.session.as_ref().unwrap().value("o14"), "true");
 }

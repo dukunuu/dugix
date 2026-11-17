@@ -90,9 +90,8 @@ pub(super) fn preset_mask(mask: Mask, rect: Rect) -> Option<String> {
     ))
 }
 
-/// The exact outline of a mask without a preset, as custom geometry in
-/// hundredths of a slide pixel. Used for shapes; pictures get the mask in
-/// their alpha instead (see [`bake_mask`]), which every importer keeps.
+/// The exact outline of a mask without a preset, in hundredths of a slide pixel;
+/// pictures get the mask in their alpha instead (see [`bake_mask`]).
 pub(super) fn custom_mask(mask: Mask, rect: Rect) -> String {
     let unit = |value: f64| integer(value * 100.0);
     let (w, h) = (rect.w, rect.h);
@@ -137,9 +136,8 @@ pub(super) fn custom_mask(mask: Mask, rect: Rect) -> String {
     )
 }
 
-/// The picture with everything outside `mask` made transparent, as PNG.
-/// Pixels map to the box the way the picture is placed: scaled by `fit` and
-/// offset by `focus`. Edges are 4× supersampled.
+/// The picture with everything outside `mask` made transparent, as PNG; edges are
+/// 4× supersampled.
 pub(super) fn bake_mask(
     png: &[u8],
     mask: Mask,

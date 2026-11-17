@@ -1,9 +1,5 @@
 //! Lenient input for the `canvas` tool: the small, predictable mistakes a model
-//! makes (a font given as a string, `kind: "ellipse"`, a text style it never
-//! defined, `"58"` for 58, letter spacing in px) are repaired on the JSON
-//! value before validation, and each repair is reported so the model learns
-//! the real shape. Nothing here guesses at meaning: anything not covered still
-//! fails validation, with a hint from [`hint`].
+//! makes are repaired on the JSON value before validation, and each is reported.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -126,7 +122,6 @@ impl Context {
         self.styles.entry(name.to_string()).or_insert(size);
     }
 
-    /// Normalize a list of slide objects (the `slides` of a create).
     pub fn slides(&mut self, slides: &mut Value) {
         if let Some(items) = slides.as_array_mut() {
             for slide in items {
@@ -135,7 +130,6 @@ impl Context {
         }
     }
 
-    /// Normalize a `text_styles` object given beside the slides or ops.
     pub fn text_styles(&mut self, styles: &mut Value) {
         let Some(map) = styles.as_object_mut() else {
             return;
@@ -147,7 +141,6 @@ impl Context {
         }
     }
 
-    /// Normalize every operation of an edit or comment.
     pub fn ops(&mut self, ops: &mut [Value]) {
         // Styles defined anywhere in the call are known to every operation.
         for op in ops.iter() {
@@ -180,31 +173,90 @@ impl Context {
         for key in ["to", "index"] {
             self.number(op, key);
         }
+        // `get_mut`, never `op["key"]`: indexing inserts a null for a missing
+        // key, and the model then sees "invalid type: null" instead of the
+        // missing field's name.
         match kind.as_str() {
             "add_slide" => {
                 if let Some(slide) = op.get_mut("slide") {
                     self.node(slide, None);
                 }
             }
-            "insert_node" => self.node(&mut op["node"], None),
+            "insert_node" => {
+                if let Some(node) = op.get_mut("node") {
+                    self.node(node, None);
+                }
+            }
             "update_node" | "update_slide" => {
+                self.fold_fields(op, &kind);
                 let id = op["id"].as_str().map(str::to_string);
-                self.node(&mut op["fields"], id.as_deref());
+                if let Some(fields) = op.get_mut("fields") {
+                    self.node(fields, id.as_deref());
+                }
             }
             "set_text_style" => {
                 let name = op["name"].as_str().map(str::to_string);
-                self.font(&mut op["font"], None, name.as_deref());
+                if let Some(font) = op.get_mut("font") {
+                    self.font(font, None, name.as_deref());
+                }
             }
             "set_theme" => {
-                if let Some(styles) = op["theme"].get_mut("text_styles") {
+                if let Some(styles) = op
+                    .get_mut("theme")
+                    .and_then(|theme| theme.get_mut("text_styles"))
+                {
                     self.text_styles(styles);
                 }
             }
-            "wrap" | "set_layout" => self.layout(&mut op["layout"]),
-            "set_transition" => self.numbers_in(&mut op["transition"]),
-            "set_animation" => self.numbers_in(&mut op["build"]),
+            "wrap" | "set_layout" => {
+                if let Some(layout) = op.get_mut("layout") {
+                    self.layout(layout);
+                }
+            }
+            "set_transition" | "set_animation" => {
+                let key = if kind == "set_transition" {
+                    "transition"
+                } else {
+                    "build"
+                };
+                if let Some(value) = op.get_mut(key) {
+                    self.numbers_in(value);
+                }
+            }
             _ => {}
         }
+    }
+
+    /// An update written flat (`{"op":"update_node","id":…,"text":…}`) means
+    /// those keys as `fields`, since the op takes no others; `update_slide`
+    /// may name its slide `slide`.
+    fn fold_fields(&mut self, op: &mut Value, kind: &str) {
+        let Some(map) = op.as_object_mut() else {
+            return;
+        };
+        if kind == "update_slide"
+            && !map.contains_key("id")
+            && let Some(slide) = map.remove("slide")
+        {
+            map.insert("id".into(), slide);
+        }
+        if map.contains_key("fields") {
+            return;
+        }
+        let flat: Vec<String> = map
+            .keys()
+            .filter(|key| !matches!(key.as_str(), "op" | "id" | "base_hash"))
+            .cloned()
+            .collect();
+        if flat.is_empty() {
+            return;
+        }
+        let fields: serde_json::Map<String, Value> = flat
+            .iter()
+            .filter_map(|key| map.remove(key).map(|value| (key.clone(), value)))
+            .collect();
+        map.insert("fields".into(), Value::Object(fields));
+        self.note(format!("{kind}: {} → fields", flat.join(", ")));
     }
 
     /// A slide, node or partial node (`fields` of an update), recursively.
@@ -359,8 +411,8 @@ impl Context {
         }
     }
 
-    /// Coerce the numeric fields of `map`, descending into the sub-objects
-    /// that hold numbers (sizing, position, stroke, animation and so on).
+    /// Coerce the numeric fields of `map`, descending into the objects that hold
+    /// them.
     fn numbers_in_map(&mut self, map: &mut Map<String, Value>) {
         for key in NUMBER_KEYS {
             self.number_in(map, key);
@@ -466,10 +518,8 @@ fn weight_word(word: &str) -> Option<u16> {
     })
 }
 
-/// `name`, `name.deck.json` and `decks/name` become `decks/name.deck.json`.
-/// Returns `None` when the path needs no change or is not a recognizable
-/// short form (a folder other than `decks/`, an absolute path), which the
-/// confinement check then judges.
+/// `name`, `name.deck.json` and `decks/name` become `decks/name.deck.json`; `None`
+/// when the path needs no change or is not a short form.
 #[must_use]
 pub fn normalize_path(input: &str) -> Option<String> {
     let trimmed = input.trim();
@@ -499,8 +549,7 @@ pub fn normalize_path(input: &str) -> Option<String> {
     (fixed != input).then_some(fixed)
 }
 
-/// A one-line fix for a validation message, when the message is a known
-/// shape of mistake. `path` is the JSON path the message is located at.
+/// A one-line fix for a validation message, when it is a known shape of mistake.
 #[must_use]
 pub fn hint(path: &str, message: &str) -> Option<&'static str> {
     let field = path.rsplit('.').next().unwrap_or(path);

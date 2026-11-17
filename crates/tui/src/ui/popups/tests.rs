@@ -2,18 +2,22 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
 use crate::app_view::AppView;
-use nexus_core::app::{App, ChatNotification, CopyOption, SettingsField, SettingsRow};
-use nexus_core::db::Db;
-use nexus_core::space::Space;
+use dugix_core::app::{App, ChatNotification, CopyOption, SettingsField, SettingsRow};
+use dugix_core::db::Db;
+use dugix_core::space::Space;
 
-fn test_app() -> AppView {
+pub(super) fn test_app() -> AppView {
     let db = Db::open_in_memory().unwrap();
-    let root = std::env::temp_dir().join(format!("nexus-popup-test-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-popup-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("spaces")).unwrap();
     AppView::new(App::new(db, Some("k"), Space { root }))
 }
 
-fn render_to_string(width: u16, height: u16, render: impl FnOnce(&mut ratatui::Frame)) -> String {
+pub(super) fn render_to_string(
+    width: u16,
+    height: u16,
+    render: impl FnOnce(&mut ratatui::Frame),
+) -> String {
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal.draw(render).unwrap();
@@ -31,7 +35,7 @@ fn render_to_string(width: u16, height: u16, render: impl FnOnce(&mut ratatui::F
 
 #[test]
 fn jobs_popup_two_jobs_and_parked_run_snapshot() {
-    use nexus_core::jobs::{Job, JobRun, JobSpec};
+    use dugix_core::jobs::{Job, JobRun, JobSpec};
 
     let mut app = test_app();
     let device = app.db.device_id().unwrap();
@@ -62,12 +66,12 @@ fn jobs_popup_two_jobs_and_parked_run_snapshot() {
         status: "parked".into(),
         iters: 1,
         cost_usd: 0.01,
-        branch: Some("nexus/job/fix/run".into()),
+        branch: Some("dugix/job/fix/run".into()),
         summary: "parked: needs approval for fs write fixed".into(),
         updated_at: "2026-01-01T00:01:00Z".into(),
     });
     let screen = render_to_string(120, 30, |frame| super::jobs::render(frame, &app));
-    assert!(screen.contains(" jobs "), "{screen}");
+    assert!(screen.contains(" Jobs "), "{screen}");
     let snapshot: Vec<_> = screen
         .lines()
         .filter_map(|line| {
@@ -82,7 +86,8 @@ fn jobs_popup_two_jobs_and_parked_run_snapshot() {
         [
             "morning · agent · interval · enabled · never run",
             "▸ fix tests · agent · until_done · enabled · parked",
-            "nexus/job/fix/run",
+            "──────────────────────────────────────────────────────────────────────────────────────────",
+            "dugix/job/fix/run",
             "parked: needs approval for fs write fixed",
         ]
     );
@@ -94,8 +99,8 @@ fn jobs_popup_two_jobs_and_parked_run_snapshot() {
 #[cfg(unix)]
 #[tokio::test]
 async fn procs_popup_two_processes_snapshot() {
-    use nexus_core::tools::ToolBox;
-    use nexus_core::workspace::Workspace;
+    use dugix_core::tools::ToolBox;
+    use dugix_core::workspace::Workspace;
 
     let app = test_app();
     let root = app.space.root.clone();
@@ -105,7 +110,7 @@ async fn procs_popup_two_processes_snapshot() {
         None,
         "auto".into(),
         vec![],
-        Some(root.join("nexus.db")),
+        Some(root.join("dugix.db")),
         None,
         None,
     );
@@ -121,7 +126,7 @@ async fn procs_popup_two_processes_snapshot() {
         assert!(result.contains(" · ready ·"), "{result}");
     }
     let screen = render_to_string(120, 30, |f| super::procs::render(f, &app));
-    assert!(screen.contains(" procs "), "{screen}");
+    assert!(screen.contains(" Processes "), "{screen}");
     let snapshot: Vec<_> = screen
         .lines()
         .filter_map(|line| {
@@ -142,9 +147,10 @@ async fn procs_popup_two_processes_snapshot() {
     assert_eq!(
         snapshot,
         [
-            "this session first · processes stop when Nexus exits",
             "▸ server · running <uptime> · listening",
             "watcher · running <uptime> · watching",
+            "──────────────────────────────────────────────────────────────────────────────────────────",
+            "Processes stop when dugix exits.",
         ]
     );
     app.procs.shutdown().await;
@@ -157,13 +163,13 @@ fn approval_app(
     summary: String,
 ) -> (
     AppView,
-    tokio::sync::oneshot::Receiver<nexus_core::tools::Decision>,
+    tokio::sync::oneshot::Receiver<dugix_core::tools::Decision>,
 ) {
     let mut app = test_app();
     app.settings.hide_hints = false;
     let (sender, receiver) = tokio::sync::oneshot::channel();
-    app.pending_approval = Some(sender);
-    app.pending_approval_request = Some(nexus_core::tools::ApprovalRequest {
+    app.approvals.pending = Some(sender);
+    app.approvals.pending_request = Some(dugix_core::tools::ApprovalRequest {
         tool: tool.into(),
         class: None,
         detail: None,
@@ -177,7 +183,7 @@ fn approval_app(
 
 #[test]
 fn harness_popup_three_rows_snapshot() {
-    use nexus_core::db::{FailureRow, HarnessSummary};
+    use dugix_core::db::{FailureRow, HarnessSummary};
 
     let mut app = test_app();
     let root = app.space.root.clone();
@@ -204,9 +210,11 @@ fn harness_popup_three_rows_snapshot() {
         .collect(),
     });
     let screen = render_to_string(120, 30, |f| super::harness::render(f, &app));
-    assert!(screen.contains(" harness "), "{screen}");
+    assert!(screen.contains(" Tool health "), "{screen}");
+    let top = screen.lines().find(|line| line.contains('╭')).unwrap();
+    assert!(top.contains("40 calls · 20 failed · 7 days"), "{screen}");
     assert!(
-        screen.contains("↑↓ select · enter open the latest transcript · esc close"),
+        screen.contains("↑↓ · Enter transcript · Esc close"),
         "{screen}"
     );
     let snapshot: Vec<_> = screen
@@ -221,7 +229,6 @@ fn harness_popup_three_rows_snapshot() {
     assert_eq!(
         snapshot,
         [
-            "40 calls · 20 failed (50%) · last 7 days",
             "▸ scripts edit · stale_edit ×14 · 2h ago",
             "shell run · blocked ×4 · 5m ago",
             "fs read · not_found ×2 · 2d ago",
@@ -244,14 +251,14 @@ fn harness_popup_three_rows_snapshot() {
 
 #[test]
 fn harness_popup_empty_state_snapshots() {
-    use nexus_core::db::HarnessSummary;
+    use dugix_core::db::HarnessSummary;
 
     let mut app = test_app();
     let root = app.space.root.clone();
     for (incognito, calls, expected) in [
-        (false, 0, "no tool failures in the last 7 days"),
-        (true, 0, "nothing recorded in incognito"),
-        (true, 5, "no tool failures in the last 7 days"),
+        (false, 0, "No tool failures in the last 7 days."),
+        (true, 0, "Nothing is recorded in incognito."),
+        (true, 5, "No tool failures in the last 7 days."),
     ] {
         app.incognito = incognito;
         app.harness = Some(HarnessSummary {
@@ -260,6 +267,11 @@ fn harness_popup_empty_state_snapshots() {
             rows: Vec::new(),
         });
         let screen = render_to_string(120, 30, |f| super::harness::render(f, &app));
+        let top = screen.lines().find(|line| line.contains('╭')).unwrap();
+        assert!(
+            top.contains(&format!("{calls} calls · 0 failed · 7 days")),
+            "{screen}"
+        );
         let snapshot: Vec<_> = screen
             .lines()
             .filter_map(|line| {
@@ -269,13 +281,7 @@ fn harness_popup_empty_state_snapshots() {
                 (!body.is_empty()).then_some(body)
             })
             .collect();
-        assert_eq!(
-            snapshot,
-            [
-                format!("{calls} calls · 0 failed (0%) · last 7 days"),
-                expected.to_string(),
-            ]
-        );
+        assert_eq!(snapshot, [expected]);
     }
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
@@ -285,7 +291,7 @@ fn harness_popup_empty_state_snapshots() {
 fn approval_escapes_terminal_controls_in_the_header_and_command() {
     let (mut app, _receiver) = approval_app("shell", "$ echo \x1b[2K\rhidden\tend\nnext".into());
     let root = app.space.root.clone();
-    app.pending_approval_request.as_mut().unwrap().action = "run\x7f\n".into();
+    app.approvals.pending_request.as_mut().unwrap().action = "run\x7f\n".into();
     app.sync_approval_popup();
     let screen = render_to_string(120, 40, |f| super::approval::render(f, &app));
     assert!(screen.contains("shell · run\\u{7f}\\u{a}"), "{screen}");
@@ -318,7 +324,7 @@ fn approval_overflow_is_counted_scrollable_and_reset_for_each_request() {
     let root = app.space.root.clone();
     let screen = render_to_string(120, 24, |f| super::approval::render(f, &app));
     assert!(
-        screen.contains("y allow once · a allow all edits this session · n deny"),
+        screen.contains("y approve · a this session · n deny · Esc deny"),
         "{screen}"
     );
     let (marker_row, marker) = screen
@@ -338,7 +344,6 @@ fn approval_overflow_is_counted_scrollable_and_reset_for_each_request() {
     let shown = screen.lines().filter(|line| line.contains("+row ")).count();
     assert_eq!(shown + remaining, 40);
     assert!(remaining > 0);
-    // Below the preview: a spacer, the pinned key row, then the border.
     assert!(screen.lines().nth(marker_row + 3).unwrap().contains('╰'));
     for (key, offset) in [
         (crossterm::event::KeyCode::Down, 1),
@@ -360,8 +365,8 @@ fn approval_overflow_is_counted_scrollable_and_reset_for_each_request() {
     assert!(app.approval_scroll.get() < app.approval_max_scroll.get());
     let opened = app.approval_opened_at.unwrap();
     let (sender, mut receiver) = tokio::sync::oneshot::channel();
-    app.pending_approval = Some(sender);
-    app.pending_approval_request.as_mut().unwrap().summary =
+    app.approvals.pending = Some(sender);
+    app.approvals.pending_request.as_mut().unwrap().summary =
         format!("edit another file\n{summary}");
     app.sync_approval_popup();
     assert_eq!(app.approval_scroll.get(), 0);
@@ -372,7 +377,7 @@ fn approval_overflow_is_counted_scrollable_and_reset_for_each_request() {
     super::approval::handle_key(&mut app, crossterm::event::KeyCode::Char('a').into()).unwrap();
     assert_eq!(
         receiver.try_recv().unwrap(),
-        nexus_core::tools::Decision::AllowForSession
+        dugix_core::tools::Decision::AllowForSession
     );
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
@@ -381,24 +386,28 @@ fn approval_overflow_is_counted_scrollable_and_reset_for_each_request() {
 #[test]
 fn queued_approvals_show_their_position_and_reset_the_guards_at_the_head() {
     use crossterm::event::KeyCode;
-    use nexus_core::tools::Decision;
+    use dugix_core::tools::Decision;
     use std::time::{Duration, Instant};
 
     let command = format!("$ echo {}\necho LAST_COMMAND", "payload ".repeat(500));
     let (mut app, mut first) = approval_app("shell", command);
     let root = app.space.root.clone();
-    let request = app.pending_approval_request.clone().unwrap();
+    let request = app.approvals.pending_request.clone().unwrap();
     let mut queued = Vec::new();
     for _ in 0..2 {
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        app.approval_queue.push_back((request.clone(), sender));
+        app.approvals.queue.push_back((request.clone(), sender));
         queued.push(receiver);
     }
     let mut third = queued.pop().unwrap();
     let second = queued.pop().unwrap();
     let screen = render_to_string(120, 24, |f| super::approval::render(f, &app));
-    assert!(screen.contains(" approve · 1 of 3 "), "{screen}");
-    // Read the first to its end and let its open delay pass.
+    assert!(
+        screen
+            .lines()
+            .any(|line| line.contains("╭ Approve ") && line.contains(" 1 of 3 ")),
+        "{screen}"
+    );
     let read_to_end = |app: &mut AppView| {
         while app.approval_scroll.get() < app.approval_max_scroll.get() {
             super::approval::handle_key(app, KeyCode::PageDown.into()).unwrap();
@@ -410,10 +419,9 @@ fn queued_approvals_show_their_position_and_reset_the_guards_at_the_head() {
     read_to_end(&mut app);
     super::approval::handle_key(&mut app, KeyCode::Char('y').into()).unwrap();
     assert_eq!(first.try_recv().unwrap(), Decision::Allow);
-    // The identical second request reaches the head with fresh guards.
     app.sync_approval_popup();
     let assert_fresh = |app: &AppView| {
-        assert_eq!(app.popup, nexus_core::app::Popup::Approval);
+        assert_eq!(app.popup, dugix_core::app::Popup::Approval);
         assert_eq!(app.approval_request.as_ref(), Some(&request));
         assert_eq!(app.approval_scroll.get(), 0);
         assert!(!app.approval_seen_end.get());
@@ -424,14 +432,18 @@ fn queued_approvals_show_their_position_and_reset_the_guards_at_the_head() {
     };
     assert_fresh(&app);
     let screen = render_to_string(120, 24, |f| super::approval::render(f, &app));
-    assert!(screen.contains(" approve · 1 of 2 "), "{screen}");
+    assert!(
+        screen
+            .lines()
+            .any(|line| line.contains("╭ Approve ") && line.contains(" 1 of 2 ")),
+        "{screen}"
+    );
     read_to_end(&mut app);
-    // Its tool call going away shows the third, again with fresh guards.
     drop(second);
     app.sync_approval_popup();
     assert_fresh(&app);
     let screen = render_to_string(120, 24, |f| super::approval::render(f, &app));
-    assert!(screen.contains(" approve "), "{screen}");
+    assert!(screen.contains("╭ Approve "), "{screen}");
     assert!(!screen.contains("1 of"), "{screen}");
     app.approval_opened_at = Some(Instant::now() - Duration::from_secs(1));
     super::approval::handle_key(&mut app, KeyCode::Char('y').into()).unwrap();
@@ -440,7 +452,7 @@ fn queued_approvals_show_their_position_and_reset_the_guards_at_the_head() {
     super::approval::handle_key(&mut app, KeyCode::Char('y').into()).unwrap();
     assert_eq!(third.try_recv().unwrap(), Decision::Allow);
     app.sync_approval_popup();
-    assert_eq!(app.popup, nexus_core::app::Popup::None);
+    assert_eq!(app.popup, dugix_core::app::Popup::None);
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -448,7 +460,7 @@ fn queued_approvals_show_their_position_and_reset_the_guards_at_the_head() {
 #[test]
 fn approval_requires_the_end_of_a_wrapped_shell_command_before_allowing() {
     use crossterm::event::KeyCode;
-    use nexus_core::tools::Decision;
+    use dugix_core::tools::Decision;
 
     for (key, decision) in [('y', Decision::Allow), ('a', Decision::AllowForSession)] {
         let (mut app, mut receiver) = approval_app(
@@ -457,11 +469,12 @@ fn approval_requires_the_end_of_a_wrapped_shell_command_before_allowing() {
         );
         let root = app.space.root.clone();
         let screen = render_to_string(120, 24, |f| super::approval::render(f, &app));
-        assert!(screen.contains("scroll to the end to enable y"), "{screen}");
+        assert!(screen.contains("n deny · Esc deny"), "{screen}");
+        assert!(!screen.contains("y approve"), "{screen}");
         assert!(screen.contains("more lines"), "{screen}");
         super::approval::handle_key(&mut app, KeyCode::Char(key).into()).unwrap();
         assert!(receiver.try_recv().is_err());
-        assert!(app.pending_approval.is_some());
+        assert!(app.approvals.pending.is_some());
         while app.approval_scroll.get() < app.approval_max_scroll.get() {
             super::approval::handle_key(&mut app, KeyCode::PageDown.into()).unwrap();
             render_to_string(120, 24, |f| super::approval::render(f, &app));
@@ -469,7 +482,7 @@ fn approval_requires_the_end_of_a_wrapped_shell_command_before_allowing() {
         let screen = render_to_string(120, 24, |f| super::approval::render(f, &app));
         assert!(screen.contains("echo LAST_COMMAND"), "{screen}");
         assert!(
-            !screen.contains("scroll to the end to enable y"),
+            screen.contains("y approve · a this session · n deny · Esc deny"),
             "{screen}"
         );
         super::approval::handle_key(&mut app, KeyCode::PageUp.into()).unwrap();
@@ -484,7 +497,7 @@ fn approval_requires_the_end_of_a_wrapped_shell_command_before_allowing() {
 #[test]
 fn approval_ignores_allow_keys_during_the_open_delay_but_never_delays_denial() {
     use crossterm::event::KeyCode;
-    use nexus_core::tools::Decision;
+    use dugix_core::tools::Decision;
     use std::time::{Duration, Instant};
 
     let (mut app, mut receiver) = approval_app("shell", "$ true".into());
@@ -495,7 +508,7 @@ fn approval_ignores_allow_keys_during_the_open_delay_but_never_delays_denial() {
     for key in ['y', 'a'] {
         super::approval::handle_key(&mut app, KeyCode::Char(key).into()).unwrap();
         assert!(receiver.try_recv().is_err());
-        assert!(app.pending_approval.is_some());
+        assert!(app.approvals.pending.is_some());
     }
     app.approval_opened_at = Some(Instant::now() - Duration::from_millis(401));
     super::approval::handle_key(&mut app, KeyCode::Char('y').into()).unwrap();
@@ -520,14 +533,16 @@ fn approval_popup_combined_wave_snapshot() {
         "2 edits, 1 command\n1. fs edit\n  edit one\n  --- a/one\n  +++ b/one\n  @@ -1 +1 @@\n  -old\n  +new\n2. fs write\n  write two\n3. shell run\n  $ cargo test".into(),
     );
     let root = app.space.root.clone();
-    // The snapshot wraps at the old fixed 112-cell column; `auto` is wider now.
     app.settings.column_width = "112".into();
-    app.pending_approval_request.as_mut().unwrap().action = "3 calls".into();
+    app.approvals.pending_request.as_mut().unwrap().action = "3 calls".into();
     app.sync_approval_popup();
     let screen = render_to_string(120, 40, |f| super::approval::render(f, &app));
-    assert!(screen.contains(" approve "), "{screen}");
     assert!(
-        screen.contains("y approve all · a + session · r one by one · n deny all"),
+        screen.contains("╭ Approve 3 calls · 2 edits, 1 command "),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("y approve · a this session · r one by one · n deny · Esc deny"),
         "{screen}"
     );
     let snapshot: Vec<_> = screen
@@ -542,15 +557,13 @@ fn approval_popup_combined_wave_snapshot() {
     assert_eq!(
         snapshot,
         [
-            " The agent wants to make these 3 calls together. Each is shown below; y approves all of them, r lets you",
-            " decide one by one.",
+            " The agent wants to make these 3 calls together. Each is shown below.",
             " ▍ 1  edit one  +1 −1",
             " 1 − old",
             " 1 + new",
             " ▍ 2  write two",
             " ▍ 3  shell · run",
             " $ cargo test",
-            " y approve all · a + session · r one by one · n deny all",
         ]
     );
     drop(app);
@@ -585,8 +598,13 @@ fn approval_edit_at_80_columns_has_colored_diff_and_class_badge() {
             "42 − let n = cfg.limit;",
             "42 + let n = cfg.limit.max(1);",
             "43 + let m = n * 2;",
-            "y allow once · a allow all edits this session · n deny",
         ]
+    );
+    let screen = render_to_string(80, 24, |frame| super::approval::render(frame, &app));
+    assert!(
+        screen.lines().any(|line| line.contains('╰')
+            && line.contains("y approve · a this session · n deny · Esc deny")),
+        "{screen}"
     );
     for (symbol, color) in [("+", app.theme.success), ("−", app.theme.error)] {
         let cells: Vec<_> = buffer
@@ -688,7 +706,7 @@ fn approval_popup_shell_and_diff_snapshots() {
     let mut app = test_app();
     let root = app.space.root.clone();
     app.settings.hide_hints = false;
-    app.popup = nexus_core::app::Popup::Approval;
+    app.popup = dugix_core::app::Popup::Approval;
     for (tool, action, summary, expected) in [
         (
             "shell",
@@ -699,7 +717,6 @@ fn approval_popup_shell_and_diff_snapshots() {
                 "The agent wants to run this command:",
                 "$ cargo test",
                 "in crates/core",
-                "y allow once · a allow all commands this session · n deny",
             ],
         ),
         (
@@ -711,11 +728,10 @@ fn approval_popup_shell_and_diff_snapshots() {
                 "The agent wants to replace the contents of file: 1 line added, 1 line removed.",
                 "1 − old",
                 "1 + new",
-                "y allow once · a allow all edits this session · n deny",
             ],
         ),
     ] {
-        app.approval_request = Some(nexus_core::tools::ApprovalRequest {
+        app.approval_request = Some(dugix_core::tools::ApprovalRequest {
             class: None,
             detail: None,
             tool: tool.into(),
@@ -724,13 +740,9 @@ fn approval_popup_shell_and_diff_snapshots() {
             allow_session: true,
         });
         let screen = render_to_string(120, 40, |f| super::approval::render(f, &app));
-        assert!(screen.contains(" approve "), "{screen}");
+        assert!(screen.contains("╭ Approve "), "{screen}");
         assert!(
-            screen.contains(if tool == "fs" {
-                "y allow once · a allow all edits this session · n deny"
-            } else {
-                "y allow once · a allow all commands this session · n deny"
-            }),
+            screen.contains("y approve · a this session · n deny · Esc deny"),
             "{screen}"
         );
         let snapshot: Vec<_> = screen
@@ -752,7 +764,7 @@ fn approval_popup_shell_and_diff_snapshots() {
 fn agent_status_tag_is_mode_specific_and_left_truncates_long_roots() {
     let mut app = test_app();
     let root = std::env::temp_dir()
-        .join(format!("nexus-status-{}", uuid::Uuid::new_v4()))
+        .join(format!("dugix-status-{}", uuid::Uuid::new_v4()))
         .join("a-long-parent-directory/deep-project");
     std::fs::create_dir_all(&root).unwrap();
     let chat = render_to_string(96, 1, |f| {
@@ -782,9 +794,9 @@ fn agent_status_abbreviates_the_home_directory() {
     };
     let mut app = test_app();
     app.workspace = Some(std::sync::Arc::new(
-        nexus_core::workspace::Workspace::open(std::path::Path::new(&home), Vec::new()).unwrap(),
+        dugix_core::workspace::Workspace::open(std::path::Path::new(&home), Vec::new()).unwrap(),
     ));
-    app.work_mode = nexus_core::app::WorkMode::Agent;
+    app.work_mode = dugix_core::app::WorkMode::Agent;
     let status = render_to_string(96, 1, |f| {
         crate::ui::status::render_status(f, &app, f.area());
     });
@@ -797,9 +809,9 @@ fn model_authored_ui_is_inline_and_focusable_without_game_commands() {
     app.incognito = true;
     app.set_input("keep my draft");
     let source = include_str!("../../../../core/tests/fixtures/interactive/counter.json").trim();
-    app.messages.push(nexus_core::db::Message {
+    app.messages.push(dugix_core::db::Message {
         role: "assistant".into(),
-        content: format!("Before\n\n```nexus-ui\n{source}\n```\n\nAfter"),
+        content: format!("Before\n\n```dugix-ui\n{source}\n```\n\nAfter"),
         model: None,
         reasoning: None,
         tokens: None,
@@ -828,20 +840,20 @@ fn model_authored_ui_is_inline_and_focusable_without_game_commands() {
     let block = app.history_cache.code[app.history_cache.widgets[0].row].unwrap();
     assert_eq!(app.history_cache.blocks[block], source);
     crate::interactive::focus(&mut app);
-    assert_eq!(app.popup, nexus_core::app::Popup::InteractiveUi);
+    assert_eq!(app.popup, dugix_core::app::Popup::InteractiveUi);
     crate::interactive::key(&mut app, crossterm::event::KeyCode::Enter.into());
     let screen = render_to_string(100, 40, |f| crate::ui::render(f, &mut app));
     assert!(screen.contains("Count: 1"), "{screen}");
     assert_eq!(app.input_text(), "keep my draft");
     assert_eq!(app.messages.len(), 1);
     crate::interactive::key(&mut app, crossterm::event::KeyCode::Esc.into());
-    assert_eq!(app.popup, nexus_core::app::Popup::None);
+    assert_eq!(app.popup, dugix_core::app::Popup::None);
     let screen = render_to_string(100, 40, |f| crate::ui::render(f, &mut app));
     assert!(
         screen.contains("Count: 1"),
         "focus should share inline state: {screen}"
     );
-    app.apply_event(&nexus_core::app::AppEvent::ViewportReset);
+    app.apply_event(&dugix_core::app::AppEvent::ViewportReset);
     let screen = render_to_string(100, 40, |f| crate::ui::render(f, &mut app));
     assert!(screen.contains("Count: 0"), "{screen}");
 }
@@ -849,8 +861,8 @@ fn model_authored_ui_is_inline_and_focusable_without_game_commands() {
 #[test]
 fn local_popup_lists_runtimes_with_discovery_and_endpoint() {
     let mut app = test_app();
-    app.core.saved.local = Some(nexus_core::provider::local::LocalConfig {
-        provider: nexus_core::provider::local::LocalRuntime::Mlx,
+    app.core.saved.local = Some(dugix_core::provider::local::LocalConfig {
+        provider: dugix_core::provider::local::LocalRuntime::Mlx,
         endpoint: None,
         list_command: None,
         memory_budget_mb: None,
@@ -862,17 +874,14 @@ fn local_popup_lists_runtimes_with_discovery_and_endpoint() {
     app.open_local_popup();
     let screen = render_to_string(80, 24, |f| super::local::render(f, &app));
 
-    assert!(screen.contains("local runtime"), "{screen}");
+    assert!(screen.contains("Local models"), "{screen}");
     assert!(screen.contains("ollama list"), "{screen}");
     assert!(screen.contains("http://localhost:8080/v1"), "{screen}");
     assert!(screen.contains("✓ active"), "{screen}");
-    // The picker opens on the configured runtime, not on row 0.
     assert_eq!(app.local_selected, 1);
 
-    // Rows past the fold scroll into view with their own discovery hint, and
-    // a surveyed row shows what its server is costing.
-    app.core.local_status = vec![nexus_core::provider::serve::RuntimeStatus {
-        runtime: nexus_core::provider::local::LocalRuntime::Edge0,
+    app.core.local.status = vec![dugix_core::provider::serve::RuntimeStatus {
+        runtime: dugix_core::provider::local::LocalRuntime::Edge0,
         endpoint: "http://localhost:8000/v1".into(),
         port: Some(8000),
         running: true,
@@ -884,51 +893,55 @@ fn local_popup_lists_runtimes_with_discovery_and_endpoint() {
     app.local_selected = 2;
     let screen = render_to_string(80, 24, |f| super::local::render(f, &app));
     assert!(screen.contains("mlx-serve list"), "{screen}");
-    assert!(screen.contains("http://localhost:11234/v1"), "{screen}");
+    assert!(
+        screen.contains("○ stopped http://localhost:11234/…"),
+        "{screen}"
+    );
 
     app.local_selected = 4;
     let screen = render_to_string(80, 24, |f| super::local::render(f, &app));
     assert!(screen.contains("edge0 models"), "{screen}");
-    // Urgency order: the size and the warning survive the truncation that
-    // eats the endpoint at this width.
-    assert!(screen.contains("● 4.2 GB · ⚠ over budget"), "{screen}");
-    // A runtime with no survey row yet reads as down rather than blank.
-    assert!(screen.contains("○ http://localhost:1234/v1"), "{screen}");
-    assert!(screen.contains("s start"), "{screen}");
-    // Given the room, ownership and the endpoint follow the warning.
+    assert!(
+        screen.contains("● running 4.2 GB · ⚠ over budget"),
+        "{screen}"
+    );
+    assert!(
+        screen.contains("○ stopped http://localhost:1234/v1"),
+        "{screen}"
+    );
+    assert!(screen.contains("r refresh · Esc close"), "{screen}");
     let wide = render_to_string(120, 30, |f| super::local::render(f, &app));
     assert!(
-        wide.contains("● 4.2 GB · ⚠ over budget · started here · http://localhos…"),
+        wide.contains("● running 4.2 GB · ⚠ over budget · started here · http://…"),
         "{wide}"
     );
 
-    // Esc closes a bare `/local`, but steps back when `/login` opened it.
     let esc = crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Esc);
     super::local::handle_key(&mut app, esc);
-    assert_eq!(app.popup, nexus_core::app::Popup::None);
+    assert_eq!(app.popup, dugix_core::app::Popup::None);
     app.open_login_popup();
-    for _ in 0..4 {
+    for _ in 0..5 {
         app.move_login_selection(1);
     }
     app.confirm_login_selection();
-    assert_eq!(app.popup, nexus_core::app::Popup::Local);
+    assert_eq!(app.popup, dugix_core::app::Popup::Local);
     super::local::handle_key(&mut app, esc);
-    assert_eq!(app.popup, nexus_core::app::Popup::Login);
+    assert_eq!(app.popup, dugix_core::app::Popup::Login);
 }
 
 #[test]
 fn login_popup_offers_the_local_runtime_row() {
     let mut app = test_app();
     app.open_login_popup();
-    // The list scrolls; the local row is the last one, past Codex.
-    for _ in 0..4 {
+    for _ in 0..5 {
         app.move_login_selection(1);
     }
-    assert_eq!(app.login_selected, 4);
+    assert_eq!(app.login_selected, 5);
     app.move_login_selection(1);
-    assert_eq!(app.login_selected, 4, "selection must stay in range");
+    assert_eq!(app.login_selected, 5, "selection must stay in range");
 
     let screen = render_to_string(80, 30, |f| super::login::render(f, &app));
+    assert!(screen.contains("Mistral Vibe"), "{screen}");
     assert!(screen.contains("Local runtime"), "{screen}");
     assert!(screen.contains("Ollama / llama.cpp / MLX"), "{screen}");
 }
@@ -983,20 +996,16 @@ fn usage_popup_renders_dashboard_with_cache_bars_and_tables() {
 
     let screen = render_to_string(96, 40, |f| super::usage::render(f, &app));
 
-    // Section markers + headers.
     assert!(screen.contains("by backend"), "{screen}");
     assert!(screen.contains("most used models"), "{screen}");
     assert!(screen.contains("recent requests"), "{screen}");
-    // Hero summary: request count, cache fraction, cache-write count.
     assert!(screen.contains("2 requests"), "{screen}");
     assert!(screen.contains("cache writes"), "{screen}");
     assert!(screen.contains("% of prompt served from cache"), "{screen}");
-    // Both backends with their glyphs; cache bar glyphs present in rows.
     assert!(screen.contains("OpenRouter"), "{screen}");
     assert!(screen.contains("Codex"), "{screen}");
     assert!(screen.contains('█'), "{screen}");
     assert!(screen.contains('░'), "{screen}");
-    // Models ranked; cost formatting for known vs unknown prices.
     assert!(screen.contains("claude-3.5-sonnet"), "{screen}");
     assert!(screen.contains("$0.0042"), "{screen}");
 }
@@ -1014,9 +1023,7 @@ fn hidden_hints_do_not_show_in_popup_titles() {
 #[test]
 fn research_live_popup_shows_agent_lifecycle_and_activity() {
     let mut app = test_app();
-    // The popup renders from the job-level stage-row mirror, kept in sync by
-    // `mirror_stage` on every Stage update.
-    app.research_stage_rows = vec![
+    app.research.stage_rows = vec![
         "planner: done — proposed 4 questions".to_string(),
         "searcher r1 1/4: working — Searching the web for rust runtimes".to_string(),
         "verifier: error — cached source unavailable".to_string(),
@@ -1024,7 +1031,7 @@ fn research_live_popup_shows_agent_lifecycle_and_activity() {
 
     let screen = render_to_string(100, 30, |f| super::research_live::render(f, &app));
 
-    assert!(screen.contains("research agents"), "{screen}");
+    assert!(screen.contains("╭ Research "), "{screen}");
     assert!(screen.contains("✓ planner"), "{screen}");
     assert!(screen.contains("⟳ searcher r1 1/4"), "{screen}");
     assert!(screen.contains("Searching the web"), "{screen}");
@@ -1034,17 +1041,14 @@ fn research_live_popup_shows_agent_lifecycle_and_activity() {
 #[test]
 fn research_live_popup_shows_queued_steers_until_picked_up() {
     let mut app = test_app();
-    app.research_steer_log = vec![(1, "look into X".to_string()), (2, "also Y".to_string())];
-    // Steer #1 was already picked up by the pipeline (acknowledged); steer
-    // #2 is still queued and must show in the popup.
-    app.research_steer_acked = std::collections::HashSet::from([1]);
-    app.research_stage_rows = vec!["steer #1: look into X".to_string()];
+    app.research.steer_log = vec![(1, "look into X".to_string()), (2, "also Y".to_string())];
+    app.research.steer_acked = std::collections::HashSet::from([1]);
+    app.research.stage_rows = vec!["steer #1: look into X".to_string()];
 
     let screen = render_to_string(100, 30, |f| super::research_live::render(f, &app));
 
     assert!(screen.contains("queued steers"), "{screen}");
     assert!(screen.contains("● also Y"), "{screen}");
-    // Picked-up steers appear as stage rows, not in the queued list.
     assert!(!screen.contains("● look into X"), "{screen}");
     assert!(screen.contains("○ steer #1"), "{screen}");
 }
@@ -1052,19 +1056,15 @@ fn research_live_popup_shows_queued_steers_until_picked_up() {
 #[test]
 fn research_live_popup_queued_status_ignores_steer_text_shape() {
     let mut app = test_app();
-    app.research_steer_log = vec![
+    app.research.steer_log = vec![
         (1, "a: b".to_string()),
         (2, "a".to_string()),
         (3, "same".to_string()),
         (4, "same".to_string()),
         (5, "100% done".to_string()),
     ];
-    // Positions 1, 3, 5 are acknowledged (drained by the pipeline); 2 and 4
-    // are still queued. Keying by position — never by steer text — keeps
-    // duplicate, prefix-of-each-other, and LIKE-wildcard text from
-    // collapsing acknowledgements.
-    app.research_steer_acked = std::collections::HashSet::from([1, 3, 5]);
-    app.research_stage_rows = vec![
+    app.research.steer_acked = std::collections::HashSet::from([1, 3, 5]);
+    app.research.stage_rows = vec![
         "steer #1: a: b".to_string(),
         "steer #3: same".to_string(),
         "steer #5: 100% done".to_string(),
@@ -1073,10 +1073,8 @@ fn research_live_popup_queued_status_ignores_steer_text_shape() {
     let screen = render_to_string(100, 30, |f| super::research_live::render(f, &app));
 
     assert!(screen.contains("queued steers"), "{screen}");
-    // Position 2 ("a") and position 4 (the second "same") are still queued.
     assert!(screen.contains("● a"), "{screen}");
     assert!(screen.contains("● same"), "{screen}");
-    // Picked-up steers (positions 1, 3, 5) show as rows, never as queued.
     assert!(!screen.contains("● a: b"), "{screen}");
     assert!(!screen.contains("● 100% done"), "{screen}");
     assert!(screen.contains("○ steer #1"), "{screen}");
@@ -1086,30 +1084,23 @@ fn research_live_popup_queued_status_ignores_steer_text_shape() {
 #[test]
 fn research_live_popup_uses_the_job_sessions_rows_from_any_session() {
     let mut app = test_app();
-    // The job runs in session A while the user views session B: the popup
-    // renders from the job-level stage-row mirror (`research_stage_rows`),
-    // which `on_research_done` fills for every Stage update regardless of
-    // what's viewed — no db read and no dependence on the viewed session.
-    app.research_running = Some(("job-session".to_string(), "topic".to_string()));
+    app.research.running = Some(("job-session".to_string(), "topic".to_string()));
     app.session = Some(
         app.db
             .create_session("other", "a/one", &app.active_space.id, "chat")
             .unwrap(),
     );
-    app.research_stage_rows = vec![
+    app.research.stage_rows = vec![
         "steer #1: look into X".to_string(),
         "planner: done — proposed 4 questions".to_string(),
     ];
-    app.research_steer_log = vec![(1, "look into X".to_string()), (2, "also Y".to_string())];
-    app.research_steer_acked = std::collections::HashSet::from([1]);
+    app.research.steer_log = vec![(1, "look into X".to_string()), (2, "also Y".to_string())];
+    app.research.steer_acked = std::collections::HashSet::from([1]);
 
     let screen = render_to_string(100, 30, |f| super::research_live::render(f, &app));
 
-    // The job's rows came through the mirror (the viewed session has none).
     assert!(screen.contains("○ steer #1"), "{screen}");
     assert!(screen.contains("✓ planner"), "{screen}");
-    // Acknowledgements are job-global: steer #1 was drained, steer #2 is
-    // still queued.
     assert!(screen.contains("● also Y"), "{screen}");
     assert!(!screen.contains("● look into X"), "{screen}");
 }
@@ -1128,25 +1119,16 @@ fn settings_popup_renders_selected_field_detail() {
 }
 
 #[test]
-fn settings_popup_has_one_model_row_that_defaults_to_auto() {
+fn settings_popup_has_no_model_rows() {
     let mut app = test_app();
     app.open_settings();
-    // Tall enough that every row is on screen.
     let screen = render_to_string(120, 60, |f| super::settings::render(f, &app));
 
     let model_rows: Vec<&str> = screen
         .lines()
         .filter(|line| line.to_lowercase().contains("model"))
         .collect();
-    assert_eq!(
-        model_rows.len(),
-        1,
-        "exactly one model row on screen:\n{screen}"
-    );
-    assert!(
-        model_rows[0].contains("helper model") && model_rows[0].contains("auto"),
-        "{screen}"
-    );
+    assert!(model_rows.is_empty(), "no model rows on screen:\n{screen}");
     for gone in [
         "memory model",
         "image model",
@@ -1160,45 +1142,6 @@ fn settings_popup_has_one_model_row_that_defaults_to_auto() {
     ] {
         assert!(!screen.contains(gone), "{gone} should be gone:\n{screen}");
     }
-
-    // A picked helper model replaces "auto" on the row.
-    app.helper_model = "x/helper".into();
-    let screen = render_to_string(120, 60, |f| super::settings::render(f, &app));
-    assert!(screen.contains("x/helper"), "{screen}");
-}
-
-#[test]
-fn settings_helper_row_picks_with_enter_and_returns_to_auto_with_backspace() {
-    use crossterm::event::KeyCode;
-    let mut app = test_app();
-    app.core.models = vec![nexus_core::provider::Model {
-        id: "a/one".into(),
-        name: "One".into(),
-        reasoning_efforts: Vec::new(),
-        context_length: None,
-        supports_images: false,
-        supports_image_generation: false,
-        supports_video_generation: false,
-        backend: nexus_core::provider::BackendTag::OpenRouter,
-        pricing: None,
-    }];
-    select_settings_field(&mut app, SettingsField::HelperModel);
-
-    press(&mut app, KeyCode::Enter);
-    assert!(app.popup == nexus_core::app::Popup::Model);
-    assert!(app.model_pick_target == nexus_core::app::ModelPickTarget::Helper);
-    let screen = render_to_string(160, 30, |f| super::model::render(f, &mut app));
-    assert!(screen.contains("picking helper model"), "{screen}");
-
-    app.pick_model_at(nexus_core::app::ModelPanel::Available, 0)
-        .unwrap();
-    assert_eq!(app.helper_model, "a/one");
-    assert!(app.popup == nexus_core::app::Popup::Settings);
-
-    select_settings_field(&mut app, SettingsField::HelperModel);
-    press(&mut app, KeyCode::Backspace);
-    assert!(app.helper_model.is_empty(), "Backspace returns to auto");
-    assert_eq!(app.db.setting("helper_model").as_deref(), Some(""));
 }
 
 #[test]
@@ -1244,37 +1187,30 @@ fn new_session_welcome_screen_drops_the_previous_sessions_click_layout() {
     app.session = app.db.get_session(&sid).unwrap();
     app.messages = app.db.load_messages(&sid).unwrap();
 
-    // Render the old session: the history area is clickable now (a click
-    // anywhere inside it maps to a recorded line — which is how a stale
-    // snapshot would resolve the old URL).
     render_to_string(100, 30, |f| crate::ui::render(f, &mut app));
     assert!(
         app.sel.pos_at(10, 5).is_some(),
         "old session layout recorded"
     );
 
-    // Start a new session and render the welcome screen.
     app.run_command("new").unwrap(); // /new
     render_to_string(100, 30, |f| crate::ui::render(f, &mut app));
 
-    // The layout snapshot is empty — clicking where the old URL used to be
-    // must not resolve to anything (it would otherwise open the old link).
     assert_eq!(app.sel.pos_at(10, 5), None);
-    // And the selection itself is cleared by /new.
     assert!(app.sel.selected_text().is_none());
 }
 #[cfg(test)]
 mod usage_render_tests {
     use super::super::usage::render;
     use crate::app_view::AppView;
-    use nexus_core::app::{App, usage::UsageData};
-    use nexus_core::db::{Db, UsageByBackend, UsageByModel, UsageRow, UsageTotals};
-    use nexus_core::space::Space;
+    use dugix_core::app::{App, usage::UsageData};
+    use dugix_core::db::{Db, UsageByBackend, UsageByModel, UsageRow, UsageTotals};
+    use dugix_core::space::Space;
 
     fn populated_app() -> AppView {
         let db = Db::open_in_memory().unwrap();
         let space = Space {
-            root: std::env::temp_dir().join(format!("nexus-usage-{}", uuid::Uuid::new_v4())),
+            root: std::env::temp_dir().join(format!("dugix-usage-{}", uuid::Uuid::new_v4())),
         };
         let mut app = AppView::new(App::new(db, Some("k"), space));
         app.usage_data = Some(UsageData {
@@ -1297,6 +1233,8 @@ mod usage_render_tests {
                     cache_read_tokens: 481_650,
                     rated_prompt_tokens: 741_000,
                     rated_cache_read_tokens: 481_650,
+                    reusable_tokens: 700_000,
+                    reused_tokens: 679_000,
                     cost: 0.1108,
                 },
                 UsageByBackend {
@@ -1307,6 +1245,8 @@ mod usage_render_tests {
                     cache_read_tokens: 2_805_000,
                     rated_prompt_tokens: 5_100_000,
                     rated_cache_read_tokens: 2_805_000,
+                    reusable_tokens: 0,
+                    reused_tokens: 0,
                     cost: 6.0330,
                 },
             ],
@@ -1319,6 +1259,8 @@ mod usage_render_tests {
                     cache_read_tokens: 481_650,
                     rated_prompt_tokens: 741_000,
                     rated_cache_read_tokens: 481_650,
+                    reusable_tokens: 700_000,
+                    reused_tokens: 679_000,
                     cost: 0.1108,
                 },
                 UsageByModel {
@@ -1329,6 +1271,8 @@ mod usage_render_tests {
                     cache_read_tokens: 2_805_000,
                     rated_prompt_tokens: 5_100_000,
                     rated_cache_read_tokens: 2_805_000,
+                    reusable_tokens: 0,
+                    reused_tokens: 0,
                     cost: 6.0330,
                 },
             ],
@@ -1336,8 +1280,6 @@ mod usage_render_tests {
                 .map(|i| UsageRow {
                     created_at: format!("2026-08-12T23:{:02}:00Z", 15 - i),
                     backend: "OpenRouter".into(),
-                    // Overflow-prone values: "122.2k→672" (10 chars) and
-                    // "120.1k→2.1k" (11 chars) exceed a 9-cell field.
                     model: format!("deepseek/deepseek-v4-flash-0731 ({i})"),
                     prompt_tokens: [122_221, 120_086, 118_690][i],
                     completion_tokens: [672, 2126, 592][i],
@@ -1347,6 +1289,11 @@ mod usage_render_tests {
                     cost: Some(0.0095),
                 })
                 .collect(),
+            misses: vec![
+                ("first".into(), 3),
+                ("hit".into(), 40),
+                ("provider_miss".into(), 5),
+            ],
         });
         app
     }
@@ -1430,7 +1377,6 @@ mod usage_render_tests {
             .find(|r| r.contains("req") && r.contains("cached") && r.contains("cost"))
             .unwrap();
         let row = rows.iter().find(|r| r.contains("28125")).unwrap();
-        // The "● " marker must have a 2-space header counterpart.
         assert_eq!(
             char_pos(header, "backend"),
             char_pos(row, "OpenCode"),
@@ -1440,7 +1386,17 @@ mod usage_render_tests {
         assert_column(header, row, "prompt", "741.0k");
         assert_column(header, row, "out", "24.8k");
         assert_column(header, row, "cached", "65"); // "%" rides one past
+        assert_column(header, row, "reused", "97");
         assert_column(header, row, "cost", "$0.1108");
+    }
+
+    #[test]
+    fn miss_breakdown_names_each_verdict() {
+        let rows = render_rows(&populated_app());
+        let line = rows.iter().find(|r| r.contains("cache requests")).unwrap();
+        for part in ["first 3", "hit 40", "provider miss 5"] {
+            assert!(line.contains(part), "{part}: {line}");
+        }
     }
 
     #[test]
@@ -1456,14 +1412,13 @@ mod usage_render_tests {
             .iter()
             .find(|r| r.contains("deepseek/deepseek-v3-Flash-07"))
             .unwrap();
-        // Different name lengths must not move the numeric columns.
-        // Right-aligned: the values' right edges must coincide.
         let edge = |line: &str, needle: &str| char_pos(line, needle).map(|c| c + needle.len());
         assert_eq!(edge(short, "28125"), edge(long, "47"), "req column drifts");
         assert_column(header, short, "req", "28125");
         assert_column(header, short, "prompt", "741.0k");
         assert_column(header, short, "out", "24.8k");
         assert_column(header, short, "cached", "65");
+        assert_column(header, short, "reused", "97");
         assert_column(header, short, "cost", "$0.1108");
     }
 
@@ -1501,92 +1456,18 @@ mod usage_render_tests {
     }
 }
 
-/// Watch-picker key-flow tests: TUI keys (ui/popups/watches.rs) driving core
-/// state through the popup.
-mod watch_popup_tests {
-    use crate::app_view::AppView;
-    use nexus_core::app::{App, WatchMode};
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
-
-    fn test_space() -> Space {
-        Space {
-            root: std::env::temp_dir().join(format!("nexus-watch-test-{}", uuid::Uuid::new_v4())),
-        }
-    }
-
-    #[test]
-    fn watch_picker_ctrl_d_confirms_with_a_second_press() {
-        let db = Db::open_in_memory().unwrap();
-        let mut a = AppView::new(App::new(db, Some("k"), test_space()));
-        let space = a.active_space.id.clone();
-        let session = a.db.create_session("watch", "a/b", &space, "chat").unwrap();
-        let _ =
-            a.db.create_watch(&space, "rust async", 24, &session.id)
-                .unwrap();
-        a.open_watch_picker().unwrap();
-
-        crate::ui::popups::watches::handle_key(
-            &mut a,
-            crossterm::event::KeyEvent::new(
-                crossterm::event::KeyCode::Char('d'),
-                crossterm::event::KeyModifiers::CONTROL,
-            ),
-        )
-        .unwrap();
-        assert_eq!(a.watch_mode, WatchMode::ConfirmDelete);
-
-        crate::ui::popups::watches::handle_key(
-            &mut a,
-            crossterm::event::KeyEvent::new(
-                crossterm::event::KeyCode::Char('d'),
-                crossterm::event::KeyModifiers::CONTROL,
-            ),
-        )
-        .unwrap();
-        assert_eq!(a.watch_mode, WatchMode::Browse);
-        assert!(a.watches_cache.is_empty());
-        assert!(a.db.list_watches(&space).unwrap().is_empty());
-    }
-
-    #[test]
-    fn watch_picker_escape_cancels_delete_confirmation() {
-        let db = Db::open_in_memory().unwrap();
-        let mut a = AppView::new(App::new(db, Some("k"), test_space()));
-        let space = a.active_space.id.clone();
-        let session = a.db.create_session("watch", "a/b", &space, "chat").unwrap();
-        let _ =
-            a.db.create_watch(&space, "rust async", 24, &session.id)
-                .unwrap();
-        a.open_watch_picker().unwrap();
-        a.watch_mode = WatchMode::ConfirmDelete;
-
-        crate::ui::popups::watches::handle_key(
-            &mut a,
-            crossterm::event::KeyEvent::new(
-                crossterm::event::KeyCode::Esc,
-                crossterm::event::KeyModifiers::empty(),
-            ),
-        )
-        .unwrap();
-
-        assert_eq!(a.watch_mode, WatchMode::Browse);
-        assert_eq!(a.watches_cache.len(), 1);
-    }
-}
-
 /// The popups' Ctrl+X handlers close the popup themselves:
 /// `stop_research`/`stop_swarm` are domain calls and never touch view state.
 mod stop_closes_popup_tests {
     use crate::app_view::AppView;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use nexus_core::app::{App, Popup};
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
+    use dugix_core::app::{App, Popup};
+    use dugix_core::db::Db;
+    use dugix_core::space::Space;
 
     fn test_space() -> Space {
         Space {
-            root: std::env::temp_dir().join(format!("nexus-stop-test-{}", uuid::Uuid::new_v4())),
+            root: std::env::temp_dir().join(format!("dugix-stop-test-{}", uuid::Uuid::new_v4())),
         }
     }
 
@@ -1599,7 +1480,7 @@ mod stop_closes_popup_tests {
         let db = Db::open_in_memory().unwrap();
         let mut a = AppView::new(App::new(db, Some("k"), test_space()));
         a.popup = Popup::ResearchLive;
-        a.core.research_live_input = "a steer".to_string();
+        a.core.research.live_input = "a steer".to_string();
 
         crate::ui::popups::research_live::handle_key(&mut a, ctrl_x());
 
@@ -1607,18 +1488,18 @@ mod stop_closes_popup_tests {
     }
 
     #[test]
-    fn swarm_ctrl_x_closes_the_popup() {
+    fn swarm_x_stops_the_turn_and_closes_the_popup() {
         let db = Db::open_in_memory().unwrap();
         let mut a = AppView::new(App::new(db, Some("k"), test_space()));
-        // The Ctrl+X arm is gated on a running turn; hand it a live channel.
+        // The x arm is gated on a running turn; hand it a live channel.
         let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        a.core.swarm_rx = Some(rx);
+        a.core.swarm.rx = Some(rx);
         a.popup = Popup::Swarm;
 
-        crate::ui::popups::swarm::handle_key(&mut a, ctrl_x()).unwrap();
+        crate::ui::popups::swarm::handle_key(&mut a, KeyCode::Char('x').into()).unwrap();
 
         assert_eq!(a.popup, Popup::None);
-        assert!(a.core.swarm_rx.is_none()); // the turn was stopped
+        assert!(a.core.swarm.rx.is_none()); // the turn was stopped
     }
 }
 
@@ -1626,7 +1507,7 @@ fn picker_app(ids: &[&str]) -> AppView {
     let mut app = test_app();
     app.core.models = ids
         .iter()
-        .map(|id| nexus_core::provider::Model {
+        .map(|id| dugix_core::provider::Model {
             id: (*id).into(),
             name: (*id).into(),
             reasoning_efforts: Vec::new(),
@@ -1634,8 +1515,9 @@ fn picker_app(ids: &[&str]) -> AppView {
             supports_images: false,
             supports_image_generation: false,
             supports_video_generation: false,
-            backend: nexus_core::provider::BackendTag::OpenRouter,
+            backend: dugix_core::provider::BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         })
         .collect();
     app.open_model_picker();
@@ -1655,7 +1537,6 @@ fn model_picker_available_panel_uses_its_own_width() {
     for id in ids {
         assert!(screen.contains(id), "{id} truncated:\n{screen}");
     }
-    // Six-char context sizes fit their column whole.
     assert!(screen.contains("262.1k"), "context size clipped:\n{screen}");
 }
 
@@ -1682,13 +1563,12 @@ fn model_picker_click_row_maps_to_the_row_drawn_there() {
 #[test]
 fn help_popup_lists_keys_and_every_command() {
     let mut app = test_app();
-    app.execute(nexus_core::app::AppCommand::OpenHelp).unwrap();
-    assert!(app.popup == nexus_core::app::Popup::Help);
-    // Tall enough to show everything without scrolling.
-    let screen = render_to_string(140, 120, |f| super::help::render(f, &mut app));
+    app.execute(dugix_core::app::AppCommand::OpenHelp).unwrap();
+    assert!(app.popup == dugix_core::app::Popup::Help);
+    let screen = render_to_string(140, 150, |f| super::help::render(f, &mut app));
     assert!(screen.contains("composer"), "{screen}");
     assert!(screen.contains("Shift/Ctrl+Enter"), "{screen}");
-    for c in nexus_core::app::COMMANDS {
+    for c in dugix_core::app::COMMANDS {
         assert!(
             screen.contains(&format!("/{}", c.name)),
             "/{} missing:\n{screen}",
@@ -1703,8 +1583,7 @@ fn help_popup_scroll_clamps_to_content() {
     app.open_help();
     app.help_scroll = u16::MAX;
     let screen = render_to_string(100, 30, |f| super::help::render(f, &mut app));
-    // Scrolled to the end: the last command is visible, not a blank pane.
-    let last = nexus_core::app::COMMANDS.last().unwrap().name;
+    let last = dugix_core::app::COMMANDS.last().unwrap().name;
     assert!(screen.contains(&format!("/{last}")), "{screen}");
     assert!(app.help_scroll < u16::MAX);
 }
@@ -1723,7 +1602,7 @@ fn settings_popup_masks_the_langsearch_key() {
 #[test]
 fn status_bar_names_the_model_and_keeps_the_space_tag_beside_the_gauge() {
     let mut app = test_app();
-    app.core.models = vec![nexus_core::provider::Model {
+    app.core.models = vec![dugix_core::provider::Model {
         id: "org/Big-Model-7B".into(),
         name: "Big Model".into(),
         reasoning_efforts: Vec::new(),
@@ -1731,8 +1610,9 @@ fn status_bar_names_the_model_and_keeps_the_space_tag_beside_the_gauge() {
         supports_images: false,
         supports_image_generation: false,
         supports_video_generation: false,
-        backend: nexus_core::provider::BackendTag::Local,
+        backend: dugix_core::provider::BackendTag::Local,
         pricing: None,
+        aliases: Vec::new(),
     }];
     app.core.current_model = Some("local:org/Big-Model-7B".into());
     app.core.active_space.name = "work".into();
@@ -1748,16 +1628,61 @@ fn status_bar_names_the_model_and_keeps_the_space_tag_beside_the_gauge() {
     assert!(!screen.contains("local:org/"), "{screen}");
     assert!(screen.contains("ready"), "{screen}");
     assert!(
-        screen.contains('▱'),
+        screen.contains('▌'),
         "context meter on the right:\n{screen}"
     );
+    // Geometric shapes fall back to wider fonts and overlap their neighbours.
+    assert!(!screen.contains(['▰', '▱']), "{screen}");
 
-    // A status too long for the bar ends in an ellipsis instead of a cut.
     app.status = "x".repeat(200);
     let screen = render_to_string(100, 1, |f| {
         crate::ui::status::render_status(f, &app, f.area());
     });
     assert!(screen.contains('…'), "{screen}");
+}
+
+#[test]
+fn status_bar_reports_reuse_not_raw_cache_share() {
+    let mut app = test_app();
+    app.core.models = vec![dugix_core::provider::Model {
+        id: "org/Big-Model-7B".into(),
+        name: "Big Model".into(),
+        reasoning_efforts: Vec::new(),
+        context_length: Some(128_000),
+        supports_images: false,
+        supports_image_generation: false,
+        supports_video_generation: false,
+        backend: dugix_core::provider::BackendTag::Local,
+        pricing: None,
+        aliases: Vec::new(),
+    }];
+    app.core.current_model = Some("local:org/Big-Model-7B".into());
+    let status = |app: &AppView| {
+        render_to_string(110, 1, |f| {
+            crate::ui::status::render_status(f, app, f.area())
+        })
+    };
+    // A first request has nothing reusable: the share of the whole prompt is
+    // not shown, because the provider could not have cached it.
+    app.core.meter.turn_cache.prompt_tokens = 1_000;
+    app.core.meter.turn_cache.cache_read_tokens = 0;
+    for stats in [true, false] {
+        app.settings.show_stats = stats;
+        let screen = status(&app);
+        assert!(
+            !screen.contains("cached") && !screen.contains("reused"),
+            "{screen}"
+        );
+    }
+    app.core.meter.turn_cache.observe_reuse(1_000, 990);
+    for stats in [true, false] {
+        app.settings.show_stats = stats;
+        let screen = status(&app);
+        assert!(screen.contains("99% reused"), "{screen}");
+        assert!(!screen.contains("cached"), "{screen}");
+    }
+    app.core.meter.turn_cache.unrated_requests = 1;
+    assert!(status(&app).contains("~99% reused"));
 }
 
 #[test]
@@ -1783,15 +1708,14 @@ fn short_model_label_keeps_openrouter_suffixes() {
 #[test]
 fn status_line_expires_after_its_ttl() {
     let mut app = test_app();
-    app.apply_event(&nexus_core::app::AppEvent::Status("saved".into()));
+    app.apply_event(&dugix_core::app::AppEvent::Status("saved".into()));
     app.expire_status();
     assert_eq!(app.status, "saved", "fresh status stays");
     app.status_at = Some(std::time::Instant::now() - crate::app_view::STATUS_TTL);
     app.expire_status();
     assert!(app.status.is_empty());
 
-    // Errors linger longer.
-    app.apply_event(&nexus_core::app::AppEvent::Status("error: boom".into()));
+    app.apply_event(&dugix_core::app::AppEvent::Status("error: boom".into()));
     app.status_at = Some(std::time::Instant::now() - crate::app_view::STATUS_TTL);
     app.expire_status();
     assert_eq!(app.status, "error: boom");
@@ -1804,7 +1728,6 @@ fn an_open_popup_dims_the_screen_behind_it_but_not_itself() {
     let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
     terminal.draw(|f| crate::ui::render(f, &mut app)).unwrap();
     let buf = terminal.backend().buffer();
-    // Corner cell: behind the popup, receded. Center cell: inside it.
     assert_eq!(buf[(0, 0)].fg, app.theme.border_dim);
     let inside = (0..100)
         .map(|x| buf[(x, 20)].fg)
@@ -1838,10 +1761,10 @@ fn fit_line_ellipsizes_across_spans() {
 
 #[test]
 fn find_picker_rows_show_the_name_then_its_folder_from_home() {
-    use nexus_core::filesearch::Found;
+    use dugix_core::filesearch::Found;
     let mut app = test_app();
-    app.popup = nexus_core::app::Popup::Files;
-    app.files_mode = nexus_core::app::FilesMode::Pick;
+    app.popup = dugix_core::app::Popup::Files;
+    app.files_mode = dugix_core::app::FilesMode::Pick;
     app.picker_home = std::path::PathBuf::from("/Users/me");
     app.picker_query = "rep".into();
     app.picker_results = vec![
@@ -1855,7 +1778,7 @@ fn find_picker_rows_show_the_name_then_its_folder_from_home() {
         },
     ];
     let out = render_to_string(80, 20, |f| super::files::render(f, &app));
-    assert!(out.contains("find"), "{out}");
+    assert!(out.contains("Find a file to import"), "{out}");
     assert!(out.contains("q3 report.pdf  ~/work"), "{out}");
     assert!(out.contains("reports/  ~"), "{out}");
     assert!(out.contains("Tab complete"), "{out}");
@@ -1877,6 +1800,356 @@ fn truncation_measures_cjk_in_display_columns() {
     );
     let fitted = super::chrome::fit_line(Line::from(vec![Span::raw("ab"), Span::raw("日本語")]), 6);
     assert_eq!(fitted.to_string(), "ab日…");
+}
+
+#[test]
+fn fit_hints_drops_whole_actions_in_priority_order_and_keeps_escape() {
+    use super::chrome::{ctrl, fit_hints, hint, keys};
+    use crate::ui::style::width;
+
+    let hints = [
+        hint(keys::MOVE, ""),
+        hint(keys::ENTER, "open"),
+        hint(ctrl('n'), "new"),
+        hint(ctrl('r'), "rename"),
+        hint(ctrl('d'), "delete"),
+        hint(keys::ESC, "close"),
+    ];
+    let kept = |max| {
+        fit_hints(&hints, max)
+            .into_iter()
+            .map(|hint| hint.key.as_ref())
+            .collect::<Vec<_>>()
+    };
+    let full_width = width("↑↓ · Enter open · ^N new · ^R rename · ^D delete · Esc close");
+    assert_eq!(kept(full_width), ["↑↓", "Enter", "^N", "^R", "^D", "Esc"]);
+    assert_eq!(kept(full_width - 1), ["↑↓", "Enter", "^N", "^D", "Esc"]);
+    assert_eq!(
+        kept(width("↑↓ · ^D delete · Esc close")),
+        ["↑↓", "^D", "Esc"]
+    );
+    assert_eq!(kept(width("↑↓ · Esc close")), ["↑↓", "Esc"]);
+    assert_eq!(kept(0), ["Esc"]);
+    assert!(fit_hints(&[], 0).is_empty());
+
+    let three = [
+        hint(keys::MOVE, ""),
+        hint("界", "開く"),
+        hint(keys::ESC, "close"),
+    ];
+    let full_width = width("↑↓ · 界 開く · Esc close");
+    assert_eq!(fit_hints(&three, full_width).len(), 3);
+    let fitted = fit_hints(&three, full_width - 1);
+    assert_eq!(
+        fitted
+            .iter()
+            .map(|hint| hint.key.as_ref())
+            .collect::<Vec<_>>(),
+        ["↑↓", "Esc"]
+    );
+    assert_eq!(ctrl('d'), "^D");
+}
+
+#[test]
+fn popup_frame_places_title_count_and_ordered_hints_on_the_borders() {
+    use super::chrome::{PopupFrame, Tone, ctrl, hint, keys, render_popup};
+    use crate::ui::style::width;
+
+    let mut app = test_app();
+    let root = app.space.root.clone();
+    app.settings.hide_hints = false;
+    let hints = [
+        hint(keys::MOVE, ""),
+        hint(keys::ENTER, "open"),
+        hint(ctrl('d'), "delete"),
+        hint(keys::ESC, "close"),
+    ];
+    let frame = PopupFrame {
+        title: "Sessions",
+        count: "2 chats",
+        hints: &hints,
+        tone: Tone::Normal,
+        focused: true,
+    };
+    let screen = render_to_string(60, 8, |f| {
+        let inner = render_popup(f, f.area(), &frame, &app);
+        assert_eq!(inner, ratatui::layout::Rect::new(2, 1, 56, 6));
+    });
+    assert_eq!(
+        screen.lines().next().unwrap(),
+        format!("╭ Sessions {} 2 chats ╮", "─".repeat(39))
+    );
+    let footer = "↑↓ · Enter open · ^D delete · Esc close";
+    assert_eq!(
+        screen.lines().last().unwrap(),
+        format!("╰{} {footer} ╯", "─".repeat(56 - width(footer)))
+    );
+    app.settings.hide_hints = true;
+    let screen = render_to_string(60, 8, |f| {
+        render_popup(f, f.area(), &frame, &app);
+    });
+    assert_eq!(
+        screen.lines().last().unwrap(),
+        format!("╰{}╯", "─".repeat(58))
+    );
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn popup_frame_only_shows_a_count_with_two_border_cells_to_spare() {
+    use super::chrome::{PopupFrame, Tone, render_popup};
+
+    let app = test_app();
+    let root = app.space.root.clone();
+    let frame = PopupFrame {
+        title: "Sessions",
+        count: "2 chats",
+        hints: &[],
+        tone: Tone::Danger,
+        focused: true,
+    };
+    let screen = render_to_string(23, 6, |f| {
+        render_popup(f, f.area(), &frame, &app);
+    });
+    assert_eq!(screen.lines().next().unwrap(), "╭ Sessions ── 2 chats ╮");
+    let screen = render_to_string(22, 6, |f| {
+        render_popup(f, f.area(), &frame, &app);
+    });
+    assert_eq!(
+        screen.lines().next().unwrap(),
+        format!("╭ Sessions {}╮", "─".repeat(10))
+    );
+    let mut terminal = Terminal::new(TestBackend::new(23, 6)).unwrap();
+    terminal
+        .draw(|f| {
+            render_popup(f, f.area(), &frame, &app);
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer[(2, 0)].fg, app.theme.error);
+    assert!(
+        buffer[(2, 0)]
+            .modifier
+            .contains(ratatui::style::Modifier::BOLD)
+    );
+    assert_eq!(buffer[(0, 1)].fg, app.theme.error);
+    assert_eq!(buffer[(15, 0)].fg, app.theme.fg_dim);
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn popup_fields_and_tabs_use_two_rows_and_leave_short_areas_unchanged() {
+    use super::chrome::{render_field, render_tabs};
+    use ratatui::layout::Rect;
+
+    let app = test_app();
+    let root = app.space.root.clone();
+    let mut rest = Rect::default();
+    for (text, editing, expected) in [
+        ("", false, "⌕ Type to filter"),
+        ("", true, "⌕ ▏"),
+        ("Alpine", false, "⌕ Alpine▏"),
+    ] {
+        let screen = render_to_string(32, 8, |f| {
+            rest = render_field(
+                f,
+                f.area(),
+                "⌕",
+                text,
+                "Type to filter",
+                editing,
+                &app.theme,
+            );
+        });
+        assert_eq!(rest, Rect::new(0, 2, 32, 6));
+        let mut lines = screen.lines();
+        assert_eq!(lines.next().unwrap().trim_end(), expected);
+        assert_eq!(lines.next().unwrap(), "─".repeat(32));
+    }
+    let mut terminal = Terminal::new(TestBackend::new(32, 8)).unwrap();
+    terminal
+        .draw(|f| {
+            rest = render_tabs(f, f.area(), &["Files", "Usage"], 1, &app.theme);
+        })
+        .unwrap();
+    assert_eq!(rest, Rect::new(0, 2, 32, 6));
+    let buffer = terminal.backend().buffer();
+    let tabs: String = (0..13).map(|x| buffer[(x, 0)].symbol()).collect();
+    assert_eq!(tabs, "Files   Usage");
+    assert_eq!(buffer[(0, 0)].fg, app.theme.fg_dim);
+    assert_eq!(buffer[(8, 0)].fg, app.theme.accent);
+    assert!(
+        buffer[(8, 0)]
+            .modifier
+            .contains(ratatui::style::Modifier::BOLD)
+    );
+    assert_eq!(buffer[(0, 1)].symbol(), "─");
+    assert_eq!(buffer[(0, 1)].fg, app.theme.border_dim);
+    let screen = render_to_string(32, 3, |f| {
+        let area = f.area();
+        f.render_widget(ratatui::widgets::Paragraph::new("untouched"), area);
+        assert_eq!(
+            render_field(f, area, "✎", "name", "", true, &app.theme),
+            area
+        );
+        assert_eq!(render_tabs(f, area, &["Files"], 0, &app.theme), area);
+    });
+    assert_eq!(screen.lines().next().unwrap().trim_end(), "untouched");
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn sessions_browse_puts_the_filter_in_a_field_and_the_count_in_the_border() {
+    let mut app = test_app();
+    let root = app.space.root.clone();
+    app.settings.hide_hints = false;
+    let space = app.active_space.id.clone();
+    for title in ["Alpine notes", "Dinner plans"] {
+        app.db
+            .create_session(title, "a/one", &space, "chat")
+            .unwrap();
+    }
+    app.open_session_picker().unwrap();
+    let screen = render_to_string(100, 40, |f| super::session::render(f, &mut app));
+    let top = screen.lines().find(|line| line.contains('╭')).unwrap();
+    assert!(top.contains(" Sessions "), "{screen}");
+    assert!(top.contains(" 2 chats "), "{screen}");
+    assert!(screen.contains("⌕ Type to filter"), "{screen}");
+    let footer = screen.lines().find(|line| line.contains('╰')).unwrap();
+    assert!(footer.trim_end().ends_with("Esc close ╯"), "{screen}");
+    assert!(
+        footer.contains("↑↓ · Enter open · ^R rename · ^D delete · Esc close"),
+        "{screen}"
+    );
+
+    for c in "Alpine".chars() {
+        app.session_filter_push(c);
+    }
+    let screen = render_to_string(100, 40, |f| super::session::render(f, &mut app));
+    let top = screen.lines().find(|line| line.contains('╭')).unwrap();
+    assert!(top.contains(" Sessions "), "{screen}");
+    assert!(top.contains(" 1 of 2 "), "{screen}");
+    assert!(!top.contains("Alpine"), "{screen}");
+    assert!(screen.contains("⌕ Alpine▏"), "{screen}");
+    let footer = screen.lines().find(|line| line.contains('╰')).unwrap();
+    assert!(footer.trim_end().ends_with("Esc clear ╯"), "{screen}");
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn sessions_confirm_delete_names_the_chat_in_the_detail_instead_of_the_preview() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = test_app();
+    let root = app.space.root.clone();
+    app.settings.hide_hints = false;
+    let space = app.active_space.id.clone();
+    let chat = app
+        .db
+        .create_session("Alpine notes", "a/one", &space, "chat")
+        .unwrap();
+    app.open_session_picker().unwrap();
+    app.session_preview = Some((chat.id, "Previous exchange".into()));
+    super::session::handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+    )
+    .unwrap();
+    let screen = render_to_string(120, 40, |f| super::session::render(f, &mut app));
+    let top = screen.lines().find(|line| line.contains('╭')).unwrap();
+    assert!(top.contains(" Delete chat? "), "{screen}");
+    assert!(!top.contains("1 chat"), "{screen}");
+    assert!(
+        screen.contains("“Alpine notes” and its messages will be deleted."),
+        "{screen}"
+    );
+    assert!(!screen.contains("Previous exchange"), "{screen}");
+    assert!(screen.contains("⌕ Type to filter"), "{screen}");
+    let footer = screen.lines().find(|line| line.contains('╰')).unwrap();
+    assert_eq!(
+        footer.trim_matches(|c| matches!(c, ' ' | '─' | '╰' | '╯')),
+        "^D delete · Esc cancel"
+    );
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn sessions_rename_keeps_the_list_below_the_edit_field() {
+    let mut app = test_app();
+    let root = app.space.root.clone();
+    app.settings.hide_hints = false;
+    let space = app.active_space.id.clone();
+    app.db
+        .create_session("Alpine notes", "a/one", &space, "chat")
+        .unwrap();
+    app.open_session_picker().unwrap();
+    app.start_rename();
+    app.session_edit = "New name".into();
+    let screen = render_to_string(100, 40, |f| super::session::render(f, &mut app));
+    let top = screen.lines().find(|line| line.contains('╭')).unwrap();
+    assert!(top.contains(" Rename chat "), "{screen}");
+    assert!(!top.contains("1 chat"), "{screen}");
+    assert!(screen.contains("✎ New name▏"), "{screen}");
+    assert!(screen.contains("▸ Alpine notes"), "{screen}");
+    let footer = screen.lines().find(|line| line.contains('╰')).unwrap();
+    assert_eq!(
+        footer.trim_matches(|c| matches!(c, ' ' | '─' | '╰' | '╯')),
+        "Enter save · Esc cancel"
+    );
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn sessions_empty_states_explain_what_to_do_and_only_hint_escape() {
+    let mut app = test_app();
+    let root = app.space.root.clone();
+    app.settings.hide_hints = false;
+    app.popup = dugix_core::app::Popup::Session;
+    for (filter, message, hint) in [
+        ("", "No chats yet.", "Esc close"),
+        (
+            "missing",
+            "No chat matches “missing”. Esc clears the filter.",
+            "Esc clear",
+        ),
+    ] {
+        app.session_filter.set(filter);
+        let screen = render_to_string(100, 40, |f| super::session::render(f, &mut app));
+        assert!(screen.contains(message), "{screen}");
+        let footer = screen.lines().find(|line| line.contains('╰')).unwrap();
+        assert_eq!(
+            footer.trim_matches(|c| matches!(c, ' ' | '─' | '╰' | '╯')),
+            hint
+        );
+    }
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn sessions_escape_clears_the_filter_before_closing() {
+    use crossterm::event::{KeyCode, KeyEvent};
+    use dugix_core::app::Popup;
+
+    let mut app = test_app();
+    let root = app.space.root.clone();
+    app.popup = Popup::Session;
+    app.session_filter.set("Alpine");
+    app.session_selected = 1;
+    super::session::handle_key(&mut app, KeyEvent::from(KeyCode::Esc)).unwrap();
+    assert!(app.session_filter.is_empty());
+    assert_eq!(app.session_selected, 0);
+    assert!(app.popup == Popup::Session);
+    super::session::handle_key(&mut app, KeyEvent::from(KeyCode::Esc)).unwrap();
+    assert!(app.popup == Popup::None);
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -1909,7 +2182,7 @@ fn session_picker_leads_with_the_title_and_marks_the_open_session() {
         .lines()
         .find(|l| l.contains("Japanese Fluency Roadmap"))
         .unwrap_or_else(|| panic!("{screen}"));
-    let when = crate::ui::fmt_created(&app.core.sessions_cache[0].created_at);
+    let when = crate::ui::fmt_created(&app.core.caches.sessions[0].created_at);
     assert!(
         title_row.contains(&when),
         "date beside the title:\n{screen}"
@@ -1923,34 +2196,42 @@ fn session_picker_leads_with_the_title_and_marks_the_open_session() {
 #[test]
 fn enter_in_skills_arms_the_highlighted_skill() {
     let mut app = test_app();
-    app.core.skills = vec![nexus_core::skills::Skill {
+    app.core.skills = vec![dugix_core::skills::Skill {
         name: "grill-me".into(),
         description: "stress-test a plan".into(),
         dir: std::path::PathBuf::from("/home/u/.claude/skills/grill-me"),
     }];
-    app.popup = nexus_core::app::Popup::Skills;
+    app.popup = dugix_core::app::Popup::Skills;
     let screen = render_to_string(100, 30, |f| super::skills::render(f, &app));
     assert!(screen.contains(".claude"), "source tag:\n{screen}");
     super::skills::handle_key(
         &mut app,
         crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Enter),
     );
-    assert!(app.popup == nexus_core::app::Popup::None);
+    assert!(app.popup == dugix_core::app::Popup::None);
     assert_eq!(app.core.forced_skill.as_deref(), Some("grill-me"));
 }
 
 #[test]
 fn files_popup_title_shows_every_tab() {
     let mut app = test_app();
-    app.popup = nexus_core::app::Popup::Files;
+    app.popup = dugix_core::app::Popup::Files;
     for tab in [
-        nexus_core::app::FilesTab::Files,
-        nexus_core::app::FilesTab::Images,
-        nexus_core::app::FilesTab::Scripts,
+        dugix_core::app::FilesTab::Files,
+        dugix_core::app::FilesTab::Images,
+        dugix_core::app::FilesTab::Scripts,
     ] {
         app.files_tab = tab;
         let screen = render_to_string(100, 30, |f| super::files::render(f, &app));
-        assert!(screen.contains("files · images · scripts"), "{screen}");
+        assert!(screen.contains("Files   Images   Scripts"), "{screen}");
+        assert!(
+            screen
+                .lines()
+                .find(|line| line.contains('╭'))
+                .unwrap()
+                .contains(" Files "),
+            "{screen}"
+        );
     }
 }
 
@@ -1969,14 +2250,14 @@ fn status_badge_keeps_the_backend_tag_when_shortened() {
 #[test]
 fn context_popup_fits_its_content_and_ctrl_g_closes_it() {
     let mut app = test_app();
-    app.popup = nexus_core::app::Popup::Context;
+    app.popup = dugix_core::app::Popup::Context;
     let screen = render_to_string(100, 40, |f| super::context::render(f, &app));
     assert!(screen.contains("unknown window"), "{screen}");
     assert!(screen.contains('█'), "per-bucket bars:\n{screen}");
     let framed_rows = screen.lines().filter(|l| l.contains('│')).count();
-    assert!(
-        framed_rows < 14,
-        "sized to content, not 40% of the screen:\n{screen}"
+    assert_eq!(
+        framed_rows, 14,
+        "the SMALL preset uses 40% of the screen height:\n{screen}"
     );
 
     let ctrl_g = crossterm::event::KeyEvent::new(
@@ -1984,29 +2265,29 @@ fn context_popup_fits_its_content_and_ctrl_g_closes_it() {
         crossterm::event::KeyModifiers::CONTROL,
     );
     super::context::handle_key(&mut app, ctrl_g);
-    assert!(app.popup == nexus_core::app::Popup::None);
+    assert!(app.popup == dugix_core::app::Popup::None);
 }
 
 #[test]
 fn research_steer_input_ignores_ctrl_chords() {
     let mut app = test_app();
-    app.popup = nexus_core::app::Popup::ResearchLive;
+    app.popup = dugix_core::app::Popup::ResearchLive;
     let key = |c, m| crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char(c), m);
     super::research_live::handle_key(&mut app, key('a', crossterm::event::KeyModifiers::CONTROL));
     super::research_live::handle_key(&mut app, key('b', crossterm::event::KeyModifiers::NONE));
-    assert_eq!(app.core.research_live_input, "b");
+    assert_eq!(app.core.research.live_input, "b");
 }
 
 // Async: an empty catalog makes the picker kick off a model fetch.
 #[tokio::test]
 async fn plain_m_opens_the_swarm_persona_model_picker() {
     let mut app = test_app();
-    app.core.swarm_cache = vec![nexus_core::db::Persona {
+    app.core.swarm.cache = vec![dugix_core::db::Persona {
         name: "Critic".into(),
         model: "a/one".into(),
         blurb: "pokes holes".into(),
     }];
-    app.popup = nexus_core::app::Popup::Swarm;
+    app.popup = dugix_core::app::Popup::Swarm;
     super::swarm::handle_key(
         &mut app,
         crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('m')),
@@ -2014,7 +2295,7 @@ async fn plain_m_opens_the_swarm_persona_model_picker() {
     .unwrap();
     assert!(matches!(
         app.core.model_pick_target,
-        nexus_core::app::ModelPickTarget::SwarmPersona(0)
+        dugix_core::app::ModelPickTarget::SwarmPersona(0)
     ));
 }
 
@@ -2107,7 +2388,10 @@ fn large_write_preview_scrolls_through_the_whole_detail() {
         screen.contains("The agent wants to create src/big.rs with 120 lines."),
         "{screen}"
     );
-    assert!(screen.contains("lines 1–"), "{screen}");
+    assert!(
+        screen.contains("y approve · a this session · n deny · Esc deny"),
+        "{screen}"
+    );
     assert!(!screen.contains("line 120"), "{screen}");
     super::approval::handle_key(&mut app, KeyCode::End.into()).unwrap();
     let screen = render_to_string(80, 30, |f| super::approval::render(f, &app));
@@ -2142,7 +2426,6 @@ fn settings_column_width_row_cycles_and_persists() {
     assert!(screen.contains("column width"), "{screen}");
     assert!(screen.contains("auto"), "{screen}");
 
-    // Enter, Space and → step forward; ← steps back. Esc is the only save/close.
     let mut seen = vec![app.settings.column_width.clone()];
     for code in [
         KeyCode::Enter,
@@ -2161,7 +2444,7 @@ fn settings_column_width_row_cycles_and_persists() {
         "the cycle wraps"
     );
     assert!(
-        app.popup == nexus_core::app::Popup::Settings,
+        app.popup == dugix_core::app::Popup::Settings,
         "Enter cycles, it does not close"
     );
     press(&mut app, KeyCode::Left);
@@ -2173,9 +2456,8 @@ fn settings_column_width_row_cycles_and_persists() {
             .any(|(k, v)| k == "column_width" && v == "220")
     );
 
-    // Saving the popup leaves the width alone.
     press(&mut app, KeyCode::Esc);
-    assert!(app.popup == nexus_core::app::Popup::None);
+    assert!(app.popup == dugix_core::app::Popup::None);
     assert_eq!(app.settings.column_width, "220");
 }
 
@@ -2201,9 +2483,15 @@ fn the_model_popup_hit_test_follows_its_resized_rect() {
     let mut app = picker_app(&ids);
     app.core.set_setting("popup_sizes", "model:60x50").unwrap();
     let (fav, avail) = super::model::model_popup_areas(&app, screen_rect);
-    let outer = fav.union(avail);
-    assert_eq!(outer, crate::ui::centered(screen_rect, 60, 50));
-    assert_ne!(outer, crate::ui::centered(screen_rect, 82, 74));
+    let outer = crate::ui::centered(screen_rect, 60, 50);
+    assert_eq!(
+        fav.union(avail),
+        ratatui::layout::Rect::new(outer.x + 2, outer.y + 3, outer.width - 4, outer.height - 4)
+    );
+    assert_ne!(
+        outer,
+        crate::ui::centered(screen_rect, super::chrome::WIDE.0, super::chrome::WIDE.1)
+    );
 
     let screen = render_to_string(150, 40, |f| super::model::render(f, &mut app));
     assert_eq!(app.popup_hit.get().map(|hit| hit.rect), Some(outer));
@@ -2221,7 +2509,7 @@ fn the_model_popup_hit_test_follows_its_resized_rect() {
 
 #[test]
 fn every_popup_renders_at_the_minimum_resize_size_without_panicking() {
-    use nexus_core::app::Popup;
+    use dugix_core::app::Popup;
     // 40x10 is the floor a drag can reach (a smaller terminal gets the same).
     for (w, h) in [(40, 10), (30, 8), (60, 14)] {
         for popup in [
@@ -2235,13 +2523,13 @@ fn every_popup_renders_at_the_minimum_resize_size_without_panicking() {
             Popup::Skills,
             Popup::Files,
             Popup::Apps,
-            Popup::Watch,
             Popup::ResearchLive,
             Popup::Swarm,
             Popup::Usage,
             Popup::Jobs,
             Popup::Harness,
             Popup::Procs,
+            Popup::Fleet,
             Popup::Login,
             Popup::Local,
             Popup::Help,
@@ -2252,9 +2540,9 @@ fn every_popup_renders_at_the_minimum_resize_size_without_panicking() {
                 .set_setting(
                     "popup_sizes",
                     "model:20x20,session:20x20,copy:20x20,key:20x20,settings:20x20,space:20x20,\
-                     skills:20x20,files:20x20,apps:20x20,watches:20x20,\
+                     skills:20x20,files:20x20,apps:20x20,\
                      research:20x20,swarm:20x20,usage:20x20,jobs:20x20,harness:20x20,\
-                     procs:20x20,login:20x20,local:20x20,help:20x20,connectors:20x20",
+                     procs:20x20,fleet:20x20,login:20x20,local:20x20,help:20x20,connectors:20x20",
                 )
                 .unwrap();
             app.popup = popup;
@@ -2267,7 +2555,7 @@ fn every_popup_renders_at_the_minimum_resize_size_without_panicking() {
 #[test]
 fn help_popup_tells_you_the_borders_and_column_edge_can_be_dragged() {
     let mut app = test_app();
-    app.execute(nexus_core::app::AppCommand::OpenHelp).unwrap();
+    app.execute(dugix_core::app::AppCommand::OpenHelp).unwrap();
     let screen = render_to_string(140, 120, |f| super::help::render(f, &mut app));
     assert!(
         screen.contains(
@@ -2294,9 +2582,9 @@ fn body_lines(screen: &str) -> Vec<String> {
 fn tool_info(
     name: &str,
     description: &str,
-    annotations: nexus_core::connectors::protocol::Annotations,
-) -> nexus_core::connectors::protocol::ToolInfo {
-    nexus_core::connectors::protocol::ToolInfo {
+    annotations: dugix_core::connectors::protocol::Annotations,
+) -> dugix_core::connectors::protocol::ToolInfo {
+    dugix_core::connectors::protocol::ToolInfo {
         name: name.into(),
         title: None,
         description: description.into(),
@@ -2306,8 +2594,8 @@ fn tool_info(
 }
 
 fn connectors_app() -> AppView {
-    use nexus_core::connectors::protocol::Annotations;
-    use nexus_core::connectors::{ConnectorConfig, Status};
+    use dugix_core::connectors::protocol::Annotations;
+    use dugix_core::connectors::{ConnectorConfig, Status};
     let mut app = test_app();
     app.settings.hide_hints = false;
     let registry = app.connectors.clone();
@@ -2403,11 +2691,11 @@ fn type_text(app: &mut AppView, text: &str) {
 #[test]
 fn connectors_list_shows_status_dots_tool_counts_and_the_selected_detail() {
     let mut app = connectors_app();
-    app.execute(nexus_core::app::AppCommand::OpenConnectors)
+    app.execute(dugix_core::app::AppCommand::OpenConnectors)
         .unwrap();
-    assert_eq!(app.popup, nexus_core::app::Popup::Connectors);
+    assert_eq!(app.popup, dugix_core::app::Popup::Connectors);
     let screen = render_to_string(120, 30, |f| super::connectors::render(f, &app));
-    assert!(screen.contains(" connectors "), "{screen}");
+    assert!(screen.contains(" Connectors "), "{screen}");
     assert_eq!(
         body_lines(&screen),
         [
@@ -2421,11 +2709,7 @@ fn connectors_list_shows_status_dots_tool_counts_and_the_selected_detail() {
             "error: tools/list failed: timed out after 20s",
         ]
     );
-    assert!(
-        screen.contains("5 connectors · ⏎ tools · a add"),
-        "{screen}"
-    );
-    // Moving the cursor changes the detail strip.
+    assert!(screen.contains("5 connectors · 4 tools"), "{screen}");
     conn_press(&mut app, crossterm::event::KeyCode::Down);
     let screen = render_to_string(120, 30, |f| super::connectors::render(f, &app));
     assert!(
@@ -2434,7 +2718,7 @@ fn connectors_list_shows_status_dots_tool_counts_and_the_selected_detail() {
     );
     assert!(screen.contains("sign in"), "{screen}");
     conn_press(&mut app, crossterm::event::KeyCode::Esc);
-    assert_eq!(app.popup, nexus_core::app::Popup::None);
+    assert_eq!(app.popup, dugix_core::app::Popup::None);
 }
 
 #[test]
@@ -2443,9 +2727,8 @@ fn connectors_empty_state_points_at_add_and_import() {
     app.settings.hide_hints = false;
     super::connectors::open(&mut app);
     let screen = render_to_string(120, 24, |f| super::connectors::render(f, &app));
-    assert!(screen.contains("no connectors yet"), "{screen}");
+    assert!(screen.contains("No connectors yet."), "{screen}");
     assert!(screen.contains("a adds one, i imports"), "{screen}");
-    // Keys on an empty list are harmless.
     for code in [
         crossterm::event::KeyCode::Enter,
         crossterm::event::KeyCode::Char('d'),
@@ -2478,12 +2761,11 @@ fn connectors_enter_opens_tools_with_badges_and_keys_set_the_policy() {
         ]
         .map(String::from)
     );
-    assert!(screen.contains("connectors · linear"), "{screen}");
+    assert!(screen.contains("linear tools"), "{screen}");
     assert!(
         screen.contains("the model sees it as linear__create_issue"),
         "{screen}"
     );
-    // allow, then deny, then back to the default.
     conn_press(&mut app, KeyCode::Char('a'));
     let screen = render_to_string(120, 30, |f| super::connectors::render(f, &app));
     assert!(
@@ -2495,7 +2777,7 @@ fn connectors_enter_opens_tools_with_badges_and_keys_set_the_policy() {
             .config_of("linear")
             .unwrap()
             .policy("create_issue"),
-        Some(nexus_core::connectors::Policy::Allow)
+        Some(dugix_core::connectors::Policy::Allow)
     );
     conn_press(&mut app, KeyCode::Down);
     conn_press(&mut app, KeyCode::Char('d'));
@@ -2504,7 +2786,6 @@ fn connectors_enter_opens_tools_with_badges_and_keys_set_the_policy() {
         body_lines(&screen)[1].contains("deny   delete_issue"),
         "{screen}"
     );
-    // A denied tool is no longer offered to the model.
     assert!(
         !app.connectors
             .exposure()
@@ -2527,7 +2808,7 @@ fn connectors_enter_opens_tools_with_badges_and_keys_set_the_policy() {
             .config_of("linear")
             .unwrap()
             .policy("get_issue"),
-        Some(nexus_core::connectors::Policy::Ask)
+        Some(dugix_core::connectors::Policy::Ask)
     );
     conn_press(&mut app, KeyCode::Esc);
     assert_eq!(app.connectors_popup.mode, super::connectors::Mode::List);
@@ -2557,7 +2838,6 @@ fn connectors_add_flow_masks_the_token_and_stores_it_in_the_keychain() {
     super::connectors::open(&mut app);
     conn_press(&mut app, KeyCode::Char('a'));
     assert_eq!(app.connectors_popup.mode, super::connectors::Mode::Add);
-    // An empty target does not advance.
     conn_press(&mut app, KeyCode::Enter);
     assert_eq!(
         app.connectors_popup.add.step,
@@ -2567,7 +2847,7 @@ fn connectors_add_flow_masks_the_token_and_stores_it_in_the_keychain() {
     conn_press(&mut app, KeyCode::Enter);
     assert_eq!(app.connectors_popup.add.name, "acme-tools");
     let screen = render_to_string(100, 24, |f| super::connectors::render(f, &app));
-    assert!(screen.contains("name: acme-tools"), "{screen}");
+    assert!(screen.contains("✎ acme-tools▏"), "{screen}");
     conn_press(&mut app, KeyCode::Enter);
     assert_eq!(
         app.connectors_popup.add.step,
@@ -2578,15 +2858,14 @@ fn connectors_add_flow_masks_the_token_and_stores_it_in_the_keychain() {
     conn_press(&mut app, KeyCode::Enter);
     type_text(&mut app, "sk-live-TOP-SECRET");
     let screen = render_to_string(100, 24, |f| super::connectors::render(f, &app));
-    assert!(screen.contains("token: ******************"), "{screen}");
+    assert!(screen.contains("✎ ******************▏"), "{screen}");
     assert!(!screen.contains("TOP-SECRET"), "{screen}");
-    // Paste lands in the token field too, newline stripped.
     super::connectors::paste(&mut app, "-pasted\n");
     assert!(app.connectors_popup.add.token.ends_with("-pasted"));
     conn_press(&mut app, KeyCode::Enter);
     assert_eq!(app.connectors_popup.mode, super::connectors::Mode::List);
     let config = app.connectors.config_of("acme-tools").unwrap();
-    assert_eq!(config.auth, nexus_core::connectors::AuthKind::Bearer);
+    assert_eq!(config.auth, dugix_core::connectors::AuthKind::Bearer);
     assert_eq!(
         app.connectors
             .vault()
@@ -2612,7 +2891,6 @@ fn connectors_add_flow_handles_local_commands_bad_names_and_back() {
     );
     conn_press(&mut app, KeyCode::Enter);
     assert_eq!(app.connectors_popup.add.name, "notes");
-    // A bad name stays on the step; Esc steps back; a local command skips auth.
     for _ in 0..5 {
         conn_press(&mut app, KeyCode::Backspace);
     }
@@ -2632,7 +2910,6 @@ fn connectors_add_flow_handles_local_commands_bad_names_and_back() {
         conn_press(&mut app, KeyCode::Backspace);
     }
     type_text(&mut app, "notes");
-    // Local commands only run from the terminal UI.
     app.interactive_ui = true;
     conn_press(&mut app, KeyCode::Enter);
     assert_eq!(app.connectors_popup.mode, super::connectors::Mode::List);
@@ -2660,16 +2937,22 @@ fn connectors_remove_asks_first_and_deletes_the_keychain_entries() {
     super::connectors::open(&mut app);
     conn_press(&mut app, KeyCode::Down);
     conn_press(&mut app, KeyCode::Down);
-    conn_press(&mut app, KeyCode::Char('d'));
+    super::connectors::handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+    );
     let screen = render_to_string(120, 24, |f| super::connectors::render(f, &app));
+    assert!(screen.contains("Remove connector?"), "{screen}");
     assert!(
-        screen.contains("remove \"linear\" and its keychain entries?"),
+        screen.contains("“linear” and its keychain entries will be removed."),
         "{screen}"
     );
-    // Anything but a confirmation backs out.
     conn_press(&mut app, KeyCode::Esc);
     assert_eq!(app.connectors.infos().len(), 5);
-    conn_press(&mut app, KeyCode::Char('d'));
+    super::connectors::handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+    );
     super::connectors::handle_key(
         &mut app,
         KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
@@ -2703,14 +2986,14 @@ fn connectors_import_lists_found_servers_with_checkboxes() {
     app.connectors
         .add(
             "lin",
-            nexus_core::connectors::ConnectorConfig::remote("https://mcp.linear.app/mcp"),
+            dugix_core::connectors::ConnectorConfig::remote("https://mcp.linear.app/mcp"),
         )
         .unwrap();
-    let paths = nexus_core::connectors::import::ImportPaths {
+    let paths = dugix_core::connectors::import::ImportPaths {
         claude_desktop: Some(desktop),
         ..Default::default()
     };
-    app.popup = nexus_core::app::Popup::Connectors;
+    app.popup = dugix_core::app::Popup::Connectors;
     super::connectors::open_import(&mut app, &paths);
     let screen = render_to_string(120, 24, |f| super::connectors::render(f, &app));
     assert_eq!(
@@ -2721,7 +3004,8 @@ fn connectors_import_lists_found_servers_with_checkboxes() {
         ]
         .map(String::from)
     );
-    assert!(screen.contains("import · 1 selected"), "{screen}");
+    assert!(screen.contains("Import connectors"), "{screen}");
+    assert!(screen.contains("1 selected"), "{screen}");
     assert!(
         screen.contains("1 secret will move to your keychain"),
         "{screen}"
@@ -2743,7 +3027,7 @@ fn connectors_import_applies_the_displayed_fixture_selection() {
     let root = app.space.root.clone();
     let fixture = root.join("mcp-import.json");
     std::fs::write(&fixture, r#"{"mcpServers":{"fixture-only":{"command":"fixture-server","env":{"API_KEY":"fake-import-secret"}}}}"#).unwrap();
-    let paths = nexus_core::connectors::import::ImportPaths {
+    let paths = dugix_core::connectors::import::ImportPaths {
         cursor: Some(fixture),
         ..Default::default()
     };
@@ -2767,7 +3051,7 @@ fn connectors_import_applies_the_displayed_fixture_selection() {
 
 #[test]
 fn connectors_render_at_80_columns_and_tiny_sizes_without_panicking() {
-    use nexus_core::app::Popup;
+    use dugix_core::app::Popup;
     for mode in [
         super::connectors::Mode::List,
         super::connectors::Mode::Tools,
@@ -2789,12 +3073,12 @@ fn connectors_render_at_80_columns_and_tiny_sizes_without_panicking() {
 #[test]
 fn connector_approvals_offer_session_and_always_and_warn_about_changed_definitions() {
     use crossterm::event::{KeyCode, KeyEvent};
-    use nexus_core::tools::Decision;
+    use dugix_core::tools::Decision;
     let summary = "writes · may delete\n\n{\n  \"title\": \"Fix it\"\n}".to_string();
     let (mut app, mut receiver) = approval_app("linear", summary);
     let root = app.space.root.clone();
     {
-        let request = app.pending_approval_request.as_mut().unwrap();
+        let request = app.approvals.pending_request.as_mut().unwrap();
         request.action = "create_issue".into();
         request.class = Some("connector".into());
     }
@@ -2813,11 +3097,15 @@ fn connector_approvals_offer_session_and_always_and_warn_about_changed_definitio
     );
     assert!(screen.contains("writes · may delete"), "{screen}");
     assert!(screen.contains("\"title\": \"Fix it\""), "{screen}");
-    assert_eq!(
-        lines.last().unwrap(),
-        "y allow once · a this tool for the session · A always allow · n deny"
+    assert!(
+        screen
+            .lines()
+            .find(|line| line.contains('╰'))
+            .unwrap()
+            .trim_end()
+            .ends_with("y approve · a this session · A always · n deny · Esc deny ╯"),
+        "{screen}"
     );
-    // The open delay applies to the new key as well.
     app.approval_delay = std::time::Duration::from_millis(400);
     app.approval_opened_at = Some(std::time::Instant::now());
     super::approval::handle_key(&mut app, KeyEvent::from(KeyCode::Char('A'))).unwrap();
@@ -2826,13 +3114,12 @@ fn connector_approvals_offer_session_and_always_and_warn_about_changed_definitio
     super::approval::handle_key(&mut app, KeyEvent::from(KeyCode::Char('A'))).unwrap();
     assert_eq!(receiver.try_recv().unwrap(), Decision::AllowAlways);
 
-    // A changed definition is called out in the warning color.
     let (mut changed, _receiver) = approval_app(
         "linear",
         "this tool's definition changed since you allowed it\nwrites\n\n{}".into(),
     );
     {
-        let request = changed.pending_approval_request.as_mut().unwrap();
+        let request = changed.approvals.pending_request.as_mut().unwrap();
         request.action = "create_issue".into();
         request.class = Some("connector".into());
     }
@@ -2873,7 +3160,7 @@ fn only_connector_approvals_offer_always() {
 }
 
 fn viewer_png(name: &str, width: u32, height: u32) -> String {
-    let dir = std::env::temp_dir().join(format!("nexus-viewer-snap-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-viewer-snap-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(name);
     image::RgbImage::from_fn(width, height, |x, y| {
@@ -2891,15 +3178,18 @@ fn image_viewer_chrome_shows_title_footer_and_hints_for_a_generated_png() {
     let mut app = test_app();
     app.core.settings.image_viewer = "terminal".into();
     app.open_image_target(&pic, &Anchor::ByTarget, Return::Nothing);
-    assert!(app.popup == nexus_core::app::Popup::ImageViewer);
+    assert!(app.popup == dugix_core::app::Popup::ImageViewer);
     let screen = render_to_string(100, 24, |f| super::image_viewer::render(f, &mut app));
     let lines: Vec<_> = screen.lines().collect();
     assert!(
-        lines[0].starts_with("\u{256d}") && lines[0].contains(" sunset.png "),
+        lines
+            .iter()
+            .any(|line| line.trim_start().starts_with("╭ sunset.png ")
+                && line.contains("1 of 1 · 64×32 ·")),
         "{screen}"
     );
-    // The footer row sits just above the bottom border, which carries the hints.
-    let footer = lines[lines.len() - 2];
+    let bottom = lines.iter().position(|line| line.contains('╰')).unwrap();
+    let footer = lines[bottom - 1];
     let size = crate::image_viewer::human_bytes(std::fs::metadata(&pic).unwrap().len());
     assert!(
         footer.contains(&format!("64x32 \u{b7} PNG \u{b7} {size} \u{b7} fit")),
@@ -2909,12 +3199,12 @@ fn image_viewer_chrome_shows_title_footer_and_hints_for_a_generated_png() {
         !footer.contains('/'),
         "a lone image shows no counter: {footer}"
     );
-    let hints = lines[lines.len() - 1];
+    let hints = lines[bottom];
     for hint in [
-        "\u{2190}\u{2192} prev/next",
-        "f 1:1",
-        "o system viewer",
-        "c copy",
+        "←→ prev/next",
+        "+/- zoom",
+        "arrows pan",
+        ". actions",
         "Esc close",
     ] {
         assert!(hints.contains(hint), "{hint}: {hints}");
@@ -2936,22 +3226,36 @@ fn image_viewer_footer_counts_images_and_names_the_one_to_one_mode() {
     app.open_image_target(&a, &Anchor::Line(0), Return::Nothing);
     super::image_viewer::handle_key(&mut app, crossterm::event::KeyCode::Char('f').into());
     let screen = render_to_string(100, 24, |f| super::image_viewer::render(f, &mut app));
-    let footer = screen.lines().nth(22).unwrap();
+    let header = screen.lines().find(|line| line.contains('╭')).unwrap();
+    assert!(header.contains("1 of 2 · 20×10 · 100%"), "{screen}");
+    let footer = screen.lines().find(|line| line.contains("· 1:1")).unwrap();
+    assert!(footer.contains("· 1:1 100%"), "{footer}");
     assert!(
-        footer.contains("\u{b7} 1:1") && footer.contains("1/2"),
-        "{footer}"
-    );
-    assert!(
-        screen.lines().nth(23).unwrap().contains("f fit"),
+        screen
+            .lines()
+            .find(|line| line.contains('╰'))
+            .unwrap()
+            .contains("+/- zoom · arrows pan · . actions · Esc close"),
         "{screen}"
     );
     super::image_viewer::handle_key(&mut app, crossterm::event::KeyCode::Right.into());
     let screen = render_to_string(100, 24, |f| super::image_viewer::render(f, &mut app));
     assert!(
-        screen.lines().next().unwrap().contains(" b.png "),
+        screen
+            .lines()
+            .find(|line| line.contains('╭'))
+            .unwrap()
+            .contains(" b.png "),
         "{screen}"
     );
-    assert!(screen.lines().nth(22).unwrap().contains("2/2"), "{screen}");
+    assert!(
+        screen
+            .lines()
+            .find(|line| line.contains('╭'))
+            .unwrap()
+            .contains("2 of 2 · 20×10 · 100%"),
+        "{screen}"
+    );
 }
 
 #[test]
@@ -2986,7 +3290,7 @@ fn open_viewer_on(app: &mut AppView, names: &[&str]) -> Vec<String> {
     app.core.settings.image_viewer = "terminal".into();
     app.history_cache.image_at_line = pics.iter().flat_map(|p| [Some(p.clone()), None]).collect();
     app.open_image_target(&pics[0], &Anchor::Line(0), Return::Nothing);
-    assert!(app.popup == nexus_core::app::Popup::ImageViewer);
+    assert!(app.popup == dugix_core::app::Popup::ImageViewer);
     pics
 }
 
@@ -2997,7 +3301,7 @@ fn image_viewer_action_menu_lists_every_action_with_its_key() {
     open_viewer_on(&mut app, &["menu.png"]);
     super::image_viewer::handle_key(&mut app, KeyCode::Char('.').into());
     let screen = render_to_string(100, 24, |f| super::image_viewer::render(f, &mut app));
-    assert!(screen.contains(" actions "), "{screen}");
+    assert!(screen.contains("╭ Actions "), "{screen}");
     for (label, key) in [
         ("Copy image", "y"),
         ("Copy path", "c"),
@@ -3025,8 +3329,7 @@ fn image_viewer_action_menu_lists_every_action_with_its_key() {
         first.contains("\u{25b8} Copy image"),
         "selection marker: {first}"
     );
-    assert!(screen.contains("Enter run"), "{screen}");
-    // The menu sits in the shared rounded chrome.
+    assert!(screen.contains("↑↓ · Enter run · Esc back"), "{screen}");
     assert!(
         screen.contains('\u{256d}') && screen.contains('\u{256f}'),
         "{screen}"
@@ -3044,18 +3347,18 @@ fn image_viewer_hints_and_footer_adapt_to_the_width() {
     open_viewer_on(&mut app, &["sunset.png"]);
     let wide = render_to_string(140, 24, |f| super::image_viewer::render(f, &mut app));
     let lines: Vec<_> = wide.lines().collect();
-    let hints = lines[lines.len() - 1];
+    let bottom = lines.iter().position(|line| line.contains('╰')).unwrap();
+    let hints = lines[bottom];
     for hint in [
-        ". menu",
-        "y copy image",
-        "c copy path",
-        "s save",
+        "←→ prev/next",
         "+/- zoom",
-        "r reveal",
+        "arrows pan",
+        ". actions",
+        "Esc close",
     ] {
         assert!(hints.contains(hint), "{hint}: {hints}");
     }
-    let footer = lines[lines.len() - 2];
+    let footer = lines[bottom - 1];
     assert!(
         footer.contains("40x20 \u{b7} PNG") && footer.contains("fit 100%"),
         "{footer}"
@@ -3067,13 +3370,14 @@ fn image_viewer_hints_and_footer_adapt_to_the_width() {
 
     let narrow = render_to_string(44, 12, |f| super::image_viewer::render(f, &mut app));
     let lines: Vec<_> = narrow.lines().collect();
-    let hints = lines[lines.len() - 1];
+    let bottom = lines.iter().position(|line| line.contains('╰')).unwrap();
+    let hints = lines[bottom];
     assert!(
-        hints.contains("Esc close"),
+        hints.contains("←→ prev/next") && hints.trim_end().ends_with("Esc close ╯"),
         "the essentials survive: {hints}"
     );
-    assert!(!hints.contains("y copy image"), "{hints}");
-    let footer = lines[lines.len() - 2];
+    assert!(!hints.contains("+/- zoom"), "{hints}");
+    let footer = lines[bottom - 1];
     assert!(footer.contains("40x20"), "size is the last to go: {footer}");
     assert!(
         !footer.contains("sunset.png"),
@@ -3099,7 +3403,6 @@ fn image_viewer_shows_a_chevron_only_where_the_pointer_would_turn_the_page() {
     };
     render_to_string(100, 24, |f| super::image_viewer::render(f, &mut app));
     let body = app.image_viewer.body();
-    // First image: nothing to go back to on the left, a chevron on the right.
     hover(&mut app, body.x + 2, body.y + 3);
     let screen = render_to_string(100, 24, |f| super::image_viewer::render(f, &mut app));
     assert!(

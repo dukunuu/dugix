@@ -27,7 +27,7 @@ fn tool_result(result: &str) -> Message {
 
 fn hero(url: &str) -> String {
     format!(
-        "```nexus-ui\n{}\n```",
+        "```dugix-ui\n{}\n```",
         json!({"version":1,"title":"Player","view":[{"type":"hero","title":"LeBron James","image":url}]})
     )
 }
@@ -96,7 +96,7 @@ fn all_ui_image_fields_are_repaired_but_literal_markdown_is_untouched() {
     let good = "https://photos.example/player.jpg";
     let bad = "https://photos.example/playe.jpg";
     let source = format!(
-        "```nexus-ui\n{}\n```",
+        "```dugix-ui\n{}\n```",
         json!({"version":1,"title":"Images","view":[
         {"type":"text","text":bad},
         {"type":"image","src":bad},

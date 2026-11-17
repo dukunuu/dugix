@@ -1,30 +1,20 @@
-//! Headless one-shot runs (`nexus ask`, `nexus chat`, `nexus research`,
-//! `nexus watch run`): the same streaming pipelines the TUI event loop
-//! drives, minus the terminal. Answers stream to stdout as they arrive,
-//! tool status goes to stderr, and every conversation is persisted as a
-//! normal session in the active space — reopen it in the TUI and it's just
-//! another chat.
+//! Headless chat and research drivers with answers on stdout and progress on stderr.
 
 use std::io::Write as _;
 
 use anyhow::{Context as _, Result, anyhow, bail};
 
-use crate::db::{Watch, stage_content};
+use crate::db::stage_content;
 use crate::provider::{StreamEvent, Usage};
 
 use super::{App, AppCommand, AppEvent};
 
-/// Per-turn behavior switches for the headless drivers.
 #[derive(Default, Clone, Copy)]
 pub struct TurnOpts {
-    /// Stream answer tokens to stdout as they arrive (default true).
     pub stream: bool,
-    /// Suppress stderr chatter (tool status, thinking, token summary).
     pub quiet: bool,
 }
 
-/// What a finished `nexus ask` leaves behind — the answer already went to
-/// stdout unless `--json` asked for it structured.
 pub struct AskOutcome {
     pub answer: String,
     pub session_id: String,
@@ -32,15 +22,13 @@ pub struct AskOutcome {
     pub usage: Option<Usage>,
 }
 
-/// A finished headless research run (`nexus research` / a watch's run).
 pub struct ResearchOutcome {
     pub report: String,
     pub session_id: String,
     pub session_title: String,
 }
 
-/// Stream one answer chunk to stdout; exit quietly if the reader closed the
-/// pipe (`nexus ask | head -c 50`) — coreutils behavior, not a panic.
+// A closed downstream pipe is normal for callers such as `head`.
 fn stream(s: &str) {
     let mut stdout = std::io::stdout();
     if stdout.write_all(s.as_bytes()).is_err() {
@@ -48,7 +36,6 @@ fn stream(s: &str) {
     }
 }
 
-/// Print a line to stderr unless quiet mode is on.
 fn note(quiet: bool, line: impl std::fmt::Display) {
     if !quiet {
         eprintln!("{line}");
@@ -72,8 +59,6 @@ fn add_usage(total: Option<Usage>, next: Usage) -> Usage {
 }
 
 impl App {
-    /// Switch the active space by name (`--space`). Bails on an unknown
-    /// name; no-op when it's already the active space.
     pub fn switch_space_cli(&mut self, name: &str) -> Result<()> {
         let row = self
             .db
@@ -81,17 +66,14 @@ impl App {
             .context("listing spaces")?
             .into_iter()
             .find(|s| s.name == name)
-            .ok_or_else(|| anyhow!("no space named {name:?} — `nexus spaces` lists them"))?;
+            .ok_or_else(|| anyhow!("no space named {name:?} — `dugix spaces` lists them"))?;
         if row.id != self.active_space.id {
             self.set_active_space(row);
         }
         Ok(())
     }
 
-    /// Drive one non-interactive turn: send `prompt`, drain stream events
-    /// until the response finishes, and (unless `opts.stream`) collect the
-    /// answer. Tool status lines and the token summary go to stderr unless
-    /// `opts.quiet`. Returns the final answer text and merged usage.
+    /// Drive a non-interactive chat turn to completion.
     pub async fn run_turn(
         &mut self,
         prompt: String,
@@ -106,8 +88,11 @@ impl App {
         if self.current_model.is_none() {
             bail!("no model selected — pass --model, or pick one in the TUI first");
         }
-        // Drive through the seam, like the host API does: boot → command →
-        // event drain. The guard checks above already validated the preconditions.
+        // This process ends with the reply, so nothing may be left running behind it.
+        if self.detached_agents {
+            self.detached_agents = false;
+            self.refresh_toolbox();
+        }
         self.execute(AppCommand::Send { text: prompt })?;
 
         let mut usage: Option<Usage> = None;
@@ -137,7 +122,7 @@ impl App {
                     }
                     let parked = matches!(&ev, StreamEvent::ToolCall { result, .. } if result == crate::jobs::PARKED);
                     self.on_chat_event(task_id, ev)?;
-                    if parked && self.job_approver.is_some() {
+                    if parked && self.approvals.job_approver.is_some() {
                         self.stop_stream()?;
                         return Ok((crate::jobs::PARKED.to_string(), usage));
                     }
@@ -145,20 +130,15 @@ impl App {
                         break;
                     }
                 }
-                // The event channel closed without a Done — nothing more is
-                // coming; fall through to the summary below.
                 AppEvent::Stream(None) => break,
                 AppEvent::Title(t) => self.on_title_result(t),
-                _ => {} // models/memory/compact/etc: nothing pending for a fresh turn
+                _ => {}
             }
         }
         if streamed_any && opts.stream {
             stream("\n");
         }
 
-        // The reply is already persisted (the turn's session is active, so
-        // finish_chat_task pushed it to self.messages too). Prefer the
-        // assistant row; surface an error row if the stream failed.
         let mut answer = None;
         for m in self.messages.iter().rev() {
             match m.role.as_str() {
@@ -186,9 +166,7 @@ impl App {
         Ok((answer, usage))
     }
 
-    /// `nexus ask`: one turn, then a short wait for the model-generated
-    /// session title so `nexus sessions` shows a real name instead of the
-    /// prompt prefix. A slow title must never hold the ask hostage — capped.
+    /// Run one turn with a bounded wait for its generated session title.
     pub async fn ask_headless(&mut self, prompt: String, opts: TurnOpts) -> Result<AskOutcome> {
         let result = self.run_turn(prompt, opts).await;
         std::mem::take(&mut self.procs).shutdown().await;
@@ -220,8 +198,7 @@ impl App {
         })
     }
 
-    /// `nexus chat`: a bare REPL — prompt on stderr, one turn per line,
-    /// all turns in the one session the first turn creates.
+    /// Run a line-oriented chat REPL in one session.
     pub async fn chat_headless(&mut self, quiet: bool) -> Result<()> {
         if !self.backends.any() {
             bail!(
@@ -260,14 +237,7 @@ impl App {
         Ok(())
     }
 
-    /// `nexus research <topic>`: run the full deep-research pipeline headless.
-    ///
-    /// Gate policy: with `approve` the pipeline runs ungated (survey and
-    /// plan-approval are skipped entirely, like `/research!`). Without it,
-    /// a gated run parks at each SurveyReady/PlanReady: when stdin is a
-    /// terminal the prompt is printed and a reply is read from the line
-    /// (empty reply skips the survey round; `approve` approves the plan);
-    /// otherwise the run bails rather than hang.
+    /// Run research headlessly, requiring terminal input unless approval is automatic.
     pub async fn research_headless(
         &mut self,
         topic: String,
@@ -275,10 +245,13 @@ impl App {
         opts: TurnOpts,
     ) -> Result<ResearchOutcome> {
         if !self.backends.any() {
-            bail!(
-                "no API key configured — set one with /login in the TUI, or export \
-                 $OPENROUTER_API_KEY / $OPENAI_API_KEY / $OPENCODE_API_KEY"
-            );
+            let env_vars = crate::provider::BackendTag::ALL
+                .iter()
+                .filter_map(|tag| tag.info().key.as_ref())
+                .map(|key| format!("${}", key.env_var))
+                .collect::<Vec<_>>()
+                .join(" / ");
+            bail!("no API key configured — set one with /login in the TUI, or export {env_vars}");
         }
         if self.current_model.is_none() {
             bail!("no model selected — pass --model, or pick one in the TUI first");
@@ -288,15 +261,13 @@ impl App {
             topic,
             gated: !approve,
         })?;
-        // The execute above may have refused with a status line (already
-        // running, no model, …) — surface the last one if no job started.
         let mut refusal = String::new();
         while let Some(ev) = self.pop_pending_event() {
             if let AppEvent::Status(s) = ev {
                 refusal = s;
             }
         }
-        if self.research_rx.is_none() {
+        if self.research.rx.is_none() {
             bail!("research didn't start: {refusal}");
         }
 
@@ -316,10 +287,8 @@ impl App {
                         _ => {}
                     }
                     self.on_research_done(Some((session_id, space_id, space_name, update)));
-                    // A gate armed (or re-armed) by the handler above: answer
-                    // it before draining anything else — the pipeline is
-                    // parked and will not move until it gets a reply.
-                    if !approve && let Some(gate) = self.survey_gate.as_ref() {
+                    // The pipeline cannot emit further progress until this gate is answered.
+                    if !approve && let Some(gate) = self.research.survey_gate.as_ref() {
                         if !interactive {
                             bail!(
                                 "research needs your input at a gate ({}), but stdin isn't a \
@@ -341,7 +310,7 @@ impl App {
                     }
                 }
                 AppEvent::Research(None) => break,
-                _ => {} // unrelated background events; keep draining
+                _ => {}
             }
         }
 
@@ -358,71 +327,6 @@ impl App {
             session_title: session.title,
         })
     }
-
-    /// `nexus watch run`: run one watch (by id or topic prefix), all watches
-    /// (`--all`), or the due ones (default). Each run drives its research
-    /// job to completion before the next starts. Returns the reports, keyed
-    /// by watch topic, for the caller to print.
-    pub async fn watch_run_headless(
-        &mut self,
-        watch_ref: Option<&str>,
-        all: bool,
-        quiet: bool,
-    ) -> Result<Vec<(String, ResearchOutcome)>> {
-        let _lock = crate::jobs::DaemonLock::acquire(&self.space.root)?;
-        let jobs = self.db.list_jobs().context("listing research jobs")?;
-        let watches: Vec<Watch> = jobs
-            .iter()
-            .filter(|job| job.spec.kind == "research")
-            .map(crate::jobs::research::watch)
-            .collect();
-        let targets: Vec<Watch> = match (watch_ref, all) {
-            (Some(r), _) => {
-                let w = watches
-                    .iter()
-                    .find(|w| w.id.starts_with(r) || w.topic.contains(r))
-                    .ok_or_else(|| {
-                        anyhow!("no watch matching {r:?} — `nexus watch list` shows them")
-                    })?;
-                vec![w.clone()]
-            }
-            (None, true) => watches,
-            (None, false) => crate::jobs::due(&jobs, chrono::Utc::now(), &self.db.device_id()?)
-                .iter()
-                .filter(|job| job.spec.kind == "research")
-                .map(crate::jobs::research::watch)
-                .collect(),
-        };
-        if targets.is_empty() {
-            bail!("no watches to run — `nexus watch list` shows them");
-        }
-        let mut ran = Vec::new();
-        for w in targets {
-            note(quiet, format!("watch: {} …", w.topic));
-            let job = jobs
-                .iter()
-                .find(|job| job.id == w.id)
-                .context("research job missing")?;
-            let run = crate::jobs::run_with_app(self, job).await?;
-            if run.status != "done" {
-                bail!("watch {}: {} — {}", w.topic, run.status, run.summary);
-            }
-            let report = run.summary;
-            let session = self
-                .db
-                .get_session(&run.id)?
-                .context("watch session vanished")?;
-            ran.push((
-                w.topic,
-                ResearchOutcome {
-                    report,
-                    session_id: session.id,
-                    session_title: session.title,
-                },
-            ));
-        }
-        Ok(ran)
-    }
 }
 
 #[cfg(test)]
@@ -432,7 +336,7 @@ mod tests {
     use crate::space::Space;
 
     fn test_app() -> App {
-        let root = std::env::temp_dir().join(format!("nexus-cli-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-cli-{}", uuid::Uuid::new_v4()));
         App::new(Db::open_in_memory().unwrap(), Some("k"), Space { root })
     }
 
@@ -498,7 +402,6 @@ mod tests {
 
         app.switch_space_cli("research").unwrap();
         assert_eq!(app.active_space.id, row.id);
-        // Switching again (same space) is a no-op, not an error.
         app.switch_space_cli("research").unwrap();
         assert_eq!(app.active_space.id, row.id);
     }

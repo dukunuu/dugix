@@ -18,7 +18,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!("nexus-job-judge-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-job-judge-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("data/spaces")).unwrap();
         std::fs::create_dir(root.join("work")).unwrap();
         let mut app = App::new(
@@ -28,7 +28,6 @@ impl Fixture {
                 root: root.join("data"),
             },
         );
-        app.memory_extraction = false;
         app.current_model = Some("local:fake".into());
         app.saved.agent.decider = Some(ModelDecider::Rules);
         Self { root, app }
@@ -51,16 +50,22 @@ impl Fixture {
     }
 
     fn jev(&mut self, provider: OpenRouter) {
-        self.app.saved.openrouter_key = Some("mock-decider-key".into());
+        self.app.saved.set_key(
+            crate::provider::BackendTag::OpenRouter,
+            "mock-decider-key".into(),
+        );
         self.app.saved.agent.decider = Some(ModelDecider::Jev);
-        self.app.backends.openrouter = Some(provider);
+        self.app
+            .backends
+            .set(crate::provider::BackendTag::OpenRouter, provider);
     }
 
     async fn chat(&mut self, answers: &[&str]) -> tokio::task::JoinHandle<()> {
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await
             .unwrap();
-        self.app.backends.local = Some(
+        self.app.backends.set(
+            crate::provider::BackendTag::Local,
             OpenRouter::local(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap(),
         );
         let answers: Vec<String> = answers.iter().map(ToString::to_string).collect();
@@ -182,9 +187,6 @@ async fn judgement_controls_real_runs_and_low_confidence_continues_to_budget() {
 
 #[tokio::test]
 async fn rules_and_network_errors_end_after_one_iteration() {
-    // Without a working judge or a stop command, nothing can say the job is
-    // finished, so it stops after one iteration instead of spending the
-    // whole budget blind.
     for rules in [true, false] {
         let mut fixture = Fixture::new();
         let job = fixture.job("until_done");
@@ -213,7 +215,10 @@ async fn no_openrouter_key_uses_the_json_llm_fallback() {
     let mut fixture = Fixture::new();
     let body = json!({"choices":[{"message":{"content":"{\"choice\":\"ask_user\",\"confidence\":0.8,\"reason\":\"Which file?\"}"}}]}).to_string();
     let (provider, requests) = server(200, body, Duration::ZERO, 1).await;
-    fixture.app.backends.local = Some(provider);
+    fixture
+        .app
+        .backends
+        .set(crate::provider::BackendTag::Local, provider);
     fixture.app.saved.agent.decider = Some(ModelDecider::Jev);
     let judgement = judge(&mut fixture.app, &state()).await;
     assert_eq!(judgement.by, "llm");
@@ -254,7 +259,6 @@ async fn on_change_uses_meaningfulness_not_text_noise() {
         let mut fixture = Fixture::new();
         let mut job = fixture.job("interval");
         job.spec.notify = "on_change".into();
-        // Persist the policy before collecting notifications.
         fixture
             .app
             .db
@@ -318,13 +322,21 @@ async fn text_diff_fallback_ignores_run_paths_and_notifies_when_the_answer_chang
 }
 
 #[test]
-fn legacy_watch_migration_is_guarded_idempotent_and_survives_cache_loss() {
+fn watch_rows_become_jobs_idempotently_and_survive_cache_loss() {
     let fixture = Fixture::new();
     let path = fixture.root.join("legacy.db");
-    let db = Db::open(&path).unwrap();
-    db.conn().execute_batch("ALTER TABLE jobs DROP COLUMN kind; ALTER TABLE jobs DROP COLUMN topic;
-        INSERT INTO watches VALUES ('watch-1', 'default', 'topic', 12, 'session', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');").unwrap();
-    drop(db);
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(include_str!("../db/migrations/durable_v1.sql"))
+        .unwrap();
+    conn.execute_batch(
+        "ALTER TABLE sessions DROP COLUMN web_mode;
+         ALTER TABLE memory_chapters DROP COLUMN tidied_at;
+         PRAGMA user_version = 5;
+         INSERT INTO watches VALUES ('watch-1', 'default', 'topic', 12, 'session',
+          '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');",
+    )
+    .unwrap();
+    drop(conn);
     for _ in 0..2 {
         let db = Db::open(&path).unwrap();
         let jobs = db.list_jobs().unwrap();
@@ -345,25 +357,43 @@ fn legacy_watch_migration_is_guarded_idempotent_and_survives_cache_loss() {
             .len(),
             1
         );
-        assert_eq!(db.list_all_watches().unwrap().len(), 1);
-        db.conn()
-            .execute("DELETE FROM cache.watch_jobs", [])
+        let legacy_tables: i64 = db
+            .conn()
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM main.sqlite_schema WHERE name = 'watches')
+                 + (SELECT COUNT(*) FROM cache.sqlite_schema WHERE name = 'watch_jobs')",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
+        assert_eq!(legacy_tables, 0);
+        drop(db);
+        std::fs::remove_file(crate::db::cache_path_for(&path)).unwrap();
     }
 }
 
 #[test]
-fn research_kind_and_topic_sync_and_deleted_migrations_stay_deleted() {
+fn research_kind_and_topic_sync_and_deleted_jobs_stay_deleted() {
     let fixture = Fixture::new();
     let session = fixture
         .app
         .db
         .create_session("watch", "local:fake", "default", "research")
         .unwrap();
-    let id = fixture
+    let id = uuid::Uuid::new_v4().to_string();
+    fixture
         .app
         .db
-        .create_watch("default", "topic", 24, &session.id)
+        .save_job(&Job {
+            id: id.clone(),
+            space_id: "default".into(),
+            session_id: session.id,
+            device_id: fixture.app.db.device_id().unwrap(),
+            spec: research::spec("topic", Some(1440)),
+            enabled: 1,
+            last_run_at: None,
+            updated_at: Utc::now().to_rfc3339(),
+        })
         .unwrap();
     let changes = crate::sync::build_changeset(&fixture.app.db, None, "owner").unwrap();
     let row = changes.rows.iter().find(|row| row.table == "jobs").unwrap();
@@ -382,25 +412,27 @@ fn research_kind_and_topic_sync_and_deleted_migrations_stay_deleted() {
 }
 
 #[tokio::test]
-async fn slash_watch_creates_research_job_and_direct_watch_runner_remains_compatible() {
+async fn slash_watch_creates_research_job_and_direct_research_runner_reuses_it() {
     let mut fixture = Fixture::new();
-    // A bound mock backend permits synchronous startup; abort before yielding to
-    // its spawned research task, so this test never starts a provider request.
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .unwrap();
-    fixture.app.backends.local =
-        Some(OpenRouter::local(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap());
-    fixture.app.create_watch("topic");
+    fixture.app.backends.set(
+        crate::provider::BackendTag::Local,
+        OpenRouter::local(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap(),
+    );
+    fixture.app.repeat_research("topic");
     let job = fixture.app.db.list_jobs().unwrap().pop().unwrap();
     assert_eq!(job.spec.kind, "research");
     assert_eq!(job.spec.topic.as_deref(), Some("topic"));
     assert_eq!(job.spec.interval_minutes, 1440);
     fixture.app.stop_research();
-    let watch = fixture.app.db.list_all_watches().unwrap().pop().unwrap();
-    assert!(fixture.app.run_one_watch(&watch));
-    let updated = fixture.app.db.list_all_watches().unwrap().pop().unwrap();
-    assert_ne!(updated.session_id, watch.session_id);
+    assert!(fixture.app.run_research_job(&job));
+    let jobs = fixture.app.db.list_jobs().unwrap();
+    assert_eq!(jobs.len(), 1);
+    let updated = &jobs[0];
+    assert_eq!(updated.id, job.id);
+    assert_ne!(updated.session_id, job.session_id);
     assert_eq!(fixture.app.db.list_job_runs().unwrap().len(), 2);
     fixture.app.stop_research();
 }

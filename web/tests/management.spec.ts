@@ -5,7 +5,7 @@ test("management controls persist scoped swarm, watches, and skills", async ({ p
   let roster = [{ name: "Ada", model: "test", blurb: "careful" }];
   let watches: { id: string; topic: string; interval_hours: number }[] = [];
   let armed = "";
-  await page.route("**/.well-known/nexus", (route) => route.fulfill({ json: { host_id: "management", product: "nexus-chat", version: "test", api: "/v1", authentication: "bearer" } }));
+  await page.route("**/.well-known/dugix", (route) => route.fulfill({ json: { host_id: "management", product: "dugix", version: "test", api: "/v1", authentication: "bearer" } }));
   await page.route("**/v1/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());

@@ -4,7 +4,7 @@ use serde_json::json;
 struct Temp(PathBuf);
 impl Temp {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!("nexus-studio-font-{}", Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-studio-font-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
         Self(root.canonicalize().unwrap())
     }
@@ -102,7 +102,7 @@ fn import_copies_sanitized_font_metadata_and_is_one_undo_step() {
     );
     assert_eq!(
         backend
-            .serve(&format!("nexus://localhost/{}", imported.file))
+            .serve(&format!("dugix://localhost/{}", imported.file))
             .unwrap()
             .1,
         bytes
@@ -253,7 +253,7 @@ fn font_assets_use_the_same_size_cap_as_core() {
         .unwrap();
     assert_eq!(
         backend
-            .serve("nexus://localhost/assets/fonts/large.woff2")
+            .serve("dugix://localhost/assets/fonts/large.woff2")
             .unwrap()
             .1
             .len(),
@@ -267,7 +267,7 @@ fn font_assets_use_the_same_size_cap_as_core() {
         .unwrap();
     assert!(
         backend
-            .serve("nexus://localhost/assets/fonts/large.woff2")
+            .serve("dugix://localhost/assets/fonts/large.woff2")
             .is_err()
     );
 }

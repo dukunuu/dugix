@@ -1,19 +1,11 @@
-//! The in-terminal image viewer: what opens where (terminal first, the OS
-//! viewer as the fallback), the conversation's image order, and the
-//! decode/encode work behind the full-screen popup.
-//!
-//! Decoding and graphics encoding run on bounded background jobs, like the
-//! diagram previews: a draw only places an already-encoded image. Each image is
-//! decoded once and downscaled to [`MAX_EDGE`], so a huge photo costs bounded
-//! memory; resizing the terminal, toggling fit / 1:1 or panning re-encodes
-//! from that decoded copy.
+//! Terminal image viewing with bounded background decoding and encoding.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use dugix_core::app::Popup;
 use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView, ImageFormat};
-use nexus_core::app::Popup;
 use ratatui::layout::{Rect, Size};
 use ratatui_image::Resize;
 use ratatui_image::picker::{Picker, ProtocolType};
@@ -25,28 +17,18 @@ use crate::interactive::PendingImage;
 
 /// Longest edge kept after decoding; larger images are downscaled once.
 pub const MAX_EDGE: u32 = 3072;
-/// Files bigger than this are not read into memory for the viewer.
 const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
-/// Vector images rasterize to this longest edge.
 const SVG_EDGE: u32 = 2048;
-/// Decode and encode jobs allowed in flight at once.
 const MAX_JOBS: usize = 2;
 
-// ── Where an image opens ──────────────────────────────────────────────────
-
-/// The `image viewer` setting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Preference {
-    /// In the terminal when it draws real graphics, else the OS viewer.
     Auto,
-    /// Always in the terminal, even with half-block rendering.
     Terminal,
-    /// Always the OS viewer.
     System,
 }
 
 impl Preference {
-    /// Unknown strings are `auto`, the setting's default.
     #[must_use]
     pub fn parse(value: &str) -> Self {
         match value {
@@ -57,13 +39,10 @@ impl Preference {
     }
 }
 
-/// What a target is, as far as the viewer can tell without decoding it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Image,
-    /// A video thumbnail whose sibling `.mp4` exists: plays in the OS player.
     Video,
-    /// A format the `image` crate build here cannot decode.
     Unsupported,
 }
 
@@ -73,9 +52,6 @@ pub enum Route {
     System,
 }
 
-/// The fallback decision table: the OS viewer for videos and for formats we
-/// cannot decode; otherwise the setting decides, with `auto` choosing the
-/// terminal only when it has a real graphics protocol.
 #[must_use]
 pub fn route(preference: Preference, protocol: ProtocolType, kind: Kind) -> Route {
     match (kind, preference) {
@@ -90,8 +66,6 @@ pub fn is_remote(target: &str) -> bool {
     target.starts_with("https://") || target.starts_with("http://")
 }
 
-/// `abc_first.png` / `abc_last.png` -> the sibling `abc.mp4` or
-/// `_stitch_abc.mp4`, when one exists.
 #[must_use]
 pub fn video_for(target: &str) -> Option<PathBuf> {
     if is_remote(target) {
@@ -123,7 +97,6 @@ fn extension(target: &str) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
-/// Whether `ext` names a raster or vector image (decodable or not).
 #[must_use]
 pub fn is_image_extension(ext: &str) -> bool {
     ext.eq_ignore_ascii_case("svg") || ImageFormat::from_extension(ext).is_some()
@@ -144,7 +117,6 @@ pub fn kind_of(target: &str) -> Kind {
     }
 }
 
-/// The title: a file's name, or a URL's host plus the tail of its path.
 #[must_use]
 pub fn display_name(target: &str) -> String {
     if is_remote(target)
@@ -178,51 +150,38 @@ pub(crate) fn human_bytes(bytes: u64) -> String {
     }
 }
 
-// ── The conversation's images, in history order ───────────────────────────
-
-/// Where an item sits in the transcript, so a click lands on the right copy
-/// of an image that appears more than once.
+/// Distinguishes transcript occurrences of the same image.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Anchor {
-    /// The first rendered line of an inline image.
     Line(usize),
-    /// The `index`th image of an interactive block.
     Widget {
         owner: usize,
         ordinal: usize,
         index: usize,
     },
-    /// Not from the transcript: the first item with this target.
     ByTarget,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Item {
-    /// A file path or an `https` URL.
     pub target: String,
     pub anchor: Anchor,
 }
 
-/// Where the viewer returns to when it closes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Return {
     #[default]
     Nothing,
     Files,
-    /// The focused interactive block it was opened from.
     Interactive,
 }
 
-// ── Decoding and encoding ─────────────────────────────────────────────────
-
-/// What the footer says about the loaded image.
 #[derive(Clone, Debug)]
 pub struct Meta {
     pub width: u32,
     pub height: u32,
     pub format: String,
     pub bytes: u64,
-    /// Set when the stored copy is smaller than the file.
     pub shown: Option<(u32, u32)>,
 }
 
@@ -240,7 +199,6 @@ enum Load {
     Failed(PathBuf),
 }
 
-/// What an encoded protocol was made for. Equal keys never re-encode.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ViewKey {
     path: PathBuf,
@@ -255,32 +213,21 @@ struct Shown {
     protocol: Protocol,
 }
 
-/// Pixel sizes of the last view, for clamping, for anchoring a zoom and for
-/// deciding whether the arrows pan or move between images.
 #[derive(Clone, Copy, Debug)]
 struct Geometry {
-    /// The window the image is drawn in, in pixels.
     view: (u32, u32),
-    /// The decoded (possibly downscaled) copy.
     image: (u32, u32),
-    /// Width of the file's own pixels: what a zoom percentage is relative to.
     natural_w: u32,
 }
 
-// ── Zoom ──────────────────────────────────────────────────────────────────
-
-/// How big the image is drawn: scaled down to the window, or a percentage of
-/// the file's own pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Zoom {
     Fit,
     Percent(u32),
 }
 
-/// The percentages the keys and the wheel step through.
 pub const ZOOM_STEPS: [u32; 10] = [25, 50, 75, 100, 150, 200, 300, 400, 600, 800];
 
-/// The next step above (`dir > 0`) or below `percent`, clamped to the range.
 #[must_use]
 pub fn next_zoom_percent(percent: f64, dir: i32) -> u32 {
     let first = ZOOM_STEPS[0];
@@ -299,9 +246,6 @@ pub fn next_zoom_percent(percent: f64, dir: i32) -> u32 {
     }
 }
 
-/// Display pixels per decoded pixel. Fit shrinks to the window and never
-/// enlarges; a percentage is relative to the file's own width, so a photo
-/// downscaled for memory still reads 100% at its real size.
 fn scale_for(zoom: Zoom, decoded: (u32, u32), natural_w: u32, view: (u32, u32)) -> f64 {
     let (width, height) = (f64::from(decoded.0.max(1)), f64::from(decoded.1.max(1)));
     match zoom {
@@ -312,7 +256,6 @@ fn scale_for(zoom: Zoom, decoded: (u32, u32), natural_w: u32, view: (u32, u32)) 
     }
 }
 
-/// The decoded image's size once drawn at `scale`.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // bounded: 800% of 3072
 fn display_size(decoded: (u32, u32), scale: f64) -> (u32, u32) {
     (
@@ -321,8 +264,6 @@ fn display_size(decoded: (u32, u32), scale: f64) -> (u32, u32) {
     )
 }
 
-/// Where the window starts along one axis, in display pixels from the image's
-/// edge: negative when the image is smaller than the window (centered).
 fn axis_origin(disp: f64, view: f64, pan: f64) -> f64 {
     if disp > view {
         (disp - view) / 2.0 + clamp_pan_f(pan, disp, view)
@@ -340,9 +281,7 @@ fn clamp_pan_f(pan: f64, disp: f64, view: f64) -> f64 {
     }
 }
 
-/// The pan (display pixels from centered) that keeps the image point under
-/// `pointer` (display pixels from the window's edge) fixed while the scale
-/// goes from `old` to `new`. Pure, so the zoom math is testable on its own.
+/// Keeps the image point under the pointer fixed while zooming.
 #[must_use]
 #[allow(clippy::cast_possible_truncation)] // clamped to half an image
 pub fn anchored_pan(decoded: u32, view: u32, pan: i32, pointer: f64, old: f64, new: f64) -> i32 {
@@ -386,7 +325,7 @@ fn rasterize_svg(data: &[u8]) -> Result<(DynamicImage, (u32, u32)), String> {
             resolve_data: Box::new(|_, _, _| None),
             resolve_string: Box::new(|_, _| None),
         },
-        fontdb: nexus_core::deck::text::system_fonts(),
+        fontdb: dugix_core::deck::text::system_fonts(),
         ..Default::default()
     };
     let tree = resvg::usvg::Tree::from_data(data, &options).map_err(|e| format!("svg: {e}"))?;
@@ -434,7 +373,6 @@ fn format_name(format: ImageFormat) -> String {
     }
 }
 
-/// Read, decode and (once) downscale a file. Runs off the draw path.
 fn decode(path: &Path) -> Result<Decoded, String> {
     let bytes = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
     if bytes > MAX_FILE_BYTES {
@@ -479,8 +417,7 @@ fn decode(path: &Path) -> Result<Decoded, String> {
     })
 }
 
-/// The file decoded at its own size, for copying to the clipboard. Vector
-/// images aren't handled here: they have no pixels of their own.
+/// Decodes original raster pixels for clipboard copies.
 pub(crate) fn decode_original(path: &Path) -> Result<DynamicImage, String> {
     let bytes = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
     if bytes > MAX_FILE_BYTES {
@@ -494,9 +431,7 @@ pub(crate) fn decode_original(path: &Path) -> Result<DynamicImage, String> {
         .map_err(|e| e.to_string())
 }
 
-/// The window of the image the view shows, at `scale`, panned `pan` display
-/// pixels from centered. Only the visible part is resampled, so a deep zoom
-/// costs a window, not the whole image; at exactly 100% nothing is resampled.
+// Resample only the visible window to keep deep-zoom work bounded by the viewport.
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -530,7 +465,6 @@ fn render_window(
     if window.dimensions() == shown {
         return window;
     }
-    // Past 300% the pixels are the point: keep them crisp.
     let filter = if scale >= 3.0 {
         FilterType::Nearest
     } else {
@@ -539,7 +473,6 @@ fn render_window(
     window.resize_exact(shown.0, shown.1, filter)
 }
 
-/// Draw `image` for a `cols` x `rows` window at `zoom` and `pan`.
 fn encode(
     picker: &Picker,
     image: &DynamicImage,
@@ -568,8 +501,6 @@ fn clamp_pan(pan: i32, disp: u32, view: u32) -> i32 {
     pan.clamp(-half, half)
 }
 
-// ── The opener (injectable, so tests never launch a viewer) ───────────────
-
 #[derive(Clone)]
 pub struct Opener(Arc<dyn Fn(&str) + Send + Sync>);
 
@@ -590,15 +521,11 @@ impl Opener {
     }
 }
 
-// ── The viewer ────────────────────────────────────────────────────────────
-
-/// What a target resolves to right now.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
     Ready(PathBuf),
     Loading,
     Failed,
-    /// Remote images are switched off.
     Off,
     Missing,
 }
@@ -607,10 +534,10 @@ pub enum Source {
 pub fn source_of(target: &str) -> Source {
     if is_remote(target) {
         match crate::app_view::remote_image(target) {
-            nexus_core::remote_image::Status::Ready(path) => Source::Ready(path),
-            nexus_core::remote_image::Status::Loading => Source::Loading,
-            nexus_core::remote_image::Status::Failed => Source::Failed,
-            nexus_core::remote_image::Status::Off => Source::Off,
+            dugix_core::remote_image::Status::Ready(path) => Source::Ready(path),
+            dugix_core::remote_image::Status::Loading => Source::Loading,
+            dugix_core::remote_image::Status::Failed => Source::Failed,
+            dugix_core::remote_image::Status::Off => Source::Off,
         }
     } else {
         let path = PathBuf::from(target);
@@ -639,9 +566,7 @@ pub struct Viewer {
     tx: mpsc::UnboundedSender<Completion>,
     rx: mpsc::UnboundedReceiver<Completion>,
     opener: Opener,
-    /// The pointer's drag, clicks, hover and the open action menu.
     pub(crate) pointer: crate::image_viewer_actions::Pointer,
-    /// Clipboard, file-manager and Downloads seams (real ones outside tests).
     pub(crate) hooks: crate::image_viewer_actions::Hooks,
 }
 
@@ -676,7 +601,6 @@ impl Default for Viewer {
 }
 
 impl Viewer {
-    /// Called once after the terminal is initialised, with the probed picker.
     pub fn set_picker(&mut self, picker: Picker) {
         self.picker = picker;
         self.shown = None;
@@ -693,7 +617,6 @@ impl Viewer {
         self.opener = opener;
     }
 
-    /// Open `target` (or its sibling video) in the OS viewer.
     pub fn open_external(&self, target: &str) {
         let resolved = video_for(target);
         self.opener.call(
@@ -703,7 +626,6 @@ impl Viewer {
         );
     }
 
-    /// Begin viewing `items[index]`; fit mode, centered.
     pub fn start(&mut self, items: Vec<Item>, index: usize, return_to: Return) {
         self.index = index.min(items.len().saturating_sub(1));
         self.items = items;
@@ -722,7 +644,6 @@ impl Viewer {
         self.pan = (0, 0);
     }
 
-    /// Drop the decoded image and anything in flight.
     pub fn close(&mut self) -> Return {
         self.ticket = self.ticket.wrapping_add(1);
         self.load = Load::Idle;
@@ -777,7 +698,6 @@ impl Viewer {
         self.pointer.body
     }
 
-    /// The decoded image, once it has loaded.
     #[must_use]
     pub(crate) fn decoded(&self) -> Option<&Decoded> {
         match &self.load {
@@ -786,7 +706,6 @@ impl Viewer {
         }
     }
 
-    /// `f`: fit <-> 1:1.
     pub fn toggle_fit(&mut self) {
         self.set_zoom(
             if self.zoom == Zoom::Fit {
@@ -798,7 +717,6 @@ impl Viewer {
         );
     }
 
-    /// The zoom now in effect, as a percentage of the file's own pixels.
     #[must_use]
     pub fn percent(&self) -> Option<f64> {
         let g = self.geometry?;
@@ -806,8 +724,7 @@ impl Viewer {
         Some(scale * f64::from(g.image.0) / f64::from(g.natural_w.max(1)) * 100.0)
     }
 
-    /// Change the zoom. With a `pointer` (cells, screen coordinates) the image
-    /// point under it stays put; without one the view keeps its center.
+    /// Changes zoom around a screen-cell pointer or the view center.
     pub fn set_zoom(&mut self, zoom: Zoom, pointer: Option<(u16, u16)>) {
         let Some(g) = self.geometry else {
             self.zoom = zoom;
@@ -832,7 +749,6 @@ impl Viewer {
         self.requested = None;
     }
 
-    /// One zoom step in (`dir > 0`) or out, anchored at the pointer.
     pub fn zoom_step(&mut self, dir: i32, pointer: Option<(u16, u16)>) {
         let current = self.percent().unwrap_or(match self.zoom {
             Zoom::Percent(percent) => f64::from(percent),
@@ -845,7 +761,6 @@ impl Viewer {
         self.set_zoom(Zoom::Percent(next), pointer);
     }
 
-    /// A double-click: fit <-> 100% around the pointer.
     pub fn toggle_zoom_at(&mut self, pointer: (u16, u16)) {
         let next = if self.zoom == Zoom::Fit {
             Zoom::Percent(100)
@@ -855,7 +770,6 @@ impl Viewer {
         self.set_zoom(next, Some(pointer));
     }
 
-    /// A screen cell as pixels from the window's top left (cell centre).
     fn pointer_px(&self, pointer: Option<(u16, u16)>) -> Option<(f64, f64)> {
         let (column, row) = pointer?;
         let body = self.pointer.body;
@@ -869,7 +783,6 @@ impl Viewer {
         ))
     }
 
-    /// Move to a neighbouring image; stays put at either end.
     pub fn step(&mut self, delta: isize) -> bool {
         let last = self.items.len().saturating_sub(1);
         let next = self.index.saturating_add_signed(delta).min(last);
@@ -889,7 +802,6 @@ impl Viewer {
         }
     }
 
-    /// Insert `target` after the current image and show it (a dropped file).
     pub fn insert_after_current(&mut self, target: String) {
         let at = (self.index + 1).min(self.items.len());
         self.items.insert(
@@ -902,7 +814,6 @@ impl Viewer {
         self.go(at);
     }
 
-    /// Whether the picture is larger than the window on (x, y) at this zoom.
     #[must_use]
     pub fn can_pan(&self) -> (bool, bool) {
         let Some(g) = self.geometry else {
@@ -913,7 +824,6 @@ impl Viewer {
         (disp.0 > g.view.0, disp.1 > g.view.1)
     }
 
-    /// Pan by whole cells (the window shows more of the image in that direction).
     pub fn pan_by(&mut self, dx: i32, dy: i32) {
         let font = self.picker.font_size();
         self.pan_px(
@@ -922,30 +832,23 @@ impl Viewer {
         );
     }
 
-    /// Pan by display pixels; the next draw clamps to the image's edges.
     pub fn pan_px(&mut self, dx: i32, dy: i32) {
         self.pan.0 = self.pan.0.saturating_add(dx);
         self.pan.1 = self.pan.1.saturating_add(dy);
     }
 
-    /// One cell in display pixels.
     #[must_use]
     pub fn cell_px(&self) -> (i32, i32) {
         let font = self.picker.font_size();
         (i32::from(font.width), i32::from(font.height))
     }
 
-    // ── Background work ──────────────────────────────────────────────────
-
-    /// The next finished job, for the event loop.
     pub async fn next_completion(&mut self) -> Option<Completion> {
         self.rx.recv().await
     }
 
     fn spawn(&mut self, job: impl FnOnce() -> Completion + Send + 'static) {
         self.in_flight += 1;
-        // Synchronous callers (the snapshot tests) have no runtime: run the
-        // job inline. The real TUI always has one.
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             let tx = self.tx.clone();
             runtime.spawn_blocking(move || {
@@ -956,8 +859,6 @@ impl Viewer {
         }
     }
 
-    /// Apply one finished job. A decode or encode error is queued as a failure
-    /// for the app to turn into the OS-viewer fallback.
     pub fn apply(&mut self, completion: Completion) {
         self.in_flight = self.in_flight.saturating_sub(1);
         match completion {
@@ -995,14 +896,11 @@ impl Viewer {
         }
     }
 
-    /// Absorb finished jobs and hand back any failures since the last call.
     pub fn drain(&mut self) -> Vec<String> {
         self.absorb();
         std::mem::take(&mut self.failures)
     }
 
-    /// Start whatever the current view still needs: decode the file, then
-    /// encode it for `body`. Idempotent; bounded by [`MAX_JOBS`].
     pub fn drive(&mut self, source: &Source, body: Rect) {
         let Source::Ready(path) = source else {
             return;
@@ -1010,8 +908,7 @@ impl Viewer {
         if body.width == 0 || body.height == 0 {
             return;
         }
-        // Inline (runtime-less) jobs finish inside the call, so a second pass
-        // can start the encode that follows the decode.
+        // Without a runtime, decode completes inline and encoding can start on the second pass.
         for _ in 0..2 {
             let current = match &self.load {
                 Load::Idle => None,
@@ -1097,9 +994,6 @@ impl Viewer {
         }
     }
 
-    // ── What the popup draws ─────────────────────────────────────────────
-
-    /// The encoded image for the current view, if one is ready.
     #[must_use]
     pub fn protocol_ready(&self) -> Option<&Protocol> {
         self.shown.as_ref().map(|shown| &shown.protocol)
@@ -1113,9 +1007,7 @@ impl Viewer {
         }
     }
 
-    /// The footer's fields in reading order, each with a keep-priority (lower
-    /// goes first when the line is too narrow): size, format, bytes, zoom,
-    /// whether the copy is downscaled, and where the image came from.
+    /// Returns footer fields with removal priorities, lowest discarded first when space runs out.
     #[must_use]
     pub fn footer_fields(&self) -> Vec<(String, u8)> {
         let mut fields = Vec::new();
@@ -1134,7 +1026,6 @@ impl Viewer {
         fields
     }
 
-    /// `fit 62%`, `1:1 100%` or `150%`.
     #[must_use]
     pub fn zoom_label(&self) -> String {
         let percent = self
@@ -1148,7 +1039,6 @@ impl Viewer {
     }
 }
 
-/// Where an image came from, for the footer: a URL's host or a file's name.
 #[must_use]
 pub fn source_label(target: &str) -> String {
     if is_remote(target)
@@ -1162,11 +1052,7 @@ pub fn source_label(target: &str) -> String {
         .map_or_else(|| target.to_string(), |name| name.to_string_lossy().into())
 }
 
-// ── AppView: opening, closing, falling back ───────────────────────────────
-
 impl AppView {
-    /// Every image in the conversation in history order: inline and tool-card
-    /// images by their line, interactive-block images by their block's row.
     #[must_use]
     pub fn image_gallery(&self) -> Vec<Item> {
         let mut entries: Vec<(usize, usize, Item)> = Vec::new();
@@ -1189,7 +1075,8 @@ impl AppView {
             }
         }
         for placement in self.history_cache.widgets.iter().filter(|p| p.complete) {
-            let Ok(document) = nexus_core::interactive::Document::parse(&placement.source) else {
+            let Ok((document, _)) = dugix_core::interactive::Document::recover(&placement.source)
+            else {
                 continue;
             };
             for (index, image) in crate::interactive::document_images(&document)
@@ -1218,9 +1105,6 @@ impl AppView {
         Preference::parse(&self.core.settings.image_viewer)
     }
 
-    /// Open `target`: in the terminal viewer when the setting and the
-    /// terminal allow it, else (or for videos and formats we cannot decode)
-    /// in the OS viewer.
     pub fn open_image_target(&mut self, target: &str, anchor: &Anchor, from: Return) {
         let kind = kind_of(target);
         match route(self.viewer_preference(), self.image_viewer.protocol(), kind) {
@@ -1261,7 +1145,6 @@ impl AppView {
         }
     }
 
-    /// Click or Enter on a rendered image line of the transcript.
     pub fn open_image_at_line(&mut self, line: usize) -> bool {
         let Some(Some(target)) = self.history_cache.image_at_line.get(line).cloned() else {
             return false;
@@ -1270,7 +1153,6 @@ impl AppView {
         true
     }
 
-    /// An image inside an interactive block.
     pub fn open_widget_image(&mut self, pending: &PendingImage, from: Return) {
         let anchor = Anchor::Widget {
             owner: pending.owner,
@@ -1280,8 +1162,6 @@ impl AppView {
         self.open_image_target(&pending.url, &anchor, from);
     }
 
-    /// `/view <path|url>`: a path as given, `~`-expanded, or relative to the
-    /// space's files.
     pub fn open_image_command(&mut self, argument: &str) {
         let argument = argument.trim();
         let target = if is_remote(argument) {
@@ -1309,7 +1189,6 @@ impl AppView {
         self.open_image_target(&target, &Anchor::ByTarget, Return::Nothing);
     }
 
-    /// Close the popup and go back to where it was opened from.
     pub fn close_image_viewer(&mut self) {
         let back = self.image_viewer.close();
         self.popup = match back {
@@ -1319,7 +1198,6 @@ impl AppView {
         };
     }
 
-    /// The explicit fallback: open the current item in the OS viewer/player.
     pub fn open_viewer_item_externally(&mut self) {
         let Some(item) = self.image_viewer.current().cloned() else {
             return;
@@ -1328,8 +1206,6 @@ impl AppView {
         self.push_status(format!("opened {}", display_name(&item.target)));
     }
 
-    /// Take finished decode/encode jobs; a failure closes the viewer and opens
-    /// the file in the OS viewer with a status note.
     pub fn pump_image_viewer(&mut self) {
         if self.popup != Popup::ImageViewer {
             return;
@@ -1347,7 +1223,6 @@ impl AppView {
         }
     }
 
-    /// A job finished while the event loop was idle.
     pub fn apply_image_completion(&mut self, completion: Completion) {
         self.image_viewer.apply(completion);
         self.pump_image_viewer();
@@ -1358,9 +1233,9 @@ impl AppView {
 mod tests {
     use super::*;
     use crate::interactive::Placement;
-    use nexus_core::app::App;
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
+    use dugix_core::app::App;
+    use dugix_core::db::Db;
+    use dugix_core::space::Space;
     use serde_json::json;
     use std::sync::Mutex;
 
@@ -1368,7 +1243,7 @@ mod tests {
     const PIC2: &str = "https://img.example.invalid/second.png";
 
     fn app() -> AppView {
-        let root = std::env::temp_dir().join(format!("nexus-viewer-test-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-viewer-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
         AppView::new(App::new(
             Db::open_in_memory().unwrap(),
@@ -1406,7 +1281,7 @@ mod tests {
     }
 
     fn temp_dir() -> PathBuf {
-        std::env::temp_dir().join(format!("nexus-viewer-files-{}", uuid::Uuid::new_v4()))
+        std::env::temp_dir().join(format!("dugix-viewer-files-{}", uuid::Uuid::new_v4()))
     }
 
     fn gallery_doc(images: &[&str]) -> String {
@@ -1472,7 +1347,7 @@ mod tests {
         assert_eq!(Preference::parse("terminal"), Preference::Terminal);
         assert_eq!(Preference::parse("system"), Preference::System);
         assert_eq!(Preference::parse("something else"), Preference::Auto);
-        for value in nexus_core::app::IMAGE_VIEWERS {
+        for value in dugix_core::app::IMAGE_VIEWERS {
             assert_eq!(
                 Preference::parse(value) == Preference::Auto,
                 value == "auto"
@@ -1753,6 +1628,8 @@ mod tests {
         key(&mut app, Char('n'));
         assert_eq!(app.image_viewer.index(), 4);
         key(&mut app, Char('q'));
+        assert!(app.popup == Popup::ImageViewer, "q no longer closes");
+        key(&mut app, crossterm::event::KeyCode::Esc);
         assert!(app.popup == Popup::None);
         assert!(
             app.image_viewer.items().is_empty(),
@@ -1868,7 +1745,7 @@ mod tests {
         assert!(text.contains("img.example.invalid/pic.png"), "{text}");
         app.close_image_viewer();
 
-        let fetcher = nexus_core::remote_image::Fetcher::new(temp_dir());
+        let fetcher = dugix_core::remote_image::Fetcher::new(temp_dir());
         crate::app_view::use_fetcher_for_tests(&fetcher);
         fetcher.seed(PIC, &png_bytes(48, 24)).unwrap();
         app.open_image_target(PIC, &Anchor::ByTarget, Return::Nothing);
@@ -1908,7 +1785,7 @@ mod tests {
         app.core.settings.image_viewer = "terminal".into();
         let files = app.core.space.files_dir(&app.core.active_space.name);
         png_file(&files, "from_files.png", 12, 12);
-        app.open_files_popup(nexus_core::app::FilesTab::Images);
+        app.open_files_popup(dugix_core::app::FilesTab::Images);
         assert!(app.popup == Popup::Files);
         app.open_selected_image();
         assert!(app.popup == Popup::ImageViewer);

@@ -1,6 +1,3 @@
-// Casts here are on bounded values: token counts, byte sizes, and
-// selection indices — never on unbounded input. JSON-derived indices in
-// provider/tools go through try_from instead.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -26,6 +23,8 @@ use crate::space::Space;
 
 mod apps;
 mod backends;
+mod background;
+mod cache_accounting;
 mod chat;
 mod chats;
 mod commands;
@@ -33,6 +32,7 @@ mod compaction;
 mod embeddings;
 pub mod export;
 mod files;
+mod fleet;
 pub mod headless;
 mod images;
 #[cfg(test)]
@@ -40,10 +40,15 @@ mod improve_tests;
 #[cfg(test)]
 mod masking_tests;
 mod memory;
+mod mode_note;
 mod models;
 mod panels;
 #[cfg(test)]
+mod prefix_stability_tests;
+mod prompt_freeze;
+#[cfg(test)]
 mod prompt_snapshots;
+mod queue;
 #[cfg(test)]
 mod reply_style_tests;
 #[cfg(test)]
@@ -53,46 +58,53 @@ mod scripts;
 mod sessions;
 mod settings;
 pub use settings::{
-    COLUMN_WIDTH_MAX, COLUMN_WIDTH_MIN, POPUP_IDS, POPUP_SIZE_MAX, POPUP_SIZE_MIN,
-    is_removed_setting, popup_size, removed_setting_message, with_popup_size,
+    COLUMN_WIDTH_MAX, COLUMN_WIDTH_MIN, POPUP_IDS, POPUP_SIZE_MAX, POPUP_SIZE_MIN, popup_size,
+    with_popup_size,
 };
 mod connectors;
 mod skills_popup;
 mod snapshot;
 mod spaces;
+mod state;
+pub use state::{
+    ApprovalState, CompactionState, ContextMeter, IndexState, ListCaches, LocalRuntimeState,
+    ResearchState, SearchConfig, SwarmState, UiRepairState, UserCommandState,
+};
+mod subagents;
 mod swarm;
 #[cfg(test)]
 mod tests;
 mod tool_view;
 mod transcribe;
 pub use tool_view::{BatchEntry, Source, ToolOutcome, ToolView, tool_call_view};
+mod research_jobs;
 pub mod usage;
-mod watches;
 pub use backends::{Backends, composite_id};
 pub use chat::{
     MERMAID_PREVIEW_EXAMPLES, code_blocks, human_size, pick_greeting, user_command_outcome,
     user_command_outcome_label,
 };
-pub use commands::{AppCommand, COMMANDS, Command, Match, command_score, fuzzy_score};
-pub use files::OcrUpdate;
+pub use commands::{
+    AppCommand, COMMANDS, Command, Match, MemoryAction, command_score, fuzzy_score,
+};
+pub use files::ConvertUpdate;
+pub use fleet::FleetAction;
+pub use mode_note::ModeNote;
+pub use queue::{MAX_QUEUED_MESSAGES, QueueAction, one_line};
 pub use research::{PlanQuestion, ResearchUpdate};
 pub use sessions::session_score;
 pub use snapshot::{
     CoreSnapshot, MessageSnapshot, ModelSnapshot, SessionSnapshot, SettingsSnapshot, TaskSnapshot,
 };
+pub use subagents::{SubagentRow, SubagentRun, SubagentStatus};
 pub use swarm::{SwarmUpdate, parse_persona_editor};
-pub use watches::due_watches;
 
 #[cfg(test)]
 use chat::split_inline_reasoning;
-#[cfg(test)]
-use memory::parse_memory_ops;
 use sessions::parse_topic;
 
-/// Non-interactive permissions for a disposable eval workspace.
 #[derive(Default)]
 pub struct EvalApprover {
-    /// Exact command-text prefixes allowed for shell runs.
     pub allow_shell: Vec<String>,
 }
 
@@ -114,7 +126,7 @@ impl Approver for EvalApprover {
                 .unwrap_or(&req.summary)
                 .strip_prefix("$ ")
             {
-                // The toolbox appends a separate cwd annotation to the command.
+                // The toolbox adds a cwd annotation outside the command text being authorized.
                 let command = summary.rsplit_once("\nin ").map_or(summary, |(cmd, _)| cmd);
                 if crate::workspace::escalation::check_command(command).is_ok()
                     && !command.contains([';', '&', '|', '$', '`', '>', '<', '\n', '\r'])
@@ -131,15 +143,13 @@ impl Approver for EvalApprover {
     }
 }
 
-/// Sends permission requests to an interactive frontend and remembers grants
-/// only for the lifetime of this approver.
+/// Interactive permission requests with session-lifetime grants.
 pub struct ChannelApprover {
     sender: mpsc::UnboundedSender<(ApprovalRequest, oneshot::Sender<Decision>)>,
     allowed: Arc<Mutex<HashSet<(String, String)>>>,
 }
 
 impl ChannelApprover {
-    /// Start a new approval session with no remembered permissions.
     #[must_use]
     pub fn new(
         sender: mpsc::UnboundedSender<(ApprovalRequest, oneshot::Sender<Decision>)>,
@@ -159,9 +169,7 @@ impl Approver for ChannelApprover {
         Box::pin(async move {
             let key = (req.tool.clone(), req.action.clone());
             let allow_session = req.allow_session;
-            // A connector's grants live in the connector registry, keyed by
-            // the tool's definition hash, so a changed definition asks again;
-            // this approver's name-only memory must not shortcut that.
+            // Name-only grants must not bypass the registry's definition-hash approval checks.
             let connector = req.class.as_deref() == Some(crate::connectors::exec::CLASS);
             if allow_session
                 && !connector
@@ -231,8 +239,6 @@ impl Approver for ChannelApprover {
                 .join(", ");
             for (index, req) in reqs.iter().enumerate() {
                 let _ = write!(summary, "\n{}. {} {}", index + 1, req.tool, req.action);
-                // The popup is the only reader of a wave: show each call's
-                // full preview.
                 for line in req.detail.as_ref().unwrap_or(&req.summary).split('\n') {
                     let _ = write!(summary, "\n  {line}");
                 }
@@ -267,9 +273,6 @@ impl Approver for ChannelApprover {
     }
 }
 
-/// Nudge a bounded selection index by `delta`, hard-clamping to `[0, len-1]`
-/// (or `0` if `len` is `0`). Shared by the picker/list selection-movement
-/// methods that clamp at the ends rather than wrapping around.
 pub fn clamp_cursor(current: usize, len: usize, delta: i32) -> usize {
     if len == 0 {
         return 0;
@@ -277,9 +280,6 @@ pub fn clamp_cursor(current: usize, len: usize, delta: i32) -> usize {
     (current as i32 + delta).clamp(0, len as i32 - 1) as usize
 }
 
-/// Filter `items` down to those `score_fn` returns `Some` for, sorted
-/// descending by score (best match first, stable on ties). Shared by the
-/// space and session pickers' fuzzy filters.
 pub fn fuzzy_filter_sorted<T>(items: &[T], score_fn: impl Fn(&T) -> Option<i32>) -> Vec<&T> {
     let mut scored: Vec<(i32, &T)> = items
         .iter()
@@ -289,7 +289,6 @@ pub fn fuzzy_filter_sorted<T>(items: &[T], score_fn: impl Fn(&T) -> Option<i32>)
     scored.into_iter().map(|(_, item)| item).collect()
 }
 
-/// Which tab in the `/files` popup is active.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum FilesTab {
     Files,
@@ -297,7 +296,6 @@ pub enum FilesTab {
     Scripts,
 }
 
-/// Which modal popover, if any, is open.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Popup {
     None,
@@ -306,80 +304,43 @@ pub enum Popup {
     Key,
     Settings,
     Copy,
-    /// Permission for one workspace mutation or command.
     Approval,
     Space,
     Context,
     Skills,
     Files,
     Apps,
-    /// Focused model-authored interactive output (opened from the transcript).
     InteractiveUi,
-    Watch,
     ResearchLive,
     Swarm,
-    /// `/connectors`: MCP connectors, their status, tools and policies.
     Connectors,
-    /// `/library`: the space's decks and docs, to open in studio, export or delete.
     Library,
-    /// `/usage`: aggregated per-backend/per-model token, cache, and cost stats.
+    Subagents,
     Usage,
-    /// `/harness`: ranked tool failure modes and their latest transcripts.
     Harness,
-    /// `/procs`: session-owned background commands.
     Procs,
-    /// Durable scheduled agent jobs and their creation form.
+    Fleet,
     Jobs,
-    /// `/login`'s provider selector (`OpenRouter` / `OpenCode` Go / `OpenAI` /
-    /// Codex / local runtime).
     Login,
-    /// `/local`'s runtime selector (Ollama / MLX / LM Studio / edge0 / off).
     Local,
-    /// `/help` (or F1): keybindings plus the slash-command catalog.
     Help,
-    /// Full-screen in-terminal image viewer (opened from the transcript, the
-    /// files popup, an interactive block, or `/view`).
     ImageViewer,
 }
 
-/// Which backend a pasted key in `Popup::Key` is for — set by whichever
-/// `/login` row opened the prompt, since these keys aren't distinguishable
-/// by shape (unlike `OpenRouter`'s `sk-or-` prefix).
-#[derive(PartialEq, Eq, Clone, Copy)]
-pub enum KeyTarget {
-    OpenRouter,
-    OpenAi,
-    OpencodeGo,
-}
-
-/// What the `/swarm` roster popup is doing.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum SwarmPopupMode {
     Browse,
     ConfirmDelete,
 }
 
-/// What the apps popup is doing: browsing the space's apps or confirming
-/// removal of the highlighted one.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum AppsMode {
     Browse,
     ConfirmDelete,
     EditFile,
-    /// Typing a new name for the highlighted pinned panel.
     RenamePanel,
 }
 
-/// What the watch picker is doing: browsing or confirming removal of the
-/// highlighted watch.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum WatchMode {
-    Browse,
-    ConfirmDelete,
-}
-
-/// What the skills popup is doing: browsing, typing a GitHub `owner/repo/path`
-/// to install, or confirming removal of the highlighted skill.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum SkillsMode {
     Browse,
@@ -387,8 +348,6 @@ pub enum SkillsMode {
     ConfirmRemove,
 }
 
-/// What the files popup is doing: browsing the fileset, typing a path to
-/// import, renaming the highlighted file, or confirming its removal.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum FilesMode {
     Browse,
@@ -398,15 +357,12 @@ pub enum FilesMode {
     Pick,
 }
 
-/// What the images popup is doing: browsing or confirming removal.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum ImagesMode {
     Browse,
     ConfirmDelete,
 }
 
-/// What the scripts popup is doing: browsing, creating, renaming, or
-/// confirming removal of the highlighted script.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum ScriptsMode {
     Browse,
@@ -415,8 +371,6 @@ pub enum ScriptsMode {
     ConfirmDelete,
 }
 
-/// What the space picker is doing: browsing, naming a new space, renaming the
-/// highlighted one, or confirming a delete.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum SpaceMode {
     Browse,
@@ -425,13 +379,11 @@ pub enum SpaceMode {
     ConfirmDelete,
 }
 
-/// One entry in the `/copy` menu: what to show and the text it puts on the clipboard.
 pub struct CopyOption {
     pub label: String,
     pub text: String,
 }
 
-/// Token estimate breakdown shown in the context popup (Ctrl+G).
 pub struct ContextBreakdown {
     pub system_tokens: u64,
     pub memory_tokens: u64,
@@ -439,11 +391,9 @@ pub struct ContextBreakdown {
     pub tools_tokens: u64,
     pub conversation_tokens: u64,
     pub limit: Option<u64>,
-    /// Whether the session has ever been auto-compacted.
     pub compacted: bool,
 }
 
-/// Whether the active conversation has access to a local workspace.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum WorkMode {
     Chat,
@@ -452,7 +402,6 @@ pub enum WorkMode {
 }
 
 impl WorkMode {
-    /// Both agent modes expose the same workspace tools and prompt.
     pub fn is_agent(self) -> bool {
         self != Self::Chat
     }
@@ -466,8 +415,6 @@ impl WorkMode {
     }
 }
 
-/// What the session picker is doing: browsing, renaming the highlighted row, or
-/// confirming a delete.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum SessionMode {
     Browse,
@@ -475,7 +422,6 @@ pub enum SessionMode {
     ConfirmDelete,
 }
 
-/// Which pane an in-progress mouse press is driving.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum MouseTarget {
     None,
@@ -483,33 +429,24 @@ pub enum MouseTarget {
     History,
 }
 
-/// The two columns of the model picker.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum ModelPanel {
     Favorites,
     Available,
 }
 
-/// Cache accounting summed over one user turn.
-///
-/// A turn is one user message plus every API request the tool loop makes to
-/// answer it. Later requests in a loop carry a longer cached prefix than the
-/// first, so the last request's rate is not the turn's rate — reporting one as
-/// the other is what made this number look erratic.
+/// Cache accounting across every API request in a user turn.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CacheTally {
-    /// Prompt tokens across requests whose accounting is trustworthy.
     pub prompt_tokens: u64,
-    /// Cache reads across those same requests.
     pub cache_read_tokens: u64,
-    /// Requests in this turn whose provider reported no cache accounting at
-    /// all. Non-zero means the rate covers only part of the turn.
+    pub reusable_tokens: u64,
+    pub reused_tokens: u64,
+    /// Requests without cache accounting, excluded from the reported rate.
     pub unrated_requests: u64,
 }
 
 impl CacheTally {
-    /// Fold in one request's accounting. Requests with an unidentifiable
-    /// convention are counted, not guessed at.
     pub fn observe(&mut self, usage: &crate::provider::Usage) {
         if usage.prompt_convention.ratio_is_meaningful() {
             self.prompt_tokens += usage.prompt_tokens;
@@ -519,34 +456,37 @@ impl CacheTally {
         }
     }
 
-    /// The turn's hit rate, or `None` when nothing rateable was recorded.
     #[must_use]
-    #[allow(clippy::cast_precision_loss)] // a ratio of token counts loses nothing meaningful
+    #[allow(clippy::cast_precision_loss)]
     pub fn rate(&self) -> Option<f64> {
         (self.prompt_tokens > 0).then(|| self.cache_read_tokens as f64 / self.prompt_tokens as f64)
     }
 
-    /// Whether some request in the turn went unaccounted, so the UI can mark
-    /// the rate as partial rather than presenting it as the whole story.
+    /// Add one request's reusable tokens and how many of them the provider served from cache.
+    pub fn observe_reuse(&mut self, reusable: u64, reused: u64) {
+        self.reusable_tokens += reusable;
+        self.reused_tokens += reused;
+    }
+
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn reuse_rate(&self) -> Option<f64> {
+        (self.reusable_tokens > 0).then(|| self.reused_tokens as f64 / self.reusable_tokens as f64)
+    }
+
     #[must_use]
     pub const fn is_partial(&self) -> bool {
         self.unrated_requests > 0
     }
 }
 
-/// What a confirmed model picker selection is for: the active session's model,
-/// the helper model in `/config`, or one row of the swarm roster.
 #[derive(PartialEq, Eq, Clone, Copy, Default)]
 pub enum ModelPickTarget {
     #[default]
     Session,
-    /// The helper model every background job uses (`/config`).
-    Helper,
-    /// Picking the model for one row of the active session's `/swarm` roster.
     SwarmPersona(usize),
 }
 
-/// Editable rows in the nerd-config popup.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum SettingsField {
     RemoteImages,
@@ -556,7 +496,6 @@ pub enum SettingsField {
     Temperature,
     TopP,
     MaxTokens,
-    HelperModel,
     CompactThreshold,
     SearxngUrl,
     Verbosity,
@@ -566,10 +505,12 @@ pub enum SettingsField {
     ReplyStyle,
     ColumnWidth,
     ImageViewer,
+    CacheLifetime,
+    CacheLongOpenai,
 }
 
 impl SettingsField {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::RemoteImages,
         Self::ShowStats,
         Self::ShowReasoning,
@@ -577,7 +518,6 @@ impl SettingsField {
         Self::Temperature,
         Self::TopP,
         Self::MaxTokens,
-        Self::HelperModel,
         Self::CompactThreshold,
         Self::SearxngUrl,
         Self::Verbosity,
@@ -587,6 +527,8 @@ impl SettingsField {
         Self::ReplyStyle,
         Self::ColumnWidth,
         Self::ImageViewer,
+        Self::CacheLifetime,
+        Self::CacheLongOpenai,
     ];
 
     pub const fn label(self) -> &'static str {
@@ -599,15 +541,16 @@ impl SettingsField {
             Self::ImageViewer => {
                 "image viewer (Space cycles auto/terminal/system; auto = in-terminal when graphics are available)"
             }
+            Self::CacheLifetime => "cache lifetime (Space cycles default/extended)",
+            Self::CacheLongOpenai => {
+                "paid OpenAI 12h cache (GPT-5.6+, Responses only; writes cost 2.5x)"
+            }
             Self::ShowStats => "show stats (model · TPS footer)",
             Self::ShowReasoning => "expand reasoning (Ctrl+R)",
             Self::HideHints => "hide hints (keybind labels)",
             Self::Temperature => "temperature",
             Self::TopP => "top_p",
             Self::MaxTokens => "max_tokens",
-            Self::HelperModel => {
-                "helper model (Enter to pick, Backspace for auto; auto = a cheap model on your active backend, for memory, summaries and image reading)"
-            }
             Self::CompactThreshold => "auto-compact at (% of context, 0 disables)",
             Self::SearxngUrl => "optional SearXNG URL (auto search needs no setup)",
             Self::Verbosity => "answer length (Space cycles normal/concise/caveman)",
@@ -620,10 +563,6 @@ impl SettingsField {
     }
 }
 
-/// A functional group of settings fields, shown as a collapsible section in
-/// the nerd-config popup — grouped by what part of the pipeline the fields
-/// configure (chat display, sampling, the helper model and context, web
-/// search, or reply layout), not by widget type.
 pub struct SettingsGroup {
     pub name: &'static str,
     pub fields: &'static [SettingsField],
@@ -648,8 +587,12 @@ pub const SETTINGS_GROUPS: &[SettingsGroup] = &[
         ],
     },
     SettingsGroup {
-        name: "Helper & Context",
-        fields: &[SettingsField::HelperModel, SettingsField::CompactThreshold],
+        name: "Context",
+        fields: &[
+            SettingsField::CompactThreshold,
+            SettingsField::CacheLifetime,
+            SettingsField::CacheLongOpenai,
+        ],
     },
     SettingsGroup {
         name: "Web Search",
@@ -671,8 +614,6 @@ pub const SETTINGS_GROUPS: &[SettingsGroup] = &[
     },
 ];
 
-/// One visible row in the settings popup: a collapsible group header, or a
-/// field nested under one (only present when its group isn't collapsed).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SettingsRow {
     Group(usize),
@@ -680,8 +621,6 @@ pub enum SettingsRow {
 }
 
 pub const REPLY_STYLES: [&str; 4] = ["interactive", "auto", "rich", "plain"];
-/// Where an image opens: the in-terminal viewer, the OS viewer, or whichever
-/// the terminal's graphics support makes sensible (`auto`).
 pub const IMAGE_VIEWERS: [&str; 3] = ["auto", "terminal", "system"];
 pub const VERBOSITY_LEVELS: [&str; 3] = ["normal", "concise", "caveman"];
 pub const SEARCH_PROVIDERS: [&str; 6] = [
@@ -693,38 +632,26 @@ pub const SEARCH_PROVIDERS: [&str; 6] = [
     "duckduckgo",
 ];
 
-/// Nerd config: footer toggles + core sampling parameters.
 #[derive(Debug, Clone)]
-// A settings struct is inherently many booleans; grouped by feature in the popup.
 #[allow(clippy::struct_excessive_bools)]
 pub struct Settings {
-    /// Fetch untrusted remote images and link sites' icons through the safe,
-    /// device-local cache.
+    /// Fetch untrusted remote images through the device-local safety cache.
     pub remote_images: bool,
-    /// Model-selected layouts, preferred layouts, or no layout guidance.
     pub reply_style: String,
-    /// `auto`, `terminal` or `system`: which viewer opens an image on click.
-    /// Only the terminal frontend reads it; it lives here because it persists
-    /// with the other display settings.
+    pub cache_lifetime: String,
+    pub cache_long_openai: bool,
     pub image_viewer: String,
-    /// Show the per-message model · TPS footer.
     pub show_stats: bool,
-    /// Expand stored reasoning traces (vs. a collapsed one-liner).
     pub show_reasoning: bool,
-    /// Hide keybind hints (input hint, popup titles, "Ctrl+R to expand", …).
     pub hide_hints: bool,
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
     pub max_tokens: Option<u32>,
-    /// Auto-compact once context usage crosses this percent of the model's
-    /// context window. 0 disables auto-compaction.
+    /// Context-window percentage that triggers compaction, or zero to disable it.
     pub compact_threshold: u8,
-    /// Width of the conversation column: `auto`, `full`, or a cell count.
-    /// Only the terminal frontend reads it; it lives here because it persists
-    /// with the other display settings.
+    /// Conversation width as `auto`, `full`, or a cell count.
     pub column_width: String,
-    /// Per-popup size overrides (`id:WWxHH` percentages of the screen,
-    /// comma-separated), written by dragging a popup's border.
+    /// Comma-separated `id:WWxHH` overrides in screen percentages.
     pub popup_sizes: String,
 }
 
@@ -733,6 +660,8 @@ impl Default for Settings {
         Self {
             remote_images: true,
             reply_style: "interactive".into(),
+            cache_lifetime: "extended".into(),
+            cache_long_openai: false,
             image_viewer: "auto".into(),
             show_stats: false,
             show_reasoning: false,
@@ -740,17 +669,13 @@ impl Default for Settings {
             temperature: None,
             top_p: None,
             max_tokens: None,
-            compact_threshold: 60,
+            compact_threshold: 40,
             column_width: "auto".into(),
             popup_sizes: String::new(),
         }
     }
 }
 
-/// The three answer-length presets, cycled by the settings popup's
-/// `verbosity` field. "concise" is the default — terse but not telegraphic;
-/// "caveman" is deliberately more aggressive (dropped articles/grammar),
-/// matching the community caveman-prompt technique, for users who want it.
 fn verbosity_clause(level: &str) -> &'static str {
     match level {
         "normal" => {
@@ -767,7 +692,6 @@ fn verbosity_clause(level: &str) -> &'static str {
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// Greeting lines for the start screen; one is picked at random per launch.
 const GREETINGS: [&str; 8] = [
     "What are we building today?",
     "Ask me anything.",
@@ -779,8 +703,6 @@ const GREETINGS: [&str; 8] = [
     "How can I help?",
 ];
 
-/// Dumb little "thinking" verbs, Claude-Code style: (present, past). One pair is
-/// picked per request — "⠹ Vibing" while streaming, "Vibed for 3s" once done.
 const THINKING: [(&str, &str); 16] = [
     ("Thinking", "Thought"),
     ("Pondering", "Pondered"),
@@ -800,9 +722,6 @@ const THINKING: [(&str, &str); 16] = [
     ("Doing the thing", "Did the thing"),
 ];
 
-/// Spinner colour for an in-flight response. Core names the palette
-/// abstractly (the TUI maps it to terminal colors) so this type can cross
-/// the host API boundary unchanged.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SpinnerColor {
     Green,
@@ -810,7 +729,6 @@ pub enum SpinnerColor {
     Magenta,
 }
 
-/// Palette the spinner colour is randomly drawn from each request.
 const SPINNER_COLORS: [SpinnerColor; 3] = [
     SpinnerColor::Green,
     SpinnerColor::Cyan,
@@ -819,15 +737,6 @@ const SPINNER_COLORS: [SpinnerColor; 3] = [
 
 type ModelsResult = std::result::Result<Vec<Model>, String>;
 
-/// One memory-extraction op, as emitted by the memory model.
-#[derive(Clone)]
-pub enum MemoryOp {
-    Add(String),
-    Update(usize, String),
-    Delete(usize),
-}
-
-/// One row in the `/image` popup: name, size in bytes, modified rfc3339.
 #[derive(Clone)]
 pub struct ImageMeta {
     pub name: String,
@@ -835,7 +744,6 @@ pub struct ImageMeta {
     pub modified: String,
 }
 
-/// One row in the `/script` popup: name, size in bytes, modified rfc3339.
 #[derive(Clone)]
 pub struct ScriptMeta {
     pub name: String,
@@ -843,58 +751,45 @@ pub struct ScriptMeta {
     pub modified: String,
 }
 
-/// Maximum number of concurrent interactive chat responses.
 pub const MAX_CHAT_TASKS: usize = 10;
 
 pub type ChatTaskId = u64;
 
-/// An exact context count and the conversation it measured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ContextBasis {
-    /// The provider's exact count (`context_total` while it still matches).
     pub exact: u64,
-    /// `context_chars()` when the count arrived.
     pub chars: usize,
-    /// `messages.len()` then; unchanged and idle means nothing to estimate.
     pub messages: usize,
-    /// The chat task whose request reported it.
     pub task: ChatTaskId,
 }
 
-/// Identity of a parked survey/plan gate, as surfaced on the event stream.
 #[derive(Clone)]
 pub struct GateState {
-    /// The session the reply must come from.
     pub session_id: String,
-    /// Which phase is waiting (drives the prompt shown).
     pub phase: SurveyPhase,
 }
 
-/// One event routed from a provider stream to its originating chat task.
 pub struct ChatEvent {
     pub task_id: ChatTaskId,
     pub event: StreamEvent,
 }
 
-/// State owned by one in-flight chat response. Provider/toolbox values stay in
-/// the spawned task; this state is the UI/database-facing projection.
+/// UI and persistence state for one in-flight chat response.
 pub struct ChatTask {
     pub id: ChatTaskId,
     pub session_id: String,
     pub session_title: String,
     pub space_id: String,
     pub model: String,
-    /// Raw wire model id (backend prefix stripped) — the key for pricing.
+    /// Wire model id without the backend prefix, used for pricing.
     pub model_id: String,
-    /// Which backend serves this task's requests.
     pub backend: BackendTag,
     pub incognito: bool,
     pub buffer: String,
     pub thinking: String,
     pub tool_status: Option<String>,
     pub usage: Option<Usage>,
-    /// Most recent `usage_log` row for this task; a trailing `OpenCode` Zen
-    /// cost event updates it rather than inserting a duplicate.
+    /// Latest usage row, revised in place by trailing `OpenCode` Zen cost events.
     pub usage_row_id: Option<i64>,
     pub started: std::time::Instant,
     pub thinking_idx: usize,
@@ -902,7 +797,39 @@ pub struct ChatTask {
     pub abort: tokio::task::AbortHandle,
 }
 
-/// A completed chat task waiting for the user to open its session.
+/// Token and cost totals across a turn's requests, including cost-only revisions.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TurnTally {
+    pub output_tokens: u64,
+    settled_cost: Option<f64>,
+    last_cost: Option<f64>,
+}
+
+impl TurnTally {
+    /// Record a request or, with no token count, revise the latest request's cost.
+    pub fn observe(&mut self, output_tokens: Option<u64>, cost: Option<f64>) {
+        if let Some(tokens) = output_tokens {
+            self.settled_cost = add_cost(self.settled_cost, self.last_cost.take());
+            self.output_tokens += tokens;
+            self.last_cost = cost;
+        } else if cost.is_some() {
+            self.last_cost = cost;
+        }
+    }
+
+    #[must_use]
+    pub fn cost(&self) -> Option<f64> {
+        add_cost(self.settled_cost, self.last_cost)
+    }
+}
+
+fn add_cost(a: Option<f64>, b: Option<f64>) -> Option<f64> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a + b),
+        (a, b) => a.or(b),
+    }
+}
+
 pub struct ChatNotification {
     pub session_id: String,
     pub title: String,
@@ -910,44 +837,29 @@ pub struct ChatNotification {
     pub success: bool,
 }
 
-/// Shared embedding result: (space id, file id or `chats` job marker,
-/// (seq, vector) pairs or error). An empty id denotes a capability probe.
+/// Embedding result keyed by space and file, with an empty file id denoting a probe.
 pub type EmbedMsg = (
     String,
     String,
     std::result::Result<Vec<(i64, Vec<f32>)>, String>,
 );
 
-/// A background research pipeline update: (session id, space id, space name,
-/// stage update or final result).
 pub type ResearchMsg = (String, String, String, research::ResearchUpdate);
 
-/// A parked conversation awaiting a chat reply: which session the reply
-/// must come from, the channel to send it on, and which phase is waiting.
-/// Generic — the research survey/plan-approval gates ride it, and any other
-/// mode (swarm, watch setup, plain chat) can arm it the same way. Armed by
-/// the owning job's update handler on each pending section, cleared when
-/// the user replies or the job ends.
 pub struct SurveyGate {
     pub session_id: String,
     pub reply_tx: mpsc::UnboundedSender<String>,
     pub phase: SurveyPhase,
-    /// The actionable transcript row for this gate. Keeping it with the gate
-    /// lets an incognito prompt be restored after the user switches away and
-    /// back without writing private content to the database.
+    /// Retain the prompt in memory so incognito gates survive session switches without persistence.
     pub prompt_role: String,
     pub prompt_content: String,
 }
 
-/// What a parked survey gate is waiting for — drives the status line and
-/// which phase's reply is routed. Mode-agnostic: `Clarify` is any
-/// clarifying-question round, `Approve` any presented-artifact approval.
 #[derive(Clone)]
 pub enum SurveyPhase {
-    /// A clarifying-question round (1-based).
+    /// One-based clarification round.
     Clarify { round: u8 },
-    /// Approval of a presented artifact; `rework` is true on a
-    /// re-presentation after the user's edits were folded in.
+    /// `rework` marks an artifact revised after user edits.
     Approve { rework: bool },
 }
 
@@ -957,19 +869,20 @@ pub enum LoginMsg {
     Done(Result<crate::config::CodexCredentials, String>),
 }
 
-/// External-editor request queued by app/input code. The event loop owns the
-/// terminal suspend/resume and applies structured edits after `$EDITOR` exits.
+/// A request for the frontend to suspend its terminal and run an external editor or command.
 pub enum PendingEditor {
     AppFile(std::path::PathBuf),
     Persona(std::path::PathBuf),
     ScriptFile(std::path::PathBuf),
-    /// An interactive `!` command (`!tty <cmd>`, `sudo`, `ssh`, …) that gets
-    /// the real terminal; only its command and exit code are recorded.
+    /// A terminal command recorded without capturing its output.
     UserCommand(String),
+    Memory {
+        space: String,
+        path: std::path::PathBuf,
+    },
 }
 
-/// Ensures a child stream spawned by `OpenRouter::stream_chat` is cancelled
-/// when its parent research/swarm task is aborted or otherwise dropped.
+// Dropping a JoinHandle detaches its task; this guard must abort child streams instead.
 pub struct AbortOnDrop(pub tokio::task::AbortHandle);
 
 impl Drop for AbortOnDrop {
@@ -978,414 +891,159 @@ impl Drop for AbortOnDrop {
     }
 }
 
-/// A background event surfaced to the event loop. `None` means that source's
-/// channel closed (task ended).
+/// Frontend feedback and background results, with `None` marking a closed source channel.
 #[derive(Clone)]
 pub enum AppEvent {
-    /// A one-line status update from a domain path.
     Status(String),
-    /// The composer should be replaced with this text (e.g. a send-failure
-    /// path restoring the user's message). The view layer applies it to its
-    /// `TextArea`.
     ComposerSet(String),
-    /// The composer should be cleared.
     ComposerClear,
-    /// The view should reset its viewport state (scroll, selection, pinning
-    /// baseline) — pushed wherever domain code switches sessions, starts a
-    /// stream, or otherwise invalidates the rendered conversation.
     ViewportReset,
-    /// The wrapped-history render cache must be rebuilt (in-place message
-    /// edits would otherwise leave stale wrapped content).
     HistoryInvalidated,
-    /// A domain path fell back to "no backend configured" and wants the
-    /// login selector shown (e.g. a swarm turn with no resolvable model).
     OpenLoginPopup,
-    /// A survey/plan gate armed (`Some`) or cleared (`None`). `GateState`
-    /// carries the session id the reply must come from, so a gate in another
-    /// session can never swallow typing — the consumer compares the payload
-    /// against the viewed session.
+    /// Consumers must match the gate's session before intercepting input.
     Gate(Option<GateState>),
     Stream(Option<(ChatTaskId, StreamEvent)>),
     Models(Option<ModelsResult>),
-    /// A generated session topic: (session id, title, slug).
     Title(Option<(String, String, String)>),
-    /// Extracted memory ops for a space, tagged with the space name so a
-    /// meanwhile space-switch can discard stale results.
-    Memory(Option<(String, Vec<MemoryOp>)>),
-    /// A compaction digest: (session id, digest, messages covered, pre-compaction %).
     Compact(Option<(String, String, i64, u64)>),
-    /// Result of `/skills` install: skill name on success, error message on failure.
     SkillInstall(Option<Result<String, String>>),
 
-    /// A per-page progress or final OCR result for one scanned PDF, or `None`
-    /// when the batch's channel closed.
-    Ocr(Option<(String, String, files::OcrUpdate)>),
-    /// One file's chunk-embedding job finished (or the channel closed).
+    Convert(Option<(String, String, files::ConvertUpdate)>),
     Embed(Option<EmbedMsg>),
-    /// A deep-research pipeline update, or `None` when its channel closed.
     Research(Option<ResearchMsg>),
-    /// `/research` with no topic: a distilled topic from recent chat, or an error.
     ResearchTopic(Option<Result<String, String>>),
-    /// Startup update check: newest published version, or `None` when the
-    /// check failed (offline, index hiccup) — silently ignored.
     UpdateCheck(Option<String>),
-    /// `OpenAI` Codex subscription login status or final result.
     Login(Option<LoginMsg>),
-    /// A `/swarm` turn update, or `None` when its channel closed.
     Swarm(Option<swarm::SwarmMsg>),
-    /// A finished `/local` server survey: every runtime's liveness, memory and
-    /// budget verdict, or `None` when its channel closed.
     LocalServers(Option<Vec<crate::provider::serve::RuntimeStatus>>),
 }
 
-// Channel/state fields share *_rx/*_tx postfixes by design — the postfix is the meaning.
-// App state is inherently many booleans (modes, toggles, dirty flags).
 #[allow(clippy::struct_field_names, clippy::struct_excessive_bools)]
 pub struct App {
     pub db: Db,
     pub space: Space,
-    /// Every backend currently logged into. `/model` merges all of their
-    /// catalogs into one list; picking a model resolves back to the right
-    /// one here.
     pub backends: Backends,
-    /// Every credential configured on disk, kept in sync with `backends`.
     pub saved: crate::config::SavedCreds,
-    /// Opt-in experiments loaded at boot; no reductions are implemented here.
     pub experiments: config::Experiments,
-    /// Device-local trace store, opened only when a chat turn needs recording.
     pub trace_store: Option<std::sync::Arc<crate::trace::TraceStore>>,
-    /// Most recently recorded chat turn's session and turn IDs.
     pub last_turn: Option<(String, String)>,
 
-    /// The space the current/next session belongs to.
     pub active_space: SpaceRow,
-    /// The one model every background job uses: memory extraction,
-    /// compaction summaries, image descriptions, vision OCR, the
-    /// auto-approval judge. Empty = auto, a cheap model on the active
-    /// backend (`App::helper_backend`); never switches backends silently.
-    pub helper_model: String,
-    /// Whether finished replies feed background memory extraction. Always on
-    /// in the product (there is no setting for it; incognito turns, which
-    /// never reach it, are the opt-out). Tests that serve a scripted mock
-    /// backend turn it off so the helper call cannot consume their responses.
-    pub(crate) memory_extraction: bool,
-    /// Memory contents captured when the active session/cache epoch began.
-    /// Background extraction may update the space file without changing this
-    /// snapshot during the active run.
+    /// Memory frozen for the cache epoch; mid-session facts remain in the transcript.
     pub(crate) memory_snapshot: String,
-    /// App-local prompt-cache epoch. Changes that alter the serialized prefix
-    /// advance it so a provider gets a fresh cache lane.
+    pub(crate) memory_docs: Vec<crate::memory::book::DocEntry>,
+    pub(crate) memory_tidy_due: usize,
+    /// Advance when the serialized prefix changes to select a fresh provider-cache lane.
     pub(crate) cache_epoch: u64,
-    /// Whether the local prompt-budget warning has fired in this cache epoch.
-    pub(crate) context_warned: bool,
-    /// Timestamp captured for the current prompt-cache epoch. Keeping the
-    /// `{{datetime}}` expansion stable prevents a clock tick from invalidating
-    /// the entire serialized prefix on every request.
+    prefixes: prompt_freeze::Prefixes,
+    /// The prefix and cache lane of each session's latest turn, by session id.
+    turn_lanes: HashMap<String, cache_accounting::TurnLane>,
+    /// The latest request seen on each cache lane, by cache key.
+    cache_lanes: HashMap<String, crate::db::LaneState>,
+    /// Frozen timestamp preventing clock ticks from invalidating the provider-cache prefix.
     pub(crate) prompt_datetime: String,
-    /// Embedding model for semantic file search, chosen automatically (local
-    /// `EmbeddingGemma` 2 when Ollama has it, else the backend's default, else
-    /// empty = keyword search only). Runtime state, not a setting.
-    pub embedding_model: String,
-    /// Probed runtime shared with file search; never contains cloud credentials in its identity.
-    pub embedding_backend: Option<crate::provider::embedding::Embedder>,
-    /// Runtime health and indexing progress for frontends.
-    pub embedding_status: String,
-    /// None preserves legacy OCR unless direct image embeddings are enabled.
-    pub ocr_images: Option<bool>,
-    embedding_chunks: Vec<(String, String)>,
-    embedding_chat_job: Option<chats::ChatEmbedJob>,
-    next_chat_index: std::time::Instant,
-    /// Device-local conversation indexing progress for the files popup.
-    pub chat_index_status: String,
-    embedding_discovery:
-        Option<std::sync::Arc<std::sync::OnceLock<(String, crate::provider::embedding::Embedder)>>>,
-    /// Base URL of a `SearXNG` instance for the web-search tool, or empty to
-    /// disable it. Configured in-app (`/config`), not a config file.
-    pub searxng_url: String,
-    /// `LangSearch` API key (free tier), or empty to disable it.
-    pub langsearch_key: String,
-    /// Which web-search backend to prefer: "auto"/"langsearch"/"searxng"/"duckduckgo".
-    pub search_provider: String,
-    /// Bundled base system prompt with unresolved runtime placeholders.
+    pub index: IndexState,
+    pub search: SearchConfig,
     pub base_system_prompt: String,
-    /// App-level user additions from `system_prompt.md`, editable via `$EDITOR`.
-    /// Loaded by `boot()`; empty in a bare `App::new`.
+    /// User additions from `system_prompt.md`, loaded at boot.
     pub system_prompt_overlay: String,
-    /// Client capability advertised to the model, not persistent view state.
     pub interactive_ui: bool,
-    /// Whether a frontend can ask the user for workspace permissions.
     pub interactive_approvals: bool,
-    /// Shared interactive channel for panel mutations, independent of work mode.
-    pub panel_approver: Option<Arc<dyn Approver>>,
-    /// Eval permissions survive toolbox refreshes without interactive prompts.
-    pub eval_approver: Option<Arc<dyn Approver>>,
-    /// Unattended job gate, retained across toolbox refreshes.
-    pub job_approver: Option<Arc<crate::jobs::JobApprover>>,
-    pub(crate) research_job_lock: Option<crate::jobs::DaemonLock>,
-    /// Reply channel for the currently displayed approval request.
-    pub pending_approval: Option<oneshot::Sender<Decision>>,
-    /// The action waiting for a response from the interactive frontend.
-    pub pending_approval_request: Option<ApprovalRequest>,
-    /// Requests waiting behind the displayed one, oldest first: concurrent
-    /// tool calls can each ask at once.
-    pub approval_queue: VecDeque<(ApprovalRequest, oneshot::Sender<Decision>)>,
-    /// Counts requests that reached the display, so a view can tell two
-    /// identical requests in a row apart.
-    pub approval_shown: u64,
-    /// Requests from the current interactive toolbox (agent edits and commands,
-    /// or a chat-mode `request_workspace`).
-    pub approval_rx: Option<mpsc::UnboundedReceiver<(ApprovalRequest, oneshot::Sender<Decision>)>>,
-    /// A `propose_command` (`!<cmd>`) the view moves into an empty composer.
-    pub proposed_command: Option<String>,
-    /// Session-local canvas focus and deck edit notifications, shared with tools.
+    pub approvals: ApprovalState,
     pub deck_link: Arc<std::sync::Mutex<crate::deck::link::Context>>,
-    /// An approved `request_workspace` root, applied when its chat task finishes.
+    /// Approved workspace root deferred until the current chat task finishes.
     pub(crate) queued_workspace: Option<(ChatTaskId, String)>,
-    /// The running captured `!` command's result, at most one at a time.
-    user_command_rx: Option<mpsc::UnboundedReceiver<chat::UserCommandRun>>,
-    /// The user's terminal directory; never used by agent tools.
-    pub user_command_dir: Option<std::path::PathBuf>,
-    /// Lazy shell setup, shared by command execution and composer completion.
-    pub user_shell: Arc<tokio::sync::OnceCell<crate::usershell::UserShell>>,
-    user_shell_warning_shown: bool,
-    user_command_context: Option<chat::UserCommandContext>,
-    user_command_epoch: u64,
-    /// Answer-length preference woven into the system prompt: "normal",
-    /// "concise" (default), or "caveman".
+    /// Messages waiting for a running reply, by session id (`app/queue.rs`).
+    pub(crate) queued: HashMap<String, Vec<String>>,
+    pub user_command: UserCommandState,
     pub verbosity: String,
-    pub memory_rx: Option<mpsc::UnboundedReceiver<(String, Vec<MemoryOp>)>>,
-    /// Finished UI repairs share a channel so switching sessions cannot lose a result.
-    ui_repair_tx: mpsc::UnboundedSender<chat::UiRepairResult>,
-    ui_repair_rx: mpsc::UnboundedReceiver<chat::UiRepairResult>,
-    /// Session -> reply message id; a new turn disarms that session's repair.
-    ui_repair_messages: HashMap<String, String>,
-    ui_feedback_seen: std::collections::HashSet<String>,
-    /// Background compaction result: (session id, digest, messages-covered, pre-compaction %).
-    pub compact_rx: Option<mpsc::UnboundedReceiver<(String, String, i64, u64)>>,
-    /// Session currently being compacted. Kept separately from `compact_rx` so
-    /// the TUI can mark the right row while the job is still in flight.
-    pub compacting_session_id: Option<String>,
-    /// Why the last compaction request failed, filled by its background task
-    /// before it drops the result channel, so the status names the cause.
-    pub(crate) compact_error: Arc<std::sync::Mutex<Option<String>>>,
+    pub ui_repair: UiRepairState,
+    pub compaction: CompactionState,
 
-    /// Discovered skills (name/description only — bodies are read from disk on
-    /// invocation, so this list is cheap and reloaded whenever it changes).
     pub skills: Vec<crate::skills::Skill>,
-    /// MCP connectors (`/connectors`): shared with every toolbox this app
-    /// builds. Empty until `boot()` loads `config.toml`.
     pub connectors: crate::connectors::Registry,
-    /// Where `/connectors import` looks for other tools' MCP configs; `None`
-    /// means the real locations. Tests point it at fixtures.
+    /// Override connector import locations, or `None` for the device's real paths.
     pub import_paths: Option<crate::connectors::import::ImportPaths>,
-    /// Where the registry's background tasks send short status notes.
     pub connector_notes_tx: mpsc::UnboundedSender<String>,
     connector_notes_rx: mpsc::UnboundedReceiver<String>,
-    /// A skill armed by `/<skill-name>`, injected into the next message only.
     pub forced_skill: Option<String>,
-    /// `/web` answer mode for the active session (or the next one created).
-    pub web_mode: bool,
-    /// Chat by default; agent mode exposes the bound workspace's tools.
     pub work_mode: WorkMode,
-    /// Device capability, also used for the visible auto-mode fallback badge.
     pub auto_sandbox_available: bool,
     decision_context: Arc<Mutex<(String, String)>>,
     decider_availability: Arc<crate::decider::Availability>,
     decider_status_rx: mpsc::UnboundedReceiver<String>,
-    /// Active workspace, retained in chat for Shift+Tab until the session changes.
     pub workspace: Option<std::sync::Arc<crate::workspace::Workspace>>,
     pub incognito: bool,
-    /// Temp directory for incognito image files, cleaned up on toggle.
     pub incognito_img_dir: Option<std::path::PathBuf>,
-    /// A parked conversation's chat-reply gate (clarifying questions or an
-    /// approval) — armed only while a reply is actually pending, so a gate
-    /// in another session can never swallow typing.
-    pub survey_gate: Option<SurveyGate>,
-    /// Sender half of the reply channel into a parked gate. Created at the
-    /// owning job's start; the gate itself arms/disarms as pending-section
-    /// updates arrive.
-    pub survey_reply_tx: Option<mpsc::UnboundedSender<String>>,
-    /// Every `/steer` queued during the current job, as `(queue position,
-    /// text)` — position 1-based, assigned in queue order. Entries are
-    /// dropped once the pipeline acknowledges them (`research_steer_acked`),
-    /// and the whole log is cleared when the job stops or its channel
-    /// closes, so retained steer text stays bounded per job.
-    pub research_steer_log: Vec<(usize, String)>,
-    /// Steer positions (`steer #N`) the pipeline has drained and persisted —
-    /// parsed from `Stage` updates in `on_research_done`, so the live popup
-    /// knows what's picked up even when opened from another session, and the
-    /// retained log can drop acknowledged entries.
-    pub research_steer_acked: std::collections::HashSet<usize>,
-    /// The running job's stage rows (`label: detail` content strings), kept
-    /// in sync by `mirror_stage` regardless of which session is viewed — the
-    /// live popup renders from here instead of re-reading the db per frame.
-    pub research_stage_rows: Vec<String>,
-    /// Incognito mode captured when the job started: artifact persistence
-    /// (plan files, and the plan message itself, which folds in survey
-    /// replies) is decided by this, never by toggling `incognito` mid-job.
-    pub research_incognito: bool,
-    /// Queues `/steer` instructions into the currently running research job's
-    /// round-boundary check. `None` when no research job is running.
-    pub research_steer_tx: Option<mpsc::UnboundedSender<String>>,
-    /// In-progress `/research` (no args) topic distillation from recent chat.
-    pub research_topic_rx: Option<mpsc::UnboundedReceiver<Result<String, String>>>,
-    /// Composer buffer for the live research-activity view's steer input.
-    pub research_live_input: String,
+    pub research: ResearchState,
+    pub subagent_runs: Vec<SubagentRun>,
+    pub subagent_turn_cost: HashMap<ChatTaskId, f64>,
+    pub turn_usage: HashMap<ChatTaskId, TurnTally>,
     pub toolbox: std::sync::Arc<dyn crate::tools::ToolExecutor>,
     image_fetcher: Arc<crate::remote_image::Fetcher>,
-    /// Background commands survive session switches, but not app exit.
     pub procs: Arc<crate::workspace::procs::Procs>,
-    /// Local static server for model-created apps (None if it failed to bind).
+    /// Background `task` runs, which outlive the turn that started them.
+    pub background: Arc<crate::subagent::Background>,
+    background_rx: mpsc::UnboundedReceiver<crate::subagent::BackgroundMsg>,
+    /// Ids of the background runs still working: a turn ending leaves them be.
+    pub(crate) background_agents: std::collections::HashSet<String>,
+    /// External agent CLIs in their own terminals, across every conversation.
+    pub fleet: Arc<crate::fleet::Fleet>,
+    fleet_rx: mpsc::UnboundedReceiver<crate::fleet::FleetMsg>,
+    /// Off where the process ends with the reply (`dugix ask`), so a detached
+    /// run would be cut off; then `task` only runs in the foreground.
+    pub detached_agents: bool,
     pub app_server: Option<crate::appserver::AppServer>,
     pub skills_rx: Option<mpsc::UnboundedReceiver<Result<String, String>>>,
-    /// Background OCR updates: (`space_id`, file name, progress or final result).
-    pub ocr_rx: Option<mpsc::UnboundedReceiver<(String, String, files::OcrUpdate)>>,
-    /// One in-flight file/chat embedding job, or embedder capability probe.
-    pub embed_rx: Option<mpsc::UnboundedReceiver<EmbedMsg>>,
-    /// Local provider servers Nexus started with `/local start`. Owning them
-    /// is what lets `/local stop` and the exit path reclaim their memory;
-    /// servers started outside Nexus are detected but never stopped.
-    pub local_servers: crate::provider::serve::ManagedServers,
-    /// Last local-server survey, cached for the `/local` picker. Domain state
-    /// that only a display reads, kept here like the files/scripts caches
-    /// because every frontend shows it.
-    pub local_status: Vec<crate::provider::serve::RuntimeStatus>,
-    pub local_status_rx:
-        Option<mpsc::UnboundedReceiver<Vec<crate::provider::serve::RuntimeStatus>>>,
-    /// The in-flight survey was asked for by the user, so its result should
-    /// report a line rather than only refresh the picker.
-    pub local_status_announce: bool,
-    /// A running `/research` job's channel and cancellation handle.
-    pub research_rx: Option<mpsc::UnboundedReceiver<ResearchMsg>>,
-    pub research_abort: Option<tokio::task::AbortHandle>,
+    pub local: LocalRuntimeState,
     pub login_rx: Option<mpsc::UnboundedReceiver<LoginMsg>>,
-    /// Startup update check result (newest published version, or `None` on failure).
     pub update_rx: Option<mpsc::UnboundedReceiver<Option<String>>>,
-    /// A running `/swarm` discussion's channel, cancellation handle, and
-    /// origin session id (used for targeting the correct progress row).
-    pub swarm_rx: Option<mpsc::UnboundedReceiver<swarm::SwarmMsg>>,
-    pub swarm_abort: Option<tokio::task::AbortHandle>,
-    pub swarm_session: Option<String>,
-    /// The active session's `/swarm` roster, cached for the popup (kept in
-    /// sync by `on_swarm_update` while a turn runs; the view owns the cursor).
-    pub swarm_cache: Vec<crate::db::Persona>,
-    /// (session id, topic) of the `/research` job currently running, if any —
-    /// cleared when its channel closes.
-    pub research_running: Option<(String, String)>,
-
-    /// The active space's imported files (refreshed by `rescan_files`).
-    pub files_cache: Vec<crate::db::FileRow>,
-    /// The space's apps (`/apps` popup).
-    pub apps_cache: Vec<String>,
-    /// The space's images (`/image` popup).
-    pub images_cache: Vec<ImageMeta>,
-
-    /// The space's scripts (`/script` popup).
-    pub scripts_cache: Vec<ScriptMeta>,
-    /// The space's standing research watches (`/watch` picker).
-    pub watches_cache: Vec<crate::db::Watch>,
-    /// Time window the `/usage` dashboard aggregates (`24h/7d/30d/all`) — a
-    /// persisted preference, applied by `apply_setting` on load.
+    /// Handle refreshed Codex tokens internally so they never enter frontend events.
+    codex_refresh_rx: Option<mpsc::UnboundedReceiver<Result<config::CodexCredentials, String>>>,
+    pub swarm: SwarmState,
+    pub caches: ListCaches,
     pub usage_range: crate::db::UsageRange,
-    /// Device-local tool-call summary loaded by `/harness`.
     pub harness: Option<crate::db::HarnessSummary>,
 
-    /// Live model catalog (fetched on demand, never hardcoded).
     pub models: Vec<Model>,
     pub current_model: Option<String>,
-    /// Router cache warning is emitted only once per app run, for session picks.
     router_note_shown: bool,
     pub models_rx: Option<mpsc::UnboundedReceiver<ModelsResult>>,
-    /// Model ids marked favorite, and when each model was last used (rfc3339).
     pub favorites: HashSet<String>,
     pub last_used: HashMap<String, String>,
-    /// Per-model reasoning effort (wire string from `ReasoningEffort::as_str`,
-    /// e.g. "minimal" / "low" / "high" / "xhigh" / "max" / "none").
     pub reasoning: HashMap<String, String>,
 
     pub session: Option<Session>,
     pub messages: Vec<Message>,
-    /// Tool-call rows before this device-local session boundary replay masked.
     pub mask_through: usize,
 
-    /// Central event channel for all in-flight chat tasks.
     pub chat_event_tx: mpsc::UnboundedSender<ChatEvent>,
     pub chat_event_rx: mpsc::UnboundedReceiver<ChatEvent>,
     pub chat_tasks: HashMap<ChatTaskId, ChatTask>,
     pub next_chat_task_id: ChatTaskId,
-    /// Completed task notifications, kept independently of the one-line status.
     pub notifications: VecDeque<ChatNotification>,
-    /// Queued `Status`/`Gate` events, drained by `next_event` before the
-    /// channel sources. The TUI/CLI/host consume the same stream either way.
+    /// Locally queued events take priority over background channels.
     pub(crate) pending_events: VecDeque<AppEvent>,
-    /// Sessions holding a response that finished while the user was elsewhere.
     pub unread: std::collections::HashSet<String>,
-    /// Exact conversation token total from the last completed response.
-    pub context_total: Option<u64>,
-    /// The latest exact count and the estimator's view of the conversation
-    /// at that moment, so the bar estimates only what was added since
-    /// rather than re-estimating the whole conversation (which saw-toothed).
-    pub(crate) context_basis: Option<ContextBasis>,
-    /// Exact tokens per estimated token, learned from the last exact count;
-    /// scales estimates made with no basis (after a session or epoch switch).
-    pub(crate) context_ratio: Option<f64>,
-    /// Cache accounting for the turn in progress, summed across every API
-    /// request it makes (a tool loop is many). Shown next to the context
-    /// window. Transient — the per-request numbers live in `usage_log`.
-    pub turn_cache: CacheTally,
-    /// Cache hit rate of the single most recent completed request (0..=1) —
-    /// the per-request view, shown in the context breakdown popup.
-    pub last_cache_rate: Option<f64>,
+    pub meter: ContextMeter,
 
     pub settings: Settings,
-    /// What a confirmed model-picker selection is currently for (the active
-    /// session's model, a feature model from `/config`, or a swarm persona).
     pub model_pick_target: ModelPickTarget,
-    /// Animated "thinking" indicator shown while a response streams.
     pub spinner_frame: usize,
     pub thinking_idx: usize,
     pub spinner_color: SpinnerColor,
 
-    pub sessions_cache: Vec<Session>,
-    /// Background topic-generation result channel.
     pub(crate) title_rx: Option<mpsc::UnboundedReceiver<(String, String, String)>>,
 }
 
 impl App {
-    // Long by design (app bootstrap).
-    #[allow(clippy::too_many_lines)]
     pub fn new(db: Db, key: Option<&str>, space: Space) -> Self {
-        let provider = key.map(|k| OpenRouter::from_key_auto(k.to_string()));
-        // A single bootstrap key (test convenience / a fresh single-backend
-        // config): guess its flavor and seed both `backends` and `saved`
-        // with it. Real app startup (main.rs) overwrites `saved` with the
-        // authoritative on-disk creds right after construction and rebuilds
-        // `backends` from that instead.
-        let mut backends = Backends::default();
-        let mut saved = crate::config::SavedCreds::default();
-        if let (Some(k), Some(p)) = (&key, &provider) {
-            let tag = p.backend_tag();
-            backends.set(tag, p.clone());
-            match tag {
-                crate::provider::BackendTag::OpenRouter => {
-                    saved.openrouter_key = Some((*k).to_string());
-                }
-                crate::provider::BackendTag::OpenAi => saved.openai_key = Some((*k).to_string()),
-                crate::provider::BackendTag::OpencodeGo => {
-                    saved.opencode_key = Some((*k).to_string());
-                }
-                // No full CodexCredentials from a bare key — fine for the
-                // bootstrap/test path, main.rs always has the real ones.
-                crate::provider::BackendTag::Codex | crate::provider::BackendTag::Local => {}
-            }
-        }
-        let status = if key.is_some() {
-            "loading models…  (/model to pick, /help for commands)".to_string()
-        } else {
-            "no API key — set it with /key (or $OPENROUTER_API_KEY/$OPENAI_API_KEY)".to_string()
-        };
-        // Fall back to a fresh in-memory default row if the db lookup somehow
-        // fails — the space name still resolves to real files on disk.
+        Self::with_creds(db, space, config::SavedCreds::from_key(key))
+    }
+
+    /// Construct app state from saved credentials without network access.
+    #[allow(clippy::too_many_lines)]
+    pub fn with_creds(db: Db, space: Space, saved: config::SavedCreds) -> Self {
         let active_space = db
             .default_space_id()
             .ok()
@@ -1400,32 +1058,12 @@ impl App {
                 created_at: Utc::now().to_rfc3339(),
             });
         let _ = space.ensure_space_dir(&active_space.name);
-        let default_model_id = |f: fn(&OpenRouter) -> &'static str, fallback: &'static str| {
-            provider.as_ref().map_or_else(
-                || fallback.to_string(),
-                |p| {
-                    let model = f(p);
-                    if model.is_empty() {
-                        String::new()
-                    } else {
-                        format!("{}{}", p.backend_tag().key_prefix(), model)
-                    }
-                },
-            )
-        };
-        let embedding_model = default_model_id(
-            OpenRouter::default_embedding_model,
-            "openai/text-embedding-3-small",
-        );
         let skills_dir = crate::skills::skills_dir(&space.root);
         let skill_dirs = crate::skills::app_skill_roots(&space.root);
         let skills = crate::skills::load_skills_from_dirs(&skill_dirs);
         let (chat_event_tx, chat_event_rx) = mpsc::unbounded_channel();
-        let (ui_repair_tx, ui_repair_rx) = mpsc::unbounded_channel();
         let (decider_status_tx, decider_status_rx) = mpsc::unbounded_channel();
         let (connector_notes_tx, connector_notes_rx) = mpsc::unbounded_channel();
-        // Built with search disabled; `load_settings()` below reads the
-        // persisted config (if any) and rebuilds this via `refresh_toolbox`.
         let image_fetcher =
             crate::remote_image::Fetcher::new(space.db_path().with_file_name("cache"));
         let toolbox = std::sync::Arc::new(
@@ -1439,20 +1077,18 @@ impl App {
                 Some(crate::tools::FilesCtx {
                     db_path: space.db_path(),
                     space_id: active_space.id.clone(),
-                    embedder: backends
-                        .resolve(&embedding_model)
-                        .map(|(p, model)| crate::provider::embedding::Embedder::openai(p, model)),
+                    embedder: None,
                 }),
-                // No apps ctx yet — the app server starts after construction;
-                // main() calls refresh_toolbox() once it's up.
                 None,
             )
             .with_skill_dirs(skill_dirs),
         );
+        let (background, background_rx) = crate::subagent::Background::new();
+        let (fleet, fleet_rx) = crate::fleet::Fleet::new();
         let mut app = Self {
             db,
             space,
-            backends,
+            backends: Backends::default(),
             saved,
             experiments: config::Experiments::default(),
             trace_store: None,
@@ -1462,11 +1098,8 @@ impl App {
             import_paths: None,
             connector_notes_tx,
             connector_notes_rx,
-            searxng_url: String::new(),
-            langsearch_key: String::new(),
-            search_provider: "auto".to_string(),
+            search: SearchConfig::new(),
             forced_skill: None,
-            web_mode: false,
             work_mode: WorkMode::Chat,
             auto_sandbox_available: crate::workspace::shell::write_confinement_available(),
             decision_context: Arc::default(),
@@ -1475,89 +1108,51 @@ impl App {
             workspace: None,
             incognito: false,
             incognito_img_dir: None,
-            survey_gate: None,
-            survey_reply_tx: None,
-            research_steer_log: Vec::new(),
-            research_steer_acked: std::collections::HashSet::new(),
-            research_stage_rows: Vec::new(),
-            research_incognito: false,
-            research_steer_tx: None,
-            research_topic_rx: None,
-            research_live_input: String::new(),
+            research: ResearchState::default(),
+            subagent_runs: Vec::new(),
+            subagent_turn_cost: HashMap::new(),
+            turn_usage: HashMap::new(),
             toolbox,
             image_fetcher,
             procs: Arc::default(),
+            background,
+            background_rx,
+            background_agents: std::collections::HashSet::new(),
+            fleet,
+            fleet_rx,
+            detached_agents: true,
             app_server: None,
             skills_rx: None,
-            ocr_rx: None,
-            embed_rx: None,
-            local_servers: crate::provider::serve::ManagedServers::default(),
-            local_status: Vec::new(),
-            local_status_rx: None,
-            local_status_announce: false,
-            research_rx: None,
-            research_abort: None,
+            local: LocalRuntimeState::default(),
             login_rx: None,
             update_rx: None,
-            swarm_rx: None,
-            swarm_abort: None,
-            swarm_session: None,
-            swarm_cache: Vec::new(),
-            research_running: None,
-            files_cache: Vec::new(),
-            apps_cache: Vec::new(),
-            watches_cache: Vec::new(),
-            images_cache: Vec::new(),
-            scripts_cache: Vec::new(),
+            codex_refresh_rx: None,
+            swarm: SwarmState::default(),
+            caches: ListCaches::default(),
             usage_range: crate::db::UsageRange::default(),
             harness: None,
             active_space,
-            helper_model: String::new(),
-            memory_extraction: true,
             memory_snapshot: String::new(),
+            memory_docs: Vec::new(),
+            memory_tidy_due: 0,
             cache_epoch: 0,
-            context_warned: false,
+            prefixes: HashMap::new(),
+            turn_lanes: HashMap::new(),
+            cache_lanes: HashMap::new(),
             prompt_datetime: Utc::now().format("%Y-%m-%d %H:%M UTC, %A").to_string(),
-            embedding_model,
-            embedding_backend: None,
-            embedding_status: String::new(),
-            embedding_chunks: Vec::new(),
-            embedding_chat_job: None,
-            next_chat_index: std::time::Instant::now() + std::time::Duration::from_secs(5),
-            chat_index_status: String::new(),
-            embedding_discovery: None,
-            ocr_images: None,
+            index: IndexState::new(),
             base_system_prompt: config::BASE_SYSTEM_PROMPT.to_string(),
             system_prompt_overlay: String::new(),
             interactive_ui: false,
             interactive_approvals: false,
-            panel_approver: None,
-            eval_approver: None,
-            job_approver: None,
-            research_job_lock: None,
-            pending_approval: None,
-            pending_approval_request: None,
-            approval_queue: VecDeque::new(),
-            approval_shown: 0,
-            approval_rx: None,
-            proposed_command: None,
+            approvals: ApprovalState::default(),
             deck_link: Arc::default(),
             queued_workspace: None,
-            user_command_rx: None,
-            user_command_dir: None,
-            user_shell: Arc::new(tokio::sync::OnceCell::new()),
-            user_shell_warning_shown: false,
-            user_command_context: None,
-            user_command_epoch: 0,
+            queued: HashMap::new(),
+            user_command: UserCommandState::default(),
             verbosity: "concise".to_string(),
-            memory_rx: None,
-            ui_repair_tx,
-            ui_repair_rx,
-            ui_repair_messages: HashMap::new(),
-            ui_feedback_seen: std::collections::HashSet::new(),
-            compact_rx: None,
-            compact_error: Arc::default(),
-            compacting_session_id: None,
+            ui_repair: UiRepairState::new(),
+            compaction: CompactionState::default(),
             models: Vec::new(),
             current_model: None,
             router_note_shown: false,
@@ -1575,23 +1170,35 @@ impl App {
             notifications: VecDeque::new(),
             pending_events: VecDeque::new(),
             unread: std::collections::HashSet::new(),
-            context_total: None,
-            context_basis: None,
-            context_ratio: None,
-            turn_cache: CacheTally::default(),
-            last_cache_rate: None,
+            meter: ContextMeter::default(),
             settings: Settings::default(),
             model_pick_target: ModelPickTarget::Session,
             spinner_frame: 0,
             thinking_idx: 0,
             spinner_color: SpinnerColor::Green,
-            sessions_cache: Vec::new(),
             title_rx: None,
         };
-        // Capture the first session snapshot before any request can be built.
-        // Subsequent session switches/new chats refresh it explicitly.
-        app.memory_snapshot = app.read_memory();
-        app.pending_events.push_back(AppEvent::Status(status));
+        app.rebuild_all_backends();
+        app.index.embedding_model = app
+            .backends
+            .configured_tags()
+            .first()
+            .and_then(|tag| app.backends.get(*tag))
+            .map_or_else(
+                || "openai/text-embedding-3-small".to_string(),
+                |provider| {
+                    let model = provider.default_embedding_model();
+                    if model.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{}{}", provider.backend_tag().key_prefix(), model)
+                    }
+                },
+            );
+        if !app.backends.any() {
+            app.push_status("no API key — run /login to add OpenRouter, OpenAI, OpenCode, Codex, Mistral or a local model".to_string());
+        }
+        app.refresh_memory_snapshot();
         app.load_prefs();
         app.load_settings();
         app
@@ -1618,7 +1225,6 @@ impl App {
         ))
     }
 
-    /// Validate and canonicalize a job's source using the normal workspace deny list.
     pub fn validate_job_root(&self, root: &str) -> Result<String> {
         Ok(self
             .open_workspace(Some(root))?
@@ -1627,7 +1233,6 @@ impl App {
             .into_owned())
     }
 
-    /// Enter only a generated run directory; source workspaces are validated separately.
     pub(crate) fn enter_job_workspace(
         &mut self,
         root: &std::path::Path,
@@ -1650,12 +1255,11 @@ impl App {
         self.reset_user_command_dir();
         self.workspace = Some(Arc::new(workspace));
         self.work_mode = mode;
-        self.job_approver = Some(approver);
+        self.approvals.job_approver = Some(approver);
         self.refresh_toolbox();
         Ok(())
     }
 
-    /// Surface newly finished daemon runs using existing TUI notification state.
     pub fn collect_job_notifications(&mut self) -> Result<()> {
         let seen = self.db.setting("jobs_seen").unwrap_or_default();
         let jobs = self.db.list_jobs()?;
@@ -1698,7 +1302,7 @@ impl App {
         let data = self.space.root.canonicalize()?;
         if data.starts_with(&root) || root.starts_with(&data) {
             anyhow::bail!(
-                "workspace {} is or contains nexus's data root, or is inside it · choose another directory",
+                "workspace {} is or contains dugix's data root, or is inside it · choose another directory",
                 root.display()
             );
         }
@@ -1712,11 +1316,7 @@ impl App {
         Ok(workspace)
     }
 
-    /// Enter a disposable agent workspace in incognito, with no session binding
-    /// or durable checkpoints. Set `eval_approver` first to permit shell prefixes.
-    ///
-    /// # Errors
-    /// Rejects inaccessible roots and the same denied paths as normal agent mode.
+    /// Enter an incognito evaluation workspace without session bindings or durable checkpoints.
     pub fn enter_eval_workspace(&mut self, root: &std::path::Path) -> Result<()> {
         let workspace = self.open_workspace_root(root)?;
         if !self.incognito {
@@ -1725,26 +1325,26 @@ impl App {
         self.reset_user_command_dir();
         self.workspace = Some(Arc::new(workspace));
         self.work_mode = WorkMode::Agent;
-        if self.eval_approver.is_none() {
-            self.eval_approver = Some(Arc::new(EvalApprover::default()));
+        if self.approvals.eval_approver.is_none() {
+            self.approvals.eval_approver = Some(Arc::new(EvalApprover::default()));
         }
         self.refresh_toolbox();
         self.bump_cache_epoch();
         Ok(())
     }
 
-    fn improve_nexus(&mut self, what: &str) -> Result<()> {
+    fn improve_dugix(&mut self, what: &str) -> Result<()> {
         use crate::jobs::service::{Tree, git};
 
         let Some(repo) = self
             .saved
             .agent
-            .nexus_repo
+            .dugix_repo
             .as_deref()
             .filter(|path| !path.trim().is_empty())
         else {
             self.push_status(
-                "/improve needs the nexus checkout · set [agent] nexus_repo = \"~/work/nexus-chat\" in config.toml",
+                "/improve needs the dugix checkout · set [agent] dugix_repo = \"~/work/dugix\" in config.toml",
             );
             return Ok(());
         };
@@ -1782,14 +1382,14 @@ impl App {
             .collect::<Vec<_>>()
             .join("\n");
         let text = format!(
-            "Improve nexus: {what}.\nRelevant recent tool failures:\n{failures}\nAcceptance: scripts/check.sh must pass. Work only in this worktree; finish with a summary of the change."
+            "Improve dugix: {what}.\nRelevant recent tool failures:\n{failures}\nAcceptance: scripts/check.sh must pass. Work only in this worktree; finish with a summary of the change."
         );
         let id = uuid::Uuid::new_v4().to_string();
         let slug: String = sessions::slugify(what).chars().take(60).collect();
-        let branch = format!("nexus/improve/{slug}-{}", &id[..8]);
+        let branch = format!("dugix/improve/{slug}-{}", &id[..8]);
         let tree = Tree::prepare(
             repo.root(),
-            &std::env::temp_dir().join("nexus-improve"),
+            &std::env::temp_dir().join("dugix-improve"),
             &slug,
             &id,
         )?;
@@ -1842,8 +1442,10 @@ impl App {
         self.reset_user_command_dir();
         self.work_mode = mode;
         self.workspace = workspace;
+        // No cache-epoch bump: the frozen prompt does not name the mode. The
+        // next message carries a mode note, and only a conversation's first
+        // agent turn rebuilds the prefix (it gains the workspace tools).
         self.refresh_toolbox();
-        self.bump_cache_epoch();
         self.push_status(if mode.is_agent() {
             format!(
                 "{} mode · workspace {}",
@@ -1864,7 +1466,6 @@ impl App {
         Ok(())
     }
 
-    /// Whether the active space has consented to device-local chat recording.
     pub fn training_enabled(&self) -> bool {
         !self.incognito
             && self
@@ -1874,24 +1475,25 @@ impl App {
                 == Some("on")
     }
 
-    /// Every saved credential, for scrubbing traces and command output.
     pub(crate) fn saved_secrets(&self) -> Vec<String> {
-        [
-            self.saved.openrouter_key.as_deref(),
-            self.saved.openai_key.as_deref(),
-            self.saved.opencode_key.as_deref(),
-            self.saved.codex.as_ref().map(|creds| creds.access.as_str()),
-            self.saved
-                .codex
-                .as_ref()
-                .map(|creds| creds.refresh.as_str()),
-            self.saved.host_token.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|secret| !secret.is_empty())
-        .map(str::to_string)
-        .collect()
+        BackendTag::ALL
+            .into_iter()
+            .filter_map(|tag| self.saved.key(tag))
+            .chain(
+                [
+                    self.saved.codex.as_ref().map(|creds| creds.access.as_str()),
+                    self.saved
+                        .codex
+                        .as_ref()
+                        .map(|creds| creds.refresh.as_str()),
+                    self.saved.host_token.as_deref(),
+                ]
+                .into_iter()
+                .flatten(),
+            )
+            .filter(|secret| !secret.is_empty())
+            .map(str::to_string)
+            .collect()
     }
 
     fn open_trace_store(&mut self) -> Option<std::sync::Arc<crate::trace::TraceStore>> {
@@ -1914,9 +1516,6 @@ impl App {
         }
     }
 
-    /// Load favorites + last-used timestamps from the db (best effort), and
-    /// default the active model to the most-recently-used one so a new session
-    /// needs no re-selection.
     fn load_prefs(&mut self) {
         if let Ok(prefs) = self.db.load_model_prefs() {
             for p in prefs {
@@ -1940,26 +1539,16 @@ impl App {
         }
     }
 
-    /// Load persisted nerd-config settings from the db (best effort).
     fn load_settings(&mut self) {
         let Ok(kv) = self.db.load_settings() else {
             return;
         };
-        let legacy = settings::legacy_helper_model(&kv);
         for (k, v) in kv {
             self.apply_setting(&k, &v);
-        }
-        if let Some(model) = legacy {
-            // One-time migration: a deliberately chosen `memory_model` becomes
-            // the helper model. Persisting it makes this a no-op next boot.
-            self.helper_model.clone_from(&model);
-            let _ = self.db.set_setting("helper_model", &model);
         }
         self.refresh_toolbox();
     }
 
-    /// Apply one persisted setting key to live state. Shared by
-    /// `load_settings` and the `SetSetting` command.
     fn apply_setting(&mut self, k: &str, v: &str) {
         match k {
             "remote_images" => {
@@ -1973,30 +1562,21 @@ impl App {
             "temperature" => self.settings.temperature = v.parse().ok(),
             "top_p" => self.settings.top_p = v.parse().ok(),
             "max_tokens" => self.settings.max_tokens = v.parse().ok(),
-            // Empty = auto. Rows for the removed per-feature model settings
-            // (see `settings::is_removed_setting`) fall through to `_`:
-            // other devices' sync data may still carry them, and they are
-            // ignored, never deleted.
-            "helper_model" => self.helper_model = v.trim().to_string(),
-            "ocr_images" => {
-                self.ocr_images = match v {
-                    "true" => Some(true),
-                    "false" => Some(false),
-                    _ => None,
-                };
-            }
             "compact_threshold" => {
                 if let Ok(t) = v.parse() {
                     self.settings.compact_threshold = t;
                 }
             }
-            "searxng_url" => self.searxng_url = v.to_string(),
+            "searxng_url" => self.search.searxng_url = v.to_string(),
             "column_width" if settings::valid_column_width(v) => {
                 self.settings.column_width = v.trim().to_string();
             }
-            // Unknown ids and out-of-range entries are dropped, not fatal: a
-            // row written by a newer build must not break an older one.
+            // Settings written by newer builds must remain readable by older clients.
             "popup_sizes" => self.settings.popup_sizes = settings::sanitize_popup_sizes(v),
+            "cache_lifetime" if matches!(v, "default" | "extended") => {
+                self.settings.cache_lifetime = v.to_string();
+            }
+            "cache_long_openai" => self.settings.cache_long_openai = v == "on",
             "reply_style" if REPLY_STYLES.contains(&v) => {
                 if self.settings.reply_style != v {
                     self.settings.reply_style = v.to_string();
@@ -2012,9 +1592,9 @@ impl App {
                     self.bump_cache_epoch();
                 }
             }
-            "langsearch_key" => self.langsearch_key = v.to_string(),
+            "langsearch_key" => self.search.langsearch_key = v.to_string(),
             "search_provider" if SEARCH_PROVIDERS.contains(&v) => {
-                self.search_provider = v.to_string();
+                self.search.provider = v.to_string();
             }
             _ => {}
         }
@@ -2040,8 +1620,7 @@ impl App {
             };
             let has_key = self
                 .saved
-                .openrouter_key
-                .as_ref()
+                .key(BackendTag::OpenRouter)
                 .is_some_and(|key| !key.trim().is_empty());
             let following: Vec<Arc<dyn Decider>> = match self.saved.agent.selected_decider(has_key)
             {
@@ -2055,7 +1634,7 @@ impl App {
                 })],
                 ModelDecider::Llm => {
                     let backend = self
-                        .helper_backend()
+                        .session_backend()
                         .map(|(p, m)| (p.usage_kind("decider"), m));
                     vec![Arc::new(LlmDecider { backend, context })]
                 }
@@ -2068,22 +1647,18 @@ impl App {
         }
     }
 
-    /// Rebuild the toolbox from the current `searxng_url`, so a settings
-    /// change takes effect immediately (no restart). Web search tries the
-    /// configured backends first, then keyless Exa and the session provider.
     pub fn refresh_toolbox(&mut self) {
         self.rebuild_toolbox();
         self.reload_skills();
     }
 
-    #[allow(clippy::too_many_lines)] // Keep the toolbox's capability wiring together.
+    #[allow(clippy::too_many_lines)]
     fn rebuild_toolbox(&mut self) {
-        let url =
-            (!self.searxng_url.trim().is_empty()).then(|| self.searxng_url.trim().to_string());
-        let key = (!self.langsearch_key.trim().is_empty())
-            .then(|| self.langsearch_key.trim().to_string());
-        // The toolbox sits behind the `ToolExecutor` seam. It writes only
-        // to the app-managed root but reads the full Agent Skills search path.
+        let url = (!self.search.searxng_url.trim().is_empty())
+            .then(|| self.search.searxng_url.trim().to_string());
+        let key = (!self.search.langsearch_key.trim().is_empty())
+            .then(|| self.search.langsearch_key.trim().to_string());
+        // Skill discovery may read external roots, but writes must stay in the managed root.
         let skills_dir = crate::skills::skills_dir(&self.space.root);
         crate::skills::install_builtin(&skills_dir);
         let skill_dirs = crate::skills::app_skill_roots(&self.space.root);
@@ -2091,10 +1666,11 @@ impl App {
             skills_dir.clone(),
             url,
             key,
-            self.search_provider.clone(),
+            self.search.provider.clone(),
             self.blocked_domains(),
             Some(
-                self.eval_approver
+                self.approvals
+                    .eval_approver
                     .as_ref()
                     .and(self.workspace.as_ref())
                     .map_or_else(
@@ -2113,8 +1689,6 @@ impl App {
                 space_id: self.active_space.id.clone(),
                 embedder: self.file_embedder(),
             }),
-            // App tools only exist while the server runs — an app(action=write) whose
-            // link can never load is worse than no tool. Disabled in incognito.
             self.app_server
                 .as_ref()
                 .filter(|_| !self.incognito)
@@ -2140,16 +1714,24 @@ impl App {
         {
             toolbox = toolbox.with_research_session(session_id);
         }
-        toolbox.search_backend = self.resolve_utility_model_backend("");
+        toolbox.search_backend = self.session_backend();
         toolbox.search_space_id.clone_from(&self.active_space.id);
         toolbox.image_gen_backend = self.generation_backend(OpenRouter::default_image_gen_model);
         toolbox.video_gen_backend = self.generation_backend(OpenRouter::default_video_gen_model);
         toolbox.space_files_dir = self.space.files_dir(&self.active_space.name);
+        toolbox.memory = (!self.incognito && self.approvals.eval_approver.is_none()).then(|| {
+            crate::tools::MemoryCtx {
+                db_path: self.space.db_path(),
+                space_id: self.active_space.id.clone(),
+                sharing: self.db.list_spaces().is_ok_and(|spaces| spaces.len() > 1),
+            }
+        });
         toolbox.space_apps_dir = self.space.apps_dir(&self.active_space.name);
         toolbox.space_scripts_dir = self.space.scripts_dir(&self.active_space.name);
         toolbox.supports_images = self.current_model_supports_images();
-        // Evals run in a hermetic workspace: no outside services.
+        // Evaluation workspaces must not access outside services.
         toolbox.connectors = self
+            .approvals
             .eval_approver
             .is_none()
             .then(|| self.connectors.clone());
@@ -2158,39 +1740,50 @@ impl App {
         toolbox.remote_images = Some(Arc::clone(&self.image_fetcher));
         toolbox.interactive_ui = self.interactive_ui;
         toolbox.deck_link = Arc::clone(&self.deck_link);
-        self.pending_approval = None;
-        self.pending_approval_request = None;
-        self.approval_queue.clear();
-        self.approval_rx = None;
-        self.panel_approver = None;
-        if let Some(approver) = &self.job_approver {
+        self.approvals.pending = None;
+        self.approvals.pending_request = None;
+        self.approvals.queue.clear();
+        self.approvals.rx = None;
+        self.approvals.panel_approver = None;
+        if let Some(approver) = &self.approvals.job_approver {
             toolbox.approver = Some(approver.clone());
-        } else if let Some(approver) = &self.eval_approver {
+        } else if let Some(approver) = &self.approvals.eval_approver {
             toolbox.approver = Some(approver.clone());
         } else if self.interactive_approvals {
             let (sender, receiver) = mpsc::unbounded_channel();
             let approver: Arc<dyn Approver> = Arc::new(ChannelApprover::new(sender));
             toolbox.approver = Some(Arc::clone(&approver));
-            self.panel_approver = Some(approver);
-            self.approval_rx = Some(receiver);
+            self.approvals.panel_approver = Some(approver);
+            self.approvals.rx = Some(receiver);
         }
         toolbox.workspace = self
             .workspace
             .as_ref()
             .filter(|_| self.work_mode.is_agent())
             .cloned();
-        if self.eval_approver.is_some() || self.job_approver.is_some() {
+        if self.approvals.eval_approver.is_some() || self.approvals.job_approver.is_some() {
             toolbox.confine_shell_writes =
                 toolbox.workspace.as_ref().map(|w| w.root().to_path_buf());
         }
-        toolbox.subagent_environment = self.environment_section();
+        // Sub-agents get a fresh prompt per task, so theirs names the workspace.
+        toolbox.subagent_environment = format!(
+            "{}{}",
+            self.environment_section(),
+            self.mode_line()
+                .map(|line| format!("\n{line}"))
+                .unwrap_or_default()
+        );
+        toolbox.offer_workspace_tools = self.offers_workspace_tools();
         toolbox.procs = Arc::clone(&self.procs);
+        toolbox.background =
+            (self.detached_agents && !self.incognito).then(|| Arc::clone(&self.background));
+        toolbox.fleet = self.detached_agents.then(|| Arc::clone(&self.fleet));
         toolbox.session_id = self
             .session
             .as_ref()
             .map(|s| s.id.clone())
             .unwrap_or_default();
-        self.toolbox = if let Some(approver) = &self.job_approver {
+        self.toolbox = if let Some(approver) = &self.approvals.job_approver {
             Arc::new(crate::jobs::JobExecutor {
                 inner: Arc::new(toolbox),
                 approver: Arc::clone(approver),
@@ -2200,13 +1793,10 @@ impl App {
         };
     }
 
-    /// Whether the active session is a research session.
     pub fn is_research_session(&self) -> bool {
         self.session.as_ref().is_some_and(|s| s.kind == "research")
     }
 
-    /// The active space's always-excluded search domains, from its
-    /// `blocked_domains.txt` (comma-separated; missing file = none).
     pub fn blocked_domains(&self) -> Vec<String> {
         std::fs::read_to_string(self.space.blocked_domains_path(&self.active_space.name))
             .unwrap_or_default()
@@ -2216,8 +1806,6 @@ impl App {
             .collect()
     }
 
-    /// Kick off the initial model fetch if a key is already present. Call once
-    /// after construction, from within the tokio runtime.
     pub fn init(&mut self) {
         if self.backends.any() {
             self.fetch_models();
@@ -2225,11 +1813,6 @@ impl App {
         self.rescan_files();
     }
 
-    /// Kick off the startup update check: once per day, compare the newest
-    /// published version against this build and auto-install it when a
-    /// newer release exists. Best-effort — offline or a failed fetch is
-    /// silent. Spawned before the event loop starts; the result arrives as
-    /// `AppEvent::UpdateCheck`.
     pub fn spawn_update_check(&mut self) {
         if !self.db.update_check_due() {
             return;
@@ -2242,12 +1825,27 @@ impl App {
         });
     }
 
-    /// Handle the startup update check result: when a newer version is
-    /// published, auto-install it via `cargo` in a detached background
-    /// process when the environment allows (dev builds, missing cargo, and
-    /// opted-out installs fall back to a plain notice). `None` (failed
-    /// check) and same/older versions are silent — the check is a
-    /// courtesy, not a nag.
+    pub fn refresh_codex_in_background(&mut self) {
+        if self.codex_refresh_rx.is_some() {
+            return;
+        }
+        let Some(creds) = self.saved.codex.as_ref() else {
+            return;
+        };
+        if Utc::now().timestamp_millis() < creds.expires - 60_000 {
+            return;
+        }
+        let creds = creds.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.codex_refresh_rx = Some(rx);
+        tokio::spawn(async move {
+            let result = config::refresh_codex_if_needed(creds)
+                .await
+                .map_err(|error| error.to_string());
+            let _ = tx.send(result);
+        });
+    }
+
     pub fn on_update_check(&mut self, latest: Option<String>) {
         let Some(latest) = latest else {
             return;
@@ -2255,38 +1853,16 @@ impl App {
         if !crate::update::version_gt(&latest, crate::update::CURRENT) {
             return;
         }
-        let notice = |app: &mut Self| {
-            app.push_status(format!(
-                "update available: v{latest} (you have {}) — run `cargo install nexus-chat`",
-                crate::update::CURRENT
-            ));
-            app.notifications.push_back(ChatNotification {
-                session_id: String::new(),
-                title: "update available".to_string(),
-                text: format!("v{latest} is out — you have {}", crate::update::CURRENT),
-                success: true,
-            });
-        };
-        match crate::update::try_start_auto_update(&self.space.root, &latest) {
-            crate::update::AutoUpdateOutcome::Started => {
-                self.push_status(format!(
-                    "auto-updating to v{latest} in the background — restart nexus to apply"
-                ));
-                self.notifications.push_back(ChatNotification {
-                    session_id: String::new(),
-                    title: format!("updating to v{latest}"),
-                    text: "installing via `cargo install` in the background — the new \
-                           version is live on your next launch"
-                        .to_string(),
-                    success: true,
-                });
-            }
-            crate::update::AutoUpdateOutcome::InFlight => {
-                // A previous launch already started the install; the next
-                // launch picks it up. Nothing to do.
-            }
-            crate::update::AutoUpdateOutcome::Unavailable => notice(self),
-        }
+        self.push_status(format!(
+            "dugix v{latest} is out (you have {}) — run `dugix update`",
+            crate::update::CURRENT
+        ));
+        self.notifications.push_back(ChatNotification {
+            session_id: String::new(),
+            title: "update available".to_string(),
+            text: format!("v{latest} is out — run `dugix update`"),
+            success: true,
+        });
     }
 
     pub fn is_streaming(&self) -> bool {
@@ -2313,35 +1889,27 @@ impl App {
         self.active_chat_task().map(|task| task.buffer.as_str())
     }
 
-    /// True when the in-flight stream belongs to the active session (every
-    /// stream carries its origin `session_id`, so this is exact).
     pub fn viewing_stream(&self) -> bool {
         self.active_chat_task().is_some()
     }
 
-    /// The empty start screen (banner + greeting + clock) shows when there's no
-    /// conversation yet — a stream running in another session doesn't hide it.
     pub fn is_welcome(&self) -> bool {
         self.messages.is_empty() && !self.viewing_stream()
     }
 
-    /// Advance the spinner one frame (called on the animation tick).
     pub const fn tick_spinner(&mut self) {
         self.spinner_frame = self.spinner_frame.wrapping_add(1);
     }
 
-    /// Current spinner glyph.
     pub const fn spinner_char(&self) -> &'static str {
         SPINNER[self.spinner_frame % SPINNER.len()]
     }
 
-    /// Randomly-chosen spinner colour for the current response.
     pub fn spinner_color(&self) -> SpinnerColor {
         self.active_chat_task()
             .map_or(self.spinner_color, |task| task.spinner_color)
     }
 
-    /// Present-tense phrase for the in-progress response ("Vibing").
     pub fn thinking_phrase(&self) -> &'static str {
         self.active_chat_task()
             .map_or(THINKING[self.thinking_idx].0, |task| {
@@ -2349,39 +1917,28 @@ impl App {
             })
     }
 
-    /// Reasoning tokens accumulated so far this stream, if any.
     pub fn thinking_text(&self) -> Option<&str> {
         self.active_chat_task()
             .and_then(|task| (!task.thinking.is_empty()).then_some(task.thinking.as_str()))
     }
 
-    // --- async event sources (drained by the event loop) ---
-
-    /// Queue a one-line status update as `AppEvent::Status`. The TUI keeps
-    /// its own `status` field fed by these events; headless consumers track
-    /// them locally.
     pub fn push_status(&mut self, s: impl Into<String>) {
         self.pending_events.push_back(AppEvent::Status(s.into()));
     }
 
-    /// Ask the view to replace its composer contents (a send-failure path
-    /// restoring the user's message, a gate reply rolled back, …).
     pub fn push_composer_set(&mut self, text: impl Into<String>) {
         self.pending_events
             .push_back(AppEvent::ComposerSet(text.into()));
     }
 
-    /// Ask the view to clear its composer.
     pub fn push_composer_clear(&mut self) {
         self.pending_events.push_back(AppEvent::ComposerClear);
     }
 
-    /// Ask the view to reset its viewport state (scroll, selection, pinning
-    /// baseline) — pushed wherever domain code switches sessions, starts a
-    /// stream, or otherwise invalidates the rendered conversation.
     pub fn push_viewport_reset(&mut self) {
         if self
-            .user_command_context
+            .user_command
+            .context
             .as_ref()
             .is_some_and(|context| *context != self.user_command_context())
         {
@@ -2390,23 +1947,15 @@ impl App {
         self.pending_events.push_back(AppEvent::ViewportReset);
     }
 
-    /// Ask the view to rebuild its wrapped-history render cache (in-place
-    /// message edits would otherwise leave stale wrapped content).
     pub fn push_history_invalidated(&mut self) {
         self.pending_events.push_back(AppEvent::HistoryInvalidated);
     }
 
-    /// Pop one locally-queued event (status lines, gate arming, composer
-    /// feedback). The view drains these before every draw so status changes
-    /// land on the same frame as the action that caused them; `next_event`
-    /// drains any remainder before blocking on the channel sources.
+    /// Drain immediate frontend feedback before drawing or waiting on background channels.
     pub fn pop_pending_event(&mut self) -> Option<AppEvent> {
         self.pending_events.pop_front()
     }
 
-    /// Test helper: drain the pending event queue in one pass, returning
-    /// `(composer sets in order, last status line)` — the status line and the
-    /// composer live in the view, so tests assert on the events.
     #[doc(hidden)]
     pub fn drain_ui_events(&mut self) -> (Vec<String>, String) {
         let mut sets = Vec::new();
@@ -2421,28 +1970,21 @@ impl App {
         (sets, last)
     }
 
-    /// Test helper: the last queued `Status` event, draining the queue.
     #[doc(hidden)]
     pub fn last_status(&mut self) -> String {
         self.drain_ui_events().1
     }
 
-    /// Test helper: every queued `ComposerSet` payload, in order, draining
-    /// the queue (asserts composer-restore paths without a `TextArea`).
     #[doc(hidden)]
     pub fn drain_composer_sets(&mut self) -> Vec<String> {
         self.drain_ui_events().0
     }
 
-    /// Redaction context for panel tool arguments, outputs and approval previews.
     #[must_use]
     pub fn panel_scrubber(&self) -> crate::trace::Scrubber {
         crate::trace::Scrubber::new(self.saved_secrets())
     }
 
-    /// Persist a panel operation using the same compact tool cards as model calls.
-    /// # Errors
-    /// Returns database failures; incognito conversations remain memory-only.
     pub fn record_panel_call(
         &mut self,
         session_id: &str,
@@ -2484,62 +2026,81 @@ impl App {
         Ok(())
     }
 
-    /// Next background event from either the streaming task or a model fetch.
-    /// Pends on an idle source, so it only resolves when something happens.
-    #[allow(clippy::too_many_lines)] // One select branch per background source.
     pub async fn next_event(&mut self) -> AppEvent {
-        // Locally-queued events (status lines, gate arming) drain first.
-        if let Some(ev) = self.pending_events.pop_front() {
-            return ev;
+        loop {
+            if let Some(ev) = self.pending_events.pop_front() {
+                return ev;
+            }
+            if let Some(ev) = self.next_source_event().await {
+                return ev;
+            }
         }
-        tokio::select! {
-            () = tokio::time::sleep_until(self.next_chat_index.into()), if self.embed_rx.is_none() => {
+    }
+
+    /// The next result from a background source; `None` when one was handled
+    /// here and only left events (or nothing) in `pending_events`.
+    #[allow(clippy::too_many_lines)]
+    async fn next_source_event(&mut self) -> Option<AppEvent> {
+        Some(tokio::select! {
+            message = self.background_rx.recv() => {
+                if let Some(message) = message {
+                    self.on_background(message);
+                }
+                return None;
+            },
+            message = self.fleet_rx.recv() => {
+                if let Some(message) = message {
+                    self.on_fleet(&message);
+                }
+                return None;
+            },
+            () = tokio::time::sleep_until(self.index.next_chat_index.into()), if self.index.embed_rx.is_none() => {
                 self.start_embedding();
-                AppEvent::Status(self.embedding_status.clone())
+                AppEvent::Status(self.index.embedding_status.clone())
             },
             request = async {
-                match self.approval_rx.as_mut() {
+                match self.approvals.rx.as_mut() {
                     Some(receiver) => receiver.recv().await,
                     None => std::future::pending().await,
                 }
             } => {
                 if let Some((request, reply)) = request {
                     if reply.is_closed() {
-                        return AppEvent::Status("approval cancelled".to_string());
+                        return Some(AppEvent::Status("approval cancelled".to_string()));
                     }
                     let status = format!("approval needed · {} {}", request.tool, request.action);
-                    self.approval_queue.push_back((request, reply));
+                    self.approvals.queue.push_back((request, reply));
                     self.show_next_approval();
                     AppEvent::Status(status)
                 } else {
-                    self.approval_rx = None;
+                    self.approvals.rx = None;
                     AppEvent::Status(String::new())
                 }
             },
             () = async {
-                match self.pending_approval.as_mut() {
+                match self.approvals.pending.as_mut() {
                     Some(reply) => reply.closed().await,
                     None => std::future::pending().await,
                 }
             } => {
-                self.pending_approval = None;
-                self.pending_approval_request = None;
+                self.approvals.pending = None;
+                self.approvals.pending_request = None;
                 self.show_next_approval();
                 AppEvent::Status("approval cancelled".to_string())
             },
             Some(status) = self.decider_status_rx.recv() => AppEvent::Status(status),
             Some(note) = self.connector_notes_rx.recv() => AppEvent::Status(note),
-            Some(repair) = self.ui_repair_rx.recv() => self.on_ui_repair_result(repair),
+            Some(repair) = self.ui_repair.rx.recv() => self.on_ui_repair_result(repair),
             ev = self.chat_event_rx.recv() => {
                 AppEvent::Stream(ev.map(|event| (event.task_id, event.event)))
             },
             run = async {
-                match self.user_command_rx.as_mut() {
+                match self.user_command.rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
             } => {
-                self.user_command_rx = None;
+                self.user_command.rx = None;
                 if let Some(run) = run
                     && let Err(error) = self.finish_user_command(&run)
                 {
@@ -2559,14 +2120,8 @@ impl App {
                     None => std::future::pending().await,
                 }
             } => AppEvent::Title(t),
-            m = async {
-                match self.memory_rx.as_mut() {
-                    Some(rx) => rx.recv().await,
-                    None => std::future::pending().await,
-                }
-            } => AppEvent::Memory(m),
             c = async {
-                match self.compact_rx.as_mut() {
+                match self.compaction.rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
@@ -2578,25 +2133,25 @@ impl App {
                 }
             } => AppEvent::SkillInstall(r),
             r = async {
-                match self.ocr_rx.as_mut() {
+                match self.index.convert_rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
-            } => AppEvent::Ocr(r),
+            } => AppEvent::Convert(r),
             r = async {
-                match self.embed_rx.as_mut() {
+                match self.index.embed_rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
             } => AppEvent::Embed(r),
             r = async {
-                match self.local_status_rx.as_mut() {
+                match self.local.status_rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
             } => AppEvent::LocalServers(r),
             r = async {
-                match self.research_rx.as_mut() {
+                match self.research.rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
@@ -2607,7 +2162,7 @@ impl App {
                 AppEvent::Research(r)
             },
             r = async {
-                match self.research_topic_rx.as_mut() {
+                match self.research.topic_rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
@@ -2625,12 +2180,35 @@ impl App {
                 }
             } => AppEvent::UpdateCheck(r.flatten()),
             r = async {
-                match self.swarm_rx.as_mut() {
+                match self.codex_refresh_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                self.codex_refresh_rx = None;
+                if let Some(result) = r {
+                    match result.and_then(|creds| {
+                        config::save_codex_credentials(&creds).map_err(|error| error.to_string())?;
+                        Ok(creds)
+                    }) {
+                        Ok(creds) => {
+                            self.saved.codex = Some(creds);
+                            self.rebuild_all_backends();
+                        }
+                        Err(error) => self.push_status(format!(
+                            "Codex sign-in could not refresh ({error}) — run /login and pick Codex"
+                        )),
+                    }
+                }
+                self.pending_events.pop_front().unwrap_or_else(|| AppEvent::Status(String::new()))
+            },
+            r = async {
+                match self.swarm.rx.as_mut() {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,
                 }
             } => AppEvent::Swarm(r),
-        }
+        })
     }
 
     pub fn on_models_result(&mut self, result: Option<ModelsResult>) {
@@ -2642,11 +2220,7 @@ impl App {
         match result {
             Ok(models) => {
                 let n = models.len();
-                // Keep per-model catalog pricing current (OpenRouter only;
-                // other backends report none). Costs are computed against
-                // this table when usage is logged. Batched into a single
-                // transaction — hundreds of per-model writes on the UI task
-                // would stall the interface after every catalog fetch.
+                // Batch pricing writes into one transaction to avoid stalling the UI task.
                 let prices: Vec<_> = models
                     .iter()
                     .filter_map(|m| {
@@ -2655,80 +2229,61 @@ impl App {
                     })
                     .collect();
                 let _ = self.db.upsert_model_prices(&prices);
-                // Fresh catalog in hand — recompute every logged request's
-                // cost against it (fills rows logged before pricing existed
-                // and heals any legacy per-token-shaped catalog).
                 let _ = self.db.backfill_usage_costs();
                 self.models = models;
                 self.push_status(format!("loaded {n} models"));
-                // A session may have been opened before the catalog arrived.
-                // Re-check it now so old, already-large conversations are
-                // compacted without requiring another user turn.
+                // Catalog arrival may complete the prerequisites for a pending compaction.
                 self.maybe_compact();
-                // The view layer opens the model picker here: it owns the
-                // `popup` state, and checks `models`/`current_model` after
-                // this handler runs.
             }
             Err(e) => self.push_status(format!("model fetch failed: {e}")),
         }
     }
-
-    // --- nerd config (settings popup) ---
 }
 
 impl App {
-    /// Abort every interactive chat task before the TUI exits. Chat streams are
-    /// intentionally not persisted or resumed across process restarts.
     pub fn cancel_chat_tasks(&mut self) {
         for task in self.chat_tasks.values() {
             task.abort.abort();
         }
         self.chat_tasks.clear();
-        self.pending_approval = None;
-        self.pending_approval_request = None;
-        self.approval_queue.clear();
+        self.approvals.pending = None;
+        self.approvals.pending_request = None;
+        self.approvals.queue.clear();
     }
 
-    /// Display the oldest queued approval once nothing is displayed,
-    /// skipping requests whose tool call has gone away. Returns whether one
-    /// was shown.
     pub fn show_next_approval(&mut self) -> bool {
-        if self.pending_approval.is_some() {
+        if self.approvals.pending.is_some() {
             return false;
         }
-        while let Some((request, reply)) = self.approval_queue.pop_front() {
+        while let Some((request, reply)) = self.approvals.queue.pop_front() {
             if reply.is_closed() {
                 continue;
             }
-            self.pending_approval = Some(reply);
-            self.pending_approval_request = Some(request);
-            self.approval_shown += 1;
+            self.approvals.pending = Some(reply);
+            self.approvals.pending_request = Some(request);
+            self.approvals.shown += 1;
             return true;
         }
         false
     }
 
-    /// Requests awaiting an answer: the displayed one and the live queued ones.
     #[must_use]
     pub fn approval_count(&self) -> usize {
-        usize::from(self.pending_approval.is_some())
+        usize::from(self.approvals.pending.is_some())
             + self
-                .approval_queue
+                .approvals
+                .queue
                 .iter()
                 .filter(|(_, reply)| !reply.is_closed())
                 .count()
     }
 
-    /// Answer the displayed approval and display the next one. Allowing for
-    /// the session also allows every waiting request of the same kind, so
-    /// they are never shown.
     pub(crate) fn answer_approval(&mut self, decision: Decision) {
-        let request = self.pending_approval_request.take();
+        let request = self.approvals.pending_request.take();
         let connector = request.as_ref().is_some_and(|request| {
             request.class.as_deref() == Some(crate::connectors::exec::CLASS)
         });
-        // "Always" writes policy to config; only a connector request offers
-        // it, so anything else answering with it is just a plain allow.
+        // Only connector requests may persist an "Always" policy.
         let decision = match decision {
             Decision::AllowAlways if !connector => Decision::Allow,
             Decision::AllowForSession
@@ -2740,19 +2295,19 @@ impl App {
             }
             other => other,
         };
-        if let Some(sender) = self.pending_approval.take() {
+        if let Some(sender) = self.approvals.pending.take() {
             let _ = sender.send(decision);
         }
         if decision == Decision::AllowForSession
             && let Some(request) = request.filter(|request| request.tool != "wave")
             && !connector
         {
-            if let Some(receiver) = self.approval_rx.as_mut() {
+            if let Some(receiver) = self.approvals.rx.as_mut() {
                 while let Ok(item) = receiver.try_recv() {
-                    self.approval_queue.push_back(item);
+                    self.approvals.queue.push_back(item);
                 }
             }
-            for (queued, reply) in std::mem::take(&mut self.approval_queue) {
+            for (queued, reply) in std::mem::take(&mut self.approvals.queue) {
                 if queued.tool == request.tool
                     && queued.action == request.action
                     && queued.allow_session
@@ -2760,7 +2315,7 @@ impl App {
                 {
                     let _ = reply.send(Decision::Allow);
                 } else {
-                    self.approval_queue.push_back((queued, reply));
+                    self.approvals.queue.push_back((queued, reply));
                 }
             }
         }
@@ -2768,15 +2323,13 @@ impl App {
     }
 }
 
-/// Best-effort transient Linux desktop notification. The TUI notification
-/// remains the actionable one because `notify-send` cannot route a click back
-/// into this running process without a long-lived D-Bus action listener.
+// notify-send cannot route clicks back without a long-lived D-Bus action listener.
 pub fn send_system_notification(title: &str, body: &str) {
     #[cfg(all(target_os = "linux", not(test)))]
     {
         let _ = std::process::Command::new("notify-send")
             .args([
-                "--app-name=nexus-chat",
+                "--app-name=dugix",
                 "--urgency=normal",
                 "--expire-time=5000",
                 "--hint=int:transient:1",
@@ -2789,10 +2342,7 @@ pub fn send_system_notification(title: &str, body: &str) {
     let _ = (title, body);
 }
 
-// Long by design (tool-summary table).
 #[allow(clippy::too_many_lines)]
-/// The one-line transcript summary for a tool-call block: the tool's name
-/// plus the argument (and result shape) a reader actually cares about.
 pub fn tool_call_summary(name: &str, args: &str, result: &str) -> String {
     if let Some(view) = tool_view::parse(name, args, result) {
         return view.summary();
@@ -2960,7 +2510,6 @@ pub fn tool_call_summary(name: &str, args: &str, result: &str) -> String {
     }
 }
 
-/// First line of a tool result, e.g. `report.pdf (lines 1-200 of 831):`.
 fn first_line(result: &str) -> String {
     result
         .lines()
@@ -2978,7 +2527,7 @@ mod model_decider_tests {
 
     #[tokio::test]
     async fn auto_uses_jev_in_incognito_without_logging_and_passes_recent_calls() {
-        let dir = std::env::temp_dir().join(format!("nexus-decider-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-decider-{}", uuid::Uuid::new_v4()));
         let root = dir.join("workspace");
         let data = dir.join("data");
         std::fs::create_dir_all(&root).unwrap();
@@ -2990,7 +2539,8 @@ mod model_decider_tests {
         let (provider, handle) = server(200, body.to_string(), Duration::ZERO, 1).await;
         let space = Space { root: data };
         let mut app = App::new(Db::open(&space.db_path()).unwrap(), None, space);
-        app.saved.openrouter_key = Some("mock-decider-key".into());
+        app.saved
+            .set_key(BackendTag::OpenRouter, "mock-decider-key".into());
         app.backends.set(BackendTag::OpenRouter, provider);
         app.work_mode = WorkMode::AgentAuto;
         app.incognito = true;
@@ -3022,7 +2572,7 @@ mod model_decider_tests {
     }
 
     #[tokio::test]
-    async fn llm_wiring_follows_utility_and_session_model_changes() {
+    async fn llm_wiring_follows_session_model_changes() {
         let body = serde_json::json!({"choices": [{"message": {"content":
             r#"{"calls":[{"id":"c0","in_scope":0.99,"risk":1}]}"#
         }}]});
@@ -3031,7 +2581,7 @@ mod model_decider_tests {
         let dir = app.space.root.clone();
         let root = dir.join("workspace");
         std::fs::create_dir_all(&root).unwrap();
-        app.saved.openrouter_key = None;
+        app.saved.keys.remove(&BackendTag::OpenRouter);
         app.backends = Backends::default();
         app.backends.set(BackendTag::Local, provider);
         app.models[0].id = "utility".into();
@@ -3040,23 +2590,21 @@ mod model_decider_tests {
             model.backend = BackendTag::Local;
         }
         app.current_model = Some("local:session".into());
-        app.helper_model.clear();
         app.work_mode = WorkMode::AgentAuto;
         app.incognito = true;
         app.workspace = Some(Arc::new(
             crate::workspace::Workspace::open(&root, Vec::new()).unwrap(),
         ));
         app.refresh_toolbox();
-        app.model_pick_target = ModelPickTarget::Helper;
+        app.model_pick_target = ModelPickTarget::Session;
         app.pick_model("local:utility").unwrap();
         for path in ["one", "two", "three"] {
             let args = serde_json::json!({"action": "write", "path": path, "content": "ok"});
             let (result, _) = app.toolbox.run("fs", &args.to_string()).await;
             assert!(result.starts_with("wrote "), "{result}");
             if path == "one" {
-                app.clear_helper_model().unwrap();
+                app.pick_model("local:session").unwrap();
             } else if path == "two" {
-                app.model_pick_target = ModelPickTarget::Session;
                 app.pick_model("local:utility").unwrap();
             }
         }
@@ -3153,7 +2701,7 @@ mod eval_tests {
 
     #[tokio::test]
     async fn eval_workspace_is_incognito_and_has_no_binding_or_durable_checkpoints() {
-        let dir = std::env::temp_dir().join(format!("nexus-eval-app-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-eval-app-{}", uuid::Uuid::new_v4()));
         let data = dir.join("data");
         let root = dir.join("copy/workspace");
         std::fs::create_dir_all(&data).unwrap();
@@ -3164,7 +2712,7 @@ mod eval_tests {
             Space { root: data.clone() },
         );
         app.execute(AppCommand::Incognito { on: true }).unwrap();
-        app.eval_approver = Some(Arc::new(EvalApprover {
+        app.approvals.eval_approver = Some(Arc::new(EvalApprover {
             allow_shell: vec!["printf ok".into()],
         }));
         let session = app
@@ -3220,8 +2768,8 @@ mod eval_tests {
     #[test]
     fn boot_backend_wiring_carries_loaded_experiments() {
         let mut app = tests::app_with_key();
-        app.saved.experiments.cache_ttl_1h = true;
+        app.saved.experiments.compaction_itemized = true;
         app.rebuild_all_backends();
-        assert!(app.experiments.cache_ttl_1h);
+        assert!(app.experiments.compaction_itemized);
     }
 }

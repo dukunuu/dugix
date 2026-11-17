@@ -95,9 +95,8 @@ pub(super) fn delete(app: &App, id: Option<&str>, name: &str) -> Result<serde_js
     Ok(serde_json::json!({ "deleted": true, "name": name }))
 }
 
-/// Register an existing on-disk app as a public capability. The app server's
-/// startup scanner normally does this automatically; this action handles an
-/// orphan app created while the server was already running.
+/// Register an existing on-disk app as a public capability, for an orphan created
+/// while the server was already running.
 pub(super) fn register(app: &App, id: Option<&str>, name: &str) -> Result<serde_json::Value> {
     let space = space_name(app, id)?;
     let root = app.space.apps_dir(&space).join(name);
@@ -204,7 +203,7 @@ pub(super) fn source(
         if edit.content.len() as u64 > MAX_SOURCE || edit.content.contains('\0') {
             bail!("invalid source content");
         }
-        let temporary = target.with_extension(format!("nexus-edit-{}", uuid::Uuid::new_v4()));
+        let temporary = target.with_extension(format!("dugix-edit-{}", uuid::Uuid::new_v4()));
         let result = (|| -> Result<()> {
             let mut file = std::fs::OpenOptions::new()
                 .write(true)
@@ -230,7 +229,7 @@ mod tests {
 
     #[test]
     fn catalog_and_editor_are_scoped_and_preserve_newer_content() {
-        let root = std::env::temp_dir().join(format!("nexus-app-editor-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-app-editor-{}", uuid::Uuid::new_v4()));
         let app = App::new(
             crate::db::Db::open_in_memory().unwrap(),
             None,

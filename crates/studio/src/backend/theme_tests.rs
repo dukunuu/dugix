@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn attached_theme_updates_only_chrome_and_is_in_the_next_load() {
-    let root = std::env::temp_dir().join(format!("nexus-studio-theme-{}", Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-studio-theme-{}", Uuid::new_v4()));
     let mut backend = Backend::start(None, &root.join("files"), &root.join("data")).unwrap();
     let before = backend.deck.clone();
     let saved = fs::read(&backend.path).unwrap();

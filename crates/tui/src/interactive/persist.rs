@@ -1,14 +1,12 @@
 //! What outlives a frame: saved panel state, panels pinned as mini-apps, and
-//! the per-run trust list for `@OpenUrl`. The domain half (storage, sync,
-//! commands) lives in `nexus_core::panels`; this half decides when to save,
-//! how to show a pinned app, and what the confirmation line says.
+//! the per-run trust list for `@OpenUrl`.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use crossterm::event::KeyCode;
-use nexus_core::app::Popup;
-use nexus_core::interactive::{Document, PanelSnapshot, Session, panel_key};
+use dugix_core::app::Popup;
+use dugix_core::interactive::{Document, PanelSnapshot, Session, panel_key};
 use unicode_width::UnicodeWidthStr;
 
 use super::{Entry, Key, Placement, Widgets};
@@ -24,7 +22,6 @@ type Opener = Box<dyn FnMut(&str) -> anyhow::Result<()> + Send>;
 pub(super) enum Target {
     /// A message panel, by its conversation-local panel key.
     Panel(String),
-    /// A pinned app, by id.
     App(String),
 }
 
@@ -52,6 +49,8 @@ pub(super) struct Store {
     /// Replaces the OS opener (tests).
     opener: Option<Opener>,
     pub(super) pending_pin: bool,
+    /// When the event loop last saved.
+    last_flush: Option<std::time::Instant>,
 }
 
 impl Store {
@@ -121,8 +120,7 @@ impl Widgets {
         self.focused.as_ref().is_some_and(|key| self.is_app(key))
     }
 
-    /// Keys of focused pinned apps, which are not in the transcript's visible
-    /// set but still run their data calls.
+    /// Keys of focused pinned apps, which still run their data calls.
     pub(super) fn app_keys(&self) -> Vec<Key> {
         self.focused
             .iter()
@@ -234,7 +232,6 @@ impl Widgets {
         self.store.opener = Some(opener);
     }
 
-    /// Take a pending `p` press.
     pub(crate) fn take_pin_request(&mut self) -> bool {
         std::mem::take(&mut self.store.pending_pin)
     }
@@ -247,10 +244,9 @@ fn open_url(opener: &mut Option<Opener>, url: &str) -> anyhow::Result<()> {
     }
 }
 
-/// The confirmation line. The whole host is always visible: on a narrow card
-/// the hints give way first, then the path.
+/// The confirmation line; the whole host is always visible.
 pub(super) fn url_prompt(url: &str, width: usize) -> String {
-    let host = nexus_core::interactive::url_host(url).unwrap_or_default();
+    let host = dugix_core::interactive::url_host(url).unwrap_or_default();
     let origin = format!("https://{host}");
     let room = width.saturating_sub(6);
     let tails = [
@@ -286,8 +282,7 @@ pub(super) fn url_prompt(url: &str, width: usize) -> String {
     format!("Open {shown}{tail}")
 }
 
-/// Load the saved records of the conversation now on screen, flushing the
-/// previous one first.
+/// Load the saved records of the conversation now on screen, flushing the previous one first.
 pub(crate) fn sync_saved(app: &mut AppView) {
     let current = app.session.as_ref().map(|session| session.id.clone());
     if app.interactive.store.session_id == current {
@@ -300,6 +295,19 @@ pub(crate) fn sync_saved(app: &mut AppView) {
     };
     app.interactive.store.session_id = current;
     app.interactive.store.records = records;
+}
+
+/// The event loop's save, at most once a second; session switches and shutdown call `flush`.
+pub(crate) fn flush_settled(app: &mut AppView) {
+    let store = &mut app.interactive.store;
+    if store
+        .last_flush
+        .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(1))
+    {
+        return;
+    }
+    store.last_flush = Some(std::time::Instant::now());
+    flush(app);
 }
 
 /// Store every panel whose state changed since the last flush.
@@ -362,8 +370,7 @@ pub(crate) fn pin_focused(app: &mut AppView, name: Option<&str>) {
     }
 }
 
-/// Show a pinned app full size, with the state it was left in. Returns false
-/// when no pinned app has that name or id.
+/// Show a pinned app full size, with the state it was left in.
 pub(crate) fn open_pinned(app: &mut AppView, reference: &str) -> bool {
     if app.core.incognito {
         return false;
@@ -377,7 +384,10 @@ pub(crate) fn open_pinned(app: &mut AppView, reference: &str) -> bool {
             return false;
         }
     };
-    let mut session = match Document::parse(&pinned.program).and_then(Session::new) {
+    let document = Document::recover(&pinned.program)
+        .map(|(document, _)| document)
+        .map_err(|errors| anyhow::anyhow!(errors[0].message.clone()));
+    let mut session = match document.and_then(Session::new) {
         Ok(session) => session,
         Err(error) => {
             app.push_status(format!("{} cannot open: {error}", pinned.name));
@@ -406,15 +416,7 @@ pub(crate) fn open_pinned(app: &mut AppView, reference: &str) -> bool {
             saved: Some(pinned.record.clone()),
         },
     );
-    widgets.entries.insert(
-        key.clone(),
-        Entry {
-            session: Ok(session),
-            focus: 0,
-            error: String::new(),
-            scroll: 0,
-        },
-    );
+    widgets.entries.insert(key.clone(), Entry::new(Ok(session)));
     widgets.focused = Some(key);
     widgets.expanded = true;
     widgets.pinned = false;

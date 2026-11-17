@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use nexus_core::app::{Popup, SpaceMode};
+use dugix_core::app::{Popup, SpaceMode};
 
 use crate::app_view::AppView;
 
@@ -18,19 +18,17 @@ impl AppView {
         Ok(())
     }
 
-    /// Spaces matching the current fuzzy filter, best match first. Empty filter
-    /// keeps db order (default first, then creation order).
-    pub fn filtered_spaces(&self) -> Vec<&nexus_core::db::Space> {
+    pub fn filtered_spaces(&self) -> Vec<&dugix_core::db::Space> {
         let needle = self.space_filter.trim();
         if needle.is_empty() {
             return self.spaces_cache.iter().collect();
         }
-        nexus_core::app::fuzzy_filter_sorted(&self.spaces_cache, |s| {
-            nexus_core::app::fuzzy_score(&s.name, needle)
+        dugix_core::app::fuzzy_filter_sorted(&self.spaces_cache, |s| {
+            dugix_core::app::fuzzy_score(&s.name, needle)
         })
     }
 
-    pub fn selected_space(&self) -> Option<nexus_core::db::Space> {
+    pub fn selected_space(&self) -> Option<dugix_core::db::Space> {
         self.filtered_spaces()
             .get(self.space_selected)
             .map(|s| (*s).clone())
@@ -38,7 +36,7 @@ impl AppView {
 
     pub fn move_space_selection(&mut self, delta: i32) {
         self.space_selected =
-            nexus_core::app::clamp_cursor(self.space_selected, self.filtered_spaces().len(), delta);
+            dugix_core::app::clamp_cursor(self.space_selected, self.filtered_spaces().len(), delta);
     }
 
     pub fn space_filter_push(&mut self, c: char) {
@@ -56,11 +54,10 @@ impl AppView {
         self.space_mode = SpaceMode::Create;
     }
 
-    /// A named space cannot be renamed/deleted if it's the default.
     pub fn start_space_rename(&mut self) {
         if let Some(s) = self
             .selected_space()
-            .filter(|s| s.name != nexus_core::db::DEFAULT_SPACE)
+            .filter(|s| s.name != dugix_core::db::DEFAULT_SPACE)
         {
             self.space_edit = s.name;
             self.space_mode = SpaceMode::Rename;
@@ -88,7 +85,7 @@ impl AppView {
                 .core
                 .app_server
                 .as_ref()
-                .map(nexus_core::appserver::AppServer::registry)
+                .map(dugix_core::appserver::AppServer::registry)
             {
                 reg.rename_space(&s.name, &name);
             }
@@ -104,13 +101,10 @@ impl AppView {
         Ok(())
     }
 
-    /// Delete the highlighted space (default is never offered for delete —
-    /// gated by the popup's key handler). Sessions move to default; if the
-    /// active space was deleted, switch to default.
     pub fn confirm_space_delete(&mut self) -> Result<()> {
         if let Some(s) = self
             .selected_space()
-            .filter(|s| s.name != nexus_core::db::DEFAULT_SPACE)
+            .filter(|s| s.name != dugix_core::db::DEFAULT_SPACE)
         {
             self.core.db.delete_space(&s.id)?;
             self.core.space.remove_space_dir(&s.name)?;
@@ -133,30 +127,27 @@ impl AppView {
         self.popup = Popup::None;
     }
 
-    /// Ctrl+E/Ctrl+K target resolution for the space picker (the event loop
-    /// owns the editor handoff).
-    pub fn space_edit_target(&self) -> (Option<std::path::PathBuf>, Option<std::path::PathBuf>) {
-        let Some(s) = self.selected_space() else {
-            return (None, None);
-        };
-        (
-            self.core.instructions_path_for_space(&s.name),
-            self.core.memory_path_for_space(&s.name),
-        )
+    pub fn space_instructions_target(&self) -> Option<std::path::PathBuf> {
+        self.selected_space()
+            .and_then(|s| self.core.instructions_path_for_space(&s.name))
+    }
+
+    pub fn selected_space_name(&self) -> Option<String> {
+        self.selected_space().map(|s| s.name.clone())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_core::app::App;
-    use nexus_core::app::AppCommand;
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
+    use dugix_core::app::App;
+    use dugix_core::app::AppCommand;
+    use dugix_core::db::Db;
+    use dugix_core::space::Space;
 
     fn test_space() -> Space {
         Space {
-            root: std::env::temp_dir().join(format!("nexus-flow-test-{}", uuid::Uuid::new_v4())),
+            root: std::env::temp_dir().join(format!("dugix-flow-test-{}", uuid::Uuid::new_v4())),
         }
     }
 
@@ -208,6 +199,6 @@ mod tests {
 
         a.confirm_space_delete().unwrap(); // "work-2" still selected
         assert!(!a.spaces_cache.iter().any(|s| s.name == "work-2"));
-        assert_eq!(a.core.active_space.name, nexus_core::db::DEFAULT_SPACE); // untouched, wasn't active
+        assert_eq!(a.core.active_space.name, dugix_core::db::DEFAULT_SPACE); // untouched, wasn't active
     }
 }

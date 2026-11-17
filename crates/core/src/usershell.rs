@@ -8,19 +8,16 @@ use std::time::{Duration, Instant};
 /// Cached once per app, including failures (which are reported once).
 #[derive(Debug)]
 pub struct UserShell {
-    /// Validated shell executable.
     pub shell: PathBuf,
     /// Only definitions and PATH, never startup chatter.
     pub snapshot: Option<PathBuf>,
-    /// PATH captured after interactive startup.
     pub path: String,
-    /// Alias and function names available for completion.
     pub names: Vec<String>,
     /// Why setup could not be captured.
     pub warning: Option<String>,
 }
 
-/// Select a supported executable, otherwise the POSIX fallback.
+/// A supported executable, otherwise the POSIX fallback.
 #[must_use]
 pub fn select_shell(value: Option<&std::ffi::OsStr>) -> PathBuf {
     value
@@ -47,13 +44,12 @@ fn executable(path: &Path) -> bool {
     path.is_file()
 }
 
-/// Shell single-quoting, also used for paths containing spaces or apostrophes.
+/// Shell single-quoting; paths with spaces or apostrophes rely on it.
 #[must_use]
 pub fn quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 
-/// Display a directory without exposing the user's home prefix repeatedly.
 #[must_use]
 pub fn display_dir(path: &Path) -> String {
     display_with_home(path, std::env::var_os("HOME").as_deref().map(Path::new))
@@ -81,7 +77,7 @@ fn display_with_home(path: &Path, home: Option<&Path>) -> String {
 }
 
 impl UserShell {
-    /// Capture the supported portions of interactive startup without a terminal.
+    /// The supported portions of interactive startup, captured without a terminal.
     pub async fn load(data: &Path) -> Self {
         Self::build(
             select_shell(std::env::var_os("SHELL").as_deref()),
@@ -163,19 +159,19 @@ impl UserShell {
         private_write(names, b"").map_err(|e| e.to_string())?;
         let dump = match self.shell.file_name().and_then(|s| s.to_str()) {
             Some("bash") => {
-                r#"{ declare -f; alias -p; } >| "$NEXUS_DEFS"; { compgen -A function; compgen -A alias; } >| "$NEXUS_NAMES"; printf '%s' "$PATH" >| "$NEXUS_PATH""#
+                r#"{ declare -f; alias -p; } >| "$DUGIX_DEFS"; { compgen -A function; compgen -A alias; } >| "$DUGIX_NAMES"; printf '%s' "$PATH" >| "$DUGIX_PATH""#
             }
             Some("zsh") => {
-                r#"{ typeset -f; alias -L; typeset -p chpwd_functions 2>/dev/null; [[ -o extendedglob ]] && print 'setopt extendedglob'; [[ -o nullglob ]] && print 'setopt nullglob'; } >| "$NEXUS_DEFS"; printf '%s\n' ${(k)functions} ${(k)aliases} >| "$NEXUS_NAMES"; printf '%s' "$PATH" >| "$NEXUS_PATH""#
+                r#"{ typeset -f; alias -L; typeset -p chpwd_functions 2>/dev/null; [[ -o extendedglob ]] && print 'setopt extendedglob'; [[ -o nullglob ]] && print 'setopt nullglob'; } >| "$DUGIX_DEFS"; printf '%s\n' ${(k)functions} ${(k)aliases} >| "$DUGIX_NAMES"; printf '%s' "$PATH" >| "$DUGIX_PATH""#
             }
-            _ => r#"printf '%s' "$PATH" > "$NEXUS_PATH""#,
+            _ => r#"printf '%s' "$PATH" > "$DUGIX_PATH""#,
         };
         let mut command = tokio::process::Command::new(&self.shell);
         command
             .args(["-i", "-c", dump])
-            .env("NEXUS_DEFS", definitions)
-            .env("NEXUS_PATH", path)
-            .env("NEXUS_NAMES", names)
+            .env("DUGIX_DEFS", definitions)
+            .env("DUGIX_PATH", path)
+            .env("DUGIX_NAMES", names)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -200,8 +196,8 @@ impl UserShell {
         }
     }
 
-    /// Noninteractive wrapper: aliases expand in bash, and EXIT also records
-    /// cwd for commands containing an explicit `exit`.
+    /// Noninteractive wrapper: aliases expand in bash, and EXIT also records cwd
+    /// for commands containing an explicit `exit`.
     #[must_use]
     pub fn wrapper(&self, cmd: &str, cwd: &Path) -> String {
         let aliases = if self.shell.file_name().is_some_and(|name| name == "bash") {
@@ -212,8 +208,8 @@ impl UserShell {
         let source = self.snapshot.as_ref().map_or_else(String::new, |p| {
             format!(". {} 2>/dev/null || :\n", quote(&p.to_string_lossy()))
         });
-        // The user's `cd` may be a function (zoxide `--cmd cd`); entering the
-        // tracked directory must not run it or bump its ranking.
+        // The user's `cd` may be a function (zoxide `--cmd cd`); entering the tracked
+        // directory must not run it or bump its ranking.
         let cd = if self
             .shell
             .file_name()
@@ -224,7 +220,7 @@ impl UserShell {
             "cd"
         };
         format!(
-            "{aliases}{source}{cd} -- {} || exit\ntrap 'pwd -P > \"$NEXUS_CWD_FILE\"' EXIT\neval {}\nexit $?",
+            "{aliases}{source}{cd} -- {} || exit\ntrap 'pwd -P > \"$DUGIX_CWD_FILE\"' EXIT\neval {}\nexit $?",
             quote(&cwd.to_string_lossy()),
             quote(cmd)
         )
@@ -253,18 +249,16 @@ fn kill_group(group: Option<u32>) {
     let _ = group;
 }
 
-/// A shell word and its byte range in the composer. Quotes are decoded, not evaluated.
+/// A shell word and its byte range in the composer; quotes are decoded, not evaluated.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Word {
     /// Decoded prefix up to the cursor.
     pub text: String,
-    /// Replacement starts here.
     pub start: usize,
-    /// Replacement ends here (including any closing quote).
+    /// Including any closing quote.
     pub end: usize,
 }
 
-/// Split shell words, respecting quoted and backslash-escaped spaces.
 #[must_use]
 pub fn words(text: &str) -> Vec<Word> {
     let mut out = Vec::new();
@@ -315,8 +309,8 @@ pub fn words(text: &str) -> Vec<Word> {
     out
 }
 
-/// Programs that need the real terminal (a password prompt or a full-screen
-/// UI): the TUI hands them the terminal instead of capturing their output.
+/// Programs that need the real terminal (a password prompt or a full-screen UI):
+/// the TUI hands them the terminal instead of capturing their output.
 #[must_use]
 pub fn terminal_program(cmd: &str) -> Option<String> {
     words(cmd)
@@ -344,16 +338,15 @@ pub fn terminal_program(cmd: &str) -> Option<String> {
         .map(|word| word.text.clone())
 }
 
-/// A completion request's replacements, already escaped for shell insertion.
+/// Replacements already escaped for shell insertion.
 #[derive(Debug, Default)]
 pub struct Completion {
-    /// Byte range to replace.
     pub range: std::ops::Range<usize>,
-    /// Sorted, deduplicated alternatives.
+    /// Sorted and deduplicated.
     pub candidates: Vec<String>,
 }
 
-/// Complete off the UI thread; even a slow filesystem or zoxide cannot stall keys.
+/// Runs off the UI thread, so a slow filesystem or zoxide cannot stall keys.
 pub async fn complete(setup: &UserShell, text: &str, cursor: usize, cwd: &Path) -> Completion {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let setup_path = setup.path.clone();
@@ -537,7 +530,6 @@ fn escape(text: &str) -> String {
     })
 }
 
-/// Longest shared prefix on Unicode character boundaries.
 #[must_use]
 pub fn common_prefix(candidates: &[String]) -> String {
     let Some(first) = candidates.first() else {
@@ -568,7 +560,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     fn temp() -> PathBuf {
-        let root = std::env::temp_dir().join(format!("nexus-shell-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-shell-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("home/bin")).unwrap();
         root
     }
@@ -582,7 +574,7 @@ mod tests {
     async fn bash_snapshot_restores_definitions_path_and_exit_status() {
         let root = temp();
         let home = root.join("home");
-        std::fs::write(home.join(".bashrc"), "echo startup-noise\nalias greet='printf alias-ok'\nnexus_fn() { printf function-ok; }\nexport PATH=\"$HOME/bin:$PATH\"\n").unwrap();
+        std::fs::write(home.join(".bashrc"), "echo startup-noise\nalias greet='printf alias-ok'\ndugix_fn() { printf function-ok; }\nexport PATH=\"$HOME/bin:$PATH\"\n").unwrap();
         script(&home.join("bin/addon"), "#!/bin/sh\nprintf path-ok\n");
         let setup = UserShell::build(
             "/bin/bash".into(),
@@ -593,7 +585,7 @@ mod tests {
         .await;
         assert_eq!(setup.warning, None);
         assert!(setup.names.contains(&"greet".into()));
-        assert!(setup.names.contains(&"nexus_fn".into()));
+        assert!(setup.names.contains(&"dugix_fn".into()));
         assert!(
             setup
                 .path
@@ -610,10 +602,10 @@ mod tests {
         let output = tokio::process::Command::new(&setup.shell)
             .args([
                 "-c",
-                &setup.wrapper("greet; nexus_fn; addon; exit 23", &home),
+                &setup.wrapper("greet; dugix_fn; addon; exit 23", &home),
             ])
             .env("HOME", &home)
-            .env("NEXUS_CWD_FILE", &cwd_file)
+            .env("DUGIX_CWD_FILE", &cwd_file)
             .output()
             .await
             .unwrap();
@@ -635,8 +627,8 @@ mod tests {
         );
         app.interactive_ui = true;
         app.work_mode = crate::app::WorkMode::Agent;
-        app.user_shell.set(setup).unwrap();
-        app.run_user_command("greet; nexus_fn; addon".into())
+        app.user_command.shell.set(setup).unwrap();
+        app.run_user_command("greet; dugix_fn; addon".into())
             .unwrap();
         loop {
             if matches!(
@@ -658,9 +650,8 @@ mod tests {
     async fn failed_and_timed_out_startup_leave_no_snapshot() {
         let root = temp();
         let home = root.join("home");
-        // Only the hanging case gets the short timeout: under a loaded
-        // parallel test run bash alone can take longer than 150 ms to start,
-        // which turned "exited 9" into a spurious "timed out".
+        // Only the hanging case gets the short timeout: under a loaded parallel
+        // test run bash alone can take longer than 150 ms to start.
         for (rc, expected, timeout) in [
             ("exit 9", "shell setup exited", Duration::from_secs(10)),
             (
@@ -705,7 +696,7 @@ mod tests {
             .args(["-c", &setup.wrapper("greet; cd bin", &home)])
             .env("HOME", &home)
             .env("ZDOTDIR", &home)
-            .env("NEXUS_CWD_FILE", root.join("cwd"))
+            .env("DUGIX_CWD_FILE", root.join("cwd"))
             .output()
             .await
             .unwrap();
@@ -746,12 +737,12 @@ mod tests {
             std::fs::create_dir(root.join(name)).unwrap();
         }
         std::fs::write(root.join("file"), "").unwrap();
-        script(&root.join("home/bin/nexus-exec"), "#!/bin/sh\nexit 0\n");
+        script(&root.join("home/bin/dugix-exec"), "#!/bin/sh\nexit 0\n");
         let path = root.join("home/bin").to_string_lossy().into_owned();
         let local = |text: &str| {
             complete_local(
                 &path,
-                &["nexus-alias".into(), "_nexus-private".into()],
+                &["dugix-alias".into(), "_dugix-private".into()],
                 text,
                 text.len(),
                 &root,
@@ -759,7 +750,7 @@ mod tests {
             )
             .0
         };
-        assert_eq!(local("!nexus-").candidates, ["nexus-alias", "nexus-exec"]);
+        assert_eq!(local("!dugix-").candidates, ["dugix-alias", "dugix-exec"]);
         assert_eq!(local("!echo fo").candidates, ["folder/", "foo\\ bar/"]);
         assert_eq!(local("!echo 'foo b").candidates, ["foo\\ bar/"]);
         assert_eq!(local("!echo foo\\ b").candidates, ["foo\\ bar/"]);

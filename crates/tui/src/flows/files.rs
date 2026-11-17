@@ -1,6 +1,3 @@
-// Casts here are on bounded values: token counts, byte sizes, and
-// selection indices — never on unbounded input. JSON-derived indices in
-// provider/tools go through try_from instead.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -11,17 +8,14 @@ use anyhow::Result;
 
 use std::path::PathBuf;
 
-use nexus_core::app::{FilesMode, FilesTab, Popup};
-use nexus_core::filesearch;
+use dugix_core::app::{FilesMode, FilesTab, Popup};
+use dugix_core::filesearch;
 
 use crate::app_view::AppView;
 
-/// Rows the find picker shows at most.
 const PICKER_MAX: usize = 200;
 
 impl AppView {
-    /// Ctrl+N in /files: the system Open panel (several files at once) when
-    /// a desktop session can show one, otherwise the find picker.
     pub fn import_files(&mut self) {
         if !self.dialogs.available() {
             self.open_file_picker();
@@ -33,7 +27,6 @@ impl AppView {
         self.import_paths(&picked);
     }
 
-    /// Copy each path into the space, with one status line for the batch.
     pub fn import_paths(&mut self, paths: &[PathBuf]) {
         let mut imported = Vec::new();
         for path in paths {
@@ -52,16 +45,12 @@ impl AppView {
         }
     }
 
-    /// Open the find picker on the newest files in the usual drop folders.
     pub fn open_file_picker(&mut self) {
         self.picker_query.clear();
         self.files_mode = FilesMode::Pick;
         self.refresh_picker();
     }
 
-    /// Re-run the picker for its query: recent files when empty, path
-    /// completion for `/…` and `~…`, otherwise a background search whose
-    /// results replace the current ones when they land.
     fn refresh_picker(&mut self) {
         self.picker_selected = 0;
         self.picker_rx = None;
@@ -81,7 +70,6 @@ impl AppView {
         }
     }
 
-    /// A background search finished for the current query.
     pub fn finish_picker_search(&mut self, results: Vec<filesearch::Found>) {
         self.picker_rx = None;
         self.picker_results = results;
@@ -90,14 +78,13 @@ impl AppView {
 
     pub fn move_picker_selection(&mut self, delta: i32) {
         self.picker_selected =
-            nexus_core::app::clamp_cursor(self.picker_selected, self.picker_results.len(), delta);
+            dugix_core::app::clamp_cursor(self.picker_selected, self.picker_results.len(), delta);
     }
 
     pub fn picker_push(&mut self, c: char) {
         self.picker_type(c.encode_utf8(&mut [0; 4]));
     }
 
-    /// Append typed or pasted text to the query and search once for it.
     pub fn picker_type(&mut self, text: &str) {
         if text.is_empty() {
             return;
@@ -112,7 +99,6 @@ impl AppView {
         }
     }
 
-    /// Enter imports the highlighted file, or completes into a directory.
     pub fn picker_enter(&mut self) {
         let Some(found) = self.picker_results.get(self.picker_selected).cloned() else {
             return;
@@ -125,8 +111,6 @@ impl AppView {
         self.files_mode = FilesMode::Browse;
     }
 
-    /// Tab puts the highlighted entry's path in the query (a directory gets
-    /// its trailing slash), switching to path completion.
     pub fn picker_complete(&mut self) {
         let Some(found) = self.picker_results.get(self.picker_selected) else {
             return;
@@ -139,30 +123,15 @@ impl AppView {
         self.refresh_picker();
     }
 
-    /// Ctrl+O in /files: throw away the selected file's extracted text (and
-    /// vectors) and re-index it from disk with the current OCR engine — how a
-    /// tesseract-mangled book gets redone after configuring a VLM, without
-    /// re-importing.
     pub fn reextract_selected_file(&mut self) {
-        let Some(f) = self.core.files_cache.get(self.files_selected).cloned() else {
+        let Some(f) = self.core.caches.files.get(self.files_selected).cloned() else {
             return;
         };
         self.core.reextract_file(&f.name);
     }
 
-    /// Force OCR on the selected file, bypassing text extraction entirely.
-    /// Useful when `pdf_extract` gives unreliable text and you want VLM OCR
-    /// output instead.
-    pub fn reocr_selected_file(&mut self) {
-        let Some(f) = self.core.files_cache.get(self.files_selected).cloned() else {
-            return;
-        };
-        self.core.reocr_file(&f.name);
-    }
-
-    /// Delete the highlighted file: disk copy and index rows both go.
     pub fn confirm_files_delete(&mut self) -> Result<()> {
-        if let Some(f) = self.core.files_cache.get(self.files_selected).cloned() {
+        if let Some(f) = self.core.caches.files.get(self.files_selected).cloned() {
             self.core.delete_file(&f.name)?;
         }
         self.files_mode = FilesMode::Browse;
@@ -183,12 +152,21 @@ impl AppView {
             }
         }
         self.files_mode = FilesMode::Browse;
+        self.files_filter.clear();
         self.popup = Popup::Files;
+    }
+
+    /// Indices of the files the typed filter keeps.
+    pub fn files_rows(&self) -> Vec<usize> {
+        crate::ui::popups::list_filter::matching(
+            &self.files_filter,
+            self.core.caches.files.iter().map(|file| file.name.as_str()),
+        )
     }
 
     pub fn move_files_selection(&mut self, delta: i32) {
         self.files_selected =
-            nexus_core::app::clamp_cursor(self.files_selected, self.core.files_cache.len(), delta);
+            crate::ui::popups::list_filter::step(&self.files_rows(), self.files_selected, delta);
     }
 
     pub fn start_files_add(&mut self) {
@@ -196,8 +174,6 @@ impl AppView {
         self.files_mode = FilesMode::Add;
     }
 
-    /// Import the path typed/pasted in Add mode. Bad paths report in the status
-    /// line and return to Browse (nothing to roll back).
     pub fn confirm_files_add(&mut self) {
         let raw = self.files_edit.trim().to_string();
         self.files_mode = FilesMode::Browse;
@@ -215,20 +191,17 @@ impl AppView {
         }
     }
 
-    /// Ctrl+R in Browse: pre-fill the edit line with the current name.
     pub fn start_files_rename(&mut self) {
-        if let Some(f) = self.core.files_cache.get(self.files_selected) {
+        if let Some(f) = self.core.caches.files.get(self.files_selected) {
             self.files_edit = f.name.clone();
             self.files_mode = FilesMode::Rename;
         }
     }
 
-    /// Rename the highlighted file on disk; the rescan swaps the index rows
-    /// (old name dropped, new name re-extracted).
     pub fn confirm_files_rename(&mut self) {
         let new = self.files_edit.trim().to_string();
         self.files_mode = FilesMode::Browse;
-        let Some(f) = self.core.files_cache.get(self.files_selected).cloned() else {
+        let Some(f) = self.core.caches.files.get(self.files_selected).cloned() else {
             return;
         };
         if new.is_empty() || new == f.name {
@@ -238,18 +211,17 @@ impl AppView {
             self.push_status(e.to_string());
             return;
         }
-        // Re-point the cursor at the renamed row (the rescan reordered).
         self.files_selected = self
             .core
-            .files_cache
+            .caches
+            .files
             .iter()
             .position(|f| f.name == new)
             .unwrap_or(self.files_selected);
     }
 
-    /// Open the highlighted file in the system viewer (Enter in Browse).
     pub fn open_selected_file(&mut self) {
-        let Some(f) = self.core.files_cache.get(self.files_selected).cloned() else {
+        let Some(f) = self.core.caches.files.get(self.files_selected).cloned() else {
             return;
         };
         let path = self
@@ -259,16 +231,14 @@ impl AppView {
             .join(&f.name);
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         if ext == "md" {
-            self.pending_editor = Some(nexus_core::app::PendingEditor::ScriptFile(path));
+            self.pending_editor = Some(dugix_core::app::PendingEditor::ScriptFile(path));
         } else if crate::image_viewer::is_image_extension(ext) {
-            // Images get the viewer (terminal first); it says so itself when
-            // it falls back to the system viewer.
             self.open_image_target(
                 &path.to_string_lossy(),
                 &crate::image_viewer::Anchor::ByTarget,
                 crate::image_viewer::Return::Files,
             );
-            if self.popup == nexus_core::app::Popup::ImageViewer {
+            if self.popup == dugix_core::app::Popup::ImageViewer {
                 return;
             }
         } else {
@@ -281,13 +251,13 @@ impl AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_core::app::App;
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
+    use dugix_core::app::App;
+    use dugix_core::db::Db;
+    use dugix_core::space::Space;
 
     fn test_space() -> Space {
         Space {
-            root: std::env::temp_dir().join(format!("nexus-files-flow-{}", uuid::Uuid::new_v4())),
+            root: std::env::temp_dir().join(format!("dugix-files-flow-{}", uuid::Uuid::new_v4())),
         }
     }
 
@@ -306,14 +276,14 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("seen.txt"), "content").unwrap();
         a.run_command("files").unwrap();
-        assert_eq!(a.popup, nexus_core::app::Popup::Files);
-        assert_eq!(a.core.files_cache.len(), 1);
-        assert!(a.files_mode == nexus_core::app::FilesMode::Browse);
+        assert_eq!(a.popup, dugix_core::app::Popup::Files);
+        assert_eq!(a.core.caches.files.len(), 1);
+        assert!(a.files_mode == dugix_core::app::FilesMode::Browse);
     }
     /// A picker whose home is a temp folder holding `files`.
     fn picker_app(files: &[&str]) -> (AppView, PathBuf) {
         let mut a = test_app();
-        let home = std::env::temp_dir().join(format!("nexus-pick-{}", uuid::Uuid::new_v4()));
+        let home = std::env::temp_dir().join(format!("dugix-pick-{}", uuid::Uuid::new_v4()));
         for file in files {
             let path = home.join(file);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -346,7 +316,13 @@ mod tests {
 
         a.picker_enter();
         assert!(a.files_mode == FilesMode::Browse);
-        assert!(a.core.files_cache.iter().any(|f| f.name == "q3 report.txt"));
+        assert!(
+            a.core
+                .caches
+                .files
+                .iter()
+                .any(|f| f.name == "q3 report.txt")
+        );
         std::fs::remove_dir_all(home).unwrap();
     }
 
@@ -370,12 +346,12 @@ mod tests {
 
     #[test]
     fn ctrl_n_imports_what_the_open_panel_picks_or_falls_back_to_the_picker() {
-        use nexus_core::canvas::dialogs::Scripted;
+        use dugix_core::canvas::dialogs::Scripted;
         let (mut a, home) = picker_app(&["a.txt", "b.txt"]);
         let picked = a.picker_home.join("a.txt");
         a.dialogs = Box::new(Scripted::new([Some(picked)]));
         a.import_files();
-        assert!(a.core.files_cache.iter().any(|f| f.name == "a.txt"));
+        assert!(a.core.caches.files.iter().any(|f| f.name == "a.txt"));
         assert!(a.files_mode == FilesMode::Browse);
 
         a.dialogs = Box::new(Scripted::unavailable());
@@ -390,7 +366,13 @@ mod tests {
         a.open_files_popup(FilesTab::Files);
         let root = a.picker_home.display().to_string();
         a.paste(&format!("{root}/My\\ File.pdf '{root}/notes.md'"));
-        let names: Vec<&str> = a.core.files_cache.iter().map(|f| f.name.as_str()).collect();
+        let names: Vec<&str> = a
+            .core
+            .caches
+            .files
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
         assert!(
             names.contains(&"My File.pdf") && names.contains(&"notes.md"),
             "{names:?}"

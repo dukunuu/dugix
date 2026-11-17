@@ -10,7 +10,7 @@ fn png_pages_and_optional_visual_previews() {
     doc.theme.colors.insert("surface".into(), "#f5f5f7".into());
     doc.theme.colors.insert("border".into(), "#d2d2d7".into());
     let pages = layout::paginate(&doc, Some(&temp.0.join("assets")));
-    let preview = std::env::var_os("NEXUS_DOC_PREVIEWS").is_some();
+    let preview = std::env::var_os("DUGIX_DOC_PREVIEWS").is_some();
     let directory =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/doc-previews");
     if preview {
@@ -28,7 +28,7 @@ fn png_pages_and_optional_visual_previews() {
 }
 #[test]
 fn long_document_previews_when_requested() {
-    let Some(_) = std::env::var_os("NEXUS_DOC_PREVIEWS") else {
+    let Some(_) = std::env::var_os("DUGIX_DOC_PREVIEWS") else {
         return;
     };
     let doc = test_support::long();
@@ -126,4 +126,65 @@ fn suggestion_rechecks_keep_custom_design_resolver_through_storage() {
         threads[0].messages[0].edits[0].status,
         feedback::EditStatus::Outdated
     );
+}
+#[test]
+fn html_and_docx_color_code_by_syntax() {
+    let doc = crate::doc::test_support::checked(serde_json::json!({
+        "version": 1,
+        "title": "Code",
+        "blocks": [{"id": "c", "kind": "code", "lang": "rust", "text": "let x = \"<y>\";"}]
+    }));
+    let html = export::html::export(&doc, None, &mut vec![]).unwrap();
+    assert!(
+        html.contains("<span class=\"hl-accent\">let</span>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<span class=\"hl-accent2\">&quot;&lt;y&gt;&quot;</span>")
+            || html.contains("<span class=\"hl-accent2\">\"&lt;y&gt;\"</span>"),
+        "{html}"
+    );
+    assert!(html.contains(".hl-accent{color:"));
+    let bytes = export::docx::export(&doc, None, &[], &mut vec![]).unwrap();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml)
+        .unwrap();
+    let theme = crate::doc::inline::theme(&doc);
+    let accent = crate::deck::text::color(&theme, "accent");
+    assert!(
+        xml.contains(&format!(
+            "<w:color w:val=\"{}\"/>",
+            accent.trim_start_matches('#')
+        )),
+        "{xml}"
+    );
+}
+#[test]
+fn markdown_source_round_trips_and_keeps_block_ids() {
+    let doc = sample();
+    let source = markdown::render(&doc);
+    let same = markdown::apply_source(&doc, &source).unwrap();
+    assert_eq!(
+        serde_json::to_value(&same.blocks).unwrap(),
+        serde_json::to_value(&doc.blocks).unwrap(),
+        "an untouched source changes nothing"
+    );
+    assert_eq!(same.footnotes, doc.footnotes);
+    let edited = source
+        .replacen("A carefully set document", "A freshly set document", 1)
+        .replacen("# Research report", "# Field report", 1);
+    let next = markdown::apply_source(&doc, &edited).unwrap();
+    assert_eq!(next.title, "Field report");
+    let intro = next
+        .blocks
+        .iter()
+        .find(|b| b.id == "intro")
+        .expect("the edited paragraph keeps its id");
+    assert!(intro.text().unwrap().starts_with("A freshly set document"));
+    assert_eq!(next.blocks.len(), doc.blocks.len());
+    let added = markdown::apply_source(&doc, &format!("{source}\nOne more paragraph.\n")).unwrap();
+    assert_eq!(added.blocks.len(), doc.blocks.len() + 1);
+    let ids: std::collections::HashSet<_> = added.blocks.iter().map(|b| b.id.clone()).collect();
+    assert_eq!(ids.len(), added.blocks.len(), "ids stay unique");
 }

@@ -88,8 +88,8 @@ pub fn import_bytes(
                 hex
             }),
     });
-    // Asset paths are relative to design/assets, and can be materialized beside
-    // any deck without losing the original content-addressed design artwork.
+    // Asset paths are relative to design/assets, so they materialize beside any
+    // deck without losing the original content-addressed artwork.
     for layout in design.slide.layouts.values_mut() {
         fn paths(nodes: &mut [crate::deck::Node], slug: &str) {
             for node in nodes {
@@ -118,6 +118,14 @@ pub fn import_bytes(
         design,
         warnings,
     })
+}
+
+/// A Word file's own look (theme fonts and colors, text styles, alignment) as a
+/// checked design, without storing it. A doc imported from Word keeps its styles.
+pub(crate) fn word_design(bytes: &[u8]) -> Result<Design> {
+    let (mut design, _) = word::extract(bytes)?;
+    derive_surfaces(&mut design);
+    Design::check(&serde_json::to_string(&design)?).map_err(|errors| anyhow::anyhow!("{errors:?}"))
 }
 
 fn derive_surfaces(design: &mut Design) {

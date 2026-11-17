@@ -1,9 +1,9 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js";
-import type { NexusStore } from "./state";
+import type { DugixStore } from "./state";
 interface AppEntry { name: string; url: string | null; served_from: string | null }
 interface Source { content: string; hash: string }
 
-export function AppsPage(props: { store: NexusStore }) {
+export function AppsPage(props: { store: DugixStore }) {
   const [apps, setApps] = createSignal<AppEntry[]>([]);
   const [selected, setSelected] = createSignal<AppEntry>();
   const [files, setFiles] = createSignal<string[]>([]);
@@ -98,7 +98,7 @@ export function AppsPage(props: { store: NexusStore }) {
     <button disabled={busy()} onClick={() => { if (discard()) void catalog(); }}>Refresh apps</button>
     <Show when={error()}><p class="error-banner" role="alert">{error()}</p></Show>
     <Show when={busy()}><p role="status">Loading…</p></Show>
-    <div class="app-catalog"><For each={apps()} fallback={<Show when={!busy()}><p class="muted">No apps in this space. Ask Nexus to build one in Chat.</p></Show>}>{(app) => <button classList={{ selected: selected()?.name === app.name }} disabled={busy()} onClick={() => void select(app)}>{app.name}</button>}</For></div>
+    <div class="app-catalog"><For each={apps()} fallback={<Show when={!busy()}><p class="muted">No apps in this space. Ask Dugix to build one in Chat.</p></Show>}>{(app) => <button classList={{ selected: selected()?.name === app.name }} disabled={busy()} onClick={() => void select(app)}>{app.name}</button>}</For></div>
     <Show when={selected()}>{(app) => <div class="app-workbench"><h2>{app().name}</h2>
       <Show when={app().url} fallback={<><p class="muted">App server unavailable or app not registered.</p><button disabled={busy()} onClick={() => void register()}>Register app</button></>}>
         <a class="app-launch" href={appUrl()} target="_blank" rel="noopener noreferrer">Launch app ↗</a>

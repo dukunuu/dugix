@@ -1,12 +1,5 @@
 //! The MCP client: version negotiation, requests with timeouts and
 //! cancellation, `tools/list` with pagination, `tools/call`.
-//!
-//! Negotiation follows the design: try `server/discover` first. A server that
-//! answers speaks the stateless 2026-07-28 revision (every request carries
-//! `_meta`; no session). A server that answers "method not found" -- or an
-//! HTTP 4xx for it -- is a 2025 server: `initialize` offering 2025-11-25,
-//! accept 2025-11-25 / 2025-06-18 / 2025-03-26, send
-//! `notifications/initialized`, keep the `Mcp-Session-Id`.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -15,16 +8,14 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use super::protocol::{
-    ACCEPT_LEGACY, CallResult, METHOD_NOT_FOUND, OFFER_LEGACY, PROTOCOL_2026, ResultType, ToolInfo,
-    ToolsPage, client_info, notification, request, with_meta,
+    ACCEPT_LEGACY, CallResult, OFFER_LEGACY, PROTOCOL_2026, ResultType, ToolInfo, ToolsPage,
+    client_info, notification, request, with_meta,
 };
 use super::transport::{McpError, Signals, Transport};
 
-/// Most tools one server may list; a runaway paginator stops here.
 const MAX_TOOLS: usize = 2_000;
 const MAX_PAGES: usize = 50;
 
-/// Per-connector request timeouts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Timeouts {
     pub connect: Duration,
@@ -42,12 +33,10 @@ impl Default for Timeouts {
     }
 }
 
-/// What negotiation settled on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Negotiated {
-    /// The protocol revision in use.
     pub protocol: String,
-    /// 2026-style: no `initialize`, `_meta` on every request.
+    /// The stateless 2026 revision: no `initialize`, `_meta` on every request.
     pub stateless: bool,
     pub server_name: Option<String>,
     pub instructions: Option<String>,
@@ -66,7 +55,6 @@ struct Inner {
 #[derive(Clone)]
 pub struct Session(Arc<Inner>);
 
-/// Sends `notifications/cancelled` if its request is abandoned.
 struct CancelOnDrop {
     session: Session,
     id: u64,
@@ -107,11 +95,6 @@ impl Drop for CancelOnDrop {
 }
 
 impl Session {
-    /// Negotiate with the server behind `transport`.
-    ///
-    /// # Errors
-    /// Unreachable server, sign-in required, a protocol version nexus does
-    /// not speak, or no answer within the connect timeout.
     pub async fn connect(
         transport: Transport,
         signals: Arc<Signals>,
@@ -166,7 +149,10 @@ impl Session {
                 }
                 self.initialize().await
             }
-            Err(McpError::Rpc(error)) if error.code == METHOD_NOT_FOUND => self.initialize().await,
+            // Strict legacy servers reject any request before initialize, not just unknown
+            // methods. Stdio bridges may wrap that rejection in their own RPC error code.
+            // Discovery is only a probe: try initialize once, preserving any error it returns.
+            Err(McpError::Rpc(_)) => self.initialize().await,
             Err(McpError::Http { status, .. }) if (400..500).contains(&status) => {
                 self.initialize().await
             }
@@ -192,7 +178,7 @@ impl Session {
             .unwrap_or_default();
         if !ACCEPT_LEGACY.contains(&chosen) {
             return Err(McpError::Protocol(format!(
-                "the server speaks protocol {chosen:?}, which nexus does not"
+                "the server speaks protocol {chosen:?}, which dugix does not"
             )));
         }
         inner.transport.configure(chosen, false);
@@ -221,19 +207,16 @@ impl Session {
         })?
     }
 
-    /// What was negotiated.
     #[must_use]
     pub fn negotiated(&self) -> Negotiated {
         self.0.negotiated.lock().expect("negotiated").clone()
     }
 
-    /// Whether the transport has died.
     #[must_use]
     pub fn is_closed(&self) -> bool {
         self.0.signals.is_closed()
     }
 
-    /// The signals this session's transport raises.
     #[must_use]
     pub fn signals(&self) -> &Arc<Signals> {
         &self.0.signals
@@ -267,12 +250,7 @@ impl Session {
         }
     }
 
-    /// Send one request with this session's rules (`_meta` when stateless,
-    /// one re-`initialize` when a stateful server forgot us, one retry when
-    /// a read-only request's stream broke).
-    ///
-    /// # Errors
-    /// Anything [`McpError`] describes.
+    /// Retries a broken stream once, except for `tools/call`, which may have run.
     pub async fn request(
         &self,
         method: &str,
@@ -306,11 +284,7 @@ impl Session {
         }
     }
 
-    /// Every tool the server lists, following `nextCursor`. The second
-    /// value is the server's `ttlMs`, if it gave one.
-    ///
-    /// # Errors
-    /// A page failed to load.
+    /// Every tool the server lists, following `nextCursor`; the second value is its `ttlMs`.
     pub async fn list_tools(&self) -> Result<(Vec<ToolInfo>, Option<u64>), McpError> {
         let mut tools = Vec::new();
         let mut ttl = None;
@@ -340,12 +314,7 @@ impl Session {
         Ok((tools, ttl))
     }
 
-    /// Call one tool.
-    ///
-    /// # Errors
-    /// Transport failure, a JSON-RPC error, or a server that wants input
-    /// nexus cannot give yet. A tool that ran and failed is `Ok` with
-    /// `is_error` set.
+    /// A tool that ran and failed is `Ok` with `is_error` set.
     pub async fn call_tool(&self, name: &str, arguments: Value) -> Result<CallResult, McpError> {
         let params = json!({"name": name, "arguments": arguments});
         let result = self
@@ -355,11 +324,11 @@ impl Session {
         match parsed.result_type {
             ResultType::Complete => Ok(parsed),
             ResultType::InputRequired => Err(McpError::Unsupported(
-                "the server asked for more input (input_required), which nexus cannot answer yet"
+                "the server asked for more input (input_required), which dugix cannot answer yet"
                     .into(),
             )),
             ResultType::Other => Err(McpError::Unsupported(
-                "the server returned a result type nexus does not understand".into(),
+                "the server returned a result type dugix does not understand".into(),
             )),
         }
     }

@@ -19,7 +19,6 @@ impl Backend {
         })
     }
 
-    /// A deck as a file in `format`, not yet written anywhere.
     pub(super) fn deck_output(
         &self,
         deck: &deck::Deck,
@@ -27,7 +26,7 @@ impl Backend {
         format: deck::export::Format,
         template: Option<&str>,
     ) -> Result<deck::export::Export> {
-        nexus_core::design::template::export_deck(
+        dugix_core::design::template::export_deck(
             deck,
             Some(&asset_root(path)?),
             &self.files_dir,
@@ -44,7 +43,7 @@ impl Backend {
         Self::show_in_folder(path)
     }
 
-    /// Open the file manager on `path`, through an argv and never a shell.
+    /// Open the file manager through an argv, never a shell.
     pub(super) fn show_in_folder(path: &Path) -> Result<Event> {
         let (program, args) = reveal_argv(path, std::env::consts::OS);
         let mut child = std::process::Command::new(program).args(args).spawn()?;
@@ -76,7 +75,7 @@ mod tests {
 
     #[test]
     fn export_defaults_uniquifies_and_returns_warnings_without_changing_deck() {
-        let temp = std::env::temp_dir().join(format!("nexus-export-{}", uuid::Uuid::new_v4()));
+        let temp = std::env::temp_dir().join(format!("dugix-export-{}", uuid::Uuid::new_v4()));
         let mut backend = Backend::start(None, &temp.join("files"), &temp.join("data")).unwrap();
         let before = backend.deck.clone();
         let mut paths = Vec::new();

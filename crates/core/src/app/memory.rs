@@ -1,266 +1,211 @@
-// Casts here are on bounded values: token counts, byte sizes, and
-// selection indices — never on unbounded input. JSON-derived indices in
-// provider/tools go through try_from instead.
-#![allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss,
-    clippy::cast_sign_loss
-)]
-use super::{App, MemoryOp};
+//! Memory snapshots, recall hints, editing, and tidying for conversations.
+
+#[cfg(test)]
+#[path = "memory_tests.rs"]
+mod tests;
+
+use std::collections::HashSet;
+use std::path::PathBuf;
+
+use anyhow::{Context as _, Result};
+
+use super::App;
 use crate::db::Message;
-use crate::prompts;
-use crate::provider::{ChatMessage, ChatParams};
-use std::fmt::Write as _;
-use tokio::sync::mpsc;
+use crate::memory::{self, book, recall};
+
+pub(super) fn note(role: &str, content: String) -> Message {
+    Message {
+        role: role.to_string(),
+        content,
+        model: None,
+        reasoning: None,
+        tokens: None,
+        secs: None,
+        cost: None,
+        phrase: None,
+        persona: None,
+        created_at: Some(chrono::Utc::now().to_rfc3339()),
+    }
+}
 
 impl App {
-    // --- memory (per-space, extracted after every assistant reply) ---
-
-    /// Raw contents of the active space's memory file, capped to ~120k chars
-    /// (~30k tokens — headroom is cheap on 1M-context models; this just stops
-    /// a runaway file from eating the whole budget).
-    pub fn read_memory(&self) -> String {
-        let text = std::fs::read_to_string(self.space.memory_path(&self.active_space.name))
-            .unwrap_or_default();
-        text.chars().take(120_000).collect()
-    }
-
-    /// Reload the active session's memory snapshot and begin a new prompt-cache
-    /// epoch. New inferred facts normally do not call this while a session is
-    /// active; switching sessions or an explicit refresh does.
+    /// Recompute the memory table of contents; it reaches the prompt only when a prefix is built.
     pub fn refresh_memory_snapshot(&mut self) {
-        self.memory_snapshot = self.read_memory();
-        self.bump_cache_epoch();
+        let conn = self.db.conn();
+        let space = &self.active_space.id;
+        let chapters = memory::visible_chapters(conn, space).unwrap_or_default();
+        let facts = memory::visible_facts(conn, space).unwrap_or_default();
+        let labels = memory::share_labels(conn, space, &chapters).unwrap_or_default();
+        self.memory_docs = book::docs(&self.space.files_dir(&self.active_space.name));
+        self.memory_snapshot = book::toc_with_labels(&chapters, &facts, &self.memory_docs, &labels);
+        self.memory_tidy_due = chapters
+            .iter()
+            .filter(|c| {
+                facts.iter().filter(|f| f.chapter_id == c.id).count() > memory::TIDY_HINT_FACTS
+            })
+            .count();
     }
 
-    /// Return the memory text that is stable for the active cache epoch.
     #[must_use]
     pub fn memory_snapshot(&self) -> &str {
         &self.memory_snapshot
     }
 
-    /// Advance the app-local prompt-cache epoch after a serialized-prefix
-    /// boundary such as a memory or prompt refresh.
+    #[must_use]
+    pub fn memory_tidy_due(&self) -> usize {
+        self.memory_tidy_due
+    }
+
+    /// Declare a rebuild point: the active session's frozen prompt prefix is
+    /// rebuilt on its next request, under a new provider-cache lane.
     pub(crate) fn bump_cache_epoch(&mut self) {
         self.cache_epoch = self.cache_epoch.wrapping_add(1);
-        self.context_warned = false;
-        self.prompt_datetime = chrono::Utc::now()
-            .format("%Y-%m-%d %H:%M UTC, %A")
-            .to_string();
-        // The exact total belongs to the previous serialized prompt/model
-        // lane. Let the next request establish a fresh value rather than
-        // pinning the context bar to an unrelated boundary.
-        self.context_total = None;
-        self.last_cache_rate = None;
-        self.turn_cache = super::CacheTally::default();
+        if let Some(id) = self.session.as_ref().map(|s| s.id.clone()) {
+            self.invalidate_prefix(&id);
+        }
+        self.meter.warned = false;
+        // Exact usage from a different prompt/model lane cannot measure this epoch.
+        self.meter.total = None;
+        self.meter.last_cache_rate = None;
+        self.meter.turn_cache = super::CacheTally::default();
     }
 
-    /// Build a non-sensitive cache-lane key for one session and epoch.
-    #[must_use]
-    pub(crate) fn prompt_cache_key_for(&self, session_id: &str) -> String {
-        format!("{session_id}:{}", self.cache_epoch)
-    }
-
-    /// After an assistant reply, ask the helper model for ADD/UPDATE/DELETE ops
-    /// against the space's fact file. No-op if no backend is signed in or the
-    /// last exchange is unavailable.
-    pub fn maybe_extract_memory(&mut self) {
-        if !self.memory_extraction {
-            return;
+    pub(super) fn memory_hint(&self, text: &str) -> Option<recall::Recall> {
+        if self.incognito {
+            return None;
         }
-        let Some((provider, raw_model)) = self.helper_backend() else {
-            return;
-        };
-        let Some((user_msg, assistant_msg)) = latest_memory_exchange(&self.messages) else {
-            return;
-        };
-        let facts = self.read_memory();
-        let space = self.active_space.name.clone();
-        let prompt_cache_key = self
-            .session
-            .as_ref()
-            .map(|session| format!("memory:{}", self.prompt_cache_key_for(&session.id)));
-        let (tx, rx) = mpsc::unbounded_channel();
-        self.memory_rx = Some(rx);
-        let provider = provider.usage_kind("memory");
-        tokio::spawn(async move {
-            let truncate = |s: &str| s.chars().take(2000).collect::<String>();
-            let prompt = prompts::render(
-                prompts::MEMORY,
-                &[
-                    ("facts", &facts),
-                    ("user", &truncate(&user_msg.content)),
-                    ("assistant", &truncate(&assistant_msg.content)),
-                ],
-            );
-            let msgs = vec![ChatMessage::text("user", prompt)];
-            let params = ChatParams {
-                prompt_cache_key,
-                ..ChatParams::default()
-            };
-            if let Ok(completion) = provider
-                .complete_with_params(&raw_model, msgs, &params)
-                .await
-            {
-                let ops = parse_memory_ops(&completion.text);
-                let _ = tx.send((space, ops));
-            }
-        });
-    }
-
-    /// Apply extracted ops to the active space's memory file, if it's still the
-    /// active one (a meanwhile space-switch discards stale results).
-    pub fn on_memory_result(&mut self, result: Option<(String, Vec<MemoryOp>)>) {
-        self.memory_rx = None;
-        let Some((space, ops)) = result else { return };
-        if space != self.active_space.name || ops.is_empty() {
-            return;
-        }
-        // Ids in `ops` refer to the *original* numbering, so resolve updates/
-        // deletes against that fixed list before appending adds — mutating the
-        // vector in place as ops are applied would shift later ids underfoot.
-        let mut updates: std::collections::HashMap<usize, String> =
-            std::collections::HashMap::new();
-        let mut deletes: std::collections::HashSet<usize> = std::collections::HashSet::new();
-        let mut adds: Vec<String> = Vec::new();
-        for op in ops {
-            match op {
-                MemoryOp::Add(text) => adds.push(text),
-                MemoryOp::Update(id, text) => {
-                    updates.insert(id, text);
-                }
-                MemoryOp::Delete(id) => {
-                    deletes.insert(id);
-                }
-            }
-        }
-        let mut facts: Vec<String> = self
-            .read_memory()
-            .lines()
-            .filter_map(parse_fact_line)
-            .map(|(_, text)| text)
-            .enumerate()
-            .filter(|(i, _)| !deletes.contains(&(i + 1)))
-            .map(|(i, text)| updates.remove(&(i + 1)).unwrap_or(text))
-            .collect();
-        facts.extend(adds);
-        let body: String = facts
+        let already: HashSet<String> = self
+            .messages
             .iter()
-            .enumerate()
-            .fold(String::new(), |mut b, (i, f)| {
-                let _ = writeln!(b, "{}. {f}", i + 1);
-                b
-            });
-        let _ = self.space.ensure_space_dir(&self.active_space.name);
-        let _ = std::fs::write(self.space.memory_path(&self.active_space.name), body);
-        // A blank/new chat has no active run to protect, so make a completed
-        // background write visible to the next request. Active sessions keep
-        // their frozen snapshot until the user switches/restarts them.
-        if self.session.is_none() {
+            .filter(|m| m.role == "recall")
+            .filter_map(|m| recall::Recall::from_row(&m.content))
+            .flat_map(|r| r.targets.into_iter().map(|t| t.key))
+            .collect();
+        let conn = self.db.conn();
+        let space = &self.active_space.id;
+        recall::hint(
+            text,
+            &memory::visible_chapters(conn, space).ok()?,
+            &memory::visible_facts(conn, space).ok()?,
+            &self.memory_docs,
+            &already,
+        )
+    }
+
+    pub(super) fn push_note(
+        &mut self,
+        session_id: &str,
+        role: &str,
+        content: String,
+    ) -> Result<()> {
+        if !self.incognito {
+            self.db.insert_message(
+                session_id, role, &content, None, None, None, None, None, None,
+            )?;
+        }
+        self.messages.push(note(role, content));
+        Ok(())
+    }
+
+    fn space_id_by_name(&self, name: &str) -> Result<String> {
+        self.db
+            .list_spaces()?
+            .into_iter()
+            .find(|s| s.name == name)
+            .map(|s| s.id)
+            .with_context(|| format!("no space named {name:?}"))
+    }
+
+    pub fn memory_edit_file(&self, space_name: &str) -> Result<PathBuf> {
+        let space = self.space_id_by_name(space_name)?;
+        let conn = self.db.conn();
+        let text = book::render_edit(
+            &memory::chapters(conn, &space)?,
+            &memory::facts(conn, &space)?,
+        );
+        self.space.ensure_space_dir(space_name)?;
+        let path = self.space.space_dir(space_name).join("memory.edit.md");
+        std::fs::write(&path, text)?;
+        Ok(path)
+    }
+
+    pub fn finish_memory_edit(&mut self, space_name: &str, path: &std::path::Path) -> Result<()> {
+        let space = self.space_id_by_name(space_name)?;
+        let text = std::fs::read_to_string(path)?;
+        let summary = book::apply_edit(
+            self.db.conn(),
+            &space,
+            &book::parse_edit(&text),
+            book::opened_at(&text),
+        )?;
+        let _ = std::fs::remove_file(path);
+        if space == self.active_space.id {
             self.refresh_memory_snapshot();
+            self.refresh_toolbox();
         }
+        self.push_status(summary.to_string());
+        Ok(())
     }
-}
 
-/// Latest user→assistant exchange worth memory extraction. Tool results are
-/// stored as transcript messages between the user and final assistant answer,
-/// so don't require the final two visible rows to be exactly user/assistant.
-fn latest_memory_exchange(messages: &[Message]) -> Option<(Message, Message)> {
-    let assistant_idx = messages
-        .iter()
-        .rposition(|m| m.role == "assistant" && m.persona.is_none())?;
-    let user_idx = messages[..assistant_idx]
-        .iter()
-        .rposition(|m| m.role == "user")?;
-    Some((messages[user_idx].clone(), messages[assistant_idx].clone()))
-}
+    pub fn memory_markdown(&self) -> Result<String> {
+        let conn = self.db.conn();
+        let space = &self.active_space.id;
+        Ok(book::render_edit(
+            &memory::chapters(conn, space)?,
+            &memory::facts(conn, space)?,
+        ))
+    }
 
-/// Parse one numbered fact line (`"3. some fact"`) into `(id, text)`.
-pub fn parse_fact_line(line: &str) -> Option<(usize, String)> {
-    let (num, rest) = line.split_once(". ")?;
-    let id: usize = num.trim().parse().ok()?;
-    Some((id, rest.trim().to_string()))
-}
+    pub fn save_memory_markdown(&mut self, text: &str) -> Result<book::EditSummary> {
+        let summary = book::apply_edit(
+            self.db.conn(),
+            &self.active_space.id,
+            &book::parse_edit(text),
+            book::opened_at(text),
+        )?;
+        self.refresh_memory_snapshot();
+        self.refresh_toolbox();
+        Ok(summary)
+    }
 
-/// Parse the memory model's reply into a list of ops. Tolerates surrounding
-/// prose/fences by extracting the first `[...]`; malformed or unrecognized
-/// entries are silently skipped rather than failing the whole batch.
-pub fn parse_memory_ops(text: &str) -> Vec<MemoryOp> {
-    let Some(start) = text.find('[') else {
-        return Vec::new();
-    };
-    let Some(end) = text.rfind(']') else {
-        return Vec::new();
-    };
-    let Some(json) = text.get(start..=end) else {
-        return Vec::new();
-    };
-    let Ok(arr) = serde_json::from_str::<serde_json::Value>(json) else {
-        return Vec::new();
-    };
-    let Some(arr) = arr.as_array() else {
-        return Vec::new();
-    };
-    arr.iter()
-        .filter_map(|v| {
-            let op = v.get("op")?.as_str()?;
-            match op {
-                "add" => Some(MemoryOp::Add(v.get("text")?.as_str()?.trim().to_string())),
-                "update" => Some(MemoryOp::Update(
-                    v.get("id")?.as_u64()? as usize,
-                    v.get("text")?.as_str()?.trim().to_string(),
-                )),
-                "delete" => Some(MemoryOp::Delete(v.get("id")?.as_u64()? as usize)),
-                _ => None,
-            }
-        })
-        .collect()
-}
+    pub(super) fn memory_share(
+        &mut self,
+        title: &str,
+        target: Option<&memory::ShareTarget>,
+    ) -> Result<()> {
+        let conn = self.db.conn();
+        let space = &self.active_space.id;
+        let Some(target) = target else {
+            let listing = memory::sharing_list(conn, space)?;
+            self.push_status(listing);
+            return Ok(());
+        };
+        let chapter = memory::find_chapter(conn, space, title)?
+            .with_context(|| format!("no chapter titled {title:?} in this space"))?;
+        let chapter = memory::share_chapter(conn, &chapter.id, target.resolve(conn)?)?;
+        let status = if chapter.shared_with == memory::Share::Private {
+            format!("{:?} is private", chapter.title)
+        } else {
+            let labels = memory::share_labels(conn, space, std::slice::from_ref(&chapter))?;
+            format!(
+                "{:?} {}",
+                chapter.title,
+                labels[&chapter.id]
+                    .trim()
+                    .trim_start_matches('(')
+                    .trim_end_matches(')')
+            )
+        };
+        self.refresh_memory_snapshot();
+        self.push_status(status);
+        Ok(())
+    }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn msg(role: &str, content: &str) -> Message {
-        Message {
-            role: role.to_string(),
-            content: content.to_string(),
-            model: None,
-            reasoning: None,
-            tokens: None,
-            secs: None,
-            cost: None,
-            phrase: None,
-            persona: None,
-            created_at: None,
+    pub fn memory_tidy(&mut self) -> Result<()> {
+        if self.incognito {
+            self.push_status("memory is off in incognito");
+            return Ok(());
         }
-    }
-
-    #[test]
-    fn latest_memory_exchange_skips_tool_rows_between_user_and_assistant() {
-        let messages = vec![
-            msg("user", "remember I prefer terse answers"),
-            msg("tool_call", "search result"),
-            msg("assistant", "Noted."),
-        ];
-
-        let (user, assistant) = latest_memory_exchange(&messages).unwrap();
-        assert_eq!(user.content, "remember I prefer terse answers");
-        assert_eq!(assistant.content, "Noted.");
-    }
-
-    #[test]
-    fn latest_memory_exchange_ignores_persona_round_replies() {
-        let mut persona = msg("assistant", "persona chatter");
-        persona.persona = Some("Skeptic".to_string());
-        let messages = vec![
-            msg("user", "remember x"),
-            persona,
-            msg("assistant", "final"),
-        ];
-
-        let (_, assistant) = latest_memory_exchange(&messages).unwrap();
-        assert_eq!(assistant.content, "final");
+        self.send_message(crate::prompts::render(crate::prompts::MEMORY_TIDY, &[]))
     }
 }

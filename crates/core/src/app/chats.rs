@@ -1,5 +1,3 @@
-//! Low-priority chat work on the shared embedding channel.
-
 use std::time::{Duration, Instant};
 
 use crate::db::chats;
@@ -16,11 +14,12 @@ impl App {
     pub(super) fn index_chats(&mut self) {
         let _ = chats::index_pending(self.db.conn());
         self.update_chat_index_status();
-        self.next_chat_index = Instant::now() + Duration::from_secs(5);
+        self.index.next_chat_index = Instant::now() + Duration::from_secs(5);
     }
 
     pub(super) fn update_chat_index_status(&mut self) {
         let identity = self
+            .index
             .embedding_backend
             .as_ref()
             .and_then(|b| b.identity())
@@ -28,7 +27,7 @@ impl App {
         if let Ok((indexed, total)) =
             chats::progress(self.db.conn(), &self.active_space.id, identity.as_deref())
         {
-            self.chat_index_status = format!("chats: {indexed} of {total} indexed");
+            self.index.chat_index_status = format!("chats: {indexed} of {total} indexed");
         }
     }
 
@@ -46,9 +45,9 @@ impl App {
             .iter()
             .map(|(_, _, text)| embedder.document(chats::CHUNK_TITLE, text))
             .collect();
-        self.embedding_chat_job = Some(ChatEmbedJob { identity, chunks });
+        self.index.embedding_chat_job = Some(ChatEmbedJob { identity, chunks });
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        self.embed_rx = Some(rx);
+        self.index.embed_rx = Some(rx);
         let space = self.active_space.id.clone();
         handle.spawn(async move {
             let result = embedder
@@ -67,7 +66,7 @@ impl App {
     }
 
     pub(super) fn on_chat_embed_done(&mut self, result: Result<Vec<(i64, Vec<f32>)>, String>) {
-        let Some(job) = self.embedding_chat_job.take() else {
+        let Some(job) = self.index.embedding_chat_job.take() else {
             return;
         };
         let result = result.and_then(|vectors| {
@@ -78,12 +77,11 @@ impl App {
                 .map_err(|e| e.to_string())
         });
         if let Err(error) = result {
-            self.embedding_status = format!("embeddings: {error} · keyword search available");
-            self.next_chat_index = Instant::now() + Duration::from_secs(60);
+            self.index.embedding_status = format!("embeddings: {error} · keyword search available");
+            self.index.next_chat_index = Instant::now() + Duration::from_secs(60);
         }
         self.update_chat_index_status();
-        // Do not chain chat jobs: one bounded batch per background tick leaves
-        // foreground work and newly imported files priority over backfill.
+        // One batch per tick gives foreground work and file imports priority.
     }
 }
 

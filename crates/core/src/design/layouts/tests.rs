@@ -168,7 +168,7 @@ fn values(name: &str) -> BTreeMap<String, String> {
     let common = match name {
         "cover_image" => vec![
             ("image", "assets/landscape1.png"),
-            ("kicker", "NEXUS / FIELD NOTES 2027"),
+            ("kicker", "DUGIX / FIELD NOTES 2027"),
             ("title", "Make the future\nfeel closer."),
             ("subtitle", "A clearer perspective on what comes next."),
             ("caption", "A new perspective.\nA shared direction."),
@@ -178,7 +178,7 @@ fn values(name: &str) -> BTreeMap<String, String> {
             ("kicker", "THE NEXT CHAPTER / TOGETHER"),
             ("title", "Better, together."),
             ("subtitle", "Let's make room for what comes next."),
-            ("caption", "hello@example.com\nnexus / studio"),
+            ("caption", "hello@example.com\ndugix / studio"),
         ],
         "section_color" => vec![
             ("kicker", "CHAPTER TWO / A SHARED DIRECTION"),
@@ -351,9 +351,8 @@ fn text_fits(deck: &Deck, assets: &Path, rects: &BTreeMap<String, Rect>) {
         if let Kind::Text { text, style, font } = &node.kind {
             let rect = rects[&node.id];
             let resolved = deck.theme.resolve_font(style, font);
-            // Layouts are sized for their font stack; when no named family
-            // in it is installed (Linux CI: no Inter, Helvetica or Segoe) a
-            // generic fallback face runs wider.
+            // Layouts are sized for their font stack; when no named family in it is
+            // installed (Linux CI: no Inter, Helvetica or Segoe) a fallback face runs wider.
             let stack = crate::deck::text::font_stack(&deck.theme, &resolved.family);
             if !stack
                 .split(',')
@@ -423,8 +422,8 @@ fn round_trip(deck: &Deck, bytes: &[u8], assets: &Path, imported: &Path) -> (usi
         .collect();
     let mut counts = (0, 0);
     for original in deck.slides[0].nodes() {
-        // Flattened, unpainted flex containers have no visible Office primitive.
-        // Every painted background and every descendant is compared separately.
+        // Flattened, unpainted flex containers have no visible Office primitive;
+        // every painted background and every descendant is compared separately.
         if matches!(
             original.kind,
             Kind::Frame {
@@ -512,7 +511,7 @@ fn package_is_complete(bytes: &[u8]) {
         let mut part = archive.by_index(i).unwrap();
         let mut bytes = Vec::new();
         part.read_to_end(&mut bytes).unwrap();
-        parts.insert(part.name().to_string(), bytes);
+        parts.insert(part.name().unwrap().into_owned(), bytes);
     }
     let types =
         deck::import::xml::parse(std::str::from_utf8(&parts["[Content_Types].xml"]).unwrap())
@@ -562,7 +561,7 @@ fn package_is_complete(bytes: &[u8]) {
 #[test]
 fn editorial_layout_gallery_checks_renders_and_round_trips_every_painted_node() {
     let root =
-        std::env::temp_dir().join(format!("nexus-editorial-layouts-{}", uuid::Uuid::new_v4()));
+        std::env::temp_dir().join(format!("dugix-editorial-layouts-{}", uuid::Uuid::new_v4()));
     let assets_dir = root.join("assets");
     assets(&assets_dir);
     let design = Design::default();
@@ -578,13 +577,12 @@ fn editorial_layout_gallery_checks_renders_and_round_trips_every_painted_node() 
             .unwrap();
         let bytes = deck::export::pptx::export_pptx(&deck, Some(&assets_dir)).unwrap();
         package_is_complete(&bytes);
-        // Separate from the older count-test's generic placeholder fixtures.
-        if std::env::var_os("NEXUS_LAYOUT_PREVIEWS").is_some() {
+        if std::env::var_os("DUGIX_LAYOUT_PREVIEWS").is_some() {
             let output = target.join("layout-previews/rich");
             std::fs::create_dir_all(&output).unwrap();
             std::fs::write(output.join(format!("{name}.png")), png).unwrap();
         }
-        if std::env::var_os("NEXUS_PPTX_SAMPLES").is_some() {
+        if std::env::var_os("DUGIX_PPTX_SAMPLES").is_some() {
             let output = target.join("pptx-samples/rich");
             std::fs::create_dir_all(&output).unwrap();
             std::fs::write(output.join(format!("{name}.pptx")), &bytes).unwrap();
@@ -606,7 +604,7 @@ fn editorial_layout_gallery_checks_renders_and_round_trips_every_painted_node() 
         use std::fmt::Write as _;
         writeln!(report,"{name}: {} painted rects within 1 px; {} text/font comparisons; fills, shadows, masks, radii and overlays retained",counts.0,counts.1).unwrap();
     }
-    if std::env::var_os("NEXUS_PPTX_SAMPLES").is_some() {
+    if std::env::var_os("DUGIX_PPTX_SAMPLES").is_some() {
         std::fs::write(target.join("pptx-samples/rich/round-trip.txt"), report).unwrap();
     }
     std::fs::remove_dir_all(root).unwrap();

@@ -1,9 +1,13 @@
-A panel of personas had this conversation about a message:
+Several agents answered this message independently, and a reviewer checked their work:
 
 {{topic}}
 
-Conversation:
+The answers:
 
-{{transcript}}
+{{drafts}}
 
-Write one final reply to the original message that states the conclusion this conversation actually reached — the agreement, resolution, or trade-off they settled on — as a clear, useful answer. If they genuinely disagreed to the end, say so and give the best-supported call. Markdown allowed. Don't mention that this came from a panel — just answer well, informed by the conversation.
+The reviewer's findings:
+
+{{review}}
+
+Write the final reply to the message. Build it on what the review confirmed and leave out what it found wrong; where the review could not check something, keep it only if it is needed and say it is unverified. If a minority answer holds a point the others missed, keep that point. Where the answers genuinely disagreed and the evidence does not settle it, end with a short "Where the drafts differed" section that states each position and what would decide it. Markdown allowed. Answer the user directly; do not describe the drafting process.

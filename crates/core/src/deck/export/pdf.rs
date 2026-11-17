@@ -1,7 +1,5 @@
-//! Vector PDF assembly shared by decks and docs: each page is an SVG drawn
-//! through `krilla-svg`, so text stays real, selectable and font-subsetted.
-//! Nothing here reads the network, the clock or random state, so the same
-//! input always produces the same bytes.
+//! Vector PDF assembly shared by decks and docs: each page is an SVG drawn through
+//! `krilla-svg`, so text stays selectable. The same input always gives the same bytes.
 #![allow(clippy::cast_possible_truncation)]
 
 use anyhow::{Context as _, Result, anyhow};
@@ -67,7 +65,7 @@ fn tree(bookmarks: &[Bookmark]) -> Vec<OutlineNode> {
     roots
 }
 
-/// Build the PDF. `options` carries the font database the SVGs were measured with.
+/// Build the PDF; `options` carries the font database the SVGs were measured with.
 pub(crate) fn assemble(
     sheets: &[Sheet],
     fonts: &std::sync::Arc<usvg::fontdb::Database>,
@@ -110,16 +108,16 @@ pub(crate) fn assemble(
     document.set_metadata(
         Metadata::new()
             .title(title.to_string())
-            .creator("nexus studio".into())
-            .producer("nexus".into()),
+            .creator("dugix studio".into())
+            .producer("dugix".into()),
     );
     document
         .finish()
         .map_err(|error| anyhow!("PDF assembly failed: {error:?}"))
 }
 
-/// One vector page per slide at half the slide's pixel size, no speaker notes.
-/// Animations appear in their final state, as in the other static exports.
+/// One vector page per slide at half the slide's pixel size, no speaker notes;
+/// animations appear in their final state.
 pub fn export_pdf(deck: &super::super::Deck, assets: Option<&std::path::Path>) -> Result<Vec<u8>> {
     let size = deck.theme.size;
     let (svgs, fonts) = super::super::render::export_svgs(deck, assets);

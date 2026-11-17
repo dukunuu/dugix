@@ -1,0 +1,285 @@
+//! `dugix sync` — changeset exchange over a shared directory or ssh.
+
+use std::io::Read as _;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context as _, Result, bail};
+
+use dugix_core::db;
+use dugix_core::space;
+
+use super::{SyncCmd, out, short_id};
+
+struct SyncTempDir {
+    path: PathBuf,
+}
+
+impl SyncTempDir {
+    fn new(prefix: &str) -> Result<Self> {
+        let path = std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&path)
+            .with_context(|| format!("creating temporary sync directory {}", path.display()))?;
+        Ok(Self { path })
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for SyncTempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+pub(super) fn sync_cmd(cmd: Option<SyncCmd>, target: Option<&Path>) -> Result<()> {
+    match cmd {
+        Some(SyncCmd::Export { peer, dir }) => sync_export(peer.as_deref(), dir.as_deref()),
+        Some(SyncCmd::Import { path, bundle }) => sync_import(path.as_deref(), bundle),
+        None => match target {
+            Some(t) => {
+                let spec = t.to_string_lossy();
+                if let Some(host) = spec.strip_prefix("ssh://") {
+                    sync_ssh(host)
+                } else if spec.contains('@') && !spec.contains('/') && !spec.contains('\\') {
+                    sync_ssh(&spec)
+                } else {
+                    sync_dir(t)
+                }
+            }
+            None => bail!(
+                "pass a sync directory, `ssh://user@host`, or a subcommand — `dugix sync --help`"
+            ),
+        },
+    }
+}
+
+fn sync_export(peer: Option<&str>, dir: Option<&Path>) -> Result<()> {
+    let space = space::Space::open()?;
+    let db = db::Db::open(&space.db_path())?;
+    let cs = dugix_core::sync::build_changeset(&db, peer, &dugix_core::sync::device_name())?;
+    if let Some(dir) = dir {
+        let n = dugix_core::sync::export_blobs(&db, &space, &cs, dir)?;
+        eprintln!("wrote {n} blob(s) to {}", dir.join("blobs").display());
+    }
+    eprintln!(
+        "exported {} rows, {} tombstones, {} files{}",
+        cs.rows.len(),
+        cs.tombstones.len(),
+        cs.files.len(),
+        match peer {
+            Some(p) => format!(" for peer {p}"),
+            None => " (full export — first sync?)".to_string(),
+        }
+    );
+    out(serde_json::to_string(&cs)?);
+    Ok(())
+}
+
+fn sync_import(path: Option<&Path>, bundle_reply: bool) -> Result<()> {
+    let space = space::Space::open()?;
+    let db = db::Db::open(&space.db_path())?;
+    let bytes = if let Some(p) = path {
+        std::fs::read(p).with_context(|| format!("reading {}", p.display()))?
+    } else {
+        let mut buf = Vec::new();
+        std::io::stdin().read_to_end(&mut buf)?;
+        buf
+    };
+    let tmp = SyncTempDir::new("dugix-import")?;
+    let (cs, blob_source) = if bytes.starts_with(b"PK") {
+        let bundle = tmp.path().join("in.bundle");
+        std::fs::write(&bundle, &bytes)?;
+        let unpacked = tmp.path().join("unpacked");
+        let cs = dugix_core::sync::unpack_bundle(&bundle, &unpacked)?;
+        (cs, Some(unpacked))
+    } else {
+        (
+            serde_json::from_slice(&bytes).context("parsing changeset JSON")?,
+            None,
+        )
+    };
+    let (summary, cursors) =
+        dugix_core::sync::apply_changeset(&db, &space, &cs, blob_source.as_deref())?;
+    print_sync_summary(&cs, &summary);
+    let mut reply = dugix_core::sync::build_changeset(
+        &db,
+        Some(&cs.device_id),
+        &dugix_core::sync::device_name(),
+    )?;
+    reply.ack = Some(cursors);
+    if bundle_reply {
+        // Zip writers require a seekable sink, so stdout must be staged through a file.
+        let reply_path = tmp.path().join("reply.bundle");
+        dugix_core::sync::write_bundle(&db, &space, &reply, std::fs::File::create(&reply_path)?)?;
+        std::io::copy(
+            &mut std::fs::File::open(&reply_path)?,
+            &mut std::io::stdout(),
+        )?;
+    } else {
+        out(serde_json::to_string(&reply)?);
+    }
+    Ok(())
+}
+
+// stdout carries the protocol reply; diagnostics must go to stderr.
+fn print_sync_summary(cs: &dugix_core::sync::Changeset, summary: &dugix_core::sync::ApplySummary) {
+    eprintln!(
+        "imported from {} ({}) — {} rows applied, {} skipped, {} tombstones, {} acks, {} files kept, {} pulled, {} missing",
+        short_id(&cs.device_id),
+        cs.device_name,
+        summary.rows_applied,
+        summary.rows_skipped,
+        summary.tombstones_applied,
+        summary.acks_applied,
+        summary.files_kept,
+        summary.files_pulled,
+        summary.files_missing.len(),
+    );
+    for w in &summary.warnings {
+        eprintln!("  warning: {w}");
+    }
+}
+
+// Atomic replacement prevents peers from reading partial changesets.
+fn write_sync_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("changeset.json");
+    let temporary = path.with_file_name(format!(".{name}.dugix-write-{}", uuid::Uuid::new_v4()));
+    if let Err(error) = std::fs::write(&temporary, bytes) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error).with_context(|| format!("writing {}", temporary.display()));
+    }
+    if let Err(error) = std::fs::rename(&temporary, path) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error).with_context(|| format!("installing {}", path.display()));
+    }
+    Ok(())
+}
+
+fn sync_dir(dir: &Path) -> Result<()> {
+    let space = space::Space::open()?;
+    let db = db::Db::open(&space.db_path())?;
+    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    let my_id = db.device_id()?;
+    let own_path = dir.join(format!("{my_id}.changeset.json"));
+    // Preserve pending outbound acknowledgments until a peer imports them.
+    let pending_ack = if own_path.is_file() {
+        let bytes = std::fs::read(&own_path)
+            .with_context(|| format!("reading pending {}", own_path.display()))?;
+        let pending: dugix_core::sync::Changeset = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parsing pending {}", own_path.display()))?;
+        if pending.device_id != my_id {
+            bail!(
+                "mailbox file {} belongs to another device",
+                own_path.display()
+            );
+        }
+        pending.ack
+    } else {
+        None
+    };
+    let mut reply_cursors = pending_ack.unwrap_or_default();
+    let mut senders: Vec<String> = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if !name.ends_with(".changeset.json") {
+            continue;
+        }
+        let cs: dugix_core::sync::Changeset = serde_json::from_slice(&std::fs::read(entry.path())?)
+            .with_context(|| format!("parsing {}", entry.path().display()))?;
+        if cs.device_id == my_id {
+            continue;
+        }
+        let (summary, cursors) = dugix_core::sync::apply_changeset(&db, &space, &cs, Some(dir))?;
+        print_sync_summary(&cs, &summary);
+        reply_cursors.extend(cursors);
+        if !senders.contains(&cs.device_id) {
+            senders.push(cs.device_id);
+        }
+        // Retain blobs to avoid racing a peer's export; hash verification rejects stale payloads.
+        std::fs::remove_file(entry.path())?;
+    }
+    // Ack-only replies have no cursors: identify peers by sender, or reuse the last peer without mail.
+    // Multiple senders need a full export so none is acknowledged without receiving our rows.
+    let peer: Option<String> = match senders.as_slice() {
+        [peer] if reply_cursors.is_empty() => Some(peer.clone()),
+        [] if reply_cursors.is_empty() => db
+            .load_sync_state()?
+            .iter()
+            .filter(|s| s.push_cursor.is_some())
+            .max_by(|a, b| a.last_synced_at.cmp(&b.last_synced_at))
+            .map(|s| s.peer_id.clone()),
+        // A full export preserves rows from the exchange whose acknowledgment is still pending.
+        _ => None,
+    };
+    let mut cs =
+        dugix_core::sync::build_changeset(&db, peer.as_deref(), &dugix_core::sync::device_name())?;
+    cs.ack = Some(reply_cursors);
+    let path = dir.join(format!("{my_id}.changeset.json"));
+    let encoded = serde_json::to_vec(&cs)?;
+    let blobs = dugix_core::sync::export_blobs(&db, &space, &cs, dir)?;
+    write_sync_file(&path, &encoded)?;
+    eprintln!(
+        "exported {} rows, {} tombstones, {blobs} blob(s) → {}",
+        cs.rows.len(),
+        cs.tombstones.len(),
+        path.display()
+    );
+    Ok(())
+}
+
+fn sync_ssh(host: &str) -> Result<()> {
+    let space = space::Space::open()?;
+    let db = db::Db::open(&space.db_path())?;
+    let remote_peer: Option<String> = db
+        .load_settings()?
+        .into_iter()
+        .find(|(k, _)| k == "sync_ssh_peer")
+        .map(|(_, v)| v);
+    let mut cs = dugix_core::sync::build_changeset(
+        &db,
+        remote_peer.as_deref(),
+        &dugix_core::sync::device_name(),
+    )?;
+    // Without pull-cursor acknowledgments the peer would re-export everything each round.
+    if let Some(peer) = &remote_peer {
+        cs.ack = Some(dugix_core::sync::build_ack(&db, peer)?);
+    }
+    let tmp = SyncTempDir::new("dugix-ssh")?;
+    let bundle = tmp.path().join("out.bundle");
+    let n = dugix_core::sync::write_bundle(&db, &space, &cs, std::fs::File::create(&bundle)?)?;
+    eprintln!(
+        "exported {} rows, {} tombstones, {n} blob(s)",
+        cs.rows.len(),
+        cs.tombstones.len()
+    );
+    let output = std::process::Command::new("ssh")
+        .arg(host)
+        .args(["dugix", "sync", "import", "--bundle"])
+        .stdin(std::process::Stdio::from(std::fs::File::open(&bundle)?))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit())
+        .output()
+        .with_context(|| format!("running ssh {host}"))?;
+    if !output.status.success() {
+        bail!(
+            "ssh {host} failed ({}) — is `dugix` installed there?",
+            output.status
+        );
+    }
+    let reply_path = tmp.path().join("reply.bundle");
+    std::fs::write(&reply_path, &output.stdout)?;
+    let unpacked = tmp.path().join("unpacked");
+    let reply = dugix_core::sync::unpack_bundle(&reply_path, &unpacked)?;
+    let (summary, _) = dugix_core::sync::apply_changeset(&db, &space, &reply, Some(&unpacked))?;
+    print_sync_summary(&reply, &summary);
+    db.set_setting("sync_ssh_peer", &reply.device_id)?;
+    Ok(())
+}

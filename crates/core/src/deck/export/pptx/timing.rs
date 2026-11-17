@@ -1,6 +1,4 @@
-//! Slide transitions and build timing, following the structure `PowerPoint`
-//! itself writes: main sequence, one `par` per click, one `par` per
-//! after-previous time slot, one `par` per effect.
+//! Slide transitions and build timing, in the structure `PowerPoint` itself writes.
 
 use super::super::super::{
     AnimationSlot, Build, BuildBy, Direction, Easing, Effect, TransitionType, Trigger,
@@ -130,8 +128,7 @@ fn numeric(
     )
 }
 
-/// `(x, y)` formulas for a point off the slide on `side` (fly), or a short
-/// distance from the resting place (rise).
+/// `(x, y)` formulas for a point off the slide (fly) or near it (rise).
 fn offset(side: Direction, far: bool) -> (&'static str, &'static str) {
     match (side, far) {
         (Direction::Left, true) => ("0-#ppt_w/2", "#ppt_y"),

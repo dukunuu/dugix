@@ -176,8 +176,8 @@ pub(super) mod unix {
         let started = std::time::Instant::now();
         let header = wait(&mut child, &group, &path, seconds).await?;
         let header = format!("{header} · {:.1}s", started.elapsed().as_secs_f64());
-        // One-shot commands must not leave background descendants behind even
-        // when the shell itself exits before them.
+        // One-shot commands must not leave background descendants behind even when
+        // the shell itself exits before them.
         drop(group);
         Ok(shape(
             &format!("{header} · shell action=log id={id}{sandbox_note}"),
@@ -207,8 +207,8 @@ pub(super) mod unix {
             return Ok(None);
         };
         environment(&mut command, &shims)?;
-        // Both descriptors share one open-file offset: stdout and stderr are
-        // recorded in kernel write order, without competing reader tasks.
+        // Both descriptors share one open-file offset: stdout and stderr are recorded
+        // in kernel write order, without competing reader tasks.
         command
             .current_dir(cwd)
             .stdin(Stdio::null())
@@ -230,7 +230,7 @@ pub(super) mod unix {
 
     pub(crate) fn runs_dir(db_path: Option<&Path>) -> PathBuf {
         db_path.map_or_else(
-            || std::env::temp_dir().join("nexus-runs"),
+            || std::env::temp_dir().join("dugix-runs"),
             |path| path.parent().unwrap_or(Path::new(".")).join("runs"),
         )
     }
@@ -505,7 +505,7 @@ pub(super) mod unix {
         impl Fixture {
             fn new() -> Self {
                 let dir =
-                    std::env::temp_dir().join(format!("nexus-shell-{}", uuid::Uuid::new_v4()));
+                    std::env::temp_dir().join(format!("dugix-shell-{}", uuid::Uuid::new_v4()));
                 let root = dir.join("workspace");
                 fs::create_dir_all(&root).unwrap();
                 let mut toolbox = ToolBox::new(
@@ -551,7 +551,7 @@ pub(super) mod unix {
                 .find(|path| !path.starts_with(&temp))
                 .unwrap();
             let outside_dir =
-                outside_parent.join(format!("nexus-shell-outside-{}", uuid::Uuid::new_v4()));
+                outside_parent.join(format!("dugix-shell-outside-{}", uuid::Uuid::new_v4()));
             fs::create_dir(&outside_dir).unwrap();
             let outside = outside_dir.join("outside");
             let touch_outside = format!("touch '{}'", outside.display());
@@ -934,7 +934,7 @@ pub(super) mod unix {
             assert!(runs.join("recent.log").exists());
             assert!(runs.join("keep.txt").exists());
             assert!(runs.join("keep.log").is_dir());
-            assert_eq!(runs_dir(None), std::env::temp_dir().join("nexus-runs"));
+            assert_eq!(runs_dir(None), std::env::temp_dir().join("dugix-runs"));
         }
 
         #[tokio::test]

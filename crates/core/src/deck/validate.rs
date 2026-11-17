@@ -1,6 +1,5 @@
-//! Parsing and validation: forgiving where the intent is clear (missing or
-//! duplicate ids are filled, version 1 is migrated, missing theme tokens and
-//! text styles are added), strict and located everywhere else.
+//! Parsing and validation: forgiving where the intent is clear (ids, migration,
+//! missing theme tokens and text styles), strict and located everywhere else.
 
 use std::collections::BTreeSet;
 
@@ -12,26 +11,21 @@ use super::model::{
 };
 use super::{CheckError, MAX_SOURCE, is_hex, issue, migrate, safe_asset_path};
 
-/// Slides per deck.
 pub const MAX_SLIDES: usize = 200;
 /// Nodes on one slide, containers included.
 pub const MAX_NODES: usize = 200;
-/// Frames nested inside frames.
 pub const MAX_DEPTH: usize = 8;
 const MAX_TEXT: usize = 8 * 1024;
 const MAX_LENGTH: f64 = 20_000.0;
 
 impl Deck {
-    /// Parse and normalize a deck. Version 1 decks are migrated to version 2
-    /// first (see `migrate.rs`). Missing/duplicate ids are repaired; other
-    /// failures carry JSON paths. Limits apply before deserializing the model.
+    /// Parse and normalize a deck; ids are repaired, other failures carry JSON paths.
     pub fn check(source: &str) -> std::result::Result<Self, Vec<CheckError>> {
         Self::check_noted(source).map(|(deck, _)| deck)
     }
 
-    /// Like [`Deck::check`], also returning load notes: animation data that
-    /// could not be parsed (an old placeholder, a typo) is dropped rather than
-    /// failing the deck, and each drop is reported here.
+    /// Like [`Deck::check`], also returning load notes: unparseable animation data
+    /// is dropped rather than failing the deck.
     pub fn check_noted(source: &str) -> std::result::Result<(Self, Vec<String>), Vec<CheckError>> {
         let mut errors = Vec::new();
         let mut notes = Vec::new();
@@ -313,9 +307,8 @@ pub(super) fn fill_id(
     value["id"] = json!(id);
 }
 
-/// Complete and repair a slide's build order against the animated nodes left
-/// in its tree: unknown and repeated ids are dropped, animated nodes missing
-/// from the list follow in tree order. A malformed list is dropped with a note.
+/// Complete and repair a slide's build order: unknown and repeated ids are dropped,
+/// animated nodes missing from the list follow in tree order.
 fn repair_builds(slide: &mut Value, path: &str, notes: &mut Vec<String>) {
     fn animated(value: &Value, ids: &mut Vec<String>) {
         if value.get("animation").is_some_and(|a| !a.is_null())

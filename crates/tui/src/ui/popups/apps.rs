@@ -7,42 +7,37 @@ use ratatui::widgets::{ListItem, ListState};
 
 use crate::app_view::AppView;
 use crossterm::event::KeyModifiers;
-use nexus_core::app::AppsMode;
+use dugix_core::app::AppsMode;
 
-use super::chrome;
+use super::chrome::{self, PopupFrame, ctrl, hint, keys};
+use super::list_filter;
 
 /// The file-name and rename prompts: an input line over an empty list.
 fn render_prompt(f: &mut Frame, app: &AppView, area: ratatui::layout::Rect) -> bool {
-    let (label, hint) = match app.apps_mode {
-        AppsMode::EditFile => {
-            let name = app
-                .apps_cache
-                .get(app.apps_selected)
-                .cloned()
-                .unwrap_or_default();
-            (
-                format!("edit {name}/"),
-                "Enter open in $EDITOR · Esc cancel",
-            )
-        }
-        AppsMode::RenamePanel => {
-            let name = app
-                .selected_pinned()
-                .map(|pinned| pinned.name.clone())
-                .unwrap_or_default();
-            (format!("rename {name} to"), "Enter rename · Esc cancel")
-        }
+    let (title, verb) = match app.apps_mode {
+        AppsMode::EditFile => ("Edit app file", "open"),
+        AppsMode::RenamePanel => ("Rename panel", "save"),
         _ => return false,
     };
-    let title = chrome::input_title(app, label, &app.apps_edit, hint);
-    let inner = chrome::render_frame(f, area, title, &app.theme, true, chrome::Tone::Normal);
-    let list = chrome::standard_list(Vec::<ListItem>::new(), &app.theme);
-    f.render_widget(list, inner);
+    let hints = [hint(keys::ENTER, verb), hint(keys::ESC, "cancel")];
+    let inner = chrome::render_popup(
+        f,
+        area,
+        &PopupFrame {
+            title,
+            count: "",
+            hints: &hints,
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
+        app,
+    );
+    chrome::render_field(f, inner, "✎", &app.apps_edit, "", true, &app.theme);
     true
 }
 
-/// Web apps first, then pinned panels.
-fn rows(app: &AppView, content_w: usize) -> Vec<ListItem<'static>> {
+/// Web apps first, then pinned panels; only the indices in `keep`.
+fn rows(app: &AppView, content_w: usize, keep: &[usize]) -> Vec<ListItem<'static>> {
     let dim = Style::default().fg(app.theme.fg_dim);
     let row = |name: &str, meta: &str| {
         ListItem::new(vec![
@@ -57,13 +52,7 @@ fn rows(app: &AppView, content_w: usize) -> Vec<ListItem<'static>> {
             Line::from(""),
         ])
     };
-    if app.apps_total() == 0 {
-        return vec![ListItem::new(Line::from(Span::styled(
-            "no apps yet — ask the model to build one",
-            dim,
-        )))];
-    }
-    let web = app.apps_cache.iter().map(|name| {
+    let web = app.caches.apps.iter().map(|name| {
         let n = app.app_file_count(name);
         let url = app
             .app_url(name)
@@ -77,7 +66,43 @@ fn rows(app: &AppView, content_w: usize) -> Vec<ListItem<'static>> {
         .pinned_apps
         .iter()
         .map(|pinned| row(&pinned.name, &format!("panel · {}", pinned.title)));
-    web.chain(panels).collect()
+    let all: Vec<_> = web.chain(panels).collect();
+    keep.iter()
+        .filter_map(|&index| all.get(index).cloned())
+        .collect()
+}
+
+/// Title and footer keys for the list and its delete prompt.
+fn frame_text(app: &AppView, shown: bool, filtering: bool) -> (&'static str, Vec<chrome::Hint>) {
+    // A pinned panel is only unpinned, so its prompt says so.
+    let verb = if app.selected_pinned().is_some() {
+        "unpin"
+    } else {
+        "delete"
+    };
+    if app.apps_mode == AppsMode::ConfirmDelete {
+        (
+            if verb == "unpin" {
+                "Unpin panel?"
+            } else {
+                "Delete app?"
+            },
+            vec![hint(ctrl('d'), verb), hint(keys::ESC, "cancel")],
+        )
+    } else {
+        let mut hints = Vec::new();
+        if shown {
+            hints.extend([hint(keys::MOVE, ""), hint(keys::ENTER, "open")]);
+            hints.push(if app.selected_pinned().is_some() {
+                hint(ctrl('r'), "rename")
+            } else {
+                hint(ctrl('e'), "edit")
+            });
+            hints.push(hint(ctrl('d'), verb));
+        }
+        hints.push(hint(keys::ESC, if filtering { "clear" } else { "close" }));
+        ("Apps", hints)
+    }
 }
 
 pub fn render(f: &mut Frame, app: &AppView) {
@@ -85,52 +110,79 @@ pub fn render(f: &mut Frame, app: &AppView) {
     if render_prompt(f, app, area) {
         return;
     }
-    let total = app.apps_total();
+    let visible = app.apps_rows();
+    let filtering = !app.apps_filter.is_empty();
+    let shown = list_filter::shown(&visible, app.apps_selected);
+    let total = visible.len();
     let content_w = (area.width.saturating_sub(5 + 2 * chrome::PAD)) as usize;
-    let items = rows(app, content_w);
+    let items = rows(app, content_w, &visible);
 
-    let title = match app.apps_mode {
-        AppsMode::EditFile | AppsMode::RenamePanel => unreachable!(),
-        AppsMode::ConfirmDelete => {
-            let question = app.selected_pinned().map_or_else(
-                || {
-                    let name = app
-                        .apps_cache
-                        .get(app.apps_selected)
-                        .cloned()
-                        .unwrap_or_default();
-                    format!("remove app \"{name}\" and all its files?")
-                },
-                |pinned| format!("unpin panel app \"{}\"?", pinned.name),
-            );
-            chrome::danger_title(app, question, "Ctrl+D confirm · Esc cancel")
-        }
-        AppsMode::Browse => chrome::popup_title(app, "apps"),
+    let count = if app.apps_mode == AppsMode::Browse {
+        list_filter::count(total, app.apps_total(), filtering, "app")
+    } else {
+        String::new()
     };
-    let hint = match app.apps_mode {
-        AppsMode::ConfirmDelete => "Ctrl+D confirm · Esc cancel".to_string(),
-        _ if total == 0 => "ask the model to build you one".to_string(),
-        _ if app.selected_pinned().is_some() => format!(
-            "{}↑↓ · Enter open · Ctrl+R rename · Ctrl+D unpin",
-            chrome::count_hint(total, "app")
-        ),
-        _ => format!(
-            "{}↑↓ · Enter open · Ctrl+E edit file · Ctrl+D remove",
-            chrome::count_hint(total, "app")
-        ),
-    };
+    let (title, hints) = frame_text(app, shown.is_some(), filtering);
     let tone = if app.apps_mode == AppsMode::ConfirmDelete {
         chrome::Tone::Danger
     } else {
         chrome::Tone::Normal
     };
-    let inner = chrome::render_hinted(f, area, title, &hint, app, true, tone);
+    let mut inner = chrome::render_popup(
+        f,
+        area,
+        &PopupFrame {
+            title,
+            count: &count,
+            hints: &hints,
+            tone,
+            focused: true,
+        },
+        app,
+    );
+    if app.apps_mode == AppsMode::Browse {
+        inner = chrome::render_field(
+            f,
+            inner,
+            "⌕",
+            &app.apps_filter,
+            "Type to filter",
+            false,
+            &app.theme,
+        );
+    }
+    if app.apps_mode == AppsMode::ConfirmDelete {
+        let detail = app.selected_pinned().map_or_else(
+            || {
+                let name = app
+                    .caches
+                    .apps
+                    .get(app.apps_selected)
+                    .cloned()
+                    .unwrap_or_default();
+                format!("App “{name}” and all its files will be removed.")
+            },
+            |pinned| format!("Panel app “{}” will be unpinned.", pinned.name),
+        );
+        let (list_area, detail_area) = chrome::split_with_detail(inner, &detail);
+        chrome::render_detail(f, detail_area, &detail, &app.theme);
+        inner = list_area;
+    }
     let list = chrome::standard_list(items, &app.theme);
     let mut state = ListState::default();
-    if total > 0 {
-        state.select(Some(app.apps_selected.min(total - 1)));
-    }
+    state.select(shown);
     chrome::render_list(f, list, &mut state, inner, total, 3, app);
+    if total == 0 {
+        let message = if filtering {
+            format!(
+                "No app matches “{}”. Esc clears the filter.",
+                app.apps_filter
+            )
+        } else {
+            "No apps yet. Ask the model to build one.".to_string()
+        };
+        chrome::render_empty(f, inner, &message, &app.theme);
+    }
 }
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
@@ -165,6 +217,15 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
             None => {}
         },
         AppsMode::Browse => {
+            // Letters filter; an action needs a highlighted row.
+            let selected = list_filter::shown(&app.apps_rows(), app.apps_selected).is_some();
+            let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+            if !selected
+                && (key.code == KeyCode::Enter
+                    || (ctrl && matches!(key.code, KeyCode::Char('e' | 'r' | 'd'))))
+            {
+                return Ok(());
+            }
             if key.code == KeyCode::Enter {
                 app.open_selected_app();
                 return Ok(());
@@ -178,7 +239,16 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
                 return Ok(());
             }
             match classify_browse_key(key, false, false) {
-                Some(BrowseAction::Close) => app.popup = nexus_core::app::Popup::None,
+                Some(BrowseAction::Close) if !app.apps_filter.is_empty() => app.apps_filter.clear(),
+                Some(BrowseAction::Close) => app.popup = dugix_core::app::Popup::None,
+                Some(BrowseAction::Filter(c)) => {
+                    app.apps_filter.push(c);
+                    app.apps_selected = list_filter::first(&app.apps_rows(), app.apps_selected);
+                }
+                Some(BrowseAction::Backspace) => {
+                    app.apps_filter.pop();
+                    app.apps_selected = list_filter::first(&app.apps_rows(), app.apps_selected);
+                }
                 Some(BrowseAction::MoveUp) => app.move_apps_selection(-1),
                 Some(BrowseAction::MoveDown) => app.move_apps_selection(1),
                 Some(

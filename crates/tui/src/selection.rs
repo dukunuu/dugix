@@ -1,8 +1,4 @@
-//! Mouse text-selection over the history pane. Coordinates are in *wrapped-line*
-//! space: `(line, col)` where `line` indexes the fully-wrapped conversation and
-//! `col` is a char offset into that line. The UI records the rendered layout each
-//! frame (`record_render`); the event loop drives gestures (down/drag/up + a
-//! long-press timer). Copy lives on `AppView` (it owns the clipboard).
+//! Mouse selection and long-press actions in wrapped transcript coordinates.
 
 use std::time::{Duration, Instant};
 
@@ -17,13 +13,8 @@ const LONG_PRESS: Duration = Duration::from_millis(450);
 pub type Pos = (usize, usize);
 
 pub enum LongPress {
-    /// Raw code text, already exact — copy verbatim.
     Code(String),
-    /// The message index under the press — `App` resolves this to the
-    /// message's exact original content.
     Message(usize),
-    /// A URL under the press — long-press copies it instead of opening it
-    /// (opening happens on a plain click instead).
     Url(String),
 }
 
@@ -34,36 +25,25 @@ pub enum Action {
 
 #[derive(Default)]
 pub struct HistorySel {
-    // Layout snapshot from the last render.
     inner: Rect,
     top: usize,
     lines: Vec<String>,
-    /// Message index each line belongs to (None for none), for message-scoped
-    /// selection.
     owner: Vec<Option<usize>>,
-    /// Code-block id each line belongs to (None if not code), and the raw text
-    /// of each block, so a long-press on code copies clean code.
     code: Vec<Option<usize>>,
     code_raw: Vec<String>,
 
-    /// Active selection as (anchor, cursor); not necessarily ordered.
     sel: Option<(Pos, Pos)>,
 
-    // Gesture state.
     anchor: Option<Pos>,
     down_at: Option<Instant>,
     down_pos: Pos,
     moved: bool,
     long_pressed: bool,
     last_click: Option<(Instant, Pos, u8)>,
-    /// Click count of the *current* press (computed at press time, not
-    /// release), so a drag following a double/triple click can extend by
-    /// word/line instead of falling back to plain char range.
     click_count: u8,
 }
 
 impl HistorySel {
-    /// Remember the rendered layout so screen coords can be mapped to positions.
     pub fn record_render(
         &mut self,
         inner: Rect,
@@ -81,20 +61,14 @@ impl HistorySel {
         self.code_raw = code_raw;
     }
 
-    /// The plain text of a rendered line from the last frame (cache prefix
-    /// plus streaming tail), if any — lets the history viewport re-find the
-    /// line it was pinned to after a cache re-wrap.
     pub fn line_at(&self, li: usize) -> Option<&str> {
         self.lines.get(li).map(String::as_str)
     }
 
-    /// The message each rendered line belonged to in the last frame, if any
-    /// — lets the history viewport re-pin by message after a cache re-wrap.
     pub fn owner_at(&self, li: usize) -> Option<usize> {
         self.owner.get(li).copied().flatten()
     }
 
-    /// Map a screen cell to a wrapped-line position, clamped to real content.
     pub fn pos_at(&self, col: u16, row: u16) -> Option<Pos> {
         if self.lines.is_empty() || !self.inner.contains(Position::new(col, row)) {
             return None;
@@ -108,7 +82,6 @@ impl HistorySel {
         Some((li, ((col - self.inner.x) as usize).min(max)))
     }
 
-    /// A real line under a cell, without the drag-selection clamp below content.
     pub fn line_at_cell(&self, col: u16, row: u16) -> Option<usize> {
         if !self.inner.contains(Position::new(col, row)) {
             return None;
@@ -117,18 +90,12 @@ impl HistorySel {
         (line < self.lines.len()).then_some(line)
     }
 
-    /// The message index the active selection's anchor line belongs to, if
-    /// any — used to resolve "the citation under the current selection" back
-    /// to the message whose content holds the Sources list.
     pub fn owner_at_selection_start(&self) -> Option<usize> {
         let (anchor, _) = self.sel?;
         self.owner.get(anchor.0).copied().flatten()
     }
 
     pub fn on_down(&mut self, pos: Pos) {
-        // Count this press against the *previous* click's time+place, so a
-        // drag that follows immediately already knows it's part of a
-        // double/triple click (see `click_count`'s doc comment).
         self.click_count = match self.last_click {
             Some((t, p, c)) if t.elapsed() <= MULTI_CLICK && p == pos => c + 1,
             _ => 1,
@@ -141,13 +108,8 @@ impl HistorySel {
         self.long_pressed = false;
     }
 
-    /// Extend the selection to `pos`. A drag following a double/triple click
-    /// snaps to word/line boundaries instead of a plain char range, so
-    /// dragging after a double-click selects whole words at a time.
     pub fn on_drag(&mut self, pos: Pos) {
-        // Some terminals emit a drag sample immediately after the button goes
-        // down, even when the pointer has not moved.  Treating that sample as
-        // motion cancels the long-press timer before it can fire.
+        // Some terminals send stationary drag samples that would cancel the long-press timer.
         if !self.moved && pos == self.down_pos {
             return;
         }
@@ -160,7 +122,6 @@ impl HistorySel {
         });
     }
 
-    /// Whether release at `pos` is an unhandled, stationary single click.
     pub fn is_plain_click(&self, pos: Option<Pos>) -> bool {
         self.down_at.is_some()
             && !self.moved
@@ -169,8 +130,6 @@ impl HistorySel {
             && pos == Some(self.down_pos)
     }
 
-    /// Finish a press. `Action::Copy` for a drag-selection or double/triple
-    /// click; `Action::OpenUrl` for a plain single click landing on a URL.
     pub fn on_up(&mut self, pos: Option<Pos>) -> Option<Action> {
         self.down_at = None;
         if self.long_pressed {
@@ -178,7 +137,7 @@ impl HistorySel {
             self.anchor = None;
             self.moved = false;
             self.last_click = None;
-            return None; // already handled + copied by the timer
+            return None;
         }
         let pos = pos.unwrap_or(self.down_pos);
         self.last_click = Some((Instant::now(), pos, self.click_count));
@@ -195,13 +154,12 @@ impl HistorySel {
                 self.selected_text().map(Action::Copy)
             }
             _ => {
-                self.sel = None; // single click clears
+                self.sel = None;
                 self.url_at(pos).map(Action::OpenUrl)
             }
         }
     }
 
-    /// The URL (if any) under `pos`, scanned from that line's plain text.
     pub fn url_at(&self, (line, col): Pos) -> Option<String> {
         let text = self.lines.get(line)?;
         scan_bare_urls(text)
@@ -210,8 +168,7 @@ impl HistorySel {
             .map(|(_, url)| url)
     }
 
-    /// When to wake the event loop to check for a long press (if a press is held
-    /// still and unmoved).
+    /// Returns the next long-press wakeup time for the event loop.
     pub fn deadline(&self) -> Option<Instant> {
         match self.down_at {
             Some(t) if !self.moved && !self.long_pressed => Some(t + LONG_PRESS),
@@ -219,18 +176,13 @@ impl HistorySel {
         }
     }
 
-    /// Fire the long press. On a code block, its raw code (already exact); over
-    /// a message, that message's index — `App` resolves this to the message's
-    /// exact original text rather than a wrap-reconstructed approximation.
     pub fn check_long_press(&mut self) -> Option<LongPress> {
         let t = self.down_at?;
         if self.moved || self.long_pressed || t.elapsed() < LONG_PRESS {
             return None;
         }
 
-        // Mark the gesture as handled before looking up its content.  This is
-        // important for separator/blank lines with no owner: a missed lookup
-        // must not leave an already-expired deadline spinning the event loop.
+        // Mark handled before lookup so ownerless lines cannot leave an expired deadline spinning.
         self.long_pressed = true;
         let line = self.down_pos.0;
         if let Some(url) = self.url_at(self.down_pos) {
@@ -247,9 +199,6 @@ impl HistorySel {
         Some(LongPress::Message(msg))
     }
 
-    /// Whether the current press has already crossed the long-press threshold.
-    /// The event loop uses this on release to avoid treating a handled long
-    /// press as a plain click (notably on an image line).
     pub const fn is_long_pressed(&self) -> bool {
         self.long_pressed
     }
@@ -273,7 +222,6 @@ impl HistorySel {
         self.click_count = 0;
     }
 
-    /// The word-boundary range (start, end) around `pos`, on its own line.
     fn word_bounds(&self, (line, col): Pos) -> (Pos, Pos) {
         let chars: Vec<char> = self
             .lines
@@ -301,16 +249,12 @@ impl HistorySel {
         self.sel = Some(((line, 0), (line, len)));
     }
 
-    /// Word-snapped range covering both `anchor`'s word and `pos`'s word, so
-    /// dragging in either direction from a double-click keeps growing by
-    /// whole words.
     fn word_extend(&self, anchor: Pos, pos: Pos) -> (Pos, Pos) {
         let (a_lo, a_hi) = self.word_bounds(anchor);
         let (p_lo, p_hi) = self.word_bounds(pos);
         (a_lo.min(p_lo), a_hi.max(p_hi))
     }
 
-    /// Line-snapped range covering every line between `anchor` and `pos`.
     fn line_extend(&self, anchor: Pos, pos: Pos) -> (Pos, Pos) {
         let (lo_line, hi_line) = (anchor.0.min(pos.0), anchor.0.max(pos.0));
         let len = self.lines.get(hi_line).map_or(0, |l| l.chars().count());
@@ -329,7 +273,6 @@ impl HistorySel {
         }
     }
 
-    /// The selected text (lines joined by newlines), or None if empty.
     pub fn selected_text(&self) -> Option<String> {
         let (a, b) = self.ordered()?;
         let mut out = String::new();
@@ -348,8 +291,6 @@ impl HistorySel {
         (!out.is_empty()).then_some(out)
     }
 
-    /// Restyle `line` (at absolute index `li`) with the selection highlight, or
-    /// None if the selection doesn't touch this line.
     pub fn highlight(&self, li: usize, line: &Line, hl: Style) -> Option<Line<'static>> {
         let (a, b) = self.ordered()?;
         if li < a.0 || li > b.0 {
@@ -379,9 +320,6 @@ impl HistorySel {
     }
 }
 
-/// Find `http(s)://...` runs in `text`, as `(char range, url)`. A URL extends
-/// to the next whitespace, then trims trailing punctuation that's usually
-/// sentence structure, not part of the link (`.`, `,`, `)`, `]`, etc.).
 fn scan_bare_urls(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
     let chars: Vec<char> = text.chars().collect();
     let mut hits = Vec::new();
@@ -414,7 +352,6 @@ fn scan_bare_urls(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
     hits
 }
 
-/// Merge a run of styled chars back into a `Line` with minimal spans.
 fn regroup(row: Vec<(char, Style)>) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut buf = String::new();

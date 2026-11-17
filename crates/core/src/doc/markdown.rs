@@ -1,6 +1,5 @@
-//! GFM input via the workspace's existing pulldown-cmark parser. Inline
-//! Markdown is canonicalized, never interpreted as HTML. Non-GFM structural
-//! blocks use a lossless `nexus-block` fenced JSON extension on Markdown out.
+//! GFM input via pulldown-cmark; inline Markdown is canonicalized, never HTML.
+//! Non-GFM structural blocks use a lossless `dugix-block` fenced JSON extension.
 use super::model::{Block, Doc, ImageWidth, Kind, ListItem, Tone};
 use crate::deck::Align;
 use pulldown_cmark::{
@@ -153,8 +152,7 @@ fn list_items(nodes: &[Tree<'_>]) -> Vec<ListItem> {
         .collect()
 }
 
-/// Parsed blocks plus footnote definitions, which live on the document rather
-/// than masquerading as visible blocks. `first_h1_is_title` is opt-in.
+/// Parsed blocks plus footnote definitions; `first_h1_is_title` is opt-in.
 #[derive(Clone, Debug, Default)]
 pub struct Parsed {
     pub blocks: Vec<Block>,
@@ -165,6 +163,18 @@ pub struct Parsed {
 #[must_use]
 pub fn parse(source: &str) -> Vec<Block> {
     parse_document(source, false).blocks
+}
+
+/// Make the first title or level-one heading the doc's title block and return
+/// its plain text; `None` when there is neither.
+pub fn take_title(blocks: &mut [Block]) -> Option<String> {
+    let block = blocks
+        .iter_mut()
+        .find(|b| matches!(b.kind, Kind::Heading { level: 1, .. } | Kind::Title { .. }))?;
+    let text = block.text().unwrap_or_default().to_string();
+    let title = plain(&text);
+    block.kind = Kind::Title { text };
+    Some(title)
 }
 
 /// Parse GFM, optionally treating the first H1 as the document's title block.
@@ -227,7 +237,7 @@ pub fn parse_document(source: &str, first_h1_is_title: bool) -> Parsed {
                     CodeBlockKind::Indented => String::new(),
                 };
                 let text = code_text(&children);
-                if lang == "nexus-block"
+                if lang == "dugix-block"
                     && let Ok(block) = serde_json::from_str::<Block>(&text)
                 {
                     parsed.blocks.push(block);
@@ -312,11 +322,11 @@ fn render_items(items: &[ListItem], ordered: bool, depth: usize, out: &mut Strin
 fn extension(block: &Block) -> String {
     let source = serde_json::to_string(block).expect("block JSON");
     let fence = "`".repeat(source.split('`').count().max(3));
-    format!("{fence}nexus-block\n{source}\n{fence}")
+    format!("{fence}dugix-block\n{source}\n{fence}")
 }
 
-/// GFM for one complete block. Structural blocks without a Markdown equivalent
-/// and explicit style/width overrides are losslessly encoded as fenced JSON.
+/// GFM for one block; structural blocks without a Markdown equivalent use fenced
+/// JSON.
 #[must_use]
 pub fn render_block(block: &Block) -> String {
     if block.style.is_some() {
@@ -365,7 +375,7 @@ pub fn render_block(block: &Block) -> String {
             out.push('\n');
             let separators = (0..rows[0].len())
                 .map(|i| match align.get(i).unwrap_or(&Align::Left) {
-                    Align::Left => ":---".into(),
+                    Align::Left | Align::Justify => ":---".into(),
                     Align::Center => ":---:".into(),
                     Align::Right => "---:".into(),
                 })
@@ -419,8 +429,52 @@ pub fn render(doc: &Doc) -> String {
     out
 }
 
-/// Clean GitHub Markdown for sharing, deliberately dropping presentation-only
-/// overrides rather than emitting the lossless internal JSON extension.
+/// Replace `doc`'s blocks and footnotes from lossless Markdown, keeping block ids
+/// where they continue so comments stay anchored.
+pub fn apply_source(doc: &Doc, source: &str) -> anyhow::Result<Doc> {
+    let parsed = parse_document(source, true);
+    let mut blocks = parsed.blocks;
+    keep_ids(&doc.blocks, &mut blocks);
+    let mut next = doc.clone();
+    if let Some(Kind::Title { text }) = blocks.first().map(|block| &block.kind) {
+        next.title = plain(text);
+    }
+    next.blocks = blocks;
+    next.footnotes = parsed.footnotes;
+    Doc::check(&serde_json::to_string(&next)?).map_err(|errors| {
+        anyhow::anyhow!(
+            errors
+                .iter()
+                .map(|error| format!("{}: {}", error.path, error.message))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )
+    })
+}
+
+/// Give each new block the id of an old block it continues: the next equal block,
+/// else the next old block of the same kind.
+fn keep_ids(old: &[Block], new: &mut [Block]) {
+    let same_kind =
+        |a: &Block, b: &Block| std::mem::discriminant(&a.kind) == std::mem::discriminant(&b.kind);
+    let equal = |a: &Block, b: &Block| {
+        a.style == b.style
+            && serde_json::to_value(&a.kind).ok() == serde_json::to_value(&b.kind).ok()
+    };
+    let mut next = 0;
+    for block in new.iter_mut() {
+        if let Some(index) = (next..old.len()).find(|&index| equal(&old[index], block)) {
+            block.id.clone_from(&old[index].id);
+            next = index + 1;
+        } else if next < old.len() && same_kind(&old[next], block) {
+            block.id.clone_from(&old[next].id);
+            next += 1;
+        }
+    }
+}
+
+/// Clean GitHub Markdown for sharing, dropping presentation-only overrides
+/// rather than emitting the lossless JSON extension.
 #[must_use]
 pub fn export(doc: &Doc) -> String {
     let mut headings = Vec::new();

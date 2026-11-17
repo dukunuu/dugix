@@ -8,7 +8,7 @@ use crate::provider::ToolDef;
 
 pub(super) enum Kind {
     Str,
-    // Script writes require a string, but deliberately allow empty content.
+    // Script writes require a string but allow empty content.
     StrOrEmpty,
     Int,
     Num,
@@ -82,7 +82,7 @@ impl Param {
         match self.kind {
             Kind::Str | Kind::Enum(_) => value.as_str().is_some_and(|s| !s.trim().is_empty()),
             Kind::StrOrEmpty => value.is_string(),
-            // Preserve files.pdf_page's as_u64 check, including acceptance of zero.
+            // As `u64`, so `files.pdf_page` accepts zero.
             Kind::Int => value.as_u64().is_some(),
             Kind::Num => value.is_number(),
             Kind::Bool => value.is_boolean(),
@@ -229,12 +229,6 @@ impl ToolSpec {
                 .is_some_and(|tools| !matches!(tools.as_str(), Some("read-only" | "workspace")))
             {
                 return Err("invalid tool arguments: tools must be read-only or workspace".into());
-            }
-            if value
-                .get("model")
-                .is_some_and(|model| !matches!(model.as_str(), Some("fast" | "session")))
-            {
-                return Err("invalid tool arguments: model must be fast or session".into());
             }
             if value.get("max_steps").is_some_and(|steps| {
                 !steps
@@ -385,7 +379,7 @@ pub(super) static PANEL_APP: ToolSpec = ToolSpec {
         Param {
             name: "patch",
             kind: Kind::Str,
-            doc: "changed nexus-ui assignments; `name = null` deletes",
+            doc: "changed dugix-ui assignments; `name = null` deletes",
         },
     ],
     actions: &[
@@ -830,7 +824,7 @@ pub(super) static SHELL: ToolSpec = ToolSpec {
 
 pub(super) static PROC: ToolSpec = ToolSpec {
     name: "proc",
-    purpose: "Start and manage session-owned background commands in the agent workspace. Commands stop when Nexus exits.",
+    purpose: "Start and manage session-owned background commands in the agent workspace. Commands stop when Dugix exits.",
     selector: Some("action"),
     params: &[
         Param {
@@ -873,6 +867,11 @@ pub(super) static PROC: ToolSpec = ToolSpec {
             kind: Kind::Int,
             doc: "1-based starting line; default new output since the previous read",
         },
+        Param {
+            name: "until",
+            kind: Kind::Str,
+            doc: "output substring to wait for (literal); default: until exit",
+        },
     ],
     actions: &[
         ActionSpec {
@@ -890,6 +889,14 @@ pub(super) static PROC: ToolSpec = ToolSpec {
             optional: &["since"],
             read_only: true,
             internal: "proc_read",
+        },
+        ActionSpec {
+            name: "wait",
+            summary: "Block until it prints `until` or exits (wait_s default 60, maximum 600), then return the new output; use instead of polling read",
+            required: &["id"],
+            optional: &["until", "wait_s"],
+            read_only: true,
+            internal: "proc_wait",
         },
         ActionSpec {
             name: "list",
@@ -939,6 +946,112 @@ pub(super) static RESEARCH_LOOKUP: ToolSpec = ToolSpec {
     ],
 };
 
+pub(super) static MEMORY: ToolSpec = ToolSpec {
+    name: "memory",
+    purpose: "Long-term memory for this space: chapters of short facts kept across chats. Save lasting preferences, decisions and facts the user states (never chat summaries) under a fitting chapter. Read a chapter before relying on it; fix or forget wrong facts.",
+    selector: Some("action"),
+    params: &[
+        Param {
+            name: "chapter",
+            kind: Kind::Str,
+            doc: "chapter title; for update, moves the fact",
+        },
+        Param {
+            name: "text",
+            kind: Kind::Str,
+            doc: "one short fact",
+        },
+        Param {
+            name: "id",
+            kind: Kind::Str,
+            doc: "fact id",
+        },
+        Param {
+            name: "description",
+            kind: Kind::Str,
+            doc: "one line on the chapter",
+        },
+        Param {
+            name: "pinned",
+            kind: Kind::Bool,
+            doc: "show the chapter in every chat (identity, standing preferences)",
+        },
+        Param {
+            name: "offset",
+            kind: Kind::Int,
+            doc: "1-based start of the page",
+        },
+        Param {
+            name: "spaces",
+            kind: Kind::StrList,
+            doc: "space names, [\"all\"] or [\"none\"] (private)",
+        },
+        Param {
+            name: "space",
+            kind: Kind::Str,
+            doc: "chapter's home space, if not this one",
+        },
+    ],
+    actions: &[
+        ActionSpec {
+            name: "read",
+            summary: "List chapters, or a chapter's facts",
+            required: &[],
+            optional: &["chapter", "offset"],
+            read_only: true,
+            internal: "memory_read",
+        },
+        ActionSpec {
+            name: "add",
+            summary: "Save a fact",
+            required: &["chapter", "text"],
+            optional: &["description", "pinned"],
+            read_only: false,
+            internal: "memory_add",
+        },
+        ActionSpec {
+            name: "update",
+            summary: "Rewrite or move a fact",
+            required: &["id"],
+            optional: &["text", "chapter"],
+            read_only: false,
+            internal: "memory_update",
+        },
+        ActionSpec {
+            name: "delete",
+            summary: "Forget a fact",
+            required: &["id"],
+            optional: &[],
+            read_only: false,
+            internal: "memory_delete",
+        },
+        ActionSpec {
+            name: "spaces",
+            summary: "Every space's chapters and sharing",
+            required: &[],
+            optional: &[],
+            read_only: true,
+            internal: "memory_spaces",
+        },
+        ActionSpec {
+            name: "share",
+            summary: "When asked: set which spaces see a chapter",
+            required: &["chapter", "spaces"],
+            optional: &["space"],
+            read_only: false,
+            internal: "memory_share",
+        },
+        ActionSpec {
+            name: "merge",
+            summary: "When asked: fold same-titled chapters of all spaces into one shared chapter",
+            required: &["chapter"],
+            optional: &["space"],
+            read_only: false,
+            internal: "memory_merge",
+        },
+    ],
+};
+
 pub(super) static FILES: ToolSpec = ToolSpec {
     name: "files",
     purpose: "Work with imported space files.",
@@ -971,6 +1084,14 @@ pub(super) static FILES: ToolSpec = ToolSpec {
         },
     ],
     actions: &[
+        ActionSpec {
+            name: "list",
+            summary: "List imported files with their sizes",
+            required: &[],
+            optional: &[],
+            read_only: true,
+            internal: "list_files",
+        },
         ActionSpec {
             name: "search",
             summary: "Search imported files by semantic similarity or keywords",
@@ -1312,24 +1433,177 @@ pub(super) static TASK: ToolSpec = ToolSpec {
             doc: "maximum tool rounds, 1–40 (default 20)",
         },
         Param {
-            name: "model",
-            kind: Kind::Enum(&["fast", "session"]),
-            doc: "fast helper (read-only default) or the session model (workspace default)",
+            name: "background",
+            kind: Kind::Bool,
+            doc: "true: return at once and keep working; collect with agents action=wait, or the report arrives as a message after your reply",
         },
     ],
     actions: &[ActionSpec {
         name: "task",
         summary: "Run a focused helper",
         required: &["prompt"],
-        optional: &["tools", "max_steps", "model"],
+        optional: &["tools", "max_steps", "background"],
         read_only: true,
         internal: "task",
     }],
 };
 
+pub(super) static AGENTS: ToolSpec = ToolSpec {
+    name: "agents",
+    purpose: "Background sub-agents started with task background=true.",
+    selector: Some("action"),
+    params: &[
+        Param {
+            name: "id",
+            kind: Kind::Int,
+            doc: "agent number from task; default: all of this conversation",
+        },
+        Param {
+            name: "wait_s",
+            kind: Kind::Int,
+            doc: "longest wait in seconds (default 300, maximum 600)",
+        },
+    ],
+    actions: &[
+        ActionSpec {
+            name: "wait",
+            summary: "Block until they finish and return their reports; a report read here is not delivered again",
+            required: &[],
+            optional: &["id", "wait_s"],
+            read_only: true,
+            internal: "agents_wait",
+        },
+        ActionSpec {
+            name: "list",
+            summary: "Running and finished-but-unread agents",
+            required: &[],
+            optional: &[],
+            read_only: true,
+            internal: "agents_list",
+        },
+        ActionSpec {
+            name: "stop",
+            summary: "Stop a running agent",
+            required: &["id"],
+            optional: &[],
+            read_only: false,
+            internal: "agents_stop",
+        },
+    ],
+};
+
+pub(super) static FLEET: ToolSpec = ToolSpec {
+    name: "fleet",
+    purpose: "External coding-agent CLIs (claude, codex, pi, opencode), each in its own terminal, working under its own permissions; in a git workspace each gets its own branch and worktree. Use them only when the user asks for other agents; start needs their approval. To run a task through them: split it into self-contained jobs that touch separate files, start one agent per job in a single start with jobs, wait, then review each with diff and check, send fixes back and check again. Report which agents are ready; the user merges them in /fleet. A blocked agent waits on a permission only the user can give there.",
+    selector: Some("action"),
+    params: &[
+        Param {
+            name: "agent",
+            kind: Kind::Enum(crate::fleet::Kind::NAMES),
+            doc: "which CLI to start",
+        },
+        Param {
+            name: "prompt",
+            kind: Kind::Str,
+            doc: "self-contained job for the agent",
+        },
+        Param {
+            name: "model",
+            kind: Kind::Str,
+            doc: "model for the agent, in that CLI's own naming (default: its default)",
+        },
+        Param {
+            name: "jobs",
+            kind: Kind::Objects,
+            doc: "several agents to start under one approval, each {agent, prompt, model?}",
+        },
+        Param {
+            name: "id",
+            kind: Kind::Int,
+            doc: "agent number from start or list",
+        },
+        Param {
+            name: "text",
+            kind: Kind::Str,
+            doc: "follow-up message typed into the agent",
+        },
+        Param {
+            name: "wait_s",
+            kind: Kind::Int,
+            doc: "longest wait in seconds for wait or check (default 300, maximum 600)",
+        },
+    ],
+    actions: &[
+        ActionSpec {
+            name: "start",
+            summary: "Start an agent on a job (agent, prompt, model), or several at once with jobs, under one approval; returns at once with their numbers",
+            required: &[],
+            optional: &["agent", "prompt", "model", "jobs"],
+            read_only: false,
+            internal: "fleet_start",
+        },
+        ActionSpec {
+            name: "list",
+            summary: "This conversation's agents and their states: working, blocked, idle, exited",
+            required: &[],
+            optional: &[],
+            read_only: true,
+            internal: "fleet_list",
+        },
+        ActionSpec {
+            name: "read",
+            summary: "An agent's state and current screen",
+            required: &["id"],
+            optional: &[],
+            read_only: true,
+            internal: "fleet_read",
+        },
+        ActionSpec {
+            name: "wait",
+            summary: "Block until the agent (default: all of them) finishes its turn, then return the screens; a blocked agent keeps it waiting while the user answers in /fleet; use instead of polling read",
+            required: &[],
+            optional: &["id", "wait_s"],
+            read_only: true,
+            internal: "fleet_wait",
+        },
+        ActionSpec {
+            name: "diff",
+            summary: "What the agent changed on its branch, as a patch with a file summary",
+            required: &["id"],
+            optional: &[],
+            read_only: true,
+            internal: "fleet_diff",
+        },
+        ActionSpec {
+            name: "check",
+            summary: "Run the project's tests in the agent's worktree and wait for pass or fail with the end of the output; calling it again waits for the same run",
+            required: &["id"],
+            optional: &["wait_s"],
+            read_only: false,
+            internal: "fleet_check",
+        },
+        ActionSpec {
+            name: "send",
+            summary: "Steer an idle or working agent with a follow-up",
+            required: &["id", "text"],
+            optional: &[],
+            read_only: false,
+            internal: "fleet_send",
+        },
+        ActionSpec {
+            name: "stop",
+            summary: "Stop an agent and close its terminal",
+            required: &["id"],
+            optional: &[],
+            read_only: false,
+            internal: "fleet_stop",
+        },
+    ],
+};
+
 pub(super) static CANVAS: ToolSpec = ToolSpec {
     name: "canvas",
-    purpose: "Draft writing as a doc (Markdown), presentations as a deck. Space files: docs/*.doc.json or decks/*.deck.json; kind from path or create.kind (default deck). Decks: choose the look first (design op=list, create.design); build slides with add_slide{layout,slots,after?}; use color roles and named styles; fix taste: and design: lines. Edit directly when asked, comment when reviewing or unsure. One file per request: edit it, no variants or probes. Never invent data, sources or images (src: https or space file). Decks: /studio, 1920x1080 px, auto-layout; view after layout changes. Docs: read outline or blocks; view pages; export docx/pdf/md/html. Atomic ops; ids/hashes automatic. Field references arrive with results. Comments: anchor to a block; one issue, two sentences with why; attach ops for fixes; at most 8, worst first; respect intent and facts; answer the thread.",
+    purpose: "Docs: writing (Markdown); decks: slides; sheets: tables; kind from path or create.kind (default deck). Decks: pick a look first (design op=list, create.design); add_slide{layout,slots,after?}; color roles, named styles; fix taste:/design: lines; /studio 1920x1080 px auto-layout; view after layout edits. Edit when asked, comment when reviewing/unsure. One file per request, no variants/probes. Never invent data/sources/images (src: https or space file). Docs: read outline/blocks, view pages, export docx/pdf/md/html. Sheets: inputs only (=formula); read range before editing; edits list error cells. Atomic ops; ids/hashes automatic; field refs in results. Comments: block anchor; one issue, two sentences with why; attach fix ops; max 8, worst first; respect intent/facts; answer threads.",
     selector: Some("action"),
     params: &[
         Param {
@@ -1340,7 +1614,7 @@ pub(super) static CANVAS: ToolSpec = ToolSpec {
         Param {
             name: "path",
             kind: Kind::Str,
-            doc: "decks/name.deck.json or docs/name.doc.json",
+            doc: "decks/name.deck.json, docs/name.doc.json, sheets/name.sheet.json",
         },
         Param {
             name: "slides",
@@ -1389,13 +1663,18 @@ pub(super) static CANVAS: ToolSpec = ToolSpec {
         },
         Param {
             name: "kind",
-            kind: Kind::Enum(&["deck", "doc"]),
+            kind: Kind::Enum(&["deck", "doc", "sheet"]),
             doc: "create kind",
         },
         Param {
             name: "markdown",
             kind: Kind::StrOrEmpty,
             doc: "doc source",
+        },
+        Param {
+            name: "range",
+            kind: Kind::Str,
+            doc: "sheet: A1:C9, B:B, 2:4, 'Tab'!A1",
         },
         Param {
             name: "blocks",
@@ -1410,7 +1689,7 @@ pub(super) static CANVAS: ToolSpec = ToolSpec {
         Param {
             name: "format",
             kind: Kind::Str,
-            doc: "doc: md; deck: pptx|pdf|png|html|json",
+            doc: "doc: md; deck: pptx|pdf|png|html|json; sheet: csv|xlsx",
         },
         Param {
             name: "design",
@@ -1448,7 +1727,7 @@ pub(super) static CANVAS: ToolSpec = ToolSpec {
             name: "read",
             summary: "Outline/tree, revision, threads",
             required: &["path"],
-            optional: &["slides", "blocks"],
+            optional: &["slides", "blocks", "range"],
             read_only: true,
             internal: "deck_read",
         },
@@ -1456,7 +1735,7 @@ pub(super) static CANVAS: ToolSpec = ToolSpec {
             name: "view",
             summary: "Deck slides: studio focus or sheet",
             required: &["path"],
-            optional: &["slides"],
+            optional: &["slides", "range"],
             read_only: true,
             internal: "deck_view",
         },
@@ -1504,7 +1783,7 @@ pub(super) static CANVAS: ToolSpec = ToolSpec {
             name: "export",
             summary: "Save a file in exports/",
             required: &["path"],
-            optional: &["format", "text", "template"],
+            optional: &["format", "text", "template", "range"],
             read_only: false,
             internal: "deck_export",
         },
@@ -1522,6 +1801,8 @@ pub(super) static CANVAS: ToolSpec = ToolSpec {
 const TOOLS: &[&ToolSpec] = &[
     &CANVAS,
     &TASK,
+    &AGENTS,
+    &FLEET,
     &SKILLS,
     &SCRIPTS,
     &SEARCH,
@@ -1531,17 +1812,15 @@ const TOOLS: &[&ToolSpec] = &[
     &PROC,
     &RESEARCH_LOOKUP,
     &FILES,
+    &MEMORY,
     &MEDIA,
 ];
 
-/// Tools that hand a step to the user instead of acting. The frontend (a
-/// terminal UI, an approver) decides whether they are offered; they route
-/// through the same validation and read-only classes as `TOOLS`.
+/// Tools that hand a step to the user instead of acting; the frontend decides
+/// whether they are offered.
 const USER_BRIDGES: &[&ToolSpec] = &[&PROPOSE_COMMAND, &REQUEST_WORKSPACE];
 
-/// Tools only a terminal UI offers, beyond the shared table: they reach state
-/// the person owns (pinned panels) and share the table's validation and
-/// read-only classes.
+/// Tools only a terminal UI offers, reaching state the person owns.
 const TERMINAL_TOOLS: &[&ToolSpec] = &[&PANEL_APP];
 
 fn all_tools() -> impl Iterator<Item = &'static ToolSpec> {
@@ -1612,7 +1891,6 @@ mod tests {
         );
     }
 
-    // Explicit legacy routing expectations, with each action's required arguments.
     const ROUTES: &[(&str, &str, &str)] = &[
         (
             "canvas",
@@ -1661,10 +1939,29 @@ mod tests {
         ),
         (
             "canvas",
-            r#"{"action":"design","op":"set_default","design":"nexus"}"#,
+            r#"{"action":"design","op":"set_default","design":"dugix"}"#,
             "canvas_design",
         ),
         ("task", r#"{"prompt":"x"}"#, "task"),
+        ("agents", r#"{"action":"wait"}"#, "agents_wait"),
+        ("agents", r#"{"action":"list"}"#, "agents_list"),
+        ("agents", r#"{"action":"stop","id":3}"#, "agents_stop"),
+        (
+            "fleet",
+            r#"{"action":"start","agent":"claude","prompt":"x"}"#,
+            "fleet_start",
+        ),
+        ("fleet", r#"{"action":"list"}"#, "fleet_list"),
+        ("fleet", r#"{"action":"read","id":1}"#, "fleet_read"),
+        ("fleet", r#"{"action":"wait"}"#, "fleet_wait"),
+        ("fleet", r#"{"action":"stop","id":1}"#, "fleet_stop"),
+        ("fleet", r#"{"action":"diff","id":1}"#, "fleet_diff"),
+        ("fleet", r#"{"action":"check","id":1}"#, "fleet_check"),
+        (
+            "fleet",
+            r#"{"action":"send","id":1,"text":"x"}"#,
+            "fleet_send",
+        ),
         ("skills", r#"{"action":"load","name":"x"}"#, "skill"),
         (
             "skills",
@@ -1745,6 +2042,7 @@ mod tests {
             "proc_start",
         ),
         ("proc", r#"{"action":"read","id":"0123abcd"}"#, "proc_read"),
+        ("proc", r#"{"action":"wait","id":"0123abcd"}"#, "proc_wait"),
         ("proc", r#"{"action":"list"}"#, "proc_list"),
         ("proc", r#"{"action":"kill","id":"0123abcd"}"#, "proc_kill"),
         (
@@ -1756,6 +2054,34 @@ mod tests {
             "research_lookup",
             r#"{"scope":"citations"}"#,
             "list_citations",
+        ),
+        ("files", r#"{"action":"list"}"#, "list_files"),
+        ("memory", r#"{"action":"read"}"#, "memory_read"),
+        (
+            "memory",
+            r#"{"action":"add","chapter":"c","text":"t"}"#,
+            "memory_add",
+        ),
+        (
+            "memory",
+            r#"{"action":"update","id":"abcd"}"#,
+            "memory_update",
+        ),
+        (
+            "memory",
+            r#"{"action":"delete","id":"abcd"}"#,
+            "memory_delete",
+        ),
+        ("memory", r#"{"action":"spaces"}"#, "memory_spaces"),
+        (
+            "memory",
+            r#"{"action":"share","chapter":"c","spaces":["all"]}"#,
+            "memory_share",
+        ),
+        (
+            "memory",
+            r#"{"action":"merge","chapter":"c"}"#,
+            "memory_merge",
         ),
         (
             "files",
@@ -1894,6 +2220,12 @@ mod tests {
             "deck_view",
             "deck_fonts",
             "task",
+            "agents_wait",
+            "agents_list",
+            "fleet_list",
+            "fleet_read",
+            "fleet_wait",
+            "fleet_diff",
             "skill",
             "web_search",
             "academic_search",
@@ -1902,6 +2234,9 @@ mod tests {
             "fetch_url",
             "search_sources",
             "list_citations",
+            "list_files",
+            "memory_read",
+            "memory_spaces",
             "search_files",
             "search_chats",
             "read_file",
@@ -1915,6 +2250,7 @@ mod tests {
             "fs_read",
             "shell_log",
             "proc_read",
+            "proc_wait",
             "proc_list",
         ];
         for &(tool, args, internal) in ROUTES {
@@ -2073,7 +2409,6 @@ mod tests {
             );
         }
         assert!(public_call("files", r#"{"action":"pdf_page","name":"x","page":0}"#).is_ok());
-        // Validation has always checked only array presence, not item types.
         assert!(public_call("scripts", r#"{"action":"install","packages":[null]}"#).is_ok());
     }
 

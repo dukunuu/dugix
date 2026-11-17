@@ -15,7 +15,6 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct Tab {
     /// Label template.
     pub label: String,
-    /// Child nodes.
     pub view: Vec<Node>,
 }
 
@@ -25,7 +24,6 @@ pub struct Tab {
 pub struct Section {
     /// Heading template.
     pub title: String,
-    /// Child nodes.
     pub view: Vec<Node>,
     /// Initial expansion state.
     #[serde(default)]
@@ -92,6 +90,9 @@ fn children(node: &Node) -> Vec<&[Node]> {
         Node::Tabs { items, .. } => items.iter().map(|item| item.view.as_slice()).collect(),
         Node::Accordion { items } => items.iter().map(|item| item.view.as_slice()).collect(),
         Node::Form { fields, .. } => vec![fields],
+        Node::Row { items, .. } | Node::Grid { items, .. } | Node::Stack { items, .. } => {
+            vec![items]
+        }
         Node::Quiz { items, .. } => items.iter().map(|item| item.view.as_slice()).collect(),
         _ => Vec::new(),
     }
@@ -100,7 +101,13 @@ pub(super) fn max_visible(nodes: &[Node]) -> usize {
     nodes
         .iter()
         .map(|node| {
-            1 + match node {
+            // Layout containers and spacers are structure, not content: only
+            // what they hold counts toward the visible-node cap.
+            let own = usize::from(!matches!(
+                node,
+                Node::Row { .. } | Node::Grid { .. } | Node::Stack { .. } | Node::Spacer { .. }
+            ));
+            own + match node {
                 Node::Tabs { items, .. } => items
                     .iter()
                     .map(|item| max_visible(&item.view))
@@ -245,6 +252,28 @@ impl Document {
                     }
                 }
             }
+            Node::Canvas { shapes, rows, alt } => {
+                self.validate_canvas(shapes, *rows, alt, budget)?;
+                controls = shapes
+                    .iter()
+                    .filter(|shape| shape.action().is_some())
+                    .count();
+            }
+            Node::Row { items, gap } => {
+                item_count(items.len(), 2, 4)?;
+                ensure!(*gap <= 4, "row gap must be 0–4");
+            }
+            Node::Grid { items, cols } => {
+                item_count(items.len(), 2, 12)?;
+                ensure!((2..=4).contains(cols), "grid cols must be 2–4");
+            }
+            Node::Stack { items, gap } => {
+                item_count(items.len(), 1, 8)?;
+                ensure!(*gap <= 3, "stack gap must be 0–3");
+            }
+            Node::Spacer { rows } => {
+                ensure!((1..=4).contains(rows), "spacer rows must be 1–4");
+            }
             Node::Timeline { items } => {
                 item_count(items.len(), 1, 8)?;
                 for item in items {
@@ -283,7 +312,7 @@ impl Document {
                 self.numeric_ok(value, budget)?;
                 self.numeric_ok(max, budget)?;
             }
-            _ => return Ok(None),
+            _ => return self.validate_extra(node, budget),
         }
         for branch in children(node) {
             item_count(branch.len(), 0, 16)?;
@@ -306,9 +335,7 @@ pub(super) fn lang_ok(lang: &str) -> Result<()> {
     Ok(())
 }
 
-/// Persisted local presentation state: selected tabs, open sections, table
-/// sort/page/filter, quiz questions and revealed answers. Everything is
-/// re-validated against the program on restore.
+/// Persisted local presentation state, re-validated against the program on restore.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ViewSnapshot {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -399,8 +426,7 @@ impl Session {
             }
         }
         for &(node, section, open) in &view.open {
-            if matches!(self.document.node(node), Some(Node::Accordion { items }) if section < items.len())
-            {
+            if self.section_default(node, section).is_some() {
                 next.open.insert((node, section), open);
             }
         }
@@ -482,8 +508,6 @@ impl Session {
             .min(items.len().saturating_sub(1))
     }
     /// Switch to a tab, updating its optional binding transactionally.
-    /// # Errors
-    /// Rejects non-tabs and invalid resulting bindings.
     pub fn select_tab(&mut self, node: usize, tab: usize) -> Result<()> {
         let Some(Node::Tabs { items, key }) = self.document.node(node) else {
             bail!("not tabs");
@@ -503,14 +527,27 @@ impl Session {
     /// Current section expansion state.
     #[must_use]
     pub fn section_open(&self, node: usize, section: usize) -> bool {
-        self.components.open.get(&(node, section)).copied().unwrap_or_else(|| matches!(self.document.node(node), Some(Node::Accordion { items }) if items.get(section).is_some_and(|s| s.open)))
+        self.components
+            .open
+            .get(&(node, section))
+            .copied()
+            .unwrap_or_else(|| self.section_default(node, section).unwrap_or(false))
+    }
+    /// A section's (or tree branch's) authored expansion; `None` when it
+    /// doesn't exist.
+    fn section_default(&self, node: usize, section: usize) -> Option<bool> {
+        match self.document.node(node)? {
+            Node::Accordion { items } => items.get(section).map(|item| item.open),
+            Node::Tree { items } => super::extras::flatten(items)
+                .get(section)
+                .map(|(_, branch)| branch.open),
+            _ => None,
+        }
     }
     /// Toggle a declared section.
-    /// # Errors
-    /// Rejects missing sections.
     pub fn expand_section(&mut self, node: usize, section: usize) -> Result<()> {
         ensure!(
-            matches!(self.document.node(node), Some(Node::Accordion { items }) if section < items.len()),
+            self.section_default(node, section).is_some(),
             "not a section"
         );
         self.components
@@ -540,6 +577,9 @@ impl Session {
                         }
                     }
                     Node::Form { fields, .. } => visit(session, fields, out),
+                    Node::Row { items, .. }
+                    | Node::Grid { items, .. }
+                    | Node::Stack { items, .. } => visit(session, items, out),
                     Node::Quiz { items, .. } => {
                         if let Some(item) = items.get(session.question(index)) {
                             visit(session, &item.view, out);
@@ -567,8 +607,6 @@ impl Session {
         })
     }
     /// Submit current bound values through the form's action.
-    /// # Errors
-    /// Rejects incomplete forms or failed actions without changing state.
     pub fn submit_form(&mut self, node: usize) -> Result<Option<String>> {
         ensure!(
             self.form_valid(node),
@@ -581,8 +619,6 @@ impl Session {
         self.activate(&action)
     }
     /// Set a rating, clamped to its declared scale.
-    /// # Errors
-    /// Rejects non-ratings or invalid resulting bindings.
     pub fn rate(&mut self, node: usize, value: u16) -> Result<()> {
         let Some(Node::Rating { key, max, .. }) = self.document.node(node) else {
             bail!("not a rating");
@@ -594,8 +630,6 @@ impl Session {
         Ok(())
     }
     /// Set a slider from a pointer fraction, snapping to its step.
-    /// # Errors
-    /// Rejects non-sliders and invalid resulting bindings.
     pub fn slide(&mut self, node: usize, fraction: f64) -> Result<()> {
         let Some(Node::Slider {
             key,
@@ -658,8 +692,6 @@ impl Session {
         rows
     }
     /// Sort by a column, toggling direction on a repeated selection.
-    /// # Errors
-    /// Rejects tables without sorting or unknown columns.
     pub fn sort_table(&mut self, node: usize, column: usize) -> Result<()> {
         ensure!(
             matches!(self.document.node(node), Some(Node::Table { columns, sortable: true, .. }) if column < columns.len()),
@@ -677,8 +709,6 @@ impl Session {
         Ok(())
     }
     /// Change the table page, clamped to filtered data.
-    /// # Errors
-    /// Rejects tables without pagination.
     pub fn page_table(&mut self, node: usize, forward: bool) -> Result<()> {
         let Some(Node::Table {
             page_size: Some(size),
@@ -702,8 +732,6 @@ impl Session {
         Ok(())
     }
     /// Edit the local table filter without changing bound selection.
-    /// # Errors
-    /// Rejects tables without search or invalid text.
     pub fn search_table(&mut self, node: usize, query: String, editing: bool) -> Result<()> {
         ensure!(
             matches!(

@@ -1,0 +1,470 @@
+//! The book's two text forms: the table of contents the model reads at the
+//! start of a session, and the Markdown the user edits in `$EDITOR`.
+
+use std::collections::{BTreeMap, HashSet};
+use std::fmt::Write as _;
+use std::path::Path;
+
+use anyhow::Result;
+use rusqlite::Connection;
+
+use super::{Chapter, Fact};
+
+/// Most pinned facts listed in full; the rest are reachable with a read.
+const MAX_PINNED_FACTS: usize = 60;
+const MAX_CHAPTERS: usize = 60;
+const MAX_DOCS: usize = 30;
+const MAX_HEADINGS: usize = 6;
+
+/// A doc of the space, as the table of contents lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocEntry {
+    /// `docs/…/x.doc.json`, what `canvas` reads.
+    pub relative: String,
+    pub title: String,
+    /// Level 1–2 headings, in order.
+    pub headings: Vec<String>,
+}
+
+/// The space's docs, newest first, with their top headings.
+#[must_use]
+pub fn docs(files_dir: &Path) -> Vec<DocEntry> {
+    crate::canvas::library(files_dir)
+        .into_iter()
+        .filter(|entry| entry.relative.starts_with("docs/"))
+        .take(MAX_DOCS)
+        .map(|entry| {
+            let headings = crate::doc::storage::load(files_dir, &entry.relative)
+                .map(|doc| {
+                    doc.blocks
+                        .iter()
+                        .filter_map(|block| match &block.kind {
+                            crate::doc::Kind::Heading { level, text } if *level <= 2 => {
+                                Some(text.split_whitespace().collect::<Vec<_>>().join(" "))
+                            }
+                            _ => None,
+                        })
+                        .filter(|text| !text.is_empty())
+                        .take(MAX_HEADINGS)
+                        .collect()
+                })
+                .unwrap_or_default();
+            DocEntry {
+                relative: entry.relative,
+                title: entry.title,
+                headings,
+            }
+        })
+        .collect()
+}
+
+/// The `## Memory` section body: pinned chapters in full, others by title, count
+/// and description, then the docs; empty when there is nothing to list.
+#[must_use]
+pub fn toc(chapters: &[Chapter], facts: &[Fact], docs: &[DocEntry]) -> String {
+    toc_with_labels(chapters, facts, docs, &BTreeMap::new())
+}
+
+/// The table of contents with display-only sharing labels.
+#[must_use]
+pub fn toc_with_labels(
+    chapters: &[Chapter],
+    facts: &[Fact],
+    docs: &[DocEntry],
+    labels: &BTreeMap<String, String>,
+) -> String {
+    if chapters.is_empty() && docs.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(
+        "Saved across chats in this space. Pinned chapters are listed in full. Open any other \
+         chapter with `memory` (action=read, chapter=…) and a doc with `canvas` (action=read, \
+         path=…) before relying on it.\n",
+    );
+    if !labels.is_empty() {
+        out.pop();
+        out.push_str(" Chapters marked shared are seen in other spaces too: keep them to facts true in all of them.\n");
+    }
+    let mut budget = MAX_PINNED_FACTS;
+    for chapter in chapters.iter().filter(|c| c.pinned) {
+        let _ = write!(out, "\n### {}{}\n", chapter.title, label(labels, chapter));
+        let in_chapter: Vec<&Fact> = facts
+            .iter()
+            .filter(|f| f.chapter_id == chapter.id)
+            .collect();
+        let take = in_chapter.len().min(budget);
+        for fact in in_chapter.iter().take(take) {
+            let _ = writeln!(out, "- [{}] {}", fact.short_id(), fact.text);
+        }
+        budget -= take;
+        let hidden = in_chapter.len() - take;
+        if hidden > 0 {
+            let _ = writeln!(out, "- … {hidden} more: open the chapter");
+        }
+    }
+    let others: Vec<&Chapter> = chapters.iter().filter(|c| !c.pinned).collect();
+    if !others.is_empty() {
+        out.push_str("\nChapters:\n");
+        for chapter in others.iter().take(MAX_CHAPTERS) {
+            let count = facts.iter().filter(|f| f.chapter_id == chapter.id).count();
+            let _ = write!(
+                out,
+                "- {}{} ({count})",
+                chapter.title,
+                label(labels, chapter)
+            );
+            if !chapter.description.is_empty() {
+                let _ = write!(out, " — {}", chapter.description);
+            }
+            out.push('\n');
+        }
+        if others.len() > MAX_CHAPTERS {
+            let _ = writeln!(
+                out,
+                "- … {} more: memory action=read lists them all",
+                others.len() - MAX_CHAPTERS
+            );
+        }
+    }
+    if !docs.is_empty() {
+        out.push_str("\nDocs:\n");
+        for doc in docs {
+            let _ = write!(out, "- {} — {}", doc.relative, doc.title);
+            if !doc.headings.is_empty() {
+                let _ = write!(out, ": {}", doc.headings.join(" · "));
+            }
+            out.push('\n');
+        }
+    }
+    out.trim_end().to_string()
+}
+
+/// Characters of entries one `memory action=read` page holds, below the tool
+/// result cap so a page is never cut mid-entry.
+const PAGE_CHARS: usize = 6_000;
+
+/// Append `lines` from the 1-based `offset` until the page is full; when entries
+/// remain, end with how to read on.
+fn page(out: &mut String, lines: &[String], offset: usize, what: &str) {
+    let start = offset.max(1) - 1;
+    if start >= lines.len() {
+        let _ = writeln!(
+            out,
+            "(offset {offset} is past the last of {} {what})",
+            lines.len()
+        );
+        return;
+    }
+    let mut used = 0;
+    let mut end = start;
+    for line in &lines[start..] {
+        let size = line.chars().count() + 1;
+        if end > start && used + size > PAGE_CHARS {
+            break;
+        }
+        out.push_str(line);
+        out.push('\n');
+        used += size;
+        end += 1;
+    }
+    if end < lines.len() {
+        let _ = writeln!(
+            out,
+            "… {what} {}–{end} of {}; continue with offset={}",
+            start + 1,
+            lines.len(),
+            end + 1
+        );
+    }
+}
+
+#[must_use]
+pub fn chapter_page(chapter: &Chapter, facts: &[Fact], offset: usize) -> String {
+    chapter_page_with_labels(chapter, facts, offset, &BTreeMap::new())
+}
+
+fn label<'a>(labels: &'a BTreeMap<String, String>, chapter: &Chapter) -> &'a str {
+    labels.get(&chapter.id).map_or("", String::as_str)
+}
+
+/// A chapter page with its sharing label.
+#[must_use]
+pub fn chapter_page_with_labels(
+    chapter: &Chapter,
+    facts: &[Fact],
+    offset: usize,
+    labels: &BTreeMap<String, String>,
+) -> String {
+    let mut out = format!("## {}{}", chapter.title, label(labels, chapter));
+    if chapter.pinned {
+        out.push_str(" [pinned]");
+    }
+    out.push('\n');
+    if !chapter.description.is_empty() {
+        let _ = writeln!(out, "{}", chapter.description);
+    }
+    let lines: Vec<String> = facts
+        .iter()
+        .filter(|f| f.chapter_id == chapter.id)
+        .map(|fact| format!("- [{}] {}", fact.short_id(), fact.text))
+        .collect();
+    if lines.is_empty() {
+        out.push_str("(no facts)\n");
+    } else {
+        page(&mut out, &lines, offset, "facts");
+    }
+    out.trim_end().to_string()
+}
+
+#[must_use]
+pub fn chapter_list(chapters: &[Chapter], facts: &[Fact], offset: usize) -> String {
+    chapter_list_with_labels(chapters, facts, offset, &BTreeMap::new())
+}
+
+/// A chapter listing with sharing labels.
+#[must_use]
+pub fn chapter_list_with_labels(
+    chapters: &[Chapter],
+    facts: &[Fact],
+    offset: usize,
+    labels: &BTreeMap<String, String>,
+) -> String {
+    if chapters.is_empty() {
+        return "memory is empty — save a fact with action=add".to_string();
+    }
+    let lines: Vec<String> = chapters
+        .iter()
+        .map(|chapter| {
+            let count = facts.iter().filter(|f| f.chapter_id == chapter.id).count();
+            let mut line = format!("- {}{} ({count})", chapter.title, label(labels, chapter));
+            if chapter.pinned {
+                line.push_str(" [pinned]");
+            }
+            if !chapter.description.is_empty() {
+                let _ = write!(line, " — {}", chapter.description);
+            }
+            line
+        })
+        .collect();
+    let mut out = String::new();
+    page(&mut out, &lines, offset, "chapters");
+    out.trim_end().to_string()
+}
+
+const EDIT_HEADER: &str =
+    "<!-- Memory for this space. One fact per \"- \" line under a \"## chapter\".
+     \"> \" sets the chapter's description; \"[pinned]\" after a title lists the
+     chapter in full in every chat. Delete a line to forget that fact, or a
+     chapter heading to forget the whole chapter. -->";
+
+#[must_use]
+pub fn render_edit(chapters: &[Chapter], facts: &[Fact]) -> String {
+    let mut out = format!(
+        "{EDIT_HEADER}\n<!-- opened {} -->\n",
+        chrono::Utc::now().to_rfc3339()
+    );
+    for chapter in chapters {
+        let _ = write!(out, "\n## {}", chapter.title);
+        if chapter.pinned {
+            out.push_str(" [pinned]");
+        }
+        out.push('\n');
+        if !chapter.description.is_empty() {
+            let _ = writeln!(out, "> {}", chapter.description);
+        }
+        for fact in facts.iter().filter(|f| f.chapter_id == chapter.id) {
+            let _ = writeln!(out, "- {}", fact.text);
+        }
+    }
+    out
+}
+
+/// When the editor text was rendered, from its `<!-- opened … -->` line.
+#[must_use]
+pub fn opened_at(text: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    let stamp = text.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("<!-- opened ")?
+            .strip_suffix(" -->")
+    })?;
+    chrono::DateTime::parse_from_rfc3339(stamp)
+        .ok()
+        .map(|time| time.with_timezone(&chrono::Utc))
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EditedChapter {
+    pub title: String,
+    pub description: String,
+    pub pinned: bool,
+    pub facts: Vec<String>,
+}
+
+/// Facts written above the first chapter heading land here.
+pub const UNFILED: &str = "General";
+
+/// Comments are skipped; any other non-empty line is a fact.
+#[must_use]
+pub fn parse_edit(text: &str) -> Vec<EditedChapter> {
+    let mut out: Vec<EditedChapter> = Vec::new();
+    for line in strip_comments(text).lines() {
+        let line = line.trim();
+        if !line.is_empty() {
+            push_line(&mut out, line);
+        }
+    }
+    out
+}
+
+fn strip_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("<!--") {
+        out.push_str(&rest[..start]);
+        match rest[start..].find("-->") {
+            Some(end) => rest = &rest[start + end + 3..],
+            None => return out,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn push_line(out: &mut Vec<EditedChapter>, line: &str) {
+    if let Some(title) = line.strip_prefix("## ") {
+        let title = title.trim();
+        let (title, pinned) = match title.strip_suffix("[pinned]") {
+            Some(rest) => (rest.trim(), true),
+            None => (title, false),
+        };
+        if !title.is_empty() {
+            out.push(EditedChapter {
+                title: title.to_string(),
+                pinned,
+                ..EditedChapter::default()
+            });
+        }
+        return;
+    }
+    if out.is_empty() {
+        out.push(EditedChapter {
+            title: UNFILED.to_string(),
+            ..EditedChapter::default()
+        });
+    }
+    let chapter = out.last_mut().expect("a chapter exists");
+    if let Some(description) = line.strip_prefix('>') {
+        if !chapter.description.is_empty() {
+            chapter.description.push(' ');
+        }
+        chapter.description.push_str(description.trim());
+        return;
+    }
+    let fact = line
+        .strip_prefix("- ")
+        .or_else(|| line.strip_prefix("* "))
+        .unwrap_or(line)
+        .trim();
+    if !fact.is_empty() && !line.starts_with('#') {
+        chapter.facts.push(fact.to_string());
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EditSummary {
+    pub added: usize,
+    pub removed: usize,
+    pub moved: usize,
+    pub chapters_removed: usize,
+}
+
+impl std::fmt::Display for EditSummary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "memory saved · {} added · {} removed · {} moved",
+            self.added, self.removed, self.moved
+        )?;
+        if self.chapters_removed > 0 {
+            write!(f, " · {} chapters removed", self.chapters_removed)?;
+        }
+        Ok(())
+    }
+}
+
+/// Apply an editor save as a diff: matching lines keep their fact, new lines are
+/// added, a line moved under another heading moves its fact, and anything no longer
+/// present is deleted.
+pub fn apply_edit(
+    conn: &Connection,
+    space: &str,
+    edited: &[EditedChapter],
+    opened_at: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<EditSummary> {
+    let mut summary = EditSummary::default();
+    let mut keep_facts: HashSet<String> = HashSet::new();
+    let mut keep_chapters: HashSet<String> = HashSet::new();
+    for edited_chapter in edited {
+        let chapter = super::ensure_chapter(
+            conn,
+            space,
+            &edited_chapter.title,
+            None,
+            Some(edited_chapter.pinned),
+        )?;
+        let chapter = if chapter.description == edited_chapter.description.trim() {
+            chapter
+        } else {
+            super::update_chapter(
+                conn,
+                space,
+                &chapter.title,
+                None,
+                Some(&edited_chapter.description),
+                None,
+            )?
+        };
+        keep_chapters.insert(chapter.id.clone());
+        for text in &edited_chapter.facts {
+            let text: String = text.chars().take(super::MAX_NOTE_CHARS).collect();
+            let existing = super::facts(conn, space)?
+                .into_iter()
+                .find(|f| f.text.eq_ignore_ascii_case(text.trim()));
+            match existing {
+                Some(fact) if fact.chapter_id == chapter.id => {
+                    keep_facts.insert(fact.id);
+                }
+                Some(fact) if !keep_facts.contains(&fact.id) => {
+                    super::update_fact(conn, space, &fact.id, None, Some(&chapter.title))?;
+                    keep_facts.insert(fact.id);
+                    summary.moved += 1;
+                }
+                // The same text twice in the edit: keep one.
+                Some(_) => {}
+                None => {
+                    let added = super::add_note(conn, space, &chapter.title, &text, None, None)?;
+                    keep_facts.insert(added.fact.id);
+                    summary.added += 1;
+                }
+            }
+        }
+    }
+    let existed =
+        |created_at: &str| match (opened_at, chrono::DateTime::parse_from_rfc3339(created_at)) {
+            (Some(opened), Ok(created)) => created.with_timezone(&chrono::Utc) <= opened,
+            _ => true,
+        };
+    for fact in super::facts(conn, space)? {
+        if !keep_facts.contains(&fact.id) && existed(&fact.created_at) {
+            super::delete_fact(conn, space, &fact.id)?;
+            summary.removed += 1;
+        }
+    }
+    for chapter in super::chapters(conn, space)? {
+        if !keep_chapters.contains(&chapter.id) && existed(&chapter.created_at) {
+            super::delete_chapter(conn, &chapter.id)?;
+            summary.chapters_removed += 1;
+        }
+    }
+    Ok(summary)
+}

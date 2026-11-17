@@ -1,4 +1,4 @@
-// Dev-only IPC fixture for the doc editor. Injected by doc-shot.mjs, never embedded.
+// Dev-only IPC fixture for the doc editor. Injected by doc-harness.mjs, never embedded.
 // It plays the backend's part: the doc is the single source of truth, every
 // DocApply is one undo step, and the model can edit from outside.
 (() => {
@@ -11,7 +11,7 @@
   let model;
   const load = async () => (model ||= await import('/doc/model.js'));
   const revision = () => `r${sequence}`;
-  const design = () => ({ slug: 'nexus', name: 'Nexus', colors: doc.theme.colors, fonts: doc.theme.fonts, update_available: Boolean(window.__mock?.designUpdate) });
+  const design = () => ({ slug: 'dugix', name: 'Dugix', colors: doc.theme.colors, fonts: doc.theme.fonts, update_available: Boolean(window.__mock?.designUpdate) });
   const current = (extra = {}) => ({
     event: 'Doc', doc, colors, revision: revision(), relative: 'docs/q3.doc.json', threads, linked: window.__mock?.linked ?? true, activities,
     changed: [], notice: null, assets: {}, design: design(), can_undo: undo.length > 0, can_redo: redo.length > 0, ...extra,
@@ -36,6 +36,10 @@
       return next;
     }
     if (op.op === 'apply_design') return next;
+    if (op.op === 'set_style') {
+      next.theme.text_styles = { ...next.theme.text_styles, [op.style]: { ...next.theme.text_styles?.[op.style], ...op.patch } };
+      return next;
+    }
     return model.applyOps(next, [op]);
   }
   function apply(ops) {
@@ -100,7 +104,7 @@
             else pending.forEach(e => { e.status = 'dismissed'; });
             return emit(current());
           }
-          if (m.command === 'DocDesigns') return emit({ event: 'Designs', available: [{ slug: 'nexus', name: 'Nexus', colors: doc.theme.colors, fonts: doc.theme.fonts, current: true }, { slug: 'warm', name: 'Warm paper', colors: { bg: '#fffaf0', fg: '#3b2f2f', accent: '#c0392b', muted: '#8c7b75' }, fonts: doc.theme.fonts, current: false }] });
+          if (m.command === 'DocDesigns') return emit({ event: 'Designs', available: [{ slug: 'dugix', name: 'Dugix', colors: doc.theme.colors, fonts: doc.theme.fonts, current: true }, { slug: 'warm', name: 'Warm paper', colors: { bg: '#fffaf0', fg: '#3b2f2f', accent: '#c0392b', muted: '#8c7b75' }, fonts: doc.theme.fonts, current: false }] });
           if (m.command === 'DocApplyDesign') { sequence++; return emit(current()); }
           if (m.command === 'History') {
             // Every undo step is a kept version: the doc before that edit.
@@ -110,6 +114,14 @@
           if (m.command === 'HistoryPreview') { const i = Number(m.id.slice(1)); return emit({ event: 'HistoryPreview', id: m.id, deck: null, doc: undo[i] }); }
           if (m.command === 'HistoryRestore') { const i = Number(m.id.slice(1)); const kept = undo[i]; undo.push(doc); redo.length = 0; doc = structuredClone(kept); sequence++; return emit(current()); }
           if (m.command === 'DocPages') return emit({ event: 'Pages', revision: revision(), pages: [1, 2, 3].map(n => ({ n, width: 595.28, height: 841.89, src: `/pages/${revision()}-${n}.png` })) });
+          // The source view: a rough Markdown rendering; applied text is kept for asserts.
+          if (m.command === 'DocSource') return emit({ event: 'DocSource', revision: revision(), markdown: doc.blocks.map(b => b.kind === 'title' ? `# ${b.text}` : b.kind === 'heading' ? `${'#'.repeat(b.level)} ${b.text}` : (b.text ?? '')).join('\n\n') + '\n' });
+          if (m.command === 'DocApplySource') { window.__mock.source = m.markdown; return emit(current()); }
+          // A stand-in for tree-sitter: keywords in accent, double-quoted strings in accent2.
+          if (m.command === 'Highlight') return emit({ event: 'Highlights', blocks: m.blocks.map(b => ({ id: b.id, spans: [
+            ...[...b.text.matchAll(/\b(const|let|return)\b/g)].map(x => [x.index, x.index + x[0].length, 'accent']),
+            ...[...b.text.matchAll(/"[^"]*"/g)].map(x => [x.index, x.index + x[0].length, 'accent2']),
+          ].sort((a, b) => a[0] - b[0]) })) });
           if (m.command === 'DocExport' || m.command === 'ExportAs') return emit({ event: 'Exported', path: `/tmp/exports/q3-strategy.${m.format}`, warnings: [] });
           if (m.command === 'DocImportAsset') return emit({ event: 'Asset', src: 'assets/pasted.png' });
           if (m.command === 'Reveal') return emit({ event: 'Revealed' });

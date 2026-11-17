@@ -1,6 +1,6 @@
 ---
 name: Pull request
-about: Changes to nexus-chat
+about: Changes to dugix
 title: "prefix: short imperative summary"
 labels: []
 ---

@@ -51,8 +51,8 @@ pub struct Suggestion {
     pub ops: Vec<Op>,
 }
 
-/// Fill trusted preconditions and ids, then apply each proposal to the base.
-/// Invalid proposals do not prevent independent proposals from surviving.
+/// Fill trusted preconditions and ids, then apply each proposal to the base; one
+/// invalid proposal does not stop the others.
 #[must_use]
 pub fn prepare(base: &Deck, raw: Vec<RawSuggestion>) -> (Vec<Suggestion>, Vec<CheckError>) {
     prepare_with_resolver(base, raw, None)
@@ -223,8 +223,7 @@ pub(super) fn insertion_id(
     Ok(())
 }
 
-/// Give a slide or node, and every node under it, an id. On a clash the
-/// error carries the JSON path of the node, such as `.children[1]`.
+/// Give a slide or node and its subtree an id; a clash reports the node's JSON path.
 pub(super) fn insertion_tree(
     value: &mut Value,
     stem: &str,

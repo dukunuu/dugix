@@ -1,9 +1,5 @@
-//! External converters, found at run time like tesseract and never required:
-//! `pandoc`, `antiword` / `catdoc`, `soffice` (`LibreOffice`), `ffprobe` /
-//! `ffmpeg` and a local `whisper` / `whisper-cli`, plus the user's own
-//! `[extract.converters]` hooks. Every tool is spawned from an argv array
-//! (never a shell), in a private temp directory, with a timeout and an output
-//! cap, and with credential environment variables removed.
+//! External converters, found at run time and never required: `pandoc`, `antiword` / `catdoc`,
+//! `soffice`, `ffprobe` / `ffmpeg`, `whisper`, and the user's `[extract.converters]` hooks.
 
 use std::fmt::Write as _;
 use std::io::Read;
@@ -13,8 +9,7 @@ use std::time::{Duration, Instant};
 
 use super::detect::Kind;
 
-/// A user converter from `[extract.converters]`: `"<ext or mime>" = ["cmd",
-/// "{in}"]`, stdout is Markdown.
+/// A user converter from `[extract.converters]`: `"<ext or mime>" = ["cmd", "{in}"]`; stdout is Markdown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hook {
     /// Lowercased extension (no dot) or MIME type.
@@ -51,10 +46,7 @@ impl ExtractConfig {
         }
     }
 
-    /// The real environment: `PATH` (plus the usual package-manager and
-    /// `LibreOffice` locations) and the config file's hooks. Under `cargo
-    /// test` this is [`Self::none`], so tests never touch the machine's
-    /// tools or config.
+    /// The real environment: `PATH` and the config file's hooks; under `cargo test` this is [`Self::none`].
     #[cfg(not(test))]
     pub fn load() -> Self {
         let mut cfg = Self::none();
@@ -76,12 +68,12 @@ impl ExtractConfig {
             .into_iter()
             .map(|(key, argv)| Hook { key, argv })
             .collect();
-        if let Ok(model) = std::env::var("NEXUS_WHISPER_MODEL")
+        if let Ok(model) = std::env::var("DUGIX_WHISPER_MODEL")
             && !model.trim().is_empty()
         {
             cfg.whisper_model = model.trim().to_string();
         }
-        cfg.whisper_cpp_model = std::env::var_os("NEXUS_WHISPER_CPP_MODEL")
+        cfg.whisper_cpp_model = std::env::var_os("DUGIX_WHISPER_CPP_MODEL")
             .map(PathBuf::from)
             .filter(|p| p.is_file());
         cfg
@@ -104,17 +96,10 @@ impl ExtractConfig {
             .find(|p| is_executable(p))
     }
 
-    /// The user hook for an extension or MIME type.
     pub fn hook_for(&self, ext: &str, mime: &str) -> Option<&Hook> {
         self.hooks
             .iter()
             .find(|h| (!ext.is_empty() && h.key == ext) || h.key == mime)
-    }
-
-    /// Whether scanned PDFs can be OCR'd locally: `pdftoppm` (poppler) renders
-    /// the pages and `tesseract` reads them.
-    pub fn ocr_tools_installed(&self) -> bool {
-        self.find("tesseract").is_some() && self.find("pdftoppm").is_some()
     }
 
     fn has_any(&self, programs: &[&str]) -> bool {
@@ -134,7 +119,6 @@ fn is_executable(p: &Path) -> bool {
     p.is_file()
 }
 
-/// Why running a program failed.
 #[derive(Debug, PartialEq, Eq)]
 pub enum RunError {
     Missing,
@@ -158,9 +142,7 @@ pub struct RunOutput {
     pub truncated: bool,
 }
 
-/// Run `program` with `args` in `cwd`, killing it after `timeout` or once it
-/// has printed more than `cap` bytes. Stdin is closed; stderr is reduced to
-/// a short message on failure.
+/// Run `program` with `args` in `cwd`, killing it after `timeout` or once it printed more than `cap` bytes.
 pub fn run_capped(
     program: &Path,
     args: &[String],
@@ -175,8 +157,7 @@ pub fn run_capped(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     crate::config::scrub_secret_env(&mut cmd);
-    // Its own process group, so a timeout also stops what a wrapper script
-    // started: Linux's `sh` keeps running children that hold our pipes open.
+    // Its own process group, so a timeout also stops what a wrapper script started: Linux's `sh` keeps running children that hold our pipes open.
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
     let mut child = cmd.spawn().map_err(|e| {
@@ -259,7 +240,6 @@ fn kill_group(pid: u32) {
 #[cfg(not(unix))]
 fn kill_group(_pid: u32) {}
 
-/// A converted file: the text and how it was produced.
 #[derive(Debug)]
 pub struct Converted {
     pub text: String,
@@ -271,7 +251,7 @@ struct Scratch(PathBuf);
 
 impl Scratch {
     fn new() -> Result<Self, String> {
-        let dir = std::env::temp_dir().join(format!("nexus-convert-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-convert-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         Ok(Self(dir))
     }
@@ -283,9 +263,7 @@ impl Drop for Scratch {
     }
 }
 
-/// Which external attempt [`convert`] would make for `kind`, judged from the
-/// installed tools and hooks alone (no process is started). `base_empty` says
-/// the built-in converter produced nothing.
+/// Which external attempt [`convert`] would make for `kind`; `base_empty` says the built-in converter produced nothing.
 pub fn plan(kind: Kind, ext: &str, base_empty: bool, cfg: &ExtractConfig) -> Option<&'static str> {
     if cfg.hook_for(ext, kind.mime()).is_some() {
         return Some("hook");
@@ -342,7 +320,6 @@ fn pandoc_format(kind: Kind) -> Option<&'static str> {
     })
 }
 
-/// Run the external converter for `kind` on `path`.
 pub fn convert(path: &Path, kind: Kind, cfg: &ExtractConfig) -> Result<Converted, String> {
     let ext = super::detect::extension(&path.to_string_lossy());
     let scratch = Scratch::new()?;
@@ -520,7 +497,6 @@ fn clock(secs: f64) -> String {
     }
 }
 
-/// `ffprobe` metadata as text.
 fn probe_text(exe: &Path, path: &Path, tmp: &Path, cfg: &ExtractConfig) -> Result<String, String> {
     let args = vec![
         "-v".to_string(),
@@ -628,8 +604,7 @@ fn media_text(
     }
 }
 
-/// A local transcript: `whisper` (openai CLI) or `whisper-cli` (whisper.cpp,
-/// needs `NEXUS_WHISPER_CPP_MODEL`). `Err(None)` = no transcriber installed.
+/// A local transcript from `whisper` or `whisper-cli`; `Err(None)` means no transcriber is installed.
 fn transcribe(
     path: &Path,
     tmp: &Path,
@@ -708,14 +683,13 @@ pub(crate) mod fake_tools {
     use super::*;
     use std::os::unix::fs::PermissionsExt as _;
 
-    /// A temp dir holding fake tools (shell scripts) and acting as `PATH`.
     pub(crate) struct Bin {
         pub dir: PathBuf,
     }
 
     impl Bin {
         pub fn new() -> Self {
-            let dir = std::env::temp_dir().join(format!("nexus-bin-{}", uuid::Uuid::new_v4()));
+            let dir = std::env::temp_dir().join(format!("dugix-bin-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&dir).unwrap();
             Self { dir }
         }
@@ -820,7 +794,6 @@ mod tests {
             argv: vec!["x".into()],
         });
         assert_eq!(plan(Kind::Docx, "docx", false, &cfg), Some("hook"));
-        // A hook keyed by MIME type works for any extension.
         cfg.hooks.push(Hook {
             key: "application/rtf".into(),
             argv: vec!["x".into()],
@@ -831,10 +804,9 @@ mod tests {
     #[test]
     fn pandoc_runs_with_argv_not_a_shell() {
         let bin = Bin::new();
-        // Echo the arguments so the test can see exactly what was passed.
         bin.tool("pandoc", "echo \"args: $*\"");
         let cfg = bin.cfg();
-        let dir = std::env::temp_dir().join(format!("nexus-pandoc-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-pandoc-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let input = dir.join("odd name; rm -rf x.rst");
         std::fs::write(&input, "Title\n=====").unwrap();
@@ -855,7 +827,7 @@ mod tests {
         let bin = Bin::new();
         bin.tool("tomd", "echo \"# from hook: $1\"")
             .tool("broken", "exit 2");
-        let dir = std::env::temp_dir().join(format!("nexus-hook-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-hook-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let input = dir.join("a.rtf");
         std::fs::write(&input, "{\\rtf1 hi}").unwrap();
@@ -880,7 +852,7 @@ mod tests {
         let bin = Bin::new();
         bin.tool("antiword", "exit 1")
             .tool("catdoc", "echo legacy text");
-        let dir = std::env::temp_dir().join(format!("nexus-doc-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-doc-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let input = dir.join("old.doc");
         std::fs::write(&input, [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]).unwrap();
@@ -900,7 +872,7 @@ mod tests {
             "ffprobe",
             r#"echo '{"format":{"duration":"205.4","format_long_name":"MP3","tags":{"TITLE":"Song"}},"streams":[{"codec_type":"audio","codec_name":"mp3","sample_rate":"44100","channels":2}]}'"#,
         );
-        let dir = std::env::temp_dir().join(format!("nexus-media-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-media-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let input = dir.join("a.mp3");
         std::fs::write(&input, b"ID3").unwrap();
@@ -916,7 +888,6 @@ mod tests {
             "{}",
             got.text
         );
-        // With a transcriber, the transcript follows the metadata.
         bin.tool("whisper", r#"out=""; while [ $# -gt 0 ]; do [ "$1" = "--output_dir" ] && out="$2"; shift; done; echo "hello transcript" > "$out/a.txt""#);
         let got = convert(&input, Kind::Audio("mp3"), &bin.cfg()).unwrap();
         assert_eq!(got.via, "whisper");
@@ -925,14 +896,12 @@ mod tests {
             "{}",
             got.text
         );
-        // Nothing installed: a clear error, not a panic.
         assert!(convert(&input, Kind::Audio("mp3"), &ExtractConfig::none()).is_err());
     }
 
     #[test]
     fn soffice_output_is_read_through_the_pdf_path() {
         let bin = Bin::new();
-        // Fake soffice: write a one-page PDF into --outdir.
         let pdf = crate::extract::pdf_with_pages(&["LEGACY SHEET"]);
         let pdf_path = bin.dir.join("fixture.pdf");
         std::fs::write(&pdf_path, pdf).unwrap();
@@ -943,7 +912,7 @@ mod tests {
                 pdf_path.display()
             ),
         );
-        let dir = std::env::temp_dir().join(format!("nexus-soffice-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-soffice-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let input = dir.join("old.xls");
         std::fs::write(&input, [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]).unwrap();

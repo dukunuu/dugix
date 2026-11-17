@@ -1,13 +1,5 @@
-//! Direct edits: the model changing a deck on the author's behalf.
-//!
-//! These are validated like [`super::suggest::prepare`] (ids and `base_hash`
-//! are filled in, every operation is checked against the deck as the earlier
-//! operations left it) but without the rules that exist for comment-attached
-//! suggestions, which an author reviews before applying: a direct edit may
-//! carry up to [`MAX_OPS`] operations and may introduce new images.
-//!
-//! Errors are collected for every operation rather than stopping at the
-//! first, each located as `ops[3].id`.
+//! Direct edits: the model changing a deck on the author's behalf, validated like
+//! [`super::suggest::prepare`] but without the rules for reviewed suggestions.
 
 use std::collections::BTreeSet;
 
@@ -18,17 +10,14 @@ use super::suggest::{insertion_id, insertion_tree};
 use super::validate::{reserve_id, reserved_ids};
 use super::{CheckError, Deck, Kind, Op};
 
-/// Operations in one direct edit.
 pub const MAX_OPS: usize = 500;
 /// Located errors reported at once.
 const MAX_ERRORS: usize = 12;
 
 /// A checked direct edit.
 pub struct Prepared {
-    /// The operations as applied: hashes and insertion ids filled in, and
-    /// `children` patches expanded into deletes and inserts.
+    /// The operations as applied: hashes and insertion ids filled in.
     pub ops: Vec<Op>,
-    /// The deck after the edit, already validated.
     pub next: Deck,
     /// Repairs made to the input, such as replaced children.
     pub notes: Vec<String>,
@@ -87,9 +76,8 @@ fn subtree_ids(deck: &Deck, id: &str) -> Vec<String> {
     })
 }
 
-/// A `children` patch on `update_node`/`update_slide` replaces the children:
-/// the rest of the patch, then a delete per old child and an insert per new
-/// one. Other operations pass through.
+/// A `children` patch becomes the rest of the patch, a delete per old child and an
+/// insert per new one; other operations pass through.
 fn expand(
     working: &Deck,
     mut op: Value,
@@ -162,8 +150,7 @@ pub fn prepare(base: &Deck, raw: Vec<Value>) -> Result<Prepared, Vec<CheckError>
     prepare_with_resolver(base, raw, None)
 }
 
-/// Prepare with caller-owned design lookup; layout requests become concrete
-/// slides before the existing insertion/validation machinery runs.
+/// Prepare with caller-owned design lookup; layout requests become concrete slides.
 pub fn prepare_with_resolver(
     base: &Deck,
     raw: Vec<Value>,
@@ -209,7 +196,7 @@ pub fn prepare_with_resolver(
     }
 }
 
-/// Fill, parse and apply one operation to the working copy.
+/// Fill, parse and apply one operation.
 fn one(
     working: &mut Deck,
     value: &mut Value,

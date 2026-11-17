@@ -3,8 +3,8 @@
 
 use std::path::{Path, PathBuf};
 
-/// The paths a call reads and writes, and whether it does something no path
-/// list can describe (running a program, mutating other state).
+/// The paths a call reads and writes, and whether it does something no path list
+/// can describe.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Effect {
     /// Canonical paths from `Workspace::resolve`.
@@ -14,18 +14,16 @@ pub struct Effect {
     pub exec: bool,
     /// Mutates state we can't describe by path.
     pub barrier: bool,
-    /// Reaches the network; informational for now.
+    /// Reaches the network; informational only.
     pub network: bool,
 }
 
 impl Effect {
-    /// Touches nothing that could race.
     #[must_use]
     pub fn read_only() -> Self {
         Self::default()
     }
 
-    /// Conflicts with every other call.
     #[must_use]
     pub fn barrier() -> Self {
         Self {
@@ -39,10 +37,8 @@ impl Effect {
         self.writes.is_empty() && !self.exec && !self.barrier
     }
 
-    /// Whether the two calls must keep their relative order: either is a
-    /// barrier, or one writes a path the other reads or writes (the same
-    /// path, or one inside the other, so a directory listing conflicts with
-    /// a write to a file under it). Reads never conflict with reads.
+    /// Whether the two calls must keep their relative order: either is a barrier,
+    /// or one writes a path the other reads or writes.
     #[must_use]
     pub fn conflicts(&self, other: &Effect) -> bool {
         fn overlaps(a: &Path, b: &Path) -> bool {
@@ -66,11 +62,8 @@ impl Effect {
     }
 }
 
-/// Group calls into waves that can each run concurrently. A call's wave is
-/// one past the latest wave of any earlier call it conflicts with (0 if
-/// none), so conflicting calls keep their order while an independent later
-/// call may run before an earlier one. Waves are ascending; each lists its
-/// calls in original order.
+/// Group calls into waves that can each run concurrently; conflicting calls keep
+/// their order.
 #[must_use]
 pub fn plan_waves(effects: &[Effect]) -> Vec<Vec<usize>> {
     let mut wave_of: Vec<usize> = Vec::with_capacity(effects.len());

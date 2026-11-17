@@ -17,7 +17,7 @@ fn pdf_has_one_sized_page_per_layout_page_and_pinned_metadata() {
     temp.image();
     let doc = sample();
     let bytes = pdf(&doc, &temp);
-    if std::env::var_os("NEXUS_DOC_PREVIEWS").is_some() {
+    if std::env::var_os("DUGIX_DOC_PREVIEWS").is_some() {
         let directory =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/doc-previews");
         std::fs::create_dir_all(&directory).unwrap();

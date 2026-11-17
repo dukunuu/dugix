@@ -2,47 +2,10 @@
 // is about carries a soft highlight, and the two point at each other. A
 // suggestion made of replace_text operations is drawn in the text as a tracked
 // change; its card accepts or rejects it with small icon actions in its header.
-import { inlineTokens, markdownTokens } from '../helpers.js';
 import * as M from './model.js';
 import { parseInline, plainText, toCodePoints, fromCodePoints } from './inline.js';
 import { glyph } from './glyphs.js';
-
-const el = (tag, className, text) => {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-};
-const KNOWN = new Set(['queued', 'working', 'progress', 'done', 'failed', 'stopped']);
-const busy = activity => ['queued', 'working', 'progress'].includes(activity?.state);
-const SEVERITY = { must: 'Must fix', should: 'Should fix', consider: 'Consider' };
-
-/** Inline Markdown as DOM nodes. Links stay text; nothing is interpreted as HTML. */
-function rich(text) {
-  const fragment = document.createDocumentFragment();
-  for (const token of inlineTokens(text)) fragment.append(el(['strong', 'em', 'code'].includes(token.kind) ? token.kind : 'span', '', token.text));
-  return fragment;
-}
-function paragraphs(text) {
-  const out = el('div', 'rich');
-  for (const line of markdownTokens(text)) {
-    const p = el(['h1', 'h2', 'h3'].includes(line.kind) ? 'strong' : 'p');
-    p.append(rich(line.text));
-    out.append(p);
-  }
-  return out;
-}
-
-/** A small icon action for a card's header row. */
-function action(name, label, run, className = '') {
-  const b = el('button', `icon-button quiet card-action ${className}`.trim());
-  b.type = 'button';
-  b.append(glyph(name));
-  b.title = label;
-  b.setAttribute('aria-label', label);
-  b.addEventListener('click', e => { e.stopPropagation(); run(); });
-  return b;
-}
+import { el, busy, SEVERITY, rich, paragraphs, action, author, trackActivities, activityRow as sharedActivityRow, replyBox as sharedReplyBox } from '../threads.js';
 
 export function commentsController(api) {
   const { state, surface } = api;
@@ -131,66 +94,16 @@ export function commentsController(api) {
     root.querySelector('.card.draft textarea')?.focus();
   }
 
-  // -- activity (nexus working on a comment) -------------------------------------------------
+  // -- activity (dugix working on a comment) -------------------------------------------------
 
   function updateActivities(next) {
     if (!next) return;
-    const before = state.activities;
-    state.activities = Object.fromEntries(Object.entries(next).flatMap(([id, a]) => KNOWN.has(a.state) ? [[id, a]] : before[id] ? [[id, before[id]]] : []));
-    for (const [id, activity] of Object.entries(state.activities)) {
-      const prior = before[id];
-      if (['queued', 'working'].includes(activity.state) && prior?.state !== activity.state) { progress[id] = []; delete doneUntil[id]; }
-      if (activity.state === 'progress' && activity.detail && !progress[id]?.includes(activity.detail)) (progress[id] ||= []).push(activity.detail);
-      if (['done', 'failed', 'stopped'].includes(activity.state) && prior?.state !== activity.state) {
-        if (activity.state === 'done') { doneUntil[id] = Date.now() + 4000; setTimeout(refresh, 4000); }
-        const thread = threadOf(id);
-        if (thread && state.activeThread !== id) api.toast(`nexus ${activity.detail || (activity.state === 'done' ? 'finished' : activity.state)}`, [['View', () => open(id)]]);
-      }
-    }
+    trackActivities({ state, progress, doneUntil, threadOf }, next, { notify: (thread, text) => api.toast(text, [['View', () => open(thread.id)]]), refresh });
     api.renderLink();
   }
-  function activityRow(thread) {
-    const activity = state.activities[thread.id];
-    if (!activity) return null;
-    const row = el('div', `activity ${activity.state}`);
-    row.setAttribute('role', 'status');
-    row.setAttribute('aria-live', 'polite');
-    const label = el('div', 'd-activity-label');
-    if (busy(activity)) label.append(el('span', 'd-activity-dot'));
-    if (activity.state === 'done') label.append(glyph('check'));
-    const waiting = { draft: 'Waiting — you have a draft in nexus', streaming: 'Waiting — nexus is answering something else', no_model: 'Waiting — no model selected' };
-    label.append(el('span', '', activity.state === 'queued' ? waiting[activity.reason] || 'Waiting for nexus' : ['working', 'progress'].includes(activity.state) ? 'nexus is working…' : activity.state === 'done' ? 'Done' : activity.state === 'stopped' ? 'Stopped' : 'Failed'));
-    row.append(label);
-    if (['working', 'progress'].includes(activity.state)) for (const line of progress[thread.id] || []) row.append(el('div', 'activity-line', line));
-    if (!busy(activity) && activity.detail) row.append(paragraphs(activity.detail));
-    if (activity.state === 'done' && /^edited (blocks?|slides?) /.test(activity.detail || '')) {
-      const undo = el('button', 'quiet', 'Undo');
-      undo.type = 'button';
-      undo.addEventListener('click', () => api.undo());
-      row.append(undo);
-    }
-    if (['failed', 'stopped'].includes(activity.state)) {
-      const retry = el('button', 'quiet', 'Send again');
-      retry.type = 'button';
-      retry.disabled = !state.linked;
-      retry.addEventListener('click', () => {
-        const message = thread.messages.findLast(m => m.role === 'you');
-        if (message) api.command({ command: 'CommentReply', thread: thread.id, text: message.text, send: true });
-      });
-      row.append(retry);
-    }
-    return row;
-  }
+  const activityRow = thread => sharedActivityRow(thread, { state, progress, command: api.command, undo: api.undo });
 
   // -- cards ----------------------------------------------------------------------------------
-
-  function author(message) {
-    const row = el('div', `author ${message.role}`);
-    const name = el('span', 'name', message.role === 'model' ? 'nexus' : 'You');
-    name.title = new Date(message.created * 1000).toLocaleString();
-    row.append(el('span', 'd-avatar', message.role === 'model' ? '✦' : '❯'), name);
-    return row;
-  }
 
   /** One suggested edit. `headed`: its accept and reject live in the card's header. */
   function editCard(thread, edit, headed = false) {
@@ -256,32 +169,7 @@ export function commentsController(api) {
   };
   const summarize = edit => `${edit.ops.length} change${edit.ops.length === 1 ? '' : 's'}: ${[...new Set(edit.ops.map(op => op.op.replaceAll('_', ' ')))].join(', ')}`;
 
-  function replyBox(thread) {
-    const wrap = el('div', 'reply');
-    const area = el('textarea');
-    area.rows = 1; area.maxLength = 2000; area.placeholder = 'Reply…';
-    area.setAttribute('aria-label', 'Reply to thread');
-    area.value = state.drafts[thread.id] || '';
-    area.addEventListener('input', () => { state.drafts[thread.id] = area.value; area.style.height = 'auto'; area.style.height = `${area.scrollHeight}px`; scheduleLayout(); });
-    const send = (toNexus) => {
-      if (!area.value.trim()) { area.focus(); return; }
-      const text = area.value;
-      delete state.drafts[thread.id];
-      api.command({ command: 'CommentReply', thread: thread.id, text, send: toNexus }, e => { if (e.event === 'Error') state.drafts[thread.id] = text; });
-    };
-    area.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(state.linked); } });
-    const note = el('button', 'small quiet', 'Reply'), ask = el('button', 'small primary-quiet', 'Send to nexus');
-    note.type = ask.type = 'button';
-    ask.prepend(glyph('send'));
-    ask.disabled = !state.linked;
-    ask.title = state.linked ? 'Send this reply to the conversation' : 'Not linked to a conversation — open it from nexus with /studio';
-    note.addEventListener('click', () => send(false));
-    ask.addEventListener('click', () => send(true));
-    const actions = el('div', 'reply-actions');
-    actions.append(note, ask);
-    wrap.append(area, actions);
-    return wrap;
-  }
+  const replyBox = thread => sharedReplyBox(thread, { state, command: api.command, grow: scheduleLayout });
 
   function threadCard(thread) {
     const active = state.activeThread === thread.id;
@@ -340,10 +228,10 @@ export function commentsController(api) {
     area.setAttribute('aria-label', 'Comment');
     area.value = state.draft.text;
     area.addEventListener('input', () => { state.draft.text = area.value; scheduleLayout(); });
-    const submit = toNexus => {
+    const submit = toDugix => {
       if (!area.value.trim()) { area.focus(); return; }
       const { anchor } = state.draft, text = area.value;
-      api.command({ command: 'DocCommentCreate', anchor, text, send: toNexus }, e => {
+      api.command({ command: 'DocCommentCreate', anchor, text, send: toDugix }, e => {
         if (e.event === 'Error') return;
         state.draft = null;
         const created = state.threads.at(-1);
@@ -355,11 +243,11 @@ export function commentsController(api) {
       if (e.key === 'Escape') { e.preventDefault(); cancelDraft(); }
       else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(state.linked); }
     });
-    const cancel = action('x', 'Cancel comment (Esc)', () => cancelDraft()), note = el('button', 'small quiet', 'Comment'), ask = el('button', 'small primary-quiet', 'Send to nexus');
+    const cancel = action('x', 'Cancel comment (Esc)', () => cancelDraft()), note = el('button', 'small quiet', 'Comment'), ask = el('button', 'small primary-quiet', 'Send to dugix');
     note.type = ask.type = 'button';
     ask.prepend(glyph('send'));
     ask.disabled = !state.linked;
-    ask.title = state.linked ? 'Send this comment to the conversation' : 'Not linked to a conversation — open it from nexus with /studio';
+    ask.title = state.linked ? 'Send this comment to the conversation' : 'Not linked to a conversation — open it from dugix with /studio';
     note.addEventListener('click', () => submit(false));
     ask.addEventListener('click', () => submit(true));
     const actions = el('div', 'reply-actions');

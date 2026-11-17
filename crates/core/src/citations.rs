@@ -1,15 +1,7 @@
-//! Pure parsing for report citations: the trailing `Sources:` (or
-//! `## Sources`) list research/web-mode replies end with (see
-//! `WRITER_PROMPT`/`SEARCHER_PROMPT` in `app/research.rs` and
-//! `web_mode_clause` in `app/chat.rs`), and the `[n]` inline markers that
-//! reference it. Parsing is data — it lives here in core. Styling the
-//! markers into terminal colors is rendering — it lives in the TUI crate
-//! (`ui/citations_style.rs`).
+//! Pure parsing for report citations: the trailing `Sources:` list research replies
+//! end with, and the `[n]` inline markers that reference it.
 
-/// Parse a message's trailing citation list into `(n, url)` pairs, in the
-/// order they're listed. Recognizes a `Sources:` line or a `Sources` heading
-/// (any level), then reads `N. url` / `N) url` lines until a non-matching
-/// line ends the section.
+/// A message's trailing `Sources:` list as `(n, url)` pairs, in listed order.
 pub fn parse_citations(content: &str) -> Vec<(usize, String)> {
     let mut out = Vec::new();
     let mut in_section = false;
@@ -40,7 +32,6 @@ pub fn parse_citations(content: &str) -> Vec<(usize, String)> {
     out
 }
 
-/// The first `[n]` (n = 1+ ascii digits) substring in `text`, if any.
 pub fn citation_number_in(text: &str) -> Option<usize> {
     let mut rest = text;
     while let Some(start) = rest.find('[') {

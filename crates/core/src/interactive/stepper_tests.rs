@@ -178,7 +178,7 @@ fn check_diagnostics_include_stepper_and_its_fields() {
 fn prompt_app_example_checks_and_updates_derived_progress_before_submission() {
     let prompt = include_str!("../../assets/prompts/interactive-ui.md");
     let source = prompt
-        .split("```nexus-ui\n")
+        .split("```dugix-ui\n")
         .nth(1)
         .unwrap()
         .split("\n```")

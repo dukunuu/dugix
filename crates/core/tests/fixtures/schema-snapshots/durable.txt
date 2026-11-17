@@ -1,0 +1,179 @@
+table app_settings
+  key: TEXT not_null=false default=None pk=1
+  scope: TEXT not_null=true default=Some("'sync'") pk=0
+  updated_at: TEXT not_null=false default=None pk=0
+  value: TEXT not_null=true default=None pk=0
+table citations
+  id: INTEGER not_null=false default=None pk=1
+  report_file: TEXT not_null=true default=None pk=0
+  space_id: TEXT not_null=true default=None pk=0
+  sync_id: TEXT not_null=false default=None pk=0
+  title: TEXT not_null=false default=None pk=0
+  url: TEXT not_null=true default=None pk=0
+  index idx_citations_space on citations(space_id) unique=false
+  index idx_citations_sync_id on citations(sync_id) unique=true
+table device_meta
+  created_at: TEXT not_null=true default=None pk=0
+  device_id: TEXT not_null=false default=None pk=1
+table files
+  created_at: TEXT not_null=true default=None pk=0
+  hash: TEXT not_null=true default=None pk=0
+  id: TEXT not_null=false default=None pk=1
+  name: TEXT not_null=true default=None pk=0
+  size: INTEGER not_null=true default=None pk=0
+  space_id: TEXT not_null=true default=None pk=0
+  updated_at: TEXT not_null=false default=None pk=0
+table job_runs
+  branch: TEXT not_null=false default=None pk=0
+  cost_usd: REAL not_null=true default=None pk=0
+  device_id: TEXT not_null=true default=None pk=0
+  finished_at: TEXT not_null=false default=None pk=0
+  id: TEXT not_null=false default=None pk=1
+  iters: INTEGER not_null=true default=None pk=0
+  job_id: TEXT not_null=true default=None pk=0
+  started_at: TEXT not_null=true default=None pk=0
+  status: TEXT not_null=true default=None pk=0
+  summary: TEXT not_null=true default=None pk=0
+  updated_at: TEXT not_null=true default=None pk=0
+table jobs
+  device_id: TEXT not_null=true default=None pk=0
+  enabled: INTEGER not_null=true default=None pk=0
+  id: TEXT not_null=false default=None pk=1
+  interval_minutes: INTEGER not_null=true default=None pk=0
+  kind: TEXT not_null=true default=Some("'agent'") pk=0
+  last_run_at: TEXT not_null=false default=None pk=0
+  max_cost_usd: REAL not_null=true default=None pk=0
+  max_iters: INTEGER not_null=true default=None pk=0
+  max_wall_minutes: INTEGER not_null=true default=None pk=0
+  mode: TEXT not_null=true default=None pk=0
+  name: TEXT not_null=true default=None pk=0
+  notify: TEXT not_null=true default=None pk=0
+  prompt: TEXT not_null=true default=None pk=0
+  root: TEXT not_null=true default=None pk=0
+  run_at: TEXT not_null=false default=None pk=0
+  session_id: TEXT not_null=true default=None pk=0
+  space_id: TEXT not_null=true default=None pk=0
+  stop_command: TEXT not_null=false default=None pk=0
+  topic: TEXT not_null=false default=None pk=0
+  trigger_kind: TEXT not_null=true default=None pk=0
+  updated_at: TEXT not_null=true default=None pk=0
+table memories
+  chapter_id: TEXT not_null=true default=None pk=0
+  created_at: TEXT not_null=true default=None pk=0
+  deleted_at: TEXT not_null=false default=None pk=0
+  id: TEXT not_null=false default=None pk=1
+  space_id: TEXT not_null=true default=None pk=0
+  text: TEXT not_null=true default=None pk=0
+  updated_at: TEXT not_null=true default=None pk=0
+  index idx_memories_chapter on memories(chapter_id) unique=false
+  index idx_memories_space on memories(space_id) unique=false
+table memory_chapters
+  created_at: TEXT not_null=true default=None pk=0
+  deleted_at: TEXT not_null=false default=None pk=0
+  description: TEXT not_null=true default=Some("''") pk=0
+  id: TEXT not_null=false default=None pk=1
+  pinned: INTEGER not_null=true default=Some("0") pk=0
+  shared_with: TEXT not_null=true default=Some("'[]'") pk=0
+  space_id: TEXT not_null=true default=None pk=0
+  title: TEXT not_null=true default=None pk=0
+  updated_at: TEXT not_null=true default=None pk=0
+  index idx_memory_chapters_space on memory_chapters(space_id) unique=false
+table messages
+  content: TEXT not_null=true default=None pk=0
+  cost: REAL not_null=false default=None pk=0
+  created_at: TEXT not_null=true default=None pk=0
+  id: TEXT not_null=false default=None pk=1
+  model: TEXT not_null=false default=None pk=0
+  persona: TEXT not_null=false default=None pk=0
+  phrase: TEXT not_null=false default=None pk=0
+  reasoning: TEXT not_null=false default=None pk=0
+  role: TEXT not_null=true default=None pk=0
+  secs: REAL not_null=false default=None pk=0
+  session_id: TEXT not_null=true default=None pk=0
+  tokens: INTEGER not_null=false default=None pk=0
+  index idx_messages_session on messages(session_id, created_at) unique=false
+table model_prefs
+  favorite: INTEGER not_null=true default=Some("0") pk=0
+  id: TEXT not_null=false default=None pk=1
+  last_used: TEXT not_null=false default=None pk=0
+  reasoning: TEXT not_null=false default=None pk=0
+  updated_at: TEXT not_null=false default=None pk=0
+table panel_states
+  panel_key: TEXT not_null=true default=None pk=2
+  record: TEXT not_null=true default=None pk=0
+  session_id: TEXT not_null=true default=None pk=1
+  updated_at: TEXT not_null=true default=None pk=0
+table pinned_panels
+  created_at: TEXT not_null=true default=None pk=0
+  id: TEXT not_null=false default=None pk=1
+  name: TEXT not_null=true default=None pk=0
+  program: TEXT not_null=true default=None pk=0
+  record: TEXT not_null=true default=None pk=0
+  space_id: TEXT not_null=true default=None pk=0
+  title: TEXT not_null=true default=None pk=0
+  updated_at: TEXT not_null=true default=None pk=0
+  index idx_pinned_panels_space on pinned_panels(space_id, name) unique=false
+table session_sources
+  flag: TEXT not_null=false default=None pk=0
+  session_id: TEXT not_null=true default=None pk=1
+  updated_at: TEXT not_null=false default=None pk=0
+  url_norm: TEXT not_null=true default=None pk=2
+table sessions
+  compact_summary: TEXT not_null=false default=None pk=0
+  compact_through: INTEGER not_null=true default=Some("0") pk=0
+  created_at: TEXT not_null=true default=None pk=0
+  id: TEXT not_null=false default=None pk=1
+  kind: TEXT not_null=true default=Some("'chat'") pk=0
+  model: TEXT not_null=true default=None pk=0
+  research_parent_id: TEXT not_null=false default=None pk=0
+  slug: TEXT not_null=false default=None pk=0
+  space_id: TEXT not_null=false default=None pk=0
+  swarm_mode: INTEGER not_null=true default=Some("0") pk=0
+  title: TEXT not_null=true default=None pk=0
+  updated_at: TEXT not_null=true default=None pk=0
+table spaces
+  created_at: TEXT not_null=true default=None pk=0
+  id: TEXT not_null=false default=None pk=1
+  name: TEXT not_null=true default=None pk=0
+  updated_at: TEXT not_null=false default=None pk=0
+table swarm_personas
+  model: TEXT not_null=true default=None pk=0
+  name: TEXT not_null=true default=None pk=0
+  ord: INTEGER not_null=true default=None pk=0
+  persona: TEXT not_null=true default=None pk=0
+  session_id: TEXT not_null=true default=None pk=0
+  index idx_swarm_personas_session on swarm_personas(session_id, ord) unique=false
+table sync_state
+  last_synced_at: TEXT not_null=false default=None pk=0
+  peer_id: TEXT not_null=true default=None pk=1
+  pull_cursor: TEXT not_null=false default=None pk=0
+  push_cursor: TEXT not_null=false default=None pk=0
+  table_name: TEXT not_null=true default=None pk=2
+table sync_tombstones
+  deleted_at: TEXT not_null=true default=None pk=0
+  id: INTEGER not_null=false default=None pk=1
+  row_id: TEXT not_null=true default=None pk=0
+  table_name: TEXT not_null=true default=None pk=0
+  index idx_sync_tombstones_table on sync_tombstones(table_name, row_id) unique=false
+table usage_log
+  backend: TEXT not_null=true default=None pk=0
+  cache_creation_tokens: INTEGER not_null=true default=Some("0") pk=0
+  cache_read_tokens: INTEGER not_null=true default=Some("0") pk=0
+  completion_tokens: INTEGER not_null=true default=None pk=0
+  cost: REAL not_null=false default=None pk=0
+  cost_is_provider: INTEGER not_null=false default=None pk=0
+  created_at: TEXT not_null=true default=None pk=0
+  id: INTEGER not_null=false default=None pk=1
+  kind: TEXT not_null=false default=None pk=0
+  model: TEXT not_null=true default=None pk=0
+  prompt_convention: TEXT not_null=false default=None pk=0
+  prompt_tokens: INTEGER not_null=true default=None pk=0
+  session_id: TEXT not_null=false default=None pk=0
+  space_id: TEXT not_null=false default=None pk=0
+  sync_id: TEXT not_null=false default=None pk=0
+  tools: TEXT not_null=false default=None pk=0
+  updated_at: TEXT not_null=false default=None pk=0
+  index idx_usage_log_created on usage_log(created_at) unique=false
+  index idx_usage_log_model on usage_log(model) unique=false
+  index idx_usage_log_session on usage_log(session_id, created_at) unique=false
+  index idx_usage_log_sync_id on usage_log(sync_id) unique=true

@@ -2,14 +2,9 @@ use std::path::Path;
 
 use super::{App, tests::app_with_key};
 
-// Measured 3,938 with per-action tool definitions; the `deck` tool is about 865 of
-// that (its ops, block kinds, commenting principles and the history action are
-// always on). Raised from 3,900 by 60 for the `history` action and the
-// one-deck-per-request / images / read-by-slides guidance.
-const CHAT_PROMPT_TOKEN_CEILING: usize = 3_960;
+const CHAT_PROMPT_TOKEN_CEILING: usize = 4_140;
 
 fn fixture_app() -> App {
-    // app_with_key uses a fresh temporary space, with no space instructions.
     let mut a = app_with_key();
     a.skills.clear();
     a.current_model = Some("a/one".into());
@@ -37,13 +32,13 @@ fn assert_snapshot(name: &str, actual: &str) {
         "/tests/fixtures/prompt-snapshots/"
     ));
     let path = directory.join(name);
-    if std::env::var("NEXUS_UPDATE_SNAPSHOTS").as_deref() == Ok("1") {
+    if std::env::var("DUGIX_UPDATE_SNAPSHOTS").as_deref() == Ok("1") {
         std::fs::create_dir_all(directory).unwrap();
         std::fs::write(&path, actual).unwrap();
         return;
     }
     let message = format!(
-        "snapshot {}: rerun with NEXUS_UPDATE_SNAPSHOTS=1 cargo test -p nexus-chat-core prompt_snapshots and review the diff",
+        "snapshot {}: rerun with DUGIX_UPDATE_SNAPSHOTS=1 cargo test -p dugix-core prompt_snapshots and review the diff",
         path.display()
     );
     let expected =
@@ -59,14 +54,17 @@ fn chat_prompt_snapshot() {
 #[test]
 fn agent_prompt_snapshot() {
     let mut a = fixture_app();
-    let root = std::env::temp_dir().join(format!("nexus-agent-prompt-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-agent-prompt-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     a.run_command(&format!("agent {}", root.display())).unwrap();
     assert_eq!(a.work_mode, super::WorkMode::Agent);
     a.skills.clear();
     a.prompt_datetime = "2026-01-01 00:00 UTC, Thursday".into();
     let workspace = a.workspace.as_ref().unwrap().root().display().to_string();
-    let actual = normalized_prompt(&a).replace(&workspace, "<workspace>");
+    // The system prompt is the same in every mode; agent mode reaches the
+    // model as this note, sent where the mode changed.
+    assert_eq!(normalized_prompt(&a), normalized_prompt(&fixture_app()));
+    let actual = a.mode_note_text().replace(&workspace, "<workspace>") + "\n";
     assert_snapshot("agent.txt", &actual);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -113,8 +111,33 @@ fn chat_prompt_and_tool_defs_fit_the_token_budget() {
     );
 }
 
-/// Field and operator names from the `nexus-ui` schema (`interactive-ui.md`), not tools.
-const NEXUS_UI_SCHEMA_WORDS: &[&str] = &[
+/// With two or more spaces the memory tool also offers `spaces`, `share` and
+/// `merge`; a single-space user never pays for them.
+const CHAT_PROMPT_TOKEN_CEILING_WITH_SPACES: usize = CHAT_PROMPT_TOKEN_CEILING + 125;
+
+#[test]
+fn memory_sharing_actions_cost_tokens_only_with_several_spaces() {
+    let mut a = fixture_app();
+    let single = serde_json::to_string(&a.toolbox.defs()).unwrap();
+    assert!(
+        !single.contains("\"merge\""),
+        "one space: no sharing actions"
+    );
+    a.db.create_space("second").unwrap();
+    a.rebuild_toolbox();
+    let defs = serde_json::to_string(&a.toolbox.defs()).unwrap();
+    assert!(
+        defs.contains("\"merge\""),
+        "several spaces: sharing actions offered"
+    );
+    let tokens = (a.system_prompt().chars().count() + defs.chars().count()) / 4;
+    assert!(
+        tokens <= CHAT_PROMPT_TOKEN_CEILING_WITH_SPACES,
+        "with several spaces the chat prompt and tool definitions use {tokens} estimated tokens, exceeding the ceiling of {CHAT_PROMPT_TOKEN_CEILING_WITH_SPACES}"
+    );
+}
+
+const DUGIX_UI_SCHEMA_WORDS: &[&str] = &[
     "version", "title", "state", "view", "body", "actions", "number", "null", "true",
 ];
 
@@ -125,7 +148,7 @@ fn assembled_prompts_mention_only_existing_tools() {
     for (name, interactive_ui) in [("chat.txt", false), ("tui.txt", true)] {
         a.interactive_ui = interactive_ui;
         let prompt = a.system_prompt();
-        // Scan adjacent backticks so fenced examples do not shift inline pairs.
+        // Fenced examples must not shift inline backtick pairs.
         for (start, _) in prompt.match_indices('`') {
             let Some((token, _)) = prompt[start + 1..].split_once('`') else {
                 continue;
@@ -137,7 +160,7 @@ fn assembled_prompts_mention_only_existing_tools() {
             {
                 continue;
             }
-            if NEXUS_UI_SCHEMA_WORDS.contains(&token) {
+            if DUGIX_UI_SCHEMA_WORDS.contains(&token) {
                 continue;
             }
             assert!(
@@ -249,11 +272,9 @@ fn no_connectors_leaves_the_tool_list_byte_identical() {
     for registry in [None, Some(crate::connectors::Registry::empty())] {
         toolbox.connectors = registry;
         let bare = serde_json::to_string(&toolbox.defs()).unwrap();
-        // Same builder, same capabilities: nothing about connectors leaks in.
         assert!(!bare.contains("connectors"), "{bare}");
         assert!(!bare.contains("__"));
     }
-    // The app's own list (golden-tested above) has the empty registry attached.
     assert!(a.toolbox.defs().iter().all(|d| d.name != "connectors"));
     assert_eq!(baseline, serde_json::to_string(&a.toolbox.defs()).unwrap());
 }

@@ -1,22 +1,13 @@
-//! Semantic color roles, sourced from the user's active omarchy theme
-//! (`~/.config/omarchy/current/theme/alacritty.toml`) when present, falling
-//! back to the app's original hardcoded ANSI palette otherwise. `events.rs`
-//! polls `source_stamp()` and calls `load()` again when the omarchy
-//! theme symlink changes, so switching themes in omarchy updates the running
-//! app without a restart.
+//! Semantic terminal colors and background modes.
 
-use nexus_core::theme_colors::{Palette, ThemeColors};
+use dugix_core::theme_colors::{Palette, ThemeColors};
 use ratatui::style::{Color, Style};
 
-pub use nexus_core::theme_colors::source_stamp;
+pub use dugix_core::theme_colors::source_stamp;
 #[cfg(test)]
-use nexus_core::theme_colors::{Alacritty, ghostty_pairs};
+use dugix_core::theme_colors::{Alacritty, ghostty_pairs};
 
-/// How the TUI paints its general background.
-///
-/// Terminal cells do not support alpha blending. `Transparent` uses
-/// [`Color::Reset`] so the terminal's own window opacity remains visible;
-/// `Opaque` paints the active theme's background color into the cells.
+/// Uses the terminal's default background for transparency because cells cannot alpha-blend.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BackgroundMode {
     #[default]
@@ -25,10 +16,8 @@ pub enum BackgroundMode {
 }
 
 impl BackgroundMode {
-    /// Database key used for this per-device UI preference.
     pub const SETTING_KEY: &str = "ui_background";
 
-    /// Stable value persisted in the settings database.
     #[must_use]
     pub const fn key(self) -> &'static str {
         match self {
@@ -37,7 +26,6 @@ impl BackgroundMode {
         }
     }
 
-    /// Human-readable value used in the status line.
     #[must_use]
     pub const fn label(self) -> &'static str {
         self.key()
@@ -51,7 +39,6 @@ impl BackgroundMode {
         }
     }
 
-    /// Parse a `/theme` background argument.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         let value = value.trim();
@@ -75,8 +62,6 @@ impl BackgroundMode {
 #[derive(Clone, Copy)]
 pub struct Theme {
     pub bg: Color,
-    /// Background painted into the TUI surface; derived from `bg` and the
-    /// user's [`BackgroundMode`].
     pub surface: Color,
     pub fg: Color,
     pub fg_dim: Color,
@@ -87,23 +72,17 @@ pub struct Theme {
     pub success: Color,
     pub warning: Color,
     pub error: Color,
-    /// Expanded diff row backgrounds.
     pub diff_add_bg: Color,
     pub diff_del_bg: Color,
     pub user_msg: Color,
     pub assistant_msg: Color,
     pub tool_msg: Color,
     pub research_msg: Color,
-    /// One step up from the surface: selected rows, bubbles, menus. Follows
-    /// the background mode — `Reset` when transparent, so nothing paints an
-    /// opaque block over a see-through terminal.
     pub raised: Color,
-    /// The opaque-mode `raised` shade, kept so switching modes can restore it.
     raised_opaque: Color,
-    /// Contrasting, opaque surface for compact controls and number chips.
     pub control: Color,
-    /// Text-selection highlight background.
     pub selection: Color,
+    pub round_caps: bool,
 }
 
 impl Default for Theme {
@@ -126,11 +105,11 @@ impl Default for Theme {
             assistant_msg: Color::White,
             tool_msg: Color::Yellow,
             research_msg: Color::Magenta,
-            // 256-color grays: the named ANSI palette has no in-between shade.
             raised: Color::Indexed(236),
             raised_opaque: Color::Indexed(236),
             control: Color::Indexed(238),
             selection: Color::Indexed(239),
+            round_caps: false,
         }
     }
 }
@@ -178,7 +157,7 @@ impl Theme {
         Palette::from_ghostty(colors).map(|palette| Self::from_palette(&palette))
     }
 
-    /// The opaque palette for studio; terminal transparency is not a deck color.
+    /// Keeps studio colors opaque because terminal transparency is not a deck color.
     #[must_use]
     pub fn colors(&self) -> ThemeColors {
         [
@@ -200,7 +179,6 @@ impl Theme {
         .into()
     }
 
-    /// Apply a UI background mode without changing the palette colors.
     pub fn set_background_mode(&mut self, mode: BackgroundMode) {
         (self.surface, self.raised) = match mode {
             BackgroundMode::Opaque => (self.bg, self.raised_opaque),
@@ -212,10 +190,38 @@ impl Theme {
     pub fn background_style(&self) -> Style {
         Style::default().bg(self.surface)
     }
+
+    /// Chooses readable text for a filled control in light or dark themes.
+    #[must_use]
+    pub fn on(&self, fill: Color) -> Color {
+        let fill = luminance(fill);
+        let contrast = |color: Color| {
+            let other = luminance(color);
+            (fill.max(other) + 0.05) / (fill.min(other) + 0.05)
+        };
+        if contrast(self.bg) >= contrast(self.fg) {
+            self.bg
+        } else {
+            self.fg
+        }
+    }
+}
+
+fn luminance(color: Color) -> f64 {
+    let hex = color_hex(color);
+    let channel = |range: std::ops::Range<usize>| {
+        let value = f64::from(u8::from_str_radix(&hex[range], 16).unwrap_or(0)) / 255.0;
+        if value <= 0.039_28 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(1..3) + 0.7152 * channel(3..5) + 0.0722 * channel(5..7)
 }
 
 fn color_hex(color: Color) -> String {
-    use nexus_core::theme_colors::indexed_hex;
+    use dugix_core::theme_colors::indexed_hex;
     match color {
         Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
         Color::Indexed(index) => indexed_hex(index),
@@ -238,14 +244,73 @@ fn color_hex(color: Color) -> String {
     }
 }
 
-/// The shared terminal palette, converted without losing ANSI fallbacks.
 pub fn load() -> Theme {
-    Theme::from_palette(&nexus_core::theme_colors::load())
+    let mut theme = Theme::from_palette(&dugix_core::theme_colors::load());
+    let var = |name| std::env::var(name).ok();
+    theme.round_caps = round_caps(
+        var("DUGIX_ROUND_CAPS").as_deref(),
+        var("TERM_PROGRAM").as_deref(),
+        var("TERM").as_deref(),
+        std::env::home_dir().is_some_and(|home| home.join(".config/omarchy").is_dir()),
+    );
+    theme
+}
+
+// Ghostty, WezTerm and Kitty bundle Powerline glyphs; Omarchy provides a Nerd Font.
+#[must_use]
+pub fn round_caps(
+    forced: Option<&str>,
+    term_program: Option<&str>,
+    term: Option<&str>,
+    omarchy: bool,
+) -> bool {
+    match forced.map(str::trim) {
+        Some("1" | "true" | "on" | "yes") => return true,
+        Some("0" | "false" | "off" | "no") => return false,
+        _ => {}
+    }
+    let program = term_program.unwrap_or_default().to_ascii_lowercase();
+    let term = term.unwrap_or_default().to_ascii_lowercase();
+    omarchy
+        || matches!(program.as_str(), "ghostty" | "wezterm" | "kitty")
+        || term.contains("kitty")
+        || term.contains("ghostty")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_on_fills_picks_the_more_readable_theme_color() {
+        let dark = Theme::default();
+        assert_eq!(dark.on(Color::Cyan), Color::Black);
+        assert_eq!(dark.on(Color::Indexed(236)), Color::White);
+        let light = Theme {
+            bg: Color::Rgb(250, 250, 250),
+            fg: Color::Rgb(30, 30, 30),
+            ..Theme::default()
+        };
+        assert_eq!(light.on(Color::Rgb(20, 60, 140)), Color::Rgb(250, 250, 250));
+        assert_eq!(light.on(Color::Rgb(250, 220, 90)), Color::Rgb(30, 30, 30));
+    }
+
+    #[test]
+    fn round_caps_follow_the_override_then_known_terminals() {
+        assert!(round_caps(Some("1"), None, None, false));
+        assert!(!round_caps(Some("0"), Some("ghostty"), None, true));
+        assert!(round_caps(None, Some("ghostty"), None, false));
+        assert!(round_caps(None, Some("WezTerm"), None, false));
+        assert!(round_caps(None, None, Some("xterm-kitty"), false));
+        assert!(round_caps(None, Some("Apple_Terminal"), None, true));
+        assert!(!round_caps(
+            None,
+            Some("Apple_Terminal"),
+            Some("xterm-256color"),
+            false
+        ));
+        assert!(!Theme::default().round_caps);
+    }
 
     #[test]
     fn diff_backgrounds_follow_rgb_palettes_with_ansi_fallbacks() {

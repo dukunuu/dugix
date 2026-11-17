@@ -4,8 +4,8 @@ use crate::doc::{self, Doc, Kind as BlockKind, Op as DocOp, feedback as comments
 
 const DOC_SCHEMA: &str = "\ndoc schema (sent once per session)\n\
 Blocks: {id,kind,style?}. Text kinds title, paragraph, quote: text; heading: level 1–3,text; callout: tone info|warn|success|note,text; code: lang,text. list: ordered,items:[{text,checked?,children?}] (4 deep). table: header,align:[left|center|right],rows:[[text]]. image: src,alt,caption,width:inline|wide|full. chart: chart:{chart:bar|line|pie,labels,series:[{name,values}]}. divider,page_break,toc: no fields. Footnotes: doc.footnotes map.\n\
-Ops: insert_blocks{after?,blocks}, insert_markdown{after?,markdown}, update_block{id,patch:merge patch}, delete_blocks{ids}, move_blocks{ids,after?}, replace_text{id,find,replace,occurrence?,item?} (exact source, all matches unless 1-based occurrence; list item path 2.1), set_page{patch}, set_title{title}, apply_design{design?}. Missing after appends. Ops atomic, ids automatic. revision from read permits a stale edit only when touched blocks stayed unchanged.\n\
-Markdown: # title on create without title; headings #–###, paragraphs, -/1. lists, [ ]/[x] tasks, > quotes, > [!NOTE] callouts, fenced code, pipe tables, ![alt](src \"caption\"), --- divider; inline **bold**, *italic*, `code`, [links](url), ~~strike~~, [^footnotes]. read blocks:[heading-id] gives its whole section. Comments use block and optional plain-text quote; ops attach a reviewed suggestion; thread replies, resolve closes. Export format:docx|pdf|md|html, never overwriting. create from accepts .md/.docx/.dotx; approximations are listed. view renders pages; blocks filters pages containing those ids.\n";
+Ops: insert_blocks{after?,blocks}, insert_markdown{after?,markdown}, update_block{id,patch:merge patch}, delete_blocks{ids}, move_blocks{ids,after?}, replace_text{id,find,replace,occurrence?,item?} (exact source, all matches unless 1-based occurrence; list item path 2.1), set_page{patch}, set_style{style,patch} (merge into a text style: body|title|h1–h3|quote|caption|code; align left|center|right|justify applies to every block in it), set_title{title}, apply_design{design?}. Missing after appends. Ops atomic, ids automatic. revision from read permits a stale edit only when touched blocks stayed unchanged.\n\
+Markdown: # title on create without title; headings #–###, paragraphs, -/1. lists, [ ]/[x] tasks, > quotes, > [!NOTE] callouts, fenced code, pipe tables, ![alt](src \"caption\"), --- divider; inline **bold**, *italic*, `code`, [links](url), ~~strike~~, [^footnotes]. read blocks:[heading-id] gives its whole section. Comments use block and optional plain-text quote; ops attach a reviewed suggestion; thread replies, resolve closes. Export format:docx|pdf|md|html, never overwriting. create from accepts .md/.docx/.dotx and keeps a Word file's styles (fonts, sizes, alignment), page and header/footer; approximations are listed. To reuse a Word template's look for new content: design op=import from=it, then create design=slug; export docx then keeps the template's own styles. view renders pages; blocks filters pages containing those ids.\n";
 
 impl ToolBox {
     pub(in crate::tools) fn is_doc(v: &Value) -> bool {
@@ -23,8 +23,7 @@ impl ToolBox {
         DOC_SCHEMA
     }
 
-    /// Tell the terminal which block studio should jump to. A doc with no blocks
-    /// still opens, so the first block is an empty id then.
+    /// Tell the terminal which block studio should jump to.
     fn doc_changed(&self, path: &Path, block: Option<String>) {
         self.deck_changed(path, Some(block.unwrap_or_default()));
     }
@@ -105,17 +104,8 @@ impl ToolBox {
                 .is_some_and(|e| !e.eq_ignore_ascii_case("md"))
         {
             imported.doc.title.clone()
-        } else if let Some(block) = parsed.blocks.iter_mut().find(|b| {
-            matches!(
-                b.kind,
-                BlockKind::Heading { level: 1, .. } | BlockKind::Title { .. }
-            )
-        }) {
-            let text = block.text().unwrap_or_default().to_string();
-            block.kind = BlockKind::Title { text: text.clone() };
-            doc::markdown::plain(&text)
         } else {
-            "Untitled".into()
+            doc::markdown::take_title(&mut parsed.blocks).unwrap_or_else(|| "Untitled".into())
         };
         let relative = v["path"]
             .as_str()
@@ -134,6 +124,16 @@ impl ToolBox {
         doc.footnotes = parsed.footnotes;
         if let Some(imported) = &imported {
             doc.page.clone_from(&imported.doc.page);
+            // A Word file brings its own styles unless a design was asked for.
+            if v["design"].is_null()
+                && Path::new(v["from"].as_str().unwrap_or_default())
+                    .extension()
+                    .is_some_and(|e| !e.eq_ignore_ascii_case("md"))
+            {
+                doc.theme.clone_from(&imported.doc.theme);
+                doc.design = None;
+                doc.design_rev = None;
+            }
         }
         self.doc_images(&mut doc, &path)?;
         let doc = Doc::check(&serde_json::to_string(&doc)?)
@@ -172,7 +172,8 @@ impl ToolBox {
     }
 
     fn doc_edit(&self, relative: &str, path: &Path, before: &Doc, v: &Value) -> Result<String> {
-        let ops = v["ops"].as_array().context("ops must be an array")?.clone();
+        let mut ops = v["ops"].as_array().context("ops must be an array")?.clone();
+        let aliased = doc_op_aliases(&mut ops);
         let rebased = doc_revision(path, before, v["revision"].as_str(), &ops)?;
         let resolver = |slug: &str| crate::design::load(&self.space_files_dir, slug);
         let prepared =
@@ -197,6 +198,9 @@ impl ToolBox {
         );
         if let Some(rebased) = rebased {
             let _ = writeln!(out, "{rebased}");
+        }
+        if !aliased.is_empty() {
+            let _ = writeln!(out, "read as: {}", aliased.join(", "));
         }
         let mut counts = BTreeMap::<String, usize>::new();
         for op in &prepared.ops {
@@ -538,6 +542,11 @@ fn doc_revision(
                     fields.insert("page");
                 }
             }
+            Some("set_style") => {
+                if old.theme != current.theme {
+                    fields.insert("theme");
+                }
+            }
             Some("apply_design") => {
                 if old.theme != current.theme
                     || old.design != current.design
@@ -567,4 +576,30 @@ fn doc_revision(
         "rebased: touched blocks unchanged since {given}; applied to revision {}",
         short(&current.revision())
     )))
+}
+
+/// Read common field aliases (`block` for `id`, `old`/`new` for `find`/`replace`)
+/// as the documented names; returns what was renamed.
+fn doc_op_aliases(ops: &mut [Value]) -> Vec<String> {
+    let mut renamed = BTreeSet::new();
+    for op in ops.iter_mut() {
+        let replace_text = op["op"] == "replace_text";
+        let Some(map) = op.as_object_mut() else {
+            continue;
+        };
+        let pairs: &[(&str, &str)] = if replace_text {
+            &[("block", "id"), ("old", "find"), ("new", "replace")]
+        } else {
+            &[("block", "id")]
+        };
+        for &(alias, field) in pairs {
+            if !map.contains_key(field)
+                && let Some(value) = map.remove(alias)
+            {
+                map.insert(field.into(), value);
+                renamed.insert(format!("{alias} → {field}"));
+            }
+        }
+    }
+    renamed.into_iter().collect()
 }

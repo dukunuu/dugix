@@ -143,8 +143,8 @@ fn check_block(block: &Block, theme: &Theme, path: &str, errors: &mut Vec<CheckE
 }
 
 impl Doc {
-    /// Parse and check; only absent/duplicate ids and missing theme tokens are
-    /// repaired. Every other error carries its JSON path.
+    /// Parse and check, repairing only absent or duplicate ids and missing theme
+    /// tokens.
     pub fn check(source: &str) -> Result<Self, Vec<CheckError>> {
         let mut value: Value = serde_json::from_str(source).map_err(|e| {
             vec![CheckError {

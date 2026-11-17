@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent};
-use nexus_core::app::AppCommand;
-use nexus_core::tools::Decision;
+use dugix_core::app::AppCommand;
+use dugix_core::tools::Decision;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -9,7 +9,7 @@ use ratatui::widgets::Paragraph;
 
 use crate::app_view::AppView;
 
-use super::chrome;
+use super::chrome::{self, PopupFrame, hint, keys};
 use crate::ui::diff::{self, escaped_rows};
 use crate::ui::style;
 
@@ -162,7 +162,7 @@ fn wave_lines(summary: &str, width: usize, theme: &crate::theme::Theme) -> Vec<L
     lines
 }
 
-/// One plain sentence saying what the agent is asking for, above the preview.
+/// One plain sentence saying what the agent is asking for.
 fn explain(tool: &str, action: &str, text: &str) -> String {
     let text = text
         .split_once('\n')
@@ -190,10 +190,9 @@ fn explain(tool: &str, action: &str, text: &str) -> String {
         }
     };
     match (tool, action) {
-        ("wave", _) => format!(
-            "The agent wants to make these {action} together. Each is shown below; \
-             y approves all of them, r lets you decide one by one."
-        ),
+        ("wave", _) => {
+            format!("The agent wants to make these {action} together. Each is shown below.")
+        }
         ("fs", "edit") => format!(
             "The agent wants to change {path}: {} added, {} removed.",
             lines(added),
@@ -218,16 +217,16 @@ fn explain(tool: &str, action: &str, text: &str) -> String {
     }
 }
 
-/// Put the plain-language explanation under the header (first, for a wave).
+/// Put the plain-language explanation under the header, first for a wave.
 fn insert_intro(
     lines: &mut Vec<Line<'static>>,
-    request: &nexus_core::tools::ApprovalRequest,
+    request: &dugix_core::tools::ApprovalRequest,
     text: &str,
     width: usize,
     theme: &crate::theme::Theme,
 ) {
     let wave = request.tool == "wave";
-    let connector = request.class.as_deref() == Some(nexus_core::connectors::exec::CLASS);
+    let connector = request.class.as_deref() == Some(dugix_core::connectors::exec::CLASS);
     let at = if wave {
         0
     } else {
@@ -236,7 +235,7 @@ fn insert_intro(
             .position(|line| line.width() == 0)
             .unwrap_or(lines.len())
     };
-    // Word-wrapped (it's a sentence), then escaped: paths come from the model.
+    // Word-wrapped, then escaped: paths come from the model.
     let dim = Style::default().fg(theme.fg_dim);
     let sentence = if connector {
         format!(
@@ -258,38 +257,6 @@ fn insert_intro(
     lines.splice(at..at, intro);
 }
 
-/// The pinned key row: what each key does for this request.
-fn legend(app: &AppView, request: &nexus_core::tools::ApprovalRequest) -> String {
-    let wave = request.tool == "wave";
-    let session = match request.tool.as_str() {
-        "fs" => "a allow all edits this session",
-        "shell" | "proc" => "a allow all commands this session",
-        "wave" => "a + session",
-        _ => "a allow for this session",
-    };
-    if request.class.as_deref() == Some(nexus_core::connectors::exec::CLASS) {
-        return "y allow once · a this tool for the session · A always allow · n deny".to_string();
-    }
-    if shell_unread(app) {
-        let deny = if wave { "n deny all" } else { "n deny" };
-        let review = if wave { " · r one by one" } else { "" };
-        format!("scroll to the end to enable y{review} · {deny}")
-    } else if wave {
-        let session = if request.allow_session {
-            format!(" · {session}")
-        } else {
-            String::new()
-        };
-        // Short enough for an 80-column terminal; the sentence above the
-        // preview spells out what y and r do.
-        format!("y approve all{session} · r one by one · n deny all")
-    } else if request.allow_session {
-        format!("y allow once · {session} · n deny")
-    } else {
-        "y allow once · n deny".to_string()
-    }
-}
-
 fn shell_unread(app: &AppView) -> bool {
     app.approval_request.as_ref().is_some_and(|request| {
         request.tool == "shell"
@@ -303,8 +270,7 @@ fn shell_unread(app: &AppView) -> bool {
         && !app.approval_seen_end.get()
 }
 
-/// The request's preview lines (explanation, header, diff or command) at
-/// the panel's inner `width`.
+/// The request's preview lines at the panel's inner `width`.
 fn content_lines(app: &AppView, width: usize) -> Option<Vec<Line<'static>>> {
     let request = app.approval_request.as_ref()?;
     let text = request.detail.as_deref().unwrap_or(&request.summary);
@@ -328,9 +294,8 @@ fn panel_block(app: &AppView) -> ratatui::widgets::Block<'static> {
     chrome::popup_block_focused("", &app.theme, true, chrome::Tone::Normal)
 }
 
-/// How tall the approval panel docked in the composer's place wants to be
-/// in `column`: the whole request when it fits, else about half the screen
-/// (the preview scrolls), never less than 8 rows.
+/// How tall the approval panel docked in `column` wants to be: the whole
+/// request when it fits, else about half the screen.
 #[must_use]
 pub fn docked_height(app: &AppView, column: Rect) -> u16 {
     let frame = panel_block(app).inner(Rect::new(0, 0, column.width, 100));
@@ -347,8 +312,8 @@ pub fn docked_height(app: &AppView, column: Rect) -> u16 {
     wanted.min(cap).min(column.height.saturating_sub(2)).max(4)
 }
 
-/// Draw the approval docked at the bottom of the reading column — the
-/// composer's place — as the main layout does (tests render it alone).
+/// Draw the approval docked at the bottom of the reading column, in the
+/// composer's place.
 #[cfg(test)]
 pub fn render(f: &mut Frame, app: &AppView) {
     let column = crate::ui::reading_column(f.area(), &app.settings.column_width);
@@ -362,6 +327,32 @@ pub fn render(f: &mut Frame, app: &AppView) {
 }
 
 /// Draw the approval panel in `area` (where the composer normally is).
+/// The footer keys that work for this request right now.
+fn key_hints(
+    app: &AppView,
+    request: &dugix_core::tools::ApprovalRequest,
+    wave: bool,
+    connector: bool,
+) -> Vec<chrome::Hint> {
+    let mut hints = Vec::new();
+    if shell_unread(app) {
+        hints.push(hint(keys::MOVE, "read to the end to approve"));
+    } else {
+        hints.push(hint("y", "approve"));
+        if request.allow_session {
+            hints.push(hint("a", "this session"));
+        }
+        if connector {
+            hints.push(hint("A", "always"));
+        }
+    }
+    if wave {
+        hints.push(hint("r", "one by one"));
+    }
+    hints.extend([hint("n", "deny"), hint(keys::ESC, "deny")]);
+    hints
+}
+
 pub fn render_in(f: &mut Frame, app: &AppView, area: Rect) {
     let Some(request) = &app.approval_request else {
         return;
@@ -374,7 +365,7 @@ pub fn render_in(f: &mut Frame, app: &AppView, area: Rect) {
         return;
     };
     let inner = panel_block(app).inner(area);
-    // The bottom inner row is the key legend; the preview scrolls above it.
+    // Keep the dock's preview height and scrolling guards unchanged.
     let height = usize::from(inner.height).saturating_sub(2);
     let max_scroll = lines.len().saturating_sub(height);
     let offset = app.approval_scroll.get().min(max_scroll);
@@ -388,34 +379,53 @@ pub fn render_in(f: &mut Frame, app: &AppView, area: Rect) {
     let queued = app.approval_count();
     let title = if wave {
         format!(
-            " approve {}{}{} ",
+            "Approve {}{}{}",
             request.action,
             style::SEP,
             request.summary.lines().next().unwrap_or_default()
         )
-    } else if queued > 1 {
-        format!(" approve{}1 of {queued} ", crate::ui::style::SEP)
     } else {
-        " approve ".to_string()
+        "Approve".to_string()
     };
-    let legend = legend(app, request);
-    chrome::render_hinted(
+    let title = escaped_rows(
+        &title,
+        usize::MAX,
+        Style::default().fg(app.theme.accent),
+        dim,
+    )
+    .remove(0)
+    .to_string();
+    let connector = request.class.as_deref() == Some(dugix_core::connectors::exec::CLASS);
+    let mut count = Vec::new();
+    if queued > 1 {
+        count.push(format!("1 of {queued}"));
+    }
+    if let Some(percent) = offset.saturating_mul(100).checked_div(max_scroll) {
+        count.push(format!("{percent}%"));
+    }
+    let count = count.join(style::SEP);
+    let hints = key_hints(app, request, wave, connector);
+    chrome::render_popup(
         f,
         area,
-        escaped_rows(
-            &title,
-            usize::MAX,
-            Style::default().fg(app.theme.accent),
-            dim,
-        )
-        .remove(0),
-        "",
+        &PopupFrame {
+            title: &title,
+            count: &count,
+            hints: &hints,
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
         app,
-        true,
-        chrome::Tone::Normal,
     );
-    render_footer(f, app, area, (offset, height, lines.len()), max_scroll);
-    render_legend(f, app, inner, &legend);
+    if app
+        .approval_opened_at
+        .is_some_and(|opened| opened.elapsed() < app.approval_delay)
+    {
+        f.buffer_mut().set_style(
+            Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1),
+            Style::default().add_modifier(Modifier::DIM),
+        );
+    }
     let visible = if offset < max_scroll {
         height.saturating_sub(1)
     } else {
@@ -435,87 +445,6 @@ pub fn render_in(f: &mut Frame, app: &AppView, area: Rect) {
         ..inner
     };
     f.render_widget(Paragraph::new(visible), body);
-}
-
-/// The pinned key row at the bottom of the popup, dim during the open delay
-/// (when the keys don't work yet).
-fn render_legend(f: &mut Frame, app: &AppView, inner: ratatui::layout::Rect, legend: &str) {
-    if inner.height < 2 {
-        return;
-    }
-    let delayed = app
-        .approval_opened_at
-        .is_some_and(|opened| opened.elapsed() < app.approval_delay);
-    let style = if delayed {
-        Style::default()
-            .fg(app.theme.fg_dim)
-            .add_modifier(Modifier::DIM)
-    } else {
-        Style::default().fg(app.theme.accent)
-    };
-    let row = ratatui::layout::Rect::new(inner.x, inner.bottom() - 1, inner.width, 1);
-    f.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            chrome::truncate(legend, usize::from(inner.width)),
-            style,
-        ))),
-        row,
-    );
-}
-
-/// The border's position readout when the preview scrolls.
-fn render_footer(
-    f: &mut Frame,
-    app: &AppView,
-    area: ratatui::layout::Rect,
-    (offset, height, total): (usize, usize, usize),
-    max_scroll: usize,
-) {
-    let hint = if max_scroll > 0 {
-        format!(
-            "lines {}–{} of {total} · ↑↓ PgUp PgDn Home End or wheel",
-            offset + 1,
-            (offset + height).min(total),
-        )
-    } else {
-        String::new()
-    };
-    let hint = hint.as_str();
-    let percentage = offset
-        .saturating_mul(100)
-        .checked_div(max_scroll)
-        .map_or_else(String::new, |percent| format!(" · {percent}%"));
-    let hint_width = usize::from(area.width.saturating_sub(4));
-    let hint = if app.settings.hide_hints { "" } else { hint };
-    let footer = format!(
-        " {}{} ",
-        chrome::truncate(
-            hint,
-            hint_width.saturating_sub(crate::ui::style::width(&percentage) + 2)
-        ),
-        percentage
-    );
-    let delayed = app
-        .approval_opened_at
-        .is_some_and(|opened| opened.elapsed() < app.approval_delay);
-    let footer_style = if delayed {
-        Style::default()
-            .fg(app.theme.fg_dim)
-            .add_modifier(Modifier::DIM)
-    } else {
-        Style::default().fg(app.theme.fg)
-    };
-    if !hint.is_empty() || max_scroll > 0 {
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(footer, footer_style))).right_aligned(),
-            ratatui::layout::Rect::new(
-                area.x + 2,
-                area.bottom().saturating_sub(1),
-                area.width.saturating_sub(4),
-                1,
-            ),
-        );
-    }
 }
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) -> anyhow::Result<()> {
@@ -555,7 +484,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> anyhow::Result<()> {
         KeyCode::Char('A')
             if !super::is_chord(key)
                 && app.approval_request.as_ref().is_some_and(|request| {
-                    request.class.as_deref() == Some(nexus_core::connectors::exec::CLASS)
+                    request.class.as_deref() == Some(dugix_core::connectors::exec::CLASS)
                 }) =>
         {
             Decision::AllowAlways
@@ -586,16 +515,16 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_core::app::{App, Popup};
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
-    use nexus_core::tools::ApprovalRequest;
+    use dugix_core::app::{App, Popup};
+    use dugix_core::db::Db;
+    use dugix_core::space::Space;
+    use dugix_core::tools::ApprovalRequest;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use std::time::{Duration, Instant};
 
     fn wave_app(summary: String) -> (AppView, tokio::sync::oneshot::Receiver<Decision>) {
-        let root = std::env::temp_dir().join(format!("nexus-wave-popup-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-wave-popup-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let mut app = AppView::new(App::new(
             Db::open_in_memory().unwrap(),
@@ -603,8 +532,8 @@ mod tests {
             Space { root },
         ));
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        app.pending_approval = Some(sender);
-        app.pending_approval_request = Some(ApprovalRequest {
+        app.approvals.pending = Some(sender);
+        app.approvals.pending_request = Some(ApprovalRequest {
             tool: "wave".into(),
             class: None,
             detail: None,
@@ -671,7 +600,7 @@ mod tests {
             }
             assert_eq!(receiver.try_recv().unwrap(), expected);
             assert_eq!(app.popup, Popup::None);
-            assert!(app.pending_approval.is_none());
+            assert!(app.approvals.pending.is_none());
             drop(app);
             std::fs::remove_dir_all(root).unwrap();
         }

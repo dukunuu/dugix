@@ -1,24 +1,21 @@
-//! `nexus library [--kind deck|doc] [--json]`: the decks and docs of the active
-//! space, newest first, listed the way the TUI's `/library` and studio's
-//! Library list them (`nexus_core::canvas::library`).
+//! Headless listing of the active space's decks and documents.
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use nexus_core::canvas::{self, Entry};
-use nexus_core::deck::link::Kind;
+use dugix_core::canvas::{self, Entry};
+use dugix_core::deck::link::Kind;
 
-/// What to list: everything, or one kind.
 fn wanted(kind: Option<&str>) -> Result<Option<Kind>> {
     Ok(match kind {
         None => None,
         Some("deck") => Some(Kind::Deck),
         Some("doc") => Some(Kind::Doc),
-        Some(other) => anyhow::bail!("--kind is deck or doc, not {other:?}"),
+        Some("sheet") => Some(Kind::Sheet),
+        Some(other) => anyhow::bail!("--kind is deck, doc or sheet, not {other:?}"),
     })
 }
 
-/// The lines `nexus library` prints for `entries`: a JSON array, or one aligned
-/// line per file (kind, path in the space, size, age, title).
+/// Formats library entries as JSON or aligned text rows.
 pub fn lines(
     entries: &[Entry],
     kind: Option<&str>,
@@ -45,10 +42,11 @@ pub fn lines(
         .iter()
         .map(|entry| {
             format!(
-                "{:<4}  {:<path_width$}  {:>10}  {:>14}  {}",
+                "{:<5}  {:<path_width$}  {:>10}  {:>14}  {}",
                 match entry.kind {
                     Kind::Deck => "deck",
                     Kind::Doc => "doc",
+                    Kind::Sheet => "sheet",
                 },
                 entry.relative,
                 entry.count_label(),
@@ -59,7 +57,6 @@ pub fn lines(
         .collect())
 }
 
-/// The command: list the active space's library on stdout.
 pub fn run(kind: Option<&str>, json: bool, files: &std::path::Path) -> Result<()> {
     wanted(kind)?;
     for line in lines(&canvas::library(files), kind, json, Utc::now())? {
@@ -72,8 +69,8 @@ pub fn run(kind: Option<&str>, json: bool, files: &std::path::Path) -> Result<()
 mod tests {
     use std::time::{Duration, SystemTime};
 
-    use nexus_core::deck::Deck;
-    use nexus_core::doc::Doc;
+    use dugix_core::deck::Deck;
+    use dugix_core::doc::Doc;
 
     use super::*;
 
@@ -81,7 +78,7 @@ mod tests {
     impl Space {
         fn new() -> Self {
             let path =
-                std::env::temp_dir().join(format!("nexus-cli-library-{}", uuid::Uuid::new_v4()));
+                std::env::temp_dir().join(format!("dugix-cli-library-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&path).unwrap();
             Self(path.canonicalize().unwrap())
         }
@@ -110,8 +107,8 @@ mod tests {
             &serde_json::to_vec(&Deck::titled("Launch review")).unwrap(),
             3 * 3600 + 120,
         );
-        let mut doc = Doc::from_design("Q3 memo", &nexus_core::design::Design::default());
-        doc.blocks = nexus_core::doc::markdown::parse_document("# T\n\nBody.\n", true).blocks;
+        let mut doc = Doc::from_design("Q3 memo", &dugix_core::design::Design::default());
+        doc.blocks = dugix_core::doc::markdown::parse_document("# T\n\nBody.\n", true).blocks;
         let doc = Doc::check(&serde_json::to_string(&doc).unwrap()).unwrap();
         space.put("docs/memo.doc.json", &serde_json::to_vec(&doc).unwrap(), 90);
         space.put(
@@ -130,9 +127,9 @@ mod tests {
         assert_eq!(
             text,
             [
-                "doc   docs/memo.doc.json           2 blocks    1 minute ago  Q3 memo",
-                "deck  decks/launch.deck.json        1 slide     3 hours ago  Launch review",
-                "deck  decks/talks/old.deck.json     1 slide      9 days ago  Old talk",
+                "doc    docs/memo.doc.json           2 blocks    1 minute ago  Q3 memo",
+                "deck   decks/launch.deck.json        1 slide     3 hours ago  Launch review",
+                "deck   decks/talks/old.deck.json     1 slide      9 days ago  Old talk",
             ]
         );
     }

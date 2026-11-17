@@ -1,8 +1,5 @@
 [package]
-# `nexus-core` on crates.io belongs to another project (SparkAIUR/nexus),
-# so the published package is `nexus-chat-core`. The lib target keeps the
-# `nexus_core` name, so every `use nexus_core::…` in both crates is stable.
-name = "nexus-chat-core"
+name = "dugix-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,7 +10,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [lib]
-name = "nexus_core"
+name = "dugix_core"
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.186"
@@ -28,16 +25,19 @@ anyhow = { workspace = true }
 arboard = { workspace = true }  # device-code login copies the URL to the OS clipboard (config.rs)
 base64 = { workspace = true }
 chrono = { workspace = true }
+csv = { workspace = true }  # spreadsheet CSV interchange (sheet/)
 directories = { workspace = true }
 futures-util = { workspace = true }
 image = { workspace = true }
 ignore = { workspace = true }
+ironcalc = { workspace = true }  # spreadsheet engine: formulas and xlsx (sheet/)
 keyring = { workspace = true }  # connector secrets: OS keychain (connectors/secrets.rs)
 krilla = { workspace = true }  # vector PDF export for docs and decks (doc/export/pdf.rs)
 krilla-svg = { workspace = true }
 open = { workspace = true }
 pdf-extract = { workspace = true }
 png = { workspace = true }
+portable-pty = { workspace = true }  # pseudo-terminals for external agent CLIs (fleet.rs)
 pulldown-cmark = { workspace = true }
 rand = { workspace = true }
 resvg = { workspace = true }
@@ -51,5 +51,27 @@ sha2 = { workspace = true }
 taffy = { workspace = true }
 tokio = { workspace = true }
 toml = { workspace = true }
+tree-sitter = { workspace = true }  # syntax highlighting (highlight.rs)
+tree-sitter-bash = { workspace = true }
+tree-sitter-c = { workspace = true }
+tree-sitter-cpp = { workspace = true }
+tree-sitter-css = { workspace = true }
+tree-sitter-go = { workspace = true }
+tree-sitter-highlight = { workspace = true }
+tree-sitter-html = { workspace = true }
+tree-sitter-java = { workspace = true }
+tree-sitter-javascript = { workspace = true }
+tree-sitter-json = { workspace = true }
+tree-sitter-md = { workspace = true }
+tree-sitter-python = { workspace = true }
+tree-sitter-ruby = { workspace = true }
+tree-sitter-rust = { workspace = true }
+tree-sitter-toml-ng = { workspace = true }
+tree-sitter-typescript = { workspace = true }
+tree-sitter-yaml = { workspace = true }
 uuid = { workspace = true }
+vt100 = { workspace = true }  # screen model of each fleet agent (fleet.rs)
 zip = { workspace = true }
+
+[dev-dependencies]
+ironcalc = { workspace = true, features = ["mock_time"] }

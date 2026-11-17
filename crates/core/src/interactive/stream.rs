@@ -16,8 +16,7 @@ pub fn component_signatures() -> String {
     library::signatures()
 }
 
-/// Incremental parser for one streamed UI program. Completed statement ASTs are
-/// cached; source replacement resets them. No actions are executed by parsing.
+/// Incremental parser for one streamed UI program; source replacement resets cached statements.
 #[derive(Default)]
 pub struct StreamParser {
     source: String,
@@ -26,9 +25,8 @@ pub struct StreamParser {
     error: Option<String>,
 }
 impl StreamParser {
-    /// Update the accumulated program and return its validated display snapshot.
-    /// Incomplete new definitions can render; incomplete redefinitions cannot
-    /// replace completed ones. Unsupported or malformed elements remain inert.
+    /// Update the program and return its validated display snapshot; incomplete
+    /// new definitions can render, but incomplete redefinitions cannot replace completed ones.
     #[must_use]
     pub fn set(&mut self, source: &str) -> Option<Document> {
         if source.len() > MAX_SOURCE {
@@ -56,22 +54,57 @@ impl StreamParser {
             }
             self.consumed = start + end;
         }
-        let mut symbols = self.symbols.clone();
         let tail = &source[self.consumed..];
         if self.error.is_none() && !empty(tail) {
-            let pending = format!("{tail}{suffix}");
-            if let Ok((name, expression)) = syntax::statement(&pending)
-                && (suffix.is_empty() || !symbols.contains_key(&name))
-                && (symbols.len() < 128 || symbols.contains_key(&name))
-            {
-                symbols.insert(name, expression);
+            // The unfinished statement is often mid-token, so also try it cut
+            // back to each argument boundary and keep the longest that shows the most.
+            let whole = (format!("{tail}{suffix}"), suffix.is_empty());
+            let trimmed = syntax::argument_cuts(tail)
+                .into_iter()
+                .rev()
+                .take(MAX_BACKOFF)
+                .map(|cut| {
+                    let tail = &tail[..cut];
+                    (format!("{tail}{}", syntax::boundaries(tail).1), false)
+                });
+            let mut best: Option<Document> = None;
+            for (pending, closed) in std::iter::once(whole).chain(trimmed) {
+                if let Some(document) = self.with_pending(&pending, closed)
+                    && best
+                        .as_ref()
+                        .is_none_or(|best| document.nodes().len() > best.nodes().len())
+                {
+                    best = Some(document);
+                }
+            }
+            if best.is_some() {
+                return best;
             }
         }
-        let value = library::materialize(&symbols, true, None, None).ok()?;
-        Document::check_value(value)
-            .ok()
-            .map(Document::inert_preview)
+        preview_document(&self.symbols)
     }
+
+    /// The preview with one unfinished statement added, if it validates.
+    fn with_pending(&self, pending: &str, closed: bool) -> Option<Document> {
+        let (name, expression) = syntax::statement(pending).ok()?;
+        let known = self.symbols.contains_key(&name);
+        if (!closed && known) || (self.symbols.len() >= 128 && !known) {
+            return None;
+        }
+        let mut symbols = self.symbols.clone();
+        symbols.insert(name, expression);
+        preview_document(&symbols)
+    }
+}
+
+/// Argument boundaries tried, newest first, for an unfinished statement.
+const MAX_BACKOFF: usize = 8;
+
+fn preview_document(symbols: &BTreeMap<String, Expr>) -> Option<Document> {
+    let value = library::materialize(symbols, library::Mode::Streaming, None, None).ok()?;
+    Document::check_value(value)
+        .ok()
+        .map(Document::inert_preview)
 }
 
 fn empty(source: &str) -> bool {
@@ -111,19 +144,45 @@ fn legacy(source: &str) -> Result<Value> {
 }
 
 fn program(source: &str) -> Result<Value> {
-    program_state(source, None, None)
+    program_state(source, None, None, false)
 }
 
+/// Materialize a program with live state. A salvaged program leaves out the
+/// same broken pieces on every commit, so its panel stays stable.
 pub(super) fn program_state(
     source: &str,
     state: Option<&serde_json::Map<String, Value>>,
     results: Option<&serde_json::Map<String, Value>>,
+    salvaged: bool,
 ) -> Result<Value> {
     let symbols = statements(source)?
         .into_iter()
         .map(|(name, (_, expr))| (name, expr))
         .collect();
-    library::materialize(&symbols, false, state, results)
+    let mode = if salvaged {
+        library::Mode::Salvage
+    } else {
+        library::Mode::Strict
+    };
+    library::materialize(&symbols, mode, state, results)
+}
+
+/// The statements of a finished program that parse, rejoined as source.
+pub(super) fn parseable(source: &str) -> String {
+    let (mut ends, _) = syntax::boundaries(source);
+    if ends.last() != Some(&source.len()) {
+        ends.push(source.len());
+    }
+    let mut start = 0;
+    let mut kept = Vec::new();
+    for end in ends {
+        let statement = &source[start..end];
+        if !empty(statement) && syntax::statement(statement).is_ok() {
+            kept.push(statement.trim());
+        }
+        start = end;
+    }
+    kept.join("\n")
 }
 
 fn statements(source: &str) -> Result<BTreeMap<String, (String, Expr)>> {
@@ -153,9 +212,14 @@ fn statements(source: &str) -> Result<BTreeMap<String, (String, Expr)>> {
 
 /// Merge a completed patch by statement name and validate it atomically.
 /// A top-level null deletes; unreachable value statements are pruned.
-/// # Errors
-/// Returns syntax, reference, schema or budget failures without changing input.
 pub fn merge_program(source: &str, patch: &str) -> Result<String> {
+    let program = merge_statements(source, patch)?;
+    Document::parse(&program)?;
+    Ok(program)
+}
+
+/// Merge a patch by statement name without validating the result.
+pub(super) fn merge_statements(source: &str, patch: &str) -> Result<String> {
     let mut merged = statements(source)?;
     for (name, statement) in statements(patch)? {
         if matches!(statement.1, Expr::Literal(Value::Null)) {
@@ -185,7 +249,6 @@ pub fn merge_program(source: &str, patch: &str) -> Result<String> {
         .map(|(source, _)| source.as_str())
         .collect::<Vec<_>>()
         .join("\n");
-    Document::parse(&program)?;
     Ok(program)
 }
 
@@ -221,5 +284,7 @@ pub(super) fn preview(source: &str) -> Option<Document> {
     StreamParser::default().set(source)
 }
 
+#[cfg(test)]
+mod salvage_tests;
 #[cfg(test)]
 mod tests;

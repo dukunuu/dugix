@@ -29,7 +29,7 @@ fn image() -> Value {
            "fit": "cover", "radius": 32, "shadow": "md", "sizing": {"w": "fill", "h": "fill"}})
 }
 
-/// Twenty-one role-only layouts, from spacious copy to editorial photo stories.
+/// Role-only layouts, from spacious copy to editorial photo stories.
 #[must_use]
 #[allow(clippy::too_many_lines)]
 pub fn builtin(spacing: Spacing) -> BTreeMap<String, Slide> {
@@ -166,8 +166,8 @@ pub fn builtin(spacing: Spacing) -> BTreeMap<String, Slide> {
     layouts
 }
 
-/// Scale the layouts' card and photo corners (32 px and under at the default
-/// radius) to the design's; circles drawn with larger radii stay round.
+/// Scale the layouts' card and photo corners (32 px and under at the default radius)
+/// to the design's; circles drawn with larger radii stay round.
 fn corners(value: &mut Value, scale: f64) {
     if let Some(object) = value.as_object_mut() {
         if let Some(radius) = object
@@ -187,7 +187,7 @@ fn corners(value: &mut Value, scale: f64) {
     }
 }
 
-/// Valid slot names, sorted for deterministic hints and galleries.
+/// Sorted for deterministic hints and galleries.
 #[must_use]
 pub fn slots(slide: &Slide) -> BTreeSet<String> {
     slide
@@ -198,8 +198,8 @@ pub fn slots(slide: &Slide) -> BTreeSet<String> {
         .collect()
 }
 
-/// Instantiate a pre-resolved layout. Inserted ids are assigned by the caller's
-/// normal insertion machinery, never copied from the template.
+/// Inserted ids are assigned by the caller's normal insertion machinery, never
+/// copied from the template.
 pub fn instantiate(
     design: &Design,
     layout: &str,

@@ -1,11 +1,5 @@
-//! A small, bounded XML reader for the parts of an OOXML package.
-//!
-//! It builds a tree of elements with local names (prefixes dropped), their
-//! attributes and the text directly inside them. Attributes keep their prefix
-//! only when it names the relationships namespace (`r:id`) or is otherwise
-//! qualified (`p14:dur`). It rejects nothing a real `PowerPoint` writes, expands
-//! only the five predefined entities and numeric references, ignores DOCTYPE
-//! declarations (so no entity bomb is possible) and caps depth and size.
+//! A small, bounded XML reader for the parts of an OOXML package: local names,
+//! attributes and direct text, with capped depth and size and no entity expansion.
 
 use anyhow::{Result, bail};
 
@@ -32,7 +26,6 @@ impl El {
             .map(|(_, v)| v.as_str())
     }
 
-    /// The `r:`-prefixed attribute `key`.
     pub fn rel(&self, key: &str) -> Option<&str> {
         self.attr(&format!("r:{key}"))
     }
@@ -70,7 +63,6 @@ impl El {
         self.kids.iter().filter(move |k| k.name == name)
     }
 
-    /// Follow a chain of child names.
     pub fn path(&self, names: &[&str]) -> Option<&El> {
         names.iter().try_fold(self, |el, name| el.kid(name))
     }
@@ -85,7 +77,6 @@ impl El {
         }
     }
 
-    /// The first descendant named `name`.
     pub fn find(&self, name: &str) -> Option<&El> {
         for kid in &self.kids {
             if kid.name == name {
@@ -150,8 +141,7 @@ fn skip_to<'a>(rest: &'a str, end: &str) -> Result<&'a str> {
     }
 }
 
-/// The attributes of a start tag body (`name a="1" b='2'`), resolved against
-/// the namespace declarations in scope.
+/// The attributes of a start tag body, resolved against the namespaces in scope.
 fn attributes(
     body: &str,
     scope: &mut Vec<(String, String)>,
@@ -207,10 +197,6 @@ fn attributes(
     Ok((local, attrs))
 }
 
-/// Parse one XML document.
-///
-/// # Errors
-/// On malformed markup, or a document deeper or larger than the caps.
 #[allow(clippy::too_many_lines)]
 pub(crate) fn parse(source: &str) -> Result<El> {
     let source = source.strip_prefix('\u{feff}').unwrap_or(source);

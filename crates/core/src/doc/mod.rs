@@ -45,7 +45,7 @@ impl Doc {
     }
 }
 
-/// Compact, bounded outline. The final `more:` line names omitted blocks.
+/// Compact, bounded outline; the final `more:` line names omitted blocks.
 #[must_use]
 pub fn outline(doc: &Doc, max_chars: usize) -> String {
     let lines = doc
@@ -107,8 +107,8 @@ pub fn outline(doc: &Doc, max_chars: usize) -> String {
     out
 }
 
-/// Render selected blocks in full, in document order. A heading selection
-/// includes its section through the next heading of equal or higher level.
+/// Render selected blocks in full, in document order; a heading includes its
+/// section.
 #[must_use]
 pub fn read_blocks(doc: &Doc, ids: &[String]) -> String {
     let mut selected = doc.clone();

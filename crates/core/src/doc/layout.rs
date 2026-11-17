@@ -117,10 +117,34 @@ impl Composer<'_, '_> {
     fn font(&self, name: &str) -> ResolvedFont {
         self.ts.theme.resolve_font(name, &Font::default())
     }
+    /// Lines of `source` in `style`; `code` colors literal text by language
+    /// syntax.
+    fn text(
+        &mut self,
+        source: &str,
+        style: &str,
+        x: f64,
+        width: f64,
+        code: Option<&str>,
+    ) -> Vec<Line> {
+        self.text_lines(source, style, x, width, code, true)
+    }
+    /// `justify: false` keeps a ragged edge whatever the style says, as table cells do.
     #[allow(clippy::too_many_lines)]
-    fn text(&mut self, source: &str, style: &str, x: f64, width: f64, literal: bool) -> Vec<Line> {
+    fn text_lines(
+        &mut self,
+        source: &str,
+        style: &str,
+        x: f64,
+        width: f64,
+        code: Option<&str>,
+        justify: bool,
+    ) -> Vec<Line> {
         let font = self.font(style);
-        let runs = if literal {
+        let syntax = code.map_or_else(Vec::new, |lang| crate::highlight::highlight(source, lang));
+        // Byte offset in `source` of the part being laid out (literal text only).
+        let mut at = 0;
+        let runs = if code.is_some() {
             vec![inline::Run {
                 text: source.into(),
                 ..Default::default()
@@ -133,6 +157,8 @@ impl Composer<'_, '_> {
             height: font.size * font.line_height,
         }];
         let mut used = 0.0;
+        // Lines that end at an explicit newline; justification leaves them ragged.
+        let mut hard = Vec::new();
         for mut run in runs {
             if let Some(id) = &run.footnote {
                 let number = self
@@ -154,6 +180,8 @@ impl Composer<'_, '_> {
                 spacing: font.letter_spacing * font.size,
             };
             for part in run.text.split_inclusive(['\n', ' ']) {
+                let mut piece_at = at;
+                at += part.len();
                 let newline = part.ends_with('\n');
                 let text = part.trim_end_matches('\n');
                 let advance = self.ts.advance(&face, font.size, text);
@@ -180,34 +208,43 @@ impl Composer<'_, '_> {
                     }
                     let (ascent, descent) = self.ts.ascent_descent(&face, font.size);
                     let baseline = (font.size * font.line_height - ascent - descent) / 2.0 + ascent;
-                    lines.last_mut().expect("line").items.push(Item {
-                        block: String::new(),
-                        x: x + used,
-                        y: 0.0,
-                        w,
-                        h: font.size * font.line_height,
-                        paint: Paint::Run(Run {
-                            text,
-                            family: face.family.clone(),
-                            size: font.size,
-                            weight: face.weight,
-                            italic: face.italic,
-                            strike: run.strike,
-                            link: run.link.clone(),
-                            color: color(
-                                self.ts.theme,
-                                if run.link.is_some() {
-                                    "accent"
-                                } else {
-                                    &font.color
-                                },
-                            ),
-                            baseline,
-                        }),
-                    });
-                    used += w;
+                    let plain = if run.link.is_some() {
+                        "accent"
+                    } else {
+                        &font.color
+                    };
+                    // Line breaks were decided on the whole fragment above;
+                    // syntax only splits it into differently colored runs.
+                    for (piece, role) in colored(&text, piece_at, &syntax) {
+                        let w = if piece.len() == text.len() {
+                            w
+                        } else {
+                            self.ts.advance(&face, font.size, piece)
+                        };
+                        lines.last_mut().expect("line").items.push(Item {
+                            block: String::new(),
+                            x: x + used,
+                            y: 0.0,
+                            w,
+                            h: font.size * font.line_height,
+                            paint: Paint::Run(Run {
+                                text: piece.to_string(),
+                                family: face.family.clone(),
+                                size: font.size,
+                                weight: face.weight,
+                                italic: face.italic,
+                                strike: run.strike,
+                                link: run.link.clone(),
+                                color: color(self.ts.theme, role.map_or(plain, |r| r.color_key())),
+                                baseline,
+                            }),
+                        });
+                        used += w;
+                    }
+                    piece_at += text.len();
                 }
                 if newline {
+                    hard.push(lines.len() - 1);
                     lines.push(Line {
                         items: Vec::new(),
                         height: font.size * font.line_height,
@@ -216,18 +253,63 @@ impl Composer<'_, '_> {
                 }
             }
         }
-        for line in &mut lines {
+        let count = lines.len();
+        for (index, line) in lines.iter_mut().enumerate() {
             let used = line.items.last().map_or(0.0, |i| i.x + i.w - x);
             let offset = match font.align {
-                Align::Left => 0.0,
+                Align::Left | Align::Justify => 0.0,
                 Align::Center => (width - used) / 2.0,
                 Align::Right => width - used,
             };
             for item in &mut line.items {
                 item.x += offset;
             }
+            if justify
+                && font.align == Align::Justify
+                && index + 1 < count
+                && !hard.contains(&index)
+            {
+                self.justify(line, x, width, font.letter_spacing * font.size);
+            }
         }
         lines
+    }
+    /// Spread a line's slack over its word gaps so it ends flush right.
+    fn justify(&mut self, line: &mut Line, x: f64, width: f64, spacing: f64) {
+        let ends_in_space =
+            |item: &Item| matches!(&item.paint, Paint::Run(run) if run.text.ends_with(' '));
+        let Some(last) = line.items.last() else {
+            return;
+        };
+        // The trailing space hangs past the edge, as in the browser.
+        let end = match &last.paint {
+            Paint::Run(run) if run.text.ends_with(' ') => {
+                let face = Face {
+                    family: run.family.clone(),
+                    weight: run.weight,
+                    italic: run.italic,
+                    spacing,
+                };
+                last.x + self.ts.advance(&face, run.size, run.text.trim_end())
+            }
+            _ => last.x + last.w,
+        };
+        let count = line.items.len();
+        let gaps = line.items[..count - 1]
+            .iter()
+            .filter(|item| ends_in_space(item))
+            .count();
+        if gaps == 0 {
+            return;
+        }
+        let spread = ((x + width - end) / gaps as f64).max(0.0);
+        let mut shift = 0.0;
+        for (index, item) in line.items.iter_mut().take(count).enumerate() {
+            item.x += shift;
+            if index + 1 < count && ends_in_space(item) {
+                shift += spread;
+            }
+        }
     }
     fn flow(block: &Block) -> Flow {
         Flow {
@@ -262,7 +344,7 @@ impl Composer<'_, '_> {
                 inline::style(block),
                 indent,
                 (self.width - indent).max(1.0),
-                false,
+                None,
             );
             let marker = item.checked.map_or_else(
                 || {
@@ -279,7 +361,7 @@ impl Composer<'_, '_> {
                 inline::style(block),
                 indent - LAYOUT.list_indent,
                 LAYOUT.list_indent,
-                true,
+                Some(""),
             );
             flow.lines[0].items.append(&mut label[0].items);
             out.push(flow);
@@ -290,18 +372,19 @@ impl Composer<'_, '_> {
         let cell_width = self.width / cells.len().max(1) as f64;
         let mut columns = Vec::new();
         for (index, text) in cells.iter().enumerate() {
-            let mut lines = self.text(
+            let mut lines = self.text_lines(
                 text,
                 inline::style(block),
                 index as f64 * cell_width + LAYOUT.cell_padding,
                 (cell_width - 2.0 * LAYOUT.cell_padding).max(1.0),
+                None,
                 false,
             );
             for line in &mut lines {
                 let used = line.items.iter().map(|i| i.w).sum::<f64>();
                 let slack = (cell_width - 2.0 * LAYOUT.cell_padding - used).max(0.0);
                 let shift = match align.get(index).copied().unwrap_or(Align::Left) {
-                    Align::Left => 0.0,
+                    Align::Left | Align::Justify => 0.0,
                     Align::Center => slack / 2.0,
                     Align::Right => slack,
                 };
@@ -412,7 +495,7 @@ impl Composer<'_, '_> {
                     let captions = if caption.is_empty() {
                         vec![]
                     } else {
-                        self.text(caption, "caption", 0.0, self.width, false)
+                        self.text(caption, "caption", 0.0, self.width, None)
                     };
                     let caption_height = captions.iter().map(|l| l.height).sum::<f64>()
                         + if captions.is_empty() {
@@ -498,10 +581,15 @@ impl Composer<'_, '_> {
                             "body",
                             0.0,
                             self.width - 36.0,
-                            false,
+                            None,
                         );
-                        let mut label =
-                            self.text(&number.to_string(), "body", self.width - 25.0, 25.0, true);
+                        let mut label = self.text(
+                            &number.to_string(),
+                            "body",
+                            self.width - 25.0,
+                            25.0,
+                            Some(""),
+                        );
                         lines[0].items.append(&mut label[0].items);
                         flow.lines.extend(lines);
                     }
@@ -544,7 +632,10 @@ impl Composer<'_, '_> {
                         inline::style(block),
                         padding + bar,
                         (self.width - 2.0 * padding - bar).max(1.0),
-                        matches!(block.kind, Kind::Code { .. }),
+                        match &block.kind {
+                            Kind::Code { lang, .. } => Some(lang.as_str()),
+                            _ => None,
+                        },
                     );
                 }
             }
@@ -564,7 +655,7 @@ impl Composer<'_, '_> {
                 "caption",
                 0.0,
                 self.width,
-                false,
+                None,
             );
             out.push(flow);
         }
@@ -757,7 +848,7 @@ fn pass(doc: &Doc, assets: Option<&Path>, heading_pages: &BTreeMap<String, usize
                 .replace("{pages}", &count.to_string())
                 .replace("{page}", &(index + 1).to_string())
                 .replace("{title}", &doc.title);
-            for line in composer.text(&text, "caption", 0.0, width, true) {
+            for line in composer.text(&text, "caption", 0.0, width, Some("")) {
                 place(page, &line, id, left, at);
             }
         }
@@ -784,3 +875,36 @@ pub fn heading_pages(pages: &[Page]) -> BTreeMap<String, usize> {
 
 #[cfg(test)]
 mod tests;
+
+/// `text` (starting at byte `start` of the highlighted source) split at syntax
+/// span edges, each piece with its role.
+fn colored<'t>(
+    text: &'t str,
+    start: usize,
+    syntax: &[crate::highlight::Span],
+) -> Vec<(&'t str, Option<crate::highlight::Role>)> {
+    if syntax.is_empty() || text.is_empty() {
+        return vec![(text, None)];
+    }
+    let end = start + text.len();
+    let mut out = Vec::new();
+    let mut at = start;
+    let first = syntax.partition_point(|span| span.range.end <= start);
+    for span in &syntax[first..] {
+        if span.range.start >= end {
+            break;
+        }
+        let (from, to) = (span.range.start.max(at), span.range.end.min(end));
+        if from > at {
+            out.push((&text[at - start..from - start], None));
+        }
+        if to > from {
+            out.push((&text[from - start..to - start], Some(span.role)));
+            at = to;
+        }
+    }
+    if at < end {
+        out.push((&text[at - start..], None));
+    }
+    out
+}

@@ -35,7 +35,12 @@ pub(super) fn rename(
         bail!("title must be 1–200 characters")
     }
     app.db.set_session_title(id, title, None)?;
-    if let Some(cached) = app.sessions_cache.iter_mut().find(|cached| cached.id == id) {
+    if let Some(cached) = app
+        .caches
+        .sessions
+        .iter_mut()
+        .find(|cached| cached.id == id)
+    {
         cached.title = title.to_string();
     }
     if app.session.as_ref().is_some_and(|active| active.id == id)
@@ -54,14 +59,15 @@ pub(super) fn delete(app: &mut App, space_id: &str, id: &str) -> Result<serde_js
     session_in_space(app, space_id, id)?;
     if app.chat_task_for_session(id).is_some()
         || app
-            .research_running
+            .research
+            .running
             .as_ref()
             .is_some_and(|(session, _)| session == id)
     {
         bail!("stop the session's task before deleting it")
     }
     app.db.delete_session(id)?;
-    app.sessions_cache.retain(|session| session.id != id);
+    app.caches.sessions.retain(|session| session.id != id);
     if app.session.as_ref().is_some_and(|active| active.id == id) {
         app.new_session();
     }
@@ -75,7 +81,7 @@ mod tests {
     #[test]
     fn rename_is_scoped_and_validated() {
         let root =
-            std::env::temp_dir().join(format!("nexus-session-view-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("dugix-session-view-{}", uuid::Uuid::new_v4()));
         let mut app = App::new(
             crate::db::Db::open_in_memory().expect("db"),
             None,

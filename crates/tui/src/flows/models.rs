@@ -1,6 +1,3 @@
-// Casts here are on bounded values: token counts, byte sizes, and
-// selection indices — never on unbounded input. JSON-derived indices in
-// provider/tools go through try_from instead.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -9,22 +6,19 @@
 )]
 use anyhow::Result;
 
-use nexus_core::app::{KeyTarget, ModelPanel, ModelPickTarget, Popup};
-use nexus_core::config;
-use nexus_core::provider::local::{LocalConfig, LocalRuntime};
-use nexus_core::provider::{BackendTag, Model, openrouter::OpenRouter};
+use dugix_core::app::{ModelPanel, ModelPickTarget, Popup};
+use dugix_core::config;
+use dugix_core::provider::local::{LocalConfig, LocalRuntime};
+use dugix_core::provider::{BackendTag, Model, openrouter::OpenRouter};
 
 use crate::app_view::AppView;
 
 impl AppView {
-    /// Label for the model picker's current backend filter.
     pub fn model_backend_filter_label(&self) -> &'static str {
         self.model_backend_filter
-            .map_or("all backends", BackendTag::display_name)
+            .map_or("all backends", BackendTag::name)
     }
 
-    /// Cycle the model picker's backend filter among whichever backends are
-    /// actually configured (`None` = show everything).
     pub fn cycle_model_backend_filter(&mut self) {
         let tags = self.core.backends.configured_tags();
         if tags.is_empty() {
@@ -46,15 +40,6 @@ impl AppView {
         self.open_model_picker_impl();
     }
 
-    /// Open the same model picker, but a confirmed pick sets the helper model
-    /// (in `/config`) instead of the active session's model.
-    pub fn open_model_picker_for_helper(&mut self) {
-        self.core.model_pick_target = ModelPickTarget::Helper;
-        self.open_model_picker_impl();
-    }
-
-    /// Open the same model picker, but a confirmed pick sets the model for
-    /// one row of the active session's `/swarm` roster.
     pub fn open_model_picker_for_swarm_persona(&mut self, row: usize) {
         self.core.model_pick_target = ModelPickTarget::SwarmPersona(row);
         self.open_model_picker_impl();
@@ -81,58 +66,36 @@ impl AppView {
         self.popup = Popup::Model;
     }
 
-    /// Point each panel's selection at its first row (or nothing if empty).
     pub fn reset_model_selection(&mut self) {
         self.fav_selected = 0;
         self.avail_selected = 0;
     }
 
-    /// `/login`: open the provider selector. Also what `open_model_picker`
-    /// falls back to when nothing's configured yet.
     pub fn open_login_popup(&mut self) {
         self.login_selected = 0;
         self.popup = Popup::Login;
     }
 
     pub fn move_login_selection(&mut self, delta: i32) {
-        self.login_selected = nexus_core::app::clamp_cursor(self.login_selected, 5, delta);
+        self.login_selected = dugix_core::app::clamp_cursor(
+            self.login_selected,
+            crate::ui::popups::login::LOGIN_ORDER.len(),
+            delta,
+        );
     }
 
-    /// Enter on a `/login` row: OpenRouter/OpenCode Go/OpenAI activate
-    /// immediately from their env var if set, else drop into the key-paste
-    /// popup; Codex has no key, so it starts the device-code login instead,
-    /// and the local runtime has none either — it opens `/local`.
     pub fn confirm_login_selection(&mut self) {
-        match self.login_selected {
-            0 => self.start_key_login(
-                KeyTarget::OpenRouter,
-                config::OPENROUTER_ENV_KEY,
-                "openrouter",
-                "OpenRouter",
-            ),
-            1 => self.start_key_login(
-                KeyTarget::OpencodeGo,
-                config::OPENCODE_ENV_KEY,
-                "opencode",
-                "OpenCode Go",
-            ),
-            2 => self.start_key_login(
-                KeyTarget::OpenAi,
-                config::OPENAI_ENV_KEY,
-                "openai",
-                "OpenAI",
-            ),
-            3 => self.core.start_codex_login(),
-            _ => {
-                self.open_local_popup();
-                self.local_from_login = true;
-            }
+        let target = crate::ui::popups::login::LOGIN_ORDER[self.login_selected];
+        if target.info().key.is_some() {
+            self.start_key_login(target);
+        } else if target == BackendTag::Codex {
+            self.core.start_codex_login();
+        } else {
+            self.open_local_popup();
+            self.local_from_login = true;
         }
     }
 
-    /// `s`/`x`/`r` in the `/local` picker: run a server verb against the row
-    /// under the cursor. The trailing "off" row names no runtime, so it only
-    /// re-surveys.
     pub fn local_server_key(&mut self, verb: &str) {
         let runtime = LocalRuntime::ALL
             .get(self.local_selected)
@@ -143,7 +106,6 @@ impl AppView {
         self.core.manage_local_server(verb, &runtime);
     }
 
-    /// `/local`: open the runtime selector, parked on whatever is active.
     pub fn open_local_popup(&mut self) {
         self.local_from_login = false;
         self.local_selected = self.core.saved.local.as_ref().map_or(
@@ -156,21 +118,17 @@ impl AppView {
             },
         );
         self.popup = Popup::Local;
-        // The rows show liveness and memory, so opening the picker measures.
         self.core.refresh_local_status();
     }
 
     pub fn move_local_selection(&mut self, delta: i32) {
-        self.local_selected = nexus_core::app::clamp_cursor(
+        self.local_selected = dugix_core::app::clamp_cursor(
             self.local_selected,
             crate::ui::popups::local::ROW_COUNT,
             delta,
         );
     }
 
-    /// Enter on a `/local` row: switch runtime (or disable), persisting to
-    /// the machine-local config and reloading the catalog. Failures stay on
-    /// the status line with the popup open, so the pick can be retried.
     pub fn confirm_local_selection(&mut self) {
         let current = self.core.saved.local.clone();
         let config = LocalRuntime::ALL
@@ -182,55 +140,43 @@ impl AppView {
         }
     }
 
-    fn start_key_login(&mut self, target: KeyTarget, env_var: &str, tag: &str, label: &str) {
-        if let Ok(v) = std::env::var(env_var) {
+    fn start_key_login(&mut self, target: BackendTag) {
+        let login = target.info().key.as_ref().expect("key-login backend");
+        if let Ok(v) = std::env::var(login.env_var) {
             let v = v.trim().to_string();
             if !v.is_empty() {
-                self.activate_key(target, tag, v);
+                self.activate_key(target, v);
                 return;
             }
         }
         self.key_target = target;
         self.key_input.clear();
-        self.push_status(format!("paste your {label} API key, then Enter"));
+        self.push_status(format!("paste your {} API key, then Enter", login.label));
         self.popup = Popup::Key;
     }
 
-    /// Label for the key-entry popup's hint, matching whichever `/login`
-    /// row opened it.
     pub const fn key_target_label(&self) -> &'static str {
-        match self.key_target {
-            KeyTarget::OpenRouter => "OpenRouter",
-            KeyTarget::OpenAi => "OpenAI",
-            KeyTarget::OpencodeGo => "OpenCode Go",
-        }
+        self.key_target
+            .info()
+            .key
+            .as_ref()
+            .expect("key-login backend")
+            .label
     }
 
-    fn activate_key(&mut self, target: KeyTarget, tag: &str, key: String) {
-        if let Err(e) = config::save_provider_key(tag, &key) {
+    fn activate_key(&mut self, target: BackendTag, key: String) {
+        let login = target.info().key.as_ref().expect("key-login backend");
+        if let Err(e) = config::save_provider_key(login.config_name, &key) {
             self.push_status(format!("could not save key: {e}"));
         }
-        let (backend_tag, provider) = match target {
-            KeyTarget::OpenRouter => (
-                BackendTag::OpenRouter,
-                OpenRouter::openrouter_flavor(key.clone()),
-            ),
-            KeyTarget::OpenAi => (BackendTag::OpenAi, OpenRouter::openai(key.clone())),
-            KeyTarget::OpencodeGo => (BackendTag::OpencodeGo, OpenRouter::opencode_go(key.clone())),
-        };
-        match target {
-            KeyTarget::OpenRouter => self.core.saved.openrouter_key = Some(key),
-            KeyTarget::OpenAi => self.core.saved.openai_key = Some(key),
-            KeyTarget::OpencodeGo => self.core.saved.opencode_key = Some(key),
-        }
-        self.core.backends.set(backend_tag, provider);
+        let provider = OpenRouter::with_key(target, key.clone());
+        self.core.saved.set_key(target, key);
+        self.core.backends.set(target, provider);
         self.popup = Popup::None;
         self.push_status("key saved, loading models…".to_string());
         self.core.fetch_models();
     }
 
-    /// Save the key pasted into `Popup::Key`, for whichever backend
-    /// `self.key_target` says it's for.
     pub fn confirm_key(&mut self) {
         let key = std::mem::take(&mut self.key_input);
         let key = key.trim().to_string();
@@ -239,20 +185,13 @@ impl AppView {
             self.popup = Popup::None;
             return;
         }
-        let (target, tag) = match self.key_target {
-            KeyTarget::OpenRouter => (KeyTarget::OpenRouter, "openrouter"),
-            KeyTarget::OpenAi => (KeyTarget::OpenAi, "openai"),
-            KeyTarget::OpencodeGo => (KeyTarget::OpencodeGo, "opencode"),
-        };
-        self.activate_key(target, tag, key);
+        self.activate_key(self.key_target, key);
     }
 
-    /// Favorite models matching the search filter, most-recently-used first.
     pub fn favorite_models(&self) -> Vec<&Model> {
         self.filtered_panel(true)
     }
 
-    /// Non-favorite models matching the search filter, most-recently-used first.
     pub fn available_models(&self) -> Vec<&Model> {
         self.filtered_panel(false)
     }
@@ -267,7 +206,7 @@ impl AppView {
             .filter(|m| {
                 self.core
                     .favorites
-                    .contains(&nexus_core::app::composite_id(m))
+                    .contains(&dugix_core::app::composite_id(m))
                     == want_fav
             })
             .filter(|m| {
@@ -276,11 +215,10 @@ impl AppView {
                     || m.name.to_lowercase().contains(&f)
             })
             .collect();
-        // Most-recently-used first, then alphabetical.
         out.sort_by(|a, b| {
             let (ca, cb) = (
-                nexus_core::app::composite_id(a),
-                nexus_core::app::composite_id(b),
+                dugix_core::app::composite_id(a),
+                dugix_core::app::composite_id(b),
             );
             let ra = self.core.last_used.get(&ca).cloned().unwrap_or_default();
             let rb = self.core.last_used.get(&cb).cloned().unwrap_or_default();
@@ -303,21 +241,16 @@ impl AppView {
         }
     }
 
-    /// The composite id (see `composite_id`) of the model at this row —
-    /// what gets stored in `current_model`/favorites/last-used, not the raw
-    /// `Model.id` (which can collide across backends).
+    /// Returns a backend-qualified ID because raw model IDs can collide across backends.
     fn id_at(&self, panel: ModelPanel, index: usize) -> Option<String> {
         let list = match panel {
             ModelPanel::Favorites => self.favorite_models(),
             ModelPanel::Available => self.available_models(),
         };
-        list.get(index).map(|m| nexus_core::app::composite_id(m))
+        list.get(index).map(|m| dugix_core::app::composite_id(m))
     }
 
-    /// Cycle the focused model through exactly its catalog-provided enabled
-    /// effort values. A model that accepts the explicit `none` wire value
-    /// uses that when wrapping from its highest tier, so "off" still disables
-    /// models whose provider enables reasoning by default.
+    /// Cycles catalog effort tiers, using explicit `none` to override provider reasoning defaults.
     pub fn cycle_reasoning_focused(&mut self) -> Result<()> {
         let selected = *self.state_mut(self.model_focus);
         let Some(id) = self.id_at(self.model_focus, selected) else {
@@ -327,13 +260,13 @@ impl AppView {
             .core
             .models
             .iter()
-            .find(|m| nexus_core::app::composite_id(m) == id)
+            .find(|m| dugix_core::app::composite_id(m) == id)
             .map(|m| m.reasoning_efforts.clone())
             .unwrap_or_default();
         let enabled: Vec<_> = efforts
             .iter()
             .copied()
-            .filter(|effort| *effort != nexus_core::provider::ReasoningEffort::None)
+            .filter(|effort| *effort != dugix_core::provider::ReasoningEffort::None)
             .collect();
         if enabled.is_empty() {
             if self.core.reasoning.contains_key(&id) {
@@ -346,24 +279,21 @@ impl AppView {
             return Ok(());
         }
 
-        // A missing, explicit-none, or stale stored value starts at the first
-        // enabled tier. The final tier wraps to explicit `none` when accepted,
-        // otherwise it removes the parameter.
         let stored = self.core.reasoning.get(&id).map(String::as_str);
         let pos = stored.and_then(|s| enabled.iter().position(|e| e.as_str() == s));
         let next = match pos {
             Some(i) if i + 1 < enabled.len() => Some(enabled[i + 1]),
-            Some(_) if efforts.contains(&nexus_core::provider::ReasoningEffort::None) => {
-                Some(nexus_core::provider::ReasoningEffort::None)
+            Some(_) if efforts.contains(&dugix_core::provider::ReasoningEffort::None) => {
+                Some(dugix_core::provider::ReasoningEffort::None)
             }
             Some(_) => None,
             None => Some(enabled[0]),
         };
-        let next = next.map(nexus_core::provider::ReasoningEffort::as_str);
+        let next = next.map(dugix_core::provider::ReasoningEffort::as_str);
         let accepted = efforts
             .iter()
             .map(|effort| {
-                if *effort == nexus_core::provider::ReasoningEffort::None {
+                if *effort == dugix_core::provider::ReasoningEffort::None {
                     "off"
                 } else {
                     effort.as_str()
@@ -389,8 +319,6 @@ impl AppView {
         Ok(())
     }
 
-    /// The focused model's exact accepted effort values for the picker hint.
-    /// None when the focused row has no reasoning mode.
     pub fn focused_reasoning_hint(&self) -> Option<String> {
         let selected = match self.model_focus {
             ModelPanel::Favorites => self.fav_selected,
@@ -401,7 +329,7 @@ impl AppView {
             .core
             .models
             .iter()
-            .find(|m| nexus_core::app::composite_id(m) == id)?
+            .find(|m| dugix_core::app::composite_id(m) == id)?
             .reasoning_efforts
             .as_slice();
         if efforts.is_empty() {
@@ -412,7 +340,7 @@ impl AppView {
             efforts
                 .iter()
                 .map(|effort| {
-                    if *effort == nexus_core::provider::ReasoningEffort::None {
+                    if *effort == dugix_core::provider::ReasoningEffort::None {
                         "off"
                     } else {
                         effort.as_str()
@@ -423,7 +351,6 @@ impl AppView {
         ))
     }
 
-    /// Move the focused panel's selection by `delta` (clamped).
     pub fn move_model_selection(&mut self, delta: i32) {
         let len = self.panel_len(self.model_focus);
         if len == 0 {
@@ -442,8 +369,6 @@ impl AppView {
         };
     }
 
-    /// Toggle favorite on the focused selection (Ctrl+S). The item then moves
-    /// between panels, so selections are re-clamped.
     pub fn toggle_favorite_focused(&mut self) -> Result<()> {
         let selected = *self.state_mut(self.model_focus);
         let Some(id) = self.id_at(self.model_focus, selected) else {
@@ -472,8 +397,6 @@ impl AppView {
         }
     }
 
-    /// Confirm the focused selection as the active model, then route back to
-    /// whichever popup the pick was opened from.
     pub fn confirm_model(&mut self) -> Result<()> {
         let selected = *self.state_mut(self.model_focus);
         if let Some(id) = self.id_at(self.model_focus, selected) {
@@ -482,8 +405,6 @@ impl AppView {
         Ok(())
     }
 
-    /// Pick a model by clicking a specific row in a specific panel (mouse).
-    /// A click past the end of the list just moves focus there.
     pub fn pick_model_at(&mut self, panel: ModelPanel, index: usize) -> Result<()> {
         self.model_focus = panel;
         if index >= self.panel_len(panel) {
@@ -496,12 +417,10 @@ impl AppView {
         Ok(())
     }
 
-    /// The view half of `App::pick_model`: run the domain pick, then route
-    /// the popup back to where the pick was opened from.
     pub fn pick_model(&mut self, id: &str) -> Result<()> {
         let target = self.core.model_pick_target;
         self.core.pick_model(id)?;
-        self.popup = nexus_core::app::App::popup_after_pick(target);
+        self.popup = dugix_core::app::App::popup_after_pick(target);
         Ok(())
     }
 }
@@ -509,14 +428,14 @@ impl AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_core::app::App;
-    use nexus_core::db::Db;
-    use nexus_core::provider::{BackendTag, Model};
-    use nexus_core::space::Space;
+    use dugix_core::app::App;
+    use dugix_core::db::Db;
+    use dugix_core::provider::{BackendTag, Model};
+    use dugix_core::space::Space;
 
     fn test_space() -> Space {
         Space {
-            root: std::env::temp_dir().join(format!("nexus-flow-test-{}", uuid::Uuid::new_v4())),
+            root: std::env::temp_dir().join(format!("dugix-flow-test-{}", uuid::Uuid::new_v4())),
         }
     }
 
@@ -534,6 +453,7 @@ mod tests {
                 supports_video_generation: false,
                 backend: BackendTag::OpenRouter,
                 pricing: None,
+                aliases: Vec::new(),
             },
             Model {
                 id: "b/two".into(),
@@ -545,6 +465,7 @@ mod tests {
                 supports_video_generation: false,
                 backend: BackendTag::OpenRouter,
                 pricing: None,
+                aliases: Vec::new(),
             },
         ];
         a
@@ -558,7 +479,7 @@ mod tests {
             Model {
                 id: "xhigh-model".into(),
                 name: "X".into(),
-                reasoning_efforts: nexus_core::provider::ReasoningEffort::WITH_XHIGH_AND_NONE
+                reasoning_efforts: dugix_core::provider::ReasoningEffort::WITH_XHIGH_AND_NONE
                     .to_vec(),
                 context_length: None,
                 supports_images: false,
@@ -566,6 +487,7 @@ mod tests {
                 supports_video_generation: false,
                 backend: BackendTag::OpenRouter,
                 pricing: None,
+                aliases: Vec::new(),
             },
             Model {
                 id: "no-reasoning".into(),
@@ -577,6 +499,7 @@ mod tests {
                 supports_video_generation: false,
                 backend: BackendTag::OpenRouter,
                 pricing: None,
+                aliases: Vec::new(),
             },
         ];
         a.model_focus = ModelPanel::Available;
@@ -623,13 +546,14 @@ mod tests {
         a.core.models = vec![Model {
             id: "anthropic/claude-sonnet-4.5".into(),
             name: "Sonnet".into(),
-            reasoning_efforts: nexus_core::provider::ReasoningEffort::WITH_MINIMAL.to_vec(),
+            reasoning_efforts: dugix_core::provider::ReasoningEffort::WITH_MINIMAL.to_vec(),
             context_length: Some(1000),
             supports_images: false,
             supports_image_generation: false,
             supports_video_generation: false,
             backend: BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         }];
         a.model_focus = ModelPanel::Available;
         a.avail_selected = 0;
@@ -654,13 +578,14 @@ mod tests {
         a.core.models = vec![Model {
             id: "r/model".into(),
             name: "R".into(),
-            reasoning_efforts: nexus_core::provider::ReasoningEffort::STANDARD.to_vec(),
+            reasoning_efforts: dugix_core::provider::ReasoningEffort::STANDARD.to_vec(),
             context_length: Some(1000),
             supports_images: false,
             supports_image_generation: false,
             supports_video_generation: false,
             backend: BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         }];
         a.model_focus = ModelPanel::Available;
         a.avail_selected = 0;
@@ -687,13 +612,14 @@ mod tests {
         a.core.models = vec![Model {
             id: "claude".into(),
             name: "C".into(),
-            reasoning_efforts: nexus_core::provider::ReasoningEffort::WITH_MINIMAL.to_vec(),
+            reasoning_efforts: dugix_core::provider::ReasoningEffort::WITH_MINIMAL.to_vec(),
             context_length: None,
             supports_images: false,
             supports_image_generation: false,
             supports_video_generation: false,
             backend: BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         }];
         a.model_focus = ModelPanel::Available;
         a.avail_selected = 0;
@@ -720,6 +646,7 @@ mod tests {
             supports_video_generation: false,
             backend: BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         }];
         a.model_focus = ModelPanel::Available;
         a.avail_selected = 0;
@@ -732,28 +659,6 @@ mod tests {
         a.fav_selected = 0;
         a.toggle_favorite_focused().unwrap();
         assert!(!a.favorites.contains("a/one"));
-    }
-
-    #[test]
-    fn picking_helper_model_sets_it_and_returns_to_settings() {
-        let mut a = test_app();
-        let original_model = a.current_model.clone();
-        a.open_model_picker_for_helper();
-        assert_eq!(a.popup, Popup::Model);
-        assert!(a.model_pick_target == ModelPickTarget::Helper);
-
-        a.pick_model_at(ModelPanel::Available, 0).unwrap();
-        assert_eq!(a.helper_model, "a/one");
-        assert_eq!(a.popup, Popup::Settings); // back to /config, not closed
-        assert_eq!(a.current_model, original_model); // session model untouched
-        assert_eq!(
-            a.db.load_settings()
-                .unwrap()
-                .iter()
-                .find(|(k, _)| k == "helper_model")
-                .map(|(_, v)| v.clone()),
-            Some("a/one".to_string())
-        );
     }
 
     #[test]
@@ -789,6 +694,7 @@ mod tests {
                 supports_video_generation: false,
                 backend: BackendTag::OpenRouter,
                 pricing: None,
+                aliases: Vec::new(),
             },
             Model {
                 id: "b/two".into(),
@@ -800,6 +706,7 @@ mod tests {
                 supports_video_generation: false,
                 backend: BackendTag::OpenRouter,
                 pricing: None,
+                aliases: Vec::new(),
             },
             Model {
                 id: "c/three".into(),
@@ -811,6 +718,7 @@ mod tests {
                 supports_video_generation: false,
                 backend: BackendTag::OpenRouter,
                 pricing: None,
+                aliases: Vec::new(),
             },
         ];
         // three is favorite; two was used more recently than one.

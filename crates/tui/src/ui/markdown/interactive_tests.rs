@@ -3,8 +3,8 @@ use super::*;
 const SOURCE: &str = include_str!("../../../../core/tests/fixtures/interactive/counter.json");
 #[test]
 fn fallback_shows_only_the_first_three_located_errors() {
-    let source = r#"{"version":1,"title":"Broken","view":[{"type":"radio"},{"type":"dial"},{"type":"canvas"},{"type":"marquee"}]}"#;
-    let rendered = render(&format!("```nexus-ui\n{source}\n```"), 240, colors());
+    let source = r#"{"version":1,"title":"Broken","view":[{"type":"radio"},{"type":"dial"},{"type":"carousel"},{"type":"marquee"}]}"#;
+    let rendered = render(&format!("```dugix-ui\n{source}\n```"), 240, colors());
     assert!(rendered.widgets.is_empty());
     let text = plain(&rendered);
     for index in 0..3 {
@@ -36,7 +36,7 @@ fn plain(r: &Rendered) -> String {
 
 #[test]
 fn ui_fences_keep_order_source_and_copy_metadata_without_a_json_dump() {
-    for fence in ["```nexus-ui", "~~~NeXuS-Ui"] {
+    for fence in ["```dugix-ui", "~~~DuGiX-Ui"] {
         let end: String = fence.chars().take(3).collect();
         let r = render(
             &format!("Before\n\n{fence}\n{}\n{end}\n\nAfter", SOURCE.trim()),
@@ -46,7 +46,7 @@ fn ui_fences_keep_order_source_and_copy_metadata_without_a_json_dump() {
         assert_eq!(r.widgets.len(), 1);
         let p = &r.widgets[0];
         assert!(p.complete);
-        assert_eq!(p.height, 11);
+        assert_eq!(p.height, 13); // The input now reserves its rounded field border.
         assert_eq!(p.source, SOURCE.trim());
         assert_eq!(r.lines.len(), r.code.len());
         let block = r.code[p.row].unwrap();
@@ -64,7 +64,7 @@ fn ui_fences_keep_order_source_and_copy_metadata_without_a_json_dump() {
 }
 #[test]
 fn closing_a_complete_document_does_not_change_transcript_geometry() {
-    let open = format!("```nexus-ui\n{}\n", SOURCE.trim());
+    let open = format!("```dugix-ui\n{}\n", SOURCE.trim());
     let before = render(&open, 72, colors());
     let after = render(&format!("{open}```"), 72, colors());
     assert!(!before.widgets[0].complete);
@@ -75,23 +75,22 @@ fn closing_a_complete_document_does_not_change_transcript_geometry() {
 }
 #[test]
 fn literal_fences_do_not_activate_and_bad_definitions_keep_safe_source() {
-    let literal = format!("````markdown\n```nexus-ui\n{SOURCE}```\n````");
+    let literal = format!("````markdown\n```dugix-ui\n{SOURCE}```\n````");
     assert!(render(&literal, 72, colors()).widgets.is_empty());
     let source = "{\"version\":99,\"bad\":\"\u{1b}[31m\"}";
-    let r = render(&format!("```nexus-ui\n{source}\n```"), 72, colors());
+    let r = render(&format!("```dugix-ui\n{source}\n```"), 72, colors());
     assert_eq!(r.blocks, vec![source]);
     assert!(plain(&r).contains("version"));
     assert!(!plain(&r).contains('\u{1b}'));
-    let narrow = render(&format!("```nexus-ui\n{}\n```", SOURCE.trim()), 6, colors());
+    let narrow = render(&format!("```dugix-ui\n{}\n```", SOURCE.trim()), 6, colors());
     assert!(narrow.widgets.is_empty());
     assert_eq!(narrow.blocks, vec![SOURCE.trim()]);
 }
 
 #[test]
 fn a_broken_block_shows_its_reason_and_readable_source_without_placeholder_rows() {
-    // Mismatched brackets, as a model wrote it.
     let broken = r#"{"version":1,"title":"Quiz","view":[{"type":"buttons","items":[{"label":"A","action":"a"}]],"actions":{"a":[{"op":"answer"}]}}"#;
-    let r = render(&format!("```nexus-ui\n{broken}\n```"), 72, colors());
+    let r = render(&format!("```dugix-ui\n{broken}\n```"), 72, colors());
     let text = plain(&r);
     assert!(
         r.widgets.is_empty(),
@@ -102,10 +101,8 @@ fn a_broken_block_shows_its_reason_and_readable_source_without_placeholder_rows(
         "{text}"
     );
     assert!(!text.contains("interactive output"), "{text}");
-    // Quotes are shown as written, not as \" escapes.
     assert!(text.contains(r#"{"version":1"#), "{text}");
     assert!(!text.contains(r#"\""#), "{text}");
-    // The reason line comes first inside the box.
     let reason = r.lines[1]
         .spans
         .iter()
@@ -117,7 +114,7 @@ fn a_broken_block_shows_its_reason_and_readable_source_without_placeholder_rows(
 #[test]
 fn native_programs_reserve_live_elements_and_keep_the_original_source_copyable() {
     let source = "root = Panel(\"Live\", [heading])\nheading = Hero(\"Welcome to your weekend";
-    let open = format!("```nexus-ui\n{source}");
+    let open = format!("```dugix-ui\n{source}");
     let before = render(&open, 72, colors());
     assert_eq!(before.widgets.len(), 1);
     assert!(!before.widgets[0].complete);
@@ -133,8 +130,20 @@ fn native_programs_reserve_live_elements_and_keep_the_original_source_copyable()
 #[test]
 fn invalid_finished_programs_report_a_diagnostic_instead_of_becoming_active() {
     let source = "root = Panel(\"Bad\", [NotAComponent(\"Oops\")])";
-    let rendered = render(&format!("```nexus-ui\n{source}\n```"), 72, colors());
+    let rendered = render(&format!("```dugix-ui\n{source}\n```"), 72, colors());
     assert!(rendered.widgets.is_empty());
     assert!(plain(&rendered).contains("unknown component NotAComponent"));
     assert_eq!(rendered.blocks, [source]);
+}
+
+#[test]
+fn a_program_with_one_broken_piece_reserves_a_card_instead_of_the_error_box() {
+    let source = "root = Panel(\"Trip\", [Text(\"Kept\"), PieChart([1])])";
+    let r = render(&format!("```dugix-ui\n{source}\n```"), 72, colors());
+    assert_eq!(r.widgets.len(), 1);
+    assert!(!plain(&r).contains("couldn't be shown"));
+    let nothing_left = "root = Panel(\"Trip\", [PieChart([1])])";
+    let r = render(&format!("```dugix-ui\n{nothing_left}\n```"), 72, colors());
+    assert!(r.widgets.is_empty());
+    assert!(plain(&r).contains("couldn't be shown"));
 }

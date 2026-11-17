@@ -8,6 +8,8 @@ import { editorController } from './editor.js';
 import { menusController } from './menus.js';
 import { toolbarController } from './toolbar.js';
 import { commentsController } from './comments.js';
+import { syntaxController } from './syntax.js';
+import { sourceController } from './source.js';
 import { glyph } from './glyphs.js';
 import * as M from './model.js';
 import * as E from './edits.js';
@@ -35,7 +37,7 @@ export function mount(shared) {
     doc: null, base: null, relative: '', threads: [], activities: {}, linked: false, assets: {}, design: null, canUndo: false, canRedo: false,
     decos: {}, drafts: {}, revision: '', preview: false, zoom: 1.2, pagesRevision: '',
   };
-  try { state.zoom = Number(localStorage.getItem('nexus-doc-zoom')) || 1.2; } catch { /* storage may be unavailable */ }
+  try { state.zoom = Number(localStorage.getItem('dugix-doc-zoom')) || 1.2; } catch { /* storage may be unavailable */ }
 
   // -- the shell -------------------------------------------------------------------------
 
@@ -135,13 +137,13 @@ export function mount(shared) {
   // `null` until someone opens or closes the sidebar on this device; until
   // then, open comments show themselves on a wide window.
   let sideTab = null, sideChosen = false;
-  try { const stored = localStorage.getItem('nexus-doc-sidebar'); sideChosen = stored !== null; sideTab = stored || null; } catch { /* storage may be unavailable */ }
+  try { const stored = localStorage.getItem('dugix-doc-sidebar'); sideChosen = stored !== null; sideTab = stored || null; } catch { /* storage may be unavailable */ }
   let outlineHidden = false;
-  try { outlineHidden = localStorage.getItem('nexus-doc-outline') === 'hidden'; } catch { /* ignore */ }
+  try { outlineHidden = localStorage.getItem('dugix-doc-outline') === 'hidden'; } catch { /* ignore */ }
   /** Open the sidebar on a tab, or close it with `null`. */
   function openSidebar(tab) {
     sideTab = tab; sideChosen = true;
-    try { localStorage.setItem('nexus-doc-sidebar', tab || ''); } catch { /* ignore */ }
+    try { localStorage.setItem('dugix-doc-sidebar', tab || ''); } catch { /* ignore */ }
     renderSidebar();
     if (tab === 'history') { renderHistory(); requestHistory(); }
     if (tab === 'design') { command({ command: 'DocDesigns' }); renderDesign(); }
@@ -301,6 +303,7 @@ export function mount(shared) {
       // Edits still on their way (in flight or queued) stay visible.
       for (const item of [pending, ...queue]) if (item?.ops) { const next = M.applyOps(state.doc, item.ops); if (next) state.doc = next; }
       if (external) for (const id of event.changed || []) editor.discardDirty(id);
+      if (external) source.onExternal();
       editor.overlayDirty();
     }
     Object.assign(state, {
@@ -347,6 +350,7 @@ export function mount(shared) {
     set('--d-surface', colors.surface || mix(colors.fg || '#1d1d1f', colors.bg || '#fff', 6));
     set('--d-border', colors.border || mix(colors.fg || '#1d1d1f', colors.bg || '#fff', 20));
     set('--d-accent2', colors.accent2 || colors.accent || '#0a6cff');
+    set('--d-accent3', colors.accent3 || colors.accent2 || colors.accent || '#0a6cff');
     set('--measure', String(theme.measure_ch));
     set('--z', String(state.zoom));
     const family = name => fontStack(theme.fonts?.[name] || name);
@@ -360,6 +364,7 @@ export function mount(shared) {
       set(`--ts-${name}-color`, color(font.color, { colors }));
       set(`--ts-${name}-style`, font.italic ? 'italic' : 'normal');
       set(`--ts-${name}-ls`, `${font.letter_spacing || 0}em`);
+      set(`--ts-${name}-align`, font.align || 'left');
       set(`--ts-${name}-family`, role ? `var(--d-font-${role})` : fontStack(theme.fonts?.[font.family] || font.family));
     }
     ensureDeckFonts(theme, state.assets);
@@ -367,7 +372,7 @@ export function mount(shared) {
   function setZoom(value) {
     state.zoom = Math.max(.8, Math.min(1.8, Math.round(value * 20) / 20));
     app.style.setProperty('--z', String(state.zoom));
-    try { localStorage.setItem('nexus-doc-zoom', String(state.zoom)); } catch { /* ignore */ }
+    try { localStorage.setItem('dugix-doc-zoom', String(state.zoom)); } catch { /* ignore */ }
     comments.layout();
   }
 
@@ -376,7 +381,7 @@ export function mount(shared) {
   function renderChrome() {
     if (document.activeElement !== titleInput) titleInput.value = state.doc.title;
     sizeTitle();
-    document.title = `${state.doc.title || 'Untitled'} — nexus studio`;
+    document.title = `${state.doc.title || 'Untitled'} — dugix studio`;
     renderLink();
     renderDesign();
   }
@@ -384,10 +389,10 @@ export function mount(shared) {
   function renderLink() {
     const activities = Object.values(state.activities);
     const working = activities.some(a => ['working', 'progress'].includes(a.state)), waiting = activities.filter(a => a.state === 'queued').length;
-    pill.textContent = !state.linked ? 'Not linked' : working ? 'nexus is working' : waiting ? `Linked · ${waiting} waiting` : 'Linked to nexus';
+    pill.textContent = !state.linked ? 'Not linked' : working ? 'dugix is working' : waiting ? `Linked · ${waiting} waiting` : 'Linked to dugix';
     pill.classList.toggle('connected', state.linked);
     pill.classList.toggle('working', state.linked && working);
-    pill.title = state.linked ? 'Comments go to your nexus conversation' : 'Not linked to a conversation — open it from nexus with /studio';
+    pill.title = state.linked ? 'Comments go to your dugix conversation' : 'Not linked to a conversation — open it from dugix with /studio';
     renderStatusDot();
   }
   function renderStatusDot() {
@@ -421,7 +426,7 @@ export function mount(shared) {
     // Narrow windows show the outline over the page; wide ones give it its column back.
     if (matchMedia('(max-width: 1099px)').matches) { outline.classList.toggle('open'); return; }
     outlineHidden = !outlineHidden;
-    try { localStorage.setItem('nexus-doc-outline', outlineHidden ? 'hidden' : ''); } catch { /* ignore */ }
+    try { localStorage.setItem('dugix-doc-outline', outlineHidden ? 'hidden' : ''); } catch { /* ignore */ }
     renderOutlinePanel();
   }
 
@@ -552,7 +557,7 @@ export function mount(shared) {
       if (d !== day) { day = d; pane.append(el('div', 'side-eyebrow', d)); }
       const row = el('button', `version${historyView?.id === v.id ? ' on' : ''}`);
       row.type = 'button';
-      row.append(el('span', `version-dot ${v.who === 'model' ? 'model' : ''}`), versionText(`${clock(v.at)} · ${v.who === 'model' ? 'nexus' : 'You'}`, v.summary));
+      row.append(el('span', `version-dot ${v.who === 'model' ? 'model' : ''}`), versionText(`${clock(v.at)} · ${v.who === 'model' ? 'dugix' : 'You'}`, v.summary));
       row.title = 'Show the document as it was before this edit';
       row.addEventListener('click', () => command({ command: 'HistoryPreview', id: v.id }));
       pane.append(row);
@@ -589,7 +594,7 @@ export function mount(shared) {
     historyBanner.replaceChildren();
     historyBanner.hidden = false;
     const text = el('span', 'banner-text');
-    text.append(el('strong', '', version ? `Before ${version.who === 'model' ? 'nexus\u2019s' : 'your'} edit at ${clock(version.at)}` : 'An earlier version'), document.createTextNode(' · blocks that differ from now are marked'));
+    text.append(el('strong', '', version ? `Before ${version.who === 'model' ? 'dugix\u2019s' : 'your'} edit at ${clock(version.at)}` : 'An earlier version'), document.createTextNode(' · blocks that differ from now are marked'));
     const back = el('button', 'quiet small', 'Back to current'), restore = el('button', 'small primary-quiet', 'Restore this version');
     back.type = restore.type = 'button';
     back.addEventListener('click', () => leaveVersion());
@@ -644,7 +649,7 @@ export function mount(shared) {
   }
   template.addEventListener('click', () => { plainFile = !plainFile; exportMode(); });
   // "Save to exports/ without asking": the quick export, remembered on this device.
-  const quickExport = () => { try { return localStorage.getItem('nexus-quick-export') === '1'; } catch { return false; } };
+  const quickExport = () => { try { return localStorage.getItem('dugix-quick-export') === '1'; } catch { return false; } };
   const quick = el('button', 'menu-extra');
   quick.type = 'button'; quick.setAttribute('role', 'menuitemcheckbox');
   function syncQuick() {
@@ -654,7 +659,7 @@ export function mount(shared) {
     quick.classList.toggle('on', on);
     quick.setAttribute('aria-checked', String(on));
   }
-  quick.addEventListener('click', () => { try { localStorage.setItem('nexus-quick-export', quickExport() ? '0' : '1'); } catch { /* storage may be unavailable */ } syncQuick(); });
+  quick.addEventListener('click', () => { try { localStorage.setItem('dugix-quick-export', quickExport() ? '0' : '1'); } catch { /* storage may be unavailable */ } syncQuick(); });
   syncQuick();
   exportPop.append(templateRule, template, quick);
 
@@ -678,6 +683,7 @@ export function mount(shared) {
   moreItem('Version history', '', () => openSidebar('history'), 'narrow-only');
   moreItem('Design', '', () => openSidebar('design'), 'narrow-only');
   const pagesItem = moreItem('Page preview', '', () => setPreview(!state.preview));
+  const sourceItem = moreItem('Markdown source', '⇧⌘M', () => setSource(!source.open));
   moreItem('Save a copy…', '.doc.json', () => command({ command: 'SaveCopy' }));
   moreItem('Library', '⌘O', () => shared.library.show());
   overlay.append(exportPop, morePop);
@@ -693,6 +699,7 @@ export function mount(shared) {
     if (pop === morePop) {
       undoItem.disabled = !state.canUndo; redoItem.disabled = !state.canRedo;
       pagesItem.querySelector('.menu-label').textContent = state.preview ? 'Back to editing' : 'Page preview';
+      sourceItem.querySelector('.menu-label').textContent = source.open ? 'Back to editing' : 'Markdown source';
     }
     pop.hidden = false;
     button.setAttribute('aria-expanded', 'true');
@@ -719,7 +726,24 @@ export function mount(shared) {
   // -- page preview -------------------------------------------------------------------------------------------
 
   function requestPages() { command({ command: 'DocPages' }); }
+  /** Swap the page for the doc's Markdown source (and back, once it is applied). */
+  async function setSource(on) {
+    if (on === source.open) return;
+    if (on) {
+      if (state.preview) setPreview(false);
+      leaveVersion();
+      apply([]);
+      api.toolbar.hide();
+      page.hidden = true;
+      await source.show();
+    } else {
+      await source.hide();
+      page.hidden = false;
+      surface.focus({ preventScroll: true });
+    }
+  }
   function setPreview(on) {
+    if (on && source.open) return;
     if (on) leaveVersion();
     state.preview = on;
     page.hidden = on; previewPane.hidden = !on;
@@ -796,6 +820,9 @@ export function mount(shared) {
     if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); toast('Every change is saved to the doc file as you make it.'); return; }
     if (mod && ['=', '+', '-', '0'].includes(e.key)) { e.preventDefault(); setZoom(e.key === '0' ? 1.2 : state.zoom + (e.key === '-' ? -.1 : .1)); return; }
     if (mod && e.key === '\\') { e.preventDefault(); toggleOutline(); return; }
+    if (mod && e.shiftKey && e.key.toLowerCase() === 'm') { e.preventDefault(); setSource(!source.open); return; }
+    // The source view's own keys (vim's Esc among them) stay with it.
+    if (source.open) return;
     if (e.key === 'Escape') {
       if (state.preview) { e.preventDefault(); setPreview(false); return; }
       if (historyView) { e.preventDefault(); leaveVersion(); return; }
@@ -842,12 +869,18 @@ export function mount(shared) {
   api.toolbar = toolbarController(api);
   api.comments = commentsController(api);
   const comments = api.comments;
+  const syntax = syntaxController({ surface, ask });
+  const source = sourceController({ ask });
+  body.insertBefore(source.pane, sidebar);
+  source.done.addEventListener('click', () => setSource(false));
   renderSidebar();
   renderOutlinePanel();
 
   return {
     handle,
     unmount() {
+      syntax.stop();
+      source.hide();
       lifetime.abort();
       app.hidden = true;
       app.replaceChildren();

@@ -1,11 +1,4 @@
-//! What the image viewer does besides show a picture: copy it or its path to
-//! the clipboard, save a copy into the space or `~/Downloads`, reveal it in the
-//! file manager, attach it to the draft, or take a file dropped on it.
-//!
-//! The pointer's state (drag, clicks, hover, the action menu) lives here too,
-//! on the [`Viewer`](crate::image_viewer::Viewer) inside `AppView`. Everything
-//! that touches the outside world goes through [`Hooks`], so tests inject a
-//! fake clipboard, a Downloads folder and a recording file-manager launcher.
+//! Image-viewer gestures, clipboard integration and file actions.
 
 use std::ffi::OsString;
 use std::fs::OpenOptions;
@@ -19,15 +12,10 @@ use ratatui::layout::Rect;
 use crate::app_view::AppView;
 use crate::image_viewer::{Decoded, Kind, Source, display_name, is_remote, kind_of, source_of};
 
-/// Originals up to this many pixels are decoded again at full size for "copy
-/// image"; bigger ones copy the downscaled copy the viewer already holds.
+/// Bounds original-resolution clipboard decoding; larger images use the viewer's downscaled copy.
 pub const MAX_COPY_PIXELS: u64 = 32 * 1000 * 1000;
-/// Two clicks this close together are a double-click.
 pub const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(400);
 
-// ── Pointer state ─────────────────────────────────────────────────────────
-
-/// A left-button press that may turn into a pan or a click.
 #[derive(Clone, Copy, Debug)]
 pub struct Drag {
     pub from: (u16, u16),
@@ -35,18 +23,14 @@ pub struct Drag {
     pub moved: bool,
 }
 
-/// The open action menu.
 #[derive(Clone, Copy, Debug)]
 pub struct Menu {
     pub selected: usize,
-    /// Where it was asked for (the pointer, or the window's centre).
     pub at: (u16, u16),
 }
 
 #[derive(Default)]
 pub struct Pointer {
-    /// The window the picture is drawn in, and the whole screen, as of the
-    /// last draw (cells): what clicks and the zoom anchor are measured in.
     pub body: Rect,
     pub screen: Rect,
     pub drag: Option<Drag>,
@@ -55,9 +39,6 @@ pub struct Pointer {
     pub menu: Option<Menu>,
 }
 
-// ── Seams ─────────────────────────────────────────────────────────────────
-
-/// The slice of the OS clipboard the viewer uses.
 pub trait Clipboard {
     fn set_text(&mut self, text: &str) -> Result<(), String>;
     /// Straight (not premultiplied) RGBA, row by row.
@@ -82,7 +63,7 @@ impl Clipboard for arboard::Clipboard {
     }
 }
 
-/// Launches the file manager with an argv (never a shell).
+/// Launches file-manager arguments without shell interpretation.
 #[derive(Clone)]
 pub struct Launcher(Arc<RunFn>);
 
@@ -112,7 +93,6 @@ fn run_detached(argv: &[OsString]) -> Result<(), String> {
         .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| format!("{}: {e}", command.to_string_lossy()))?;
-    // Reap it so a long session leaves no zombies behind.
     std::thread::spawn(move || {
         let _ = child.wait();
     });
@@ -140,8 +120,6 @@ impl Default for Hooks {
         }
     }
 }
-
-// ── The actions ───────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -192,7 +170,6 @@ impl Action {
     }
 }
 
-/// Which file manager command reveals a file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Os {
     Mac,
@@ -213,9 +190,7 @@ impl Os {
     }
 }
 
-/// The argv that shows `path` in the file manager: macOS selects the file in
-/// Finder, Windows selects it in Explorer, Linux (no common "select" verb)
-/// opens the folder that holds it.
+/// Linux lacks a common file-selection verb, so reveal opens the parent folder there.
 #[must_use]
 pub fn reveal_argv(os: Os, path: &Path) -> Vec<OsString> {
     match os {
@@ -232,8 +207,7 @@ pub fn reveal_argv(os: Os, path: &Path) -> Vec<OsString> {
     }
 }
 
-/// A file name that is safe in a markdown image reference and on every
-/// filesystem: letters, digits, `-`, `_` and `.`; anything else becomes `_`.
+/// Makes a filename safe for Markdown image references and filesystem paths.
 #[must_use]
 pub fn safe_name(name: &str) -> String {
     let cleaned: String = name
@@ -255,9 +229,7 @@ pub fn safe_name(name: &str) -> String {
     }
 }
 
-/// What to call the saved copy of `target`, whose bytes are at `source`: a
-/// file keeps its name; a URL's last path segment (else its host) is used,
-/// with the cached copy's extension, since the cache stores everything as PNG.
+// Remote cache files are PNGs regardless of the URL's extension.
 fn saved_name(target: &str, source: &Path) -> String {
     let extension = source
         .extension()
@@ -281,12 +253,7 @@ fn saved_name(target: &str, source: &Path) -> String {
     safe_name(&display_name(target))
 }
 
-/// Copy `source` into `dir` under a name no other file has: `name.png`, then
-/// `name-2.png`, `name-3.png`, ... The name is claimed atomically, so two
-/// saves never overwrite each other.
-///
-/// # Errors
-/// When the folder can't be created or the copy fails.
+/// Atomically claims a unique filename to prevent concurrent saves from overwriting each other.
 pub fn save_unique(source: &Path, dir: &Path, name: &str) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
     let path = Path::new(name);
@@ -330,7 +297,6 @@ pub fn save_unique(source: &Path, dir: &Path, name: &str) -> std::io::Result<Pat
     ))
 }
 
-/// `~/Pictures/x.png` for a path under the home folder.
 fn tilde(path: &Path) -> String {
     if let Some(home) = std::env::home_dir()
         && let Ok(rest) = path.strip_prefix(&home)
@@ -340,10 +306,6 @@ fn tilde(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-/// The pixels "copy image" puts on the clipboard, and whether they are the
-/// image at its real size. Small images and SVGs use the copy the viewer
-/// already decoded; a photo the viewer downscaled is decoded again from the
-/// file at full size when it is at most [`MAX_COPY_PIXELS`].
 fn clipboard_pixels(decoded: &Decoded) -> (u32, u32, Vec<u8>, bool) {
     let meta = &decoded.meta;
     let pixels = u64::from(meta.width) * u64::from(meta.height);
@@ -360,8 +322,6 @@ fn clipboard_pixels(decoded: &Decoded) -> (u32, u32, Vec<u8>, bool) {
     (width, height, decoded.image.to_rgba8().into_raw(), real)
 }
 
-/// A pasted or dropped file path, however the terminal wrote it: plain,
-/// quoted, `file://`, or with backslash-escaped spaces.
 fn dropped_path(text: &str) -> Option<PathBuf> {
     if let Some(path) = crate::composer::pasted_file_path(text) {
         return Some(path);
@@ -379,7 +339,6 @@ fn dropped_path(text: &str) -> Option<PathBuf> {
 }
 
 impl AppView {
-    /// Run one of the viewer's actions on the current image.
     pub fn viewer_action(&mut self, action: Action) {
         match action {
             Action::CopyImage => self.viewer_copy_image(),
@@ -392,8 +351,6 @@ impl AppView {
         }
     }
 
-    /// The current image and the file its pixels are in (for a URL, the
-    /// cached copy), or a status line saying why there is none.
     fn viewer_file(&mut self) -> Option<(String, PathBuf)> {
         let target = self.image_viewer.current()?.target.clone();
         match source_of(&target) {
@@ -457,8 +414,6 @@ impl AppView {
         });
     }
 
-    /// Where `s` and `a` keep a copy: the top level of the space's files, so
-    /// it is indexed, searchable and listed in the Files and Images popups.
     fn space_files_dir(&self) -> PathBuf {
         self.core.space.files_dir(&self.core.active_space.name)
     }
@@ -471,7 +426,6 @@ impl AppView {
             .or_else(|| std::env::home_dir().map(|home| home.join("Downloads")))
     }
 
-    /// `s`: a copy in the space's files; `S`: a copy in Downloads.
     fn viewer_save(&mut self, downloads: bool) {
         let Some((target, source)) = self.viewer_file() else {
             return;
@@ -495,7 +449,6 @@ impl AppView {
         }
     }
 
-    /// `r`: show the file (for a URL, its cached copy) in the file manager.
     fn viewer_reveal(&mut self) {
         let Some((_, source)) = self.viewer_file() else {
             return;
@@ -509,9 +462,6 @@ impl AppView {
         });
     }
 
-    /// `a`: put `![name](path)` in the draft the way a pasted image lands, and
-    /// close the viewer. The reference is relative to the space's files, so a
-    /// picture from anywhere else is first saved there.
     fn viewer_attach(&mut self) {
         let Some((target, source)) = self.viewer_file() else {
             return;
@@ -559,13 +509,10 @@ impl AppView {
             markdown
         });
         self.close_image_viewer();
-        self.popup = nexus_core::app::Popup::None;
+        self.popup = dugix_core::app::Popup::None;
         self.push_status(format!("attached {reference}"));
     }
 
-    /// A file path pasted or dropped while the viewer is open: an image opens
-    /// in the viewer, anything else is ignored with a note. Text that isn't a
-    /// file path is ignored silently.
     pub fn viewer_drop(&mut self, text: &str) {
         let Some(path) = dropped_path(text) else {
             return;
@@ -591,7 +538,6 @@ impl AppView {
         }
     }
 
-    /// Open the action menu at a cell, or at the window's centre.
     pub fn open_viewer_menu(&mut self, at: Option<(u16, u16)>) {
         let body = self.image_viewer.pointer.body;
         let at = at.unwrap_or((
@@ -607,8 +553,6 @@ pub const MENU_WIDTH: u16 = 38;
 #[allow(clippy::cast_possible_truncation)] // seven actions
 pub const MENU_HEIGHT: u16 = Action::ALL.len() as u16 + 2;
 
-/// Where the action menu opened at `at` sits on `screen`: its corner at the
-/// pointer, pushed back in when it would run off an edge.
 #[must_use]
 pub fn menu_rect(screen: Rect, at: (u16, u16)) -> Rect {
     let width = MENU_WIDTH.min(screen.width);

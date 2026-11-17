@@ -1,11 +1,6 @@
-//! Mouse resizing: drag the conversation column's edge to widen or narrow it,
-//! drag a popup's border to resize it. Both resize symmetrically around the
-//! screen center (the column and popups stay centered), update live as the
-//! pointer moves, and persist on release through `set_setting` — a double
-//! click on the same edge resets to the default.
+//! Mouse-driven resizing of the conversation column and popups.
 
-// Casts here are on terminal-bounded values (u16 cell counts and percentages)
-// — never on unbounded user data.
+// Casts use terminal-bounded cell counts and percentages.
 #![allow(clippy::cast_possible_truncation)]
 use std::time::{Duration, Instant};
 
@@ -16,38 +11,29 @@ use ratatui::style::Style;
 
 use crate::app_view::AppView;
 use crate::ui::popups::chrome::{MIN_POPUP_H, MIN_POPUP_W};
-use nexus_core::app::{
+use dugix_core::app::{
     COLUMN_WIDTH_MAX, COLUMN_WIDTH_MIN, POPUP_SIZE_MAX, POPUP_SIZE_MIN, Popup, popup_size,
     with_popup_size,
 };
 
-/// Two presses on the same edge within this window reset it.
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
-/// What a press grabbed: the reading column, or one popup (by its id).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Grip {
     Column,
     Popup(&'static str),
 }
 
-/// A resize in progress.
 #[derive(Clone, Copy, Debug)]
 pub struct Drag {
     pub grip: Grip,
-    /// Which axes follow the pointer (a popup's vertical edges change its
-    /// width, horizontal edges its height, corners both).
     wide: bool,
     tall: bool,
-    /// The popup's size in percent of the screen while dragging.
     size: (u16, u16),
-    /// Whether the pointer has moved since the press (a bare click persists
-    /// nothing).
     moved: bool,
 }
 
-/// Route a mouse event to a resize. Returns whether it was consumed; presses
-/// that miss every edge fall through to the usual handlers.
+/// Handles resize gestures, returning whether the mouse event was consumed.
 pub fn mouse(app: &mut AppView, m: MouseEvent, screen: Rect) -> bool {
     match m.kind {
         MouseEventKind::Down(MouseButton::Left) => press(app, m, screen),
@@ -63,7 +49,6 @@ pub fn mouse(app: &mut AppView, m: MouseEvent, screen: Rect) -> bool {
     }
 }
 
-/// Whether column `x` is a gutter cell within reach of the column's edge.
 fn on_column_edge(column: Rect, screen: Rect, x: u16) -> bool {
     let left = x < column.x && x + 2 >= column.x;
     let right = x >= column.right() && x <= column.right() + 1 && x < screen.right();
@@ -85,7 +70,6 @@ fn press(app: &mut AppView, m: MouseEvent, screen: Rect) -> bool {
         if !rect.contains(Position::new(m.column, m.row)) {
             return false;
         }
-        // Only the border cells grab; everything inside keeps its own clicks.
         let wide = m.column == rect.x || m.column + 1 == rect.right();
         let tall = m.row == rect.y || m.row + 1 == rect.bottom();
         if !wide && !tall {
@@ -118,7 +102,6 @@ fn press(app: &mut AppView, m: MouseEvent, screen: Rect) -> bool {
     true
 }
 
-/// Put the grabbed column or popup back to its default size.
 fn reset(app: &mut AppView, grip: Grip) {
     let result = match grip {
         Grip::Column => app.core.set_setting("column_width", "auto"),
@@ -136,7 +119,6 @@ fn reset(app: &mut AppView, grip: Grip) {
     }
 }
 
-/// `cells` of `total` as a whole percent, rounded.
 fn percent(cells: u16, total: u16) -> u16 {
     let total = u32::from(total.max(1));
     ((u32::from(cells) * 100 + total / 2) / total) as u16
@@ -146,7 +128,6 @@ fn drag(app: &mut AppView, m: MouseEvent, screen: Rect) {
     let Some(mut state) = app.drag else {
         return;
     };
-    // Symmetric around the screen center: the edge follows the pointer.
     let span = |pointer: u16, origin: u16, total: u16| 2 * pointer.abs_diff(origin + total / 2);
     match state.grip {
         Grip::Column => {
@@ -196,8 +177,6 @@ fn release(app: &mut AppView) {
     }
 }
 
-/// While the column is being dragged, a handle on each edge shows what the
-/// pointer has hold of.
 pub fn paint_column_handles(f: &mut Frame, app: &AppView, column: Rect) {
     if !matches!(
         app.drag,
@@ -219,8 +198,6 @@ pub fn paint_column_handles(f: &mut Frame, app: &AppView, column: Rect) {
     }
 }
 
-/// While a popup is being resized, its border takes the accent color and the
-/// bottom-right hint becomes the live `W×H` (in cells).
 pub fn paint_popup_resize(f: &mut Frame, app: &AppView) {
     let Some(Drag {
         grip: Grip::Popup(_),
@@ -239,7 +216,6 @@ pub fn paint_popup_resize(f: &mut Frame, app: &AppView) {
     let accent = Style::default().fg(app.theme.accent);
     let buf = f.buffer_mut();
     let bottom = rect.bottom() - 1;
-    // The hint lives on the bottom border: swap it for plain border, then the size.
     for x in rect.x + 1..rect.right() - 1 {
         buf[(x, bottom)].set_symbol("─");
     }
@@ -266,7 +242,6 @@ pub fn paint_popup_resize(f: &mut Frame, app: &AppView) {
         edge(rect.x, y);
         edge(rect.right() - 1, y);
     }
-    // The size label is not a border glyph; color it with the border.
     for x in start..start + label.chars().count() as u16 {
         if x > rect.x {
             buf[(x, bottom)].set_style(accent);
@@ -278,14 +253,14 @@ pub fn paint_popup_resize(f: &mut Frame, app: &AppView) {
 mod tests {
     use super::*;
     use crossterm::event::KeyModifiers;
-    use nexus_core::app::App;
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
+    use dugix_core::app::App;
+    use dugix_core::db::Db;
+    use dugix_core::space::Space;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
     fn test_app() -> AppView {
-        let root = std::env::temp_dir().join(format!("nexus-resize-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-resize-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
         AppView::new(App::new(
             Db::open_in_memory().unwrap(),
@@ -474,7 +449,7 @@ mod tests {
     #[test]
     fn a_column_drag_rewraps_history_like_a_terminal_resize() {
         let mut app = test_app();
-        app.messages.push(nexus_core::db::Message {
+        app.messages.push(dugix_core::db::Message {
             role: "assistant".into(),
             content: "word ".repeat(80),
             model: None,
@@ -739,7 +714,7 @@ mod tests {
         let resized = hit(&app);
         assert!(resized.width > rect.width && resized.height > rect.height);
         let picture = rows.join("\n");
-        assert!(picture.contains("nerd config"), "{picture}");
+        assert!(picture.contains("Settings"), "{picture}");
         println!("{picture}");
     }
 }

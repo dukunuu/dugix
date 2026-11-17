@@ -11,29 +11,54 @@ use tui_textarea::CursorMove;
 
 use crate::app_view::AppView;
 use crate::ui;
-use nexus_core::app::{AppCommand, AppEvent, ModelPanel, MouseTarget, Popup, WorkMode};
+use dugix_core::app::{AppCommand, AppEvent, ModelPanel, MouseTarget, Popup, WorkMode};
 
-/// Ctrl+E/Ctrl+K in the space picker edit that space's instructions/memory
-/// file. Returns the path to open, if the key matches and one resolves.
 fn edit_file_target(app: &AppView, key: &KeyEvent) -> Option<std::path::PathBuf> {
     if !(app.popup == Popup::Space
-        && app.space_mode == nexus_core::app::SpaceMode::Browse
-        && key.modifiers.contains(KeyModifiers::CONTROL))
+        && app.space_mode == dugix_core::app::SpaceMode::Browse
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+        && key.code == KeyCode::Char('e'))
     {
         return None;
     }
-    let (instructions, memory) = app.space_edit_target();
-    match key.code {
-        KeyCode::Char('e') => instructions,
-        KeyCode::Char('k') => memory,
-        _ => None,
+    app.space_instructions_target()
+}
+
+fn memory_edit_target(app: &AppView, key: &KeyEvent) -> Option<String> {
+    (app.popup == Popup::Space
+        && app.space_mode == dugix_core::app::SpaceMode::Browse
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+        && key.code == KeyCode::Char('k'))
+    .then(|| app.selected_space_name())
+    .flatten()
+}
+
+fn edit_memory(app: &mut AppView, terminal: &mut DefaultTerminal, space: &str) {
+    match app.core.memory_edit_file(space) {
+        Ok(path) => edit_memory_file(app, terminal, space, &path),
+        Err(error) => app.push_status(format!("memory: {error:#}")),
     }
 }
 
-/// Ctrl+E in the skills popup opens the highlighted skill's SKILL.md.
+fn edit_memory_file(
+    app: &mut AppView,
+    terminal: &mut DefaultTerminal,
+    space: &str,
+    path: &std::path::Path,
+) {
+    match edit_in_external_editor(terminal, path) {
+        Ok(()) => {
+            if let Err(error) = app.core.finish_memory_edit(space, path) {
+                app.push_status(format!("memory not saved: {error:#}"));
+            }
+        }
+        Err(error) => app.push_status(format!("editor failed: {error}")),
+    }
+}
+
 fn skill_edit_target(app: &AppView, key: &KeyEvent) -> Option<std::path::PathBuf> {
     if !(app.popup == Popup::Skills
-        && app.skills_mode == nexus_core::app::SkillsMode::Browse
+        && app.skills_mode == dugix_core::app::SkillsMode::Browse
         && key.modifiers.contains(KeyModifiers::CONTROL)
         && key.code == KeyCode::Char('e'))
     {
@@ -42,7 +67,6 @@ fn skill_edit_target(app: &AppView, key: &KeyEvent) -> Option<std::path::PathBuf
     app.skill_edit_path_for_selected()
 }
 
-/// Ctrl+E in the settings popup opens the app's base system prompt.
 fn system_prompt_edit_target(app: &AppView, key: &KeyEvent) -> Option<std::path::PathBuf> {
     if !(app.popup == Popup::Settings
         && key.modifiers.contains(KeyModifiers::CONTROL)
@@ -50,7 +74,7 @@ fn system_prompt_edit_target(app: &AppView, key: &KeyEvent) -> Option<std::path:
     {
         return None;
     }
-    nexus_core::config::system_prompt_path().ok()
+    dugix_core::config::system_prompt_path().ok()
 }
 
 pub fn run(
@@ -62,8 +86,6 @@ pub fn run(
         let result = Box::pin(run_loop(&mut app, terminal, selection_requests)).await;
         app.cancel_chat_tasks();
         app.procs.shutdown().await;
-        // Servers started with `/local start` are Nexus's to clean up; ones the
-        // user started elsewhere are untouched.
         app.stop_local_servers().await;
         result
     })
@@ -87,7 +109,6 @@ async fn next_shell_completion(
     }
 }
 
-/// The reply a background job will send, or never while none is running.
 async fn next_reply<T>(receiver: &mut Option<tokio::sync::oneshot::Receiver<T>>) -> Option<T> {
     match receiver {
         Some(receiver) => receiver.await.ok(),
@@ -95,7 +116,6 @@ async fn next_reply<T>(receiver: &mut Option<tokio::sync::oneshot::Receiver<T>>)
     }
 }
 
-// Long by design (event loop).
 #[allow(clippy::too_many_lines)]
 async fn run_loop(
     app: &mut AppView,
@@ -103,38 +123,38 @@ async fn run_loop(
     mut selection_requests: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
 ) -> Result<()> {
     let mut reader = EventStream::new();
-    // Cheap poll for a theme switch (omarchy's symlink, Ghostty's config) so
-    // changing the terminal theme restyles the running app.
     let mut theme_poll = tokio::time::interval(std::time::Duration::from_secs(2));
     let mut jobs_poll = tokio::time::interval(std::time::Duration::from_secs(60));
     loop {
-        crate::interactive::flush(app);
+        crate::interactive::flush_settled(app);
         app.sync_approval_popup();
         take_proposed_command(app);
-        // Locally-queued UI feedback (status lines, composer restore,
-        // viewport resets) applies before the draw so it lands on the same
-        // frame as the action that caused it.
+        // Apply queued feedback before drawing to avoid a frame of stale UI state.
         while let Some(ev) = app.pop_pending_event() {
             app.apply_event(&ev);
         }
         terminal.draw(|f| ui::render(f, app))?;
         if app.should_quit {
+            // Throttled persistence may still have unsaved changes at shutdown.
+            crate::interactive::flush(app);
             break;
         }
 
-        let streaming = app.is_streaming();
+        // Background agents keep the screen live too: `/agents` streams them.
+        let streaming = app.is_streaming() || app.background_running() > 0;
         let long_deadline = app.sel.deadline();
         let welcome = app.is_welcome();
         let status_deadline = app.status_deadline();
         let panel_data = app.interactive.data_pending();
+        let animating = app.interactive.animating();
         let images = std::sync::Arc::clone(&app.remote_images);
         let studio_wake = app.studio_wake();
         let studio_retry = app.studio.has_queued();
+        // Agents draw on their own clock; the board and an open terminal follow.
+        let fleet_live = app.popup == Popup::Fleet && app.fleet.live() > 0;
         tokio::select! {
             () = images.changed() => {}
-            // Studio spoke, closed, or the model changed a deck.
             () = studio_wake.notified() => app.poll_studio(),
-            // A waiting studio comment re-checks for a free composer.
             () = async {
                 if studio_retry {
                     tokio::time::sleep(std::time::Duration::from_millis(400)).await;
@@ -143,9 +163,11 @@ async fn run_loop(
                 }
             } => app.poll_studio(),
             maybe = reader.next() => match maybe {
-                Some(Ok(Event::Key(k))) if k.kind == KeyEventKind::Press => {
-                    // A failed action is reported, never fatal: one bad db
-                    // write or editor exit must not kill in-flight streams.
+                Some(Ok(Event::Key(k))) if k.kind == KeyEventKind::Press
+                    || (k.kind == KeyEventKind::Repeat && app.popup == Popup::InteractiveUi
+                        && app.interactive.input_focused())
+                    || (k.kind == KeyEventKind::Repeat && ui::popups::fleet::captures(app)) => {
+                    // An action failure must not terminate unrelated in-flight streams.
                     if let Err(e) = on_key(app, terminal, k) {
                         app.push_status(format!("error: {e:#}"));
                     }
@@ -158,10 +180,10 @@ async fn run_loop(
                         app.push_status(format!("error: {e:#}"));
                     }
                 }
-                // Terminal-native paste (bracketed paste) — goes to whatever's
-                // focused: the composer, or a popup's text field.
                 Some(Ok(Event::Paste(text))) => {
-                    app.paste(&text);
+                    if !ui::popups::fleet::paste(app, &text) {
+                        app.paste(&text);
+                    }
                 }
                 Some(Ok(_)) => {}
                 Some(Err(e)) => return Err(e.into()),
@@ -169,13 +191,7 @@ async fn run_loop(
             },
             request = next_selection_request(&mut selection_requests) => {
                 if let Some(prompt) = request {
-                    let sent = if app.web_mode {
-                        Ok(())
-                    } else {
-                        app.execute(nexus_core::app::AppCommand::ToggleWeb)
-                    }
-                    .and_then(|()| app.execute(nexus_core::app::AppCommand::Send { text: prompt }));
-                    if let Err(e) = sent {
+                    if let Err(e) = app.execute(dugix_core::app::AppCommand::Send { text: prompt }) {
                         app.push_status(format!("error: {e:#}"));
                     }
                 } else {
@@ -206,9 +222,6 @@ async fn run_loop(
                 }
             }
             event = app.core.next_event() => {
-                // View-side events (status line, composer restore, viewport
-                // reset) apply to the view layer; domain events go to their
-                // handlers, which may push more pending events in turn.
                 app.apply_event(&event);
                 match event {
                     AppEvent::Status(_)
@@ -226,8 +239,6 @@ async fn run_loop(
                     }
                     AppEvent::Models(r) => {
                         app.on_models_result(r);
-                        // First key just landed and nothing picked yet → jump
-                        // into the picker (the domain can't open popups).
                         if !app.core.models.is_empty()
                             && app.core.current_model.is_none()
                             && app.popup == Popup::None
@@ -236,18 +247,15 @@ async fn run_loop(
                         }
                     }
                     AppEvent::Title(t) => app.on_title_result(t),
-                    AppEvent::Memory(m) => app.on_memory_result(m),
                     AppEvent::Compact(c) => app.on_compact_result(c),
                     AppEvent::SkillInstall(r) => app.on_skill_install_result(r),
-                    AppEvent::Ocr(r) => app.on_ocr_done(r),
+                    AppEvent::Convert(r) => app.on_convert_done(r),
                     AppEvent::Embed(r) => app.on_embed_done(r),
                     AppEvent::LocalServers(r) => app.on_local_status(r),
                     AppEvent::Research(r) => {
                         app.on_research_done(r);
-                        // The job's channel closed: close the live view and
-                        // clear its steer input.
-                        if app.core.research_rx.is_none() {
-                            app.core.research_live_input.clear();
+                        if app.core.research.rx.is_none() {
+                            app.core.research.live_input.clear();
                             if app.popup == Popup::ResearchLive {
                                 app.popup = Popup::None;
                             }
@@ -266,8 +274,6 @@ async fn run_loop(
                     std::future::pending::<()>().await;
                 }
             } => app.tick_spinner(),
-            // Long-press (held, unmoved) copies the message, code block, or
-            // link under the pointer.
             () = async {
                 match long_deadline {
                     Some(d) => tokio::time::sleep(d.saturating_duration_since(std::time::Instant::now())).await,
@@ -287,7 +293,6 @@ async fn run_loop(
                     None => std::future::pending::<()>().await,
                 }
             } => app.expire_status(),
-            // Tick once a second on the start screen so the clock stays live.
             () = async {
                 if welcome {
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -302,6 +307,20 @@ async fn run_loop(
                     std::future::pending::<()>().await;
                 }
             } => crate::interactive::live::tick(app),
+            () = async {
+                if fleet_live {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {}
+            () = async {
+                if animating {
+                    tokio::time::sleep(std::time::Duration::from_millis(66)).await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {}
             _ = jobs_poll.tick() => {
                 if let Err(error) = app.collect_job_notifications() {
                     app.push_status(format!("jobs notifications: {error}"));
@@ -323,11 +342,11 @@ async fn run_loop(
     Ok(())
 }
 
-/// One key press: external-editor shortcuts first (this loop owns the
-/// terminal), then the focused popup's or the composer's handler.
 fn on_key(app: &mut AppView, terminal: &mut DefaultTerminal, k: KeyEvent) -> Result<()> {
     if let Some(path) = edit_file_target(app, &k) {
         edit_in_external_editor(terminal, &path)?;
+    } else if let Some(space) = memory_edit_target(app, &k) {
+        edit_memory(app, terminal, &space);
     } else if let Some(path) = skill_edit_target(app, &k) {
         edit_in_external_editor(terminal, &path)?;
         app.reload_skills();
@@ -344,35 +363,37 @@ fn on_key(app: &mut AppView, terminal: &mut DefaultTerminal, k: KeyEvent) -> Res
         }
     } else {
         handle_key(app, k)?;
-        // /edit queued an app file — open it now (this loop
-        // owns the terminal, run_command doesn't).
+        // External editors must run here because this loop owns terminal suspension.
         if let Some(edit) = app.pending_editor.take() {
             match edit {
-                nexus_core::app::PendingEditor::AppFile(path) => {
+                dugix_core::app::PendingEditor::AppFile(path) => {
                     if let Err(e) = edit_in_external_editor(terminal, &path) {
                         app.push_status(format!("editor failed: {e}"));
                     }
                 }
-                nexus_core::app::PendingEditor::Persona(path) => {
+                dugix_core::app::PendingEditor::Persona(path) => {
                     match edit_in_external_editor(terminal, &path) {
                         Ok(()) => app.apply_swarm_persona_editor(&path)?,
                         Err(e) => app.push_status(format!("editor failed: {e}")),
                     }
                 }
-                nexus_core::app::PendingEditor::ScriptFile(path) => {
+                dugix_core::app::PendingEditor::ScriptFile(path) => {
                     if let Err(e) = edit_in_external_editor(terminal, &path) {
                         app.push_status(format!("editor failed: {e}"));
                     }
                     app.refresh_scripts();
                 }
-                nexus_core::app::PendingEditor::UserCommand(cmd) => {
+                dugix_core::app::PendingEditor::Memory { space, path } => {
+                    edit_memory_file(app, terminal, &space, &path);
+                }
+                dugix_core::app::PendingEditor::UserCommand(cmd) => {
                     let cwd = app.user_command_cwd();
-                    let shell = std::sync::Arc::clone(&app.user_shell);
+                    let shell = std::sync::Arc::clone(&app.user_command.shell);
                     let data = app.space.root.clone();
                     let (exit, started, next_dir) =
                         run_interactive_command(terminal, &cmd, &cwd, shell.get(), &data)?;
                     if let Some(dir) = next_dir {
-                        app.core.user_command_dir = Some(dir);
+                        app.core.user_command.dir = Some(dir);
                     }
                     app.execute(AppCommand::RecordUserCommand { cmd, exit, started })?;
                 }
@@ -383,19 +404,21 @@ fn on_key(app: &mut AppView, terminal: &mut DefaultTerminal, k: KeyEvent) -> Res
 }
 
 fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
-    // Ctrl+C backs out one step — close the popup, stop the reply being
-    // viewed, clear the draft — and quits only on a second press with
-    // nothing left to undo, so a stray press can't kill streams or a draft.
+    // An attached fleet agent owns the keyboard, Ctrl+C and Ctrl+V included.
+    if ui::popups::fleet::captures(app) {
+        return ui::popups::fleet::handle_key(app, key);
+    }
     if key.modifiers.contains(KeyModifiers::CONTROL)
         && !key.modifiers.contains(KeyModifiers::SHIFT)
         && key.code == KeyCode::Char('c')
     {
+        if app.popup == Popup::InteractiveUi && crate::interactive::copy_selection(app, false) {
+            return Ok(());
+        }
         return ctrl_c(app);
     }
     app.quit_armed_at = None;
-    // Ctrl+V pastes into whatever's focused (composer or a popup's text
-    // field) — a fallback for terminals that don't send bracketed paste for
-    // every popup, or don't send it at all.
+    // Some terminals do not reliably send bracketed paste, so support clipboard paste too.
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('v') {
         app.paste_from_clipboard();
         return Ok(());
@@ -414,8 +437,8 @@ fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
         Popup::Files => ui::popups::files::handle_key(app, key)?,
         Popup::Apps => ui::popups::apps::handle_key(app, key)?,
         Popup::Library => ui::popups::library::handle_key(app, key),
+        Popup::Subagents => ui::popups::subagents::handle_key(app, key),
         Popup::InteractiveUi => crate::interactive::key(app, key),
-        Popup::Watch => ui::popups::watches::handle_key(app, key)?,
         Popup::ResearchLive => {
             ui::popups::research_live::handle_key(app, key);
         }
@@ -432,6 +455,7 @@ fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
         Popup::Jobs => ui::popups::jobs::handle_key(app, key)?,
         Popup::Harness => ui::popups::harness::handle_key(app, key)?,
         Popup::Procs => ui::popups::procs::handle_key(app, key)?,
+        Popup::Fleet => ui::popups::fleet::handle_key(app, key)?,
         Popup::Help => ui::popups::help::handle_key(app, key),
         Popup::ImageViewer => ui::popups::image_viewer::handle_key(app, key),
         Popup::Connectors => ui::popups::connectors::handle_key(app, key),
@@ -441,18 +465,16 @@ fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
     Ok(())
 }
 
-/// How long a first Ctrl+C keeps the quit armed.
 const QUIT_CONFIRM_WINDOW: std::time::Duration = std::time::Duration::from_millis(1500);
 
 fn ctrl_c(app: &mut AppView) -> Result<()> {
-    // In the image viewer Ctrl+C copies the picture; Esc closes.
     if app.popup == Popup::ImageViewer {
         app.viewer_action(crate::image_viewer_actions::Action::CopyImage);
         return Ok(());
     }
     if app.popup == Popup::Approval {
         return app.execute(AppCommand::Approve {
-            decision: nexus_core::tools::Decision::Deny,
+            decision: dugix_core::tools::Decision::Deny,
         });
     }
     if app.popup != Popup::None {
@@ -479,10 +501,8 @@ fn ctrl_c(app: &mut AppView) -> Result<()> {
     Ok(())
 }
 
-/// A `propose_command` lands in the composer only when it is empty; a draft
-/// is never replaced, so the proposal shows as a status line instead.
 fn take_proposed_command(app: &mut AppView) {
-    let Some(cmd) = app.core.proposed_command.take() else {
+    let Some(cmd) = app.core.approvals.proposed_command.take() else {
         return;
     };
     if app.input_text().is_empty() {
@@ -492,8 +512,6 @@ fn take_proposed_command(app: &mut AppView) {
     }
 }
 
-/// Suspend the TUI, run `child` with the real terminal, then restore it and
-/// force a full redraw (its contents are gone after the child exits).
 fn with_terminal_suspended<T>(
     terminal: &mut DefaultTerminal,
     child: impl FnOnce() -> T,
@@ -515,18 +533,12 @@ fn with_terminal_suspended<T>(
     Ok(result)
 }
 
-/// Hand the real terminal to an interactive `!` command (`!tty`, `sudo`,
-/// `ssh`, …) the way `$EDITOR` gets it: what the user types, passwords
-/// included, never passes through nexus. Its output stays on screen until
-/// the user presses Enter. Returns its exit code and whether it started.
-/// Run a `!` command on the real terminal, in the user's shell setup (when
-/// a captured `!` already loaded it) and the tracked `!` directory; returns
-/// the directory it ended in so `!sudo …`/`!ssh` keep the same cwd rules.
+// Interactive input, including passwords, must go directly to the child rather than through Dugix.
 fn run_interactive_command(
     terminal: &mut DefaultTerminal,
     cmd: &str,
     cwd: &std::path::Path,
-    setup: Option<&nexus_core::usershell::UserShell>,
+    setup: Option<&dugix_core::usershell::UserShell>,
     data: &std::path::Path,
 ) -> Result<(Option<i32>, bool, Option<std::path::PathBuf>)> {
     let cwd_file = data.join(format!("shell-cwd-{}", uuid::Uuid::new_v4()));
@@ -535,7 +547,7 @@ fn run_interactive_command(
             let mut command = std::process::Command::new(&setup.shell);
             command
                 .args(["-c", &setup.wrapper(cmd, cwd)])
-                .env("NEXUS_CWD_FILE", &cwd_file);
+                .env("DUGIX_CWD_FILE", &cwd_file);
             command
         } else {
             let mut command = std::process::Command::new("sh");
@@ -545,8 +557,8 @@ fn run_interactive_command(
         let status = command.current_dir(cwd).status();
         let started = status.is_ok();
         let exit = status.ok().and_then(|status| status.code());
-        let outcome = nexus_core::app::user_command_outcome_label(exit, started);
-        print!("\n[{outcome}] press Enter to return to nexus");
+        let outcome = dugix_core::app::user_command_outcome_label(exit, started);
+        print!("\n[{outcome}] press Enter to return to dugix");
         let _ = std::io::Write::flush(&mut std::io::stdout());
         let _ = std::io::stdin().read_line(&mut String::new());
         (exit, started)
@@ -560,9 +572,6 @@ fn run_interactive_command(
     Ok((exit, started, next_dir))
 }
 
-/// Suspend the TUI, open `path` in `$EDITOR` (falling back to `vi`), then
-/// restore the terminal and force a full redraw (its contents are gone after
-/// the editor exits).
 fn edit_in_external_editor(terminal: &mut DefaultTerminal, path: &std::path::Path) -> Result<()> {
     let editor_raw = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
     let mut parts = editor_raw.split_whitespace();
@@ -576,8 +585,7 @@ fn edit_in_external_editor(terminal: &mut DefaultTerminal, path: &std::path::Pat
     match status {
         Ok(code) if code.success() => Ok(()),
         Ok(code) => {
-            // Non-zero exit (vim `:cq`, user abort, etc.) — the terminal is
-            // restored but the caller should not consume the edited file.
+            // Editors use nonzero exit codes (such as vim's :cq) to discard edits.
             Err(anyhow::anyhow!(
                 "editor exited with code {}",
                 code.code().unwrap_or(-1)
@@ -597,12 +605,8 @@ fn open_new_session(app: &mut AppView, incognito: bool) -> Result<()> {
     Ok(())
 }
 
-// Long by design (key dispatch).
 #[allow(clippy::too_many_lines)]
 fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-
     if app.shell_state.is_some() {
         match key.code {
             KeyCode::Up => {
@@ -634,8 +638,6 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
         app.shell_recall = None;
     }
 
-    // Slash-command autocomplete captures navigation while it's showing. Typing
-    // (chars/backspace) still falls through so the list keeps filtering.
     if !app.command_matches().is_empty() {
         match key.code {
             KeyCode::Up => {
@@ -662,7 +664,6 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
         }
     }
 
-    // @-file autocomplete — only when no slash command is showing.
     if app.at_state.is_some() {
         match key.code {
             KeyCode::Up => {
@@ -685,6 +686,22 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
         }
     }
 
+    let key = if app.vim_enabled {
+        match app.vim.key(&mut app.input, key) {
+            crate::vim::Outcome::Handled => {
+                app.refresh_at_matches();
+                return Ok(());
+            }
+            crate::vim::Outcome::Submit => KeyEvent::from(KeyCode::Enter),
+            crate::vim::Outcome::Leave => KeyEvent::from(KeyCode::Esc),
+            crate::vim::Outcome::Passthrough => key,
+        }
+    } else {
+        key
+    };
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+
     match key.code {
         KeyCode::BackTab => {
             let mode = match app.work_mode {
@@ -702,11 +719,7 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
             app.start_shell_completion();
         }
         KeyCode::Enter if shift || ctrl => app.input.insert_newline(),
-        // A parked survey gate (survey answer or plan approval) intercepts
-        // Enter — but only while the *viewed* session is the gated one, so a
-        // gate in another session can never swallow typing. The reply routes
-        // to the pipeline; an empty input means "approve" (plan) / "skip
-        // ahead" (survey). Normal typing is untouched.
+        // A gate in another session must not consume this session's input.
         KeyCode::Enter if app.survey_gate_targets_current_session() => {
             let text = app.input_text();
             app.set_input("");
@@ -726,13 +739,9 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
             app.batch_focus = None;
             app.submit()?;
         }
-        // Ctrl+Shift+C copies the composer's selection for terminals that
-        // forward it (a mouse selection copies on release everywhere).
         KeyCode::Char('a') if ctrl => app.input.select_all(),
         KeyCode::Char('c' | 'C') if ctrl && shift => app.copy_selection(),
         KeyCode::Char('x') if ctrl => app.cut_selection(),
-        // Ctrl+R expands/collapses stored reasoning traces (editor's redo is
-        // shadowed here — the composer rarely needs it).
         KeyCode::Char('r') if ctrl => app.toggle_reasoning_view()?,
         KeyCode::Char('t') if ctrl => {
             app.show_tool_detail = !app.show_tool_detail;
@@ -743,42 +752,43 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
             app.tool_click_anchor = None;
             app.pin_viewport_top = true;
         }
-        // Ctrl+N starts a regular session; Ctrl+Shift+N starts an incognito
-        // session. Both shortcuts also switch modes when needed.
         KeyCode::Char('n' | 'N') if ctrl && shift => open_new_session(app, true)?,
         KeyCode::Char('n' | 'N') if ctrl => open_new_session(app, false)?,
         KeyCode::Char('o') if ctrl && app.sel.selected_text().is_some() => {
             app.open_session_link();
         }
-        // Ctrl+↑ opens the live research-activity view (per-searcher
-        // reasoning/tool calls) — only while a research job is running.
-        KeyCode::Up if ctrl && app.research_rx.is_some() => app.open_research_live(),
-        // Alt+↑/↓ recall this session's sent messages into the composer.
+        KeyCode::Up if ctrl && app.research.rx.is_some() => app.open_research_live(),
+        KeyCode::Up if ctrl && ui::popups::subagents::has_live(app) => {
+            ui::popups::subagents::open(app);
+        }
         KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT) => app.recall_prev(),
         KeyCode::Down if key.modifiers.contains(KeyModifiers::ALT) => app.recall_next(),
-        // Ctrl+G opens the context breakdown (system/memory/conversation/skills).
-        // (Not Ctrl+I: that's the same byte as Tab on terminals without the
-        // Kitty keyboard protocol, so it'd be unreachable on many of them.)
+        // Ctrl+I aliases Tab on terminals without the Kitty keyboard protocol.
         KeyCode::Char('g') if ctrl => app.popup = Popup::Context,
         KeyCode::F(1) => app.open_help(),
         KeyCode::F(2) => crate::interactive::focus(app),
-        // Alt+1…4 reopen the welcome screen's recent sessions.
         KeyCode::Char(c @ '1'..='4')
             if key.modifiers.contains(KeyModifiers::ALT) && !app.welcome_targets.is_empty() =>
         {
             app.open_welcome_session(c as usize - '1' as usize)?;
         }
-        // Ctrl+Backspace deletes the previous word. (Alt+Backspace and Ctrl+W
-        // also do this via the editor's default keymap.)
         KeyCode::Backspace if ctrl => {
             app.input.delete_word();
             app.refresh_at_matches();
             return Ok(());
         }
-        // Up/Down move the composer cursor within a multi-row message first;
-        // only once it's already at the top/bottom row do they scroll history.
-        // Shift+Up/Down falls through to the default keymap instead, so it
-        // extends the selection rather than being swallowed by this.
+        // An empty composer has no line to move to: Up takes back the newest
+        // queued message for editing.
+        KeyCode::Up
+            if !shift
+                && !ctrl
+                && app.input_text().is_empty()
+                && !app.queued_messages().is_empty() =>
+        {
+            app.execute(AppCommand::Queue {
+                action: dugix_core::app::QueueAction::Edit(None),
+            })?;
+        }
         KeyCode::Up if !shift && !ctrl && app.shell_history_mode() => app.recall_prev(),
         KeyCode::Down if !shift && !ctrl && app.shell_history_mode() => app.recall_next(),
         KeyCode::Up if !shift => {
@@ -806,12 +816,8 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
                 .min(app.max_scroll);
         }
         KeyCode::PageDown => app.scroll = app.scroll.saturating_sub(app.history_page()),
-        // Ctrl+Home/End jump to the start/end of the conversation (plain
-        // Home/End stay with the composer's line editing).
         KeyCode::Home if ctrl => app.scroll = app.max_scroll,
         KeyCode::End if ctrl => app.scroll = 0,
-        // Esc stops the streaming response or clears the composer. A parked
-        // research job is stopped from the live view (Ctrl+↑, then Ctrl+X).
         KeyCode::Esc if app.batch_focus.is_some() => {
             app.batch_focus = None;
             app.tool_open_gen = app.tool_open_gen.wrapping_add(1);
@@ -820,10 +826,7 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
         KeyCode::Esc => {
             app.set_input("");
         }
-        // Everything else (chars, word-jump, selection, cut/copy/paste, undo)
-        // goes to the editor via its default keymap. A keyboard (Shift+arrow)
-        // selection has no "release" event like a mouse drag does, so keep
-        // the clipboard synced to it live instead of requiring Ctrl+Shift+C.
+        // Keyboard selections have no release event, so synchronize their clipboard content live.
         _ => {
             app.input.input(key);
             if app.input.is_selecting() {
@@ -835,8 +838,6 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
     Ok(())
 }
 
-/// Mouse in the main view (no popup): composer click/drag places the cursor and
-/// selects; history click/drag/double/triple selects text; wheel scrolls.
 fn handle_input_mouse(app: &mut AppView, m: MouseEvent) {
     let over_input = app.input_inner.contains(Position::new(m.column, m.row));
     match m.kind {
@@ -892,11 +893,7 @@ fn handle_input_mouse(app: &mut AppView, m: MouseEvent) {
             match app.mouse_target {
                 MouseTarget::History => {
                     let p = app.sel.pos_at(m.column, m.row);
-                    // The timer normally handles a long press while the
-                    // button is held.  Also check on release: some terminal
-                    // event streams do not wake the timer reliably while a
-                    // mouse button is down, and may only deliver the next
-                    // event when the button is released.
+                    // Some terminals do not wake the held-button timer until release.
                     let long_press = app.sel.check_long_press();
                     let long_press_handled = long_press.is_some() || app.sel.is_long_pressed();
                     if let Some(long_press) = long_press {
@@ -925,10 +922,6 @@ fn handle_input_mouse(app: &mut AppView, m: MouseEvent) {
                         None => {}
                     }
                 }
-                // A drag in the composer selects text; releasing copies it
-                // immediately, same as releasing a history-pane selection.
-                // A plain click (no drag) never starts a selection, so this
-                // doesn't fire just from placing the cursor.
                 MouseTarget::Input if app.input.is_selecting() => app.copy_selection(),
                 MouseTarget::Input | MouseTarget::None => {}
             }
@@ -942,20 +935,13 @@ fn handle_input_mouse(app: &mut AppView, m: MouseEvent) {
     }
 }
 
-/// Move the composer cursor to the clicked cell. ponytail: screen row/col mapped
-/// straight to data line/char — exact when the composer isn't wrapped/scrolled
-/// (tui-textarea keeps its screen<->data map private).
+// TextArea hides its screen-to-data map, so wrapped or scrolled clicks are approximate.
 fn composer_jump(app: &mut AppView, m: MouseEvent) {
     let row = m.row.saturating_sub(app.input_inner.y);
     let col = m.column.saturating_sub(app.input_inner.x);
     app.input.move_cursor(CursorMove::Jump(row, col));
 }
 
-/// Mouse over list/text popups (model and interactive outputs have their own
-/// hit-testing): the wheel sends Up/Down to the popup's own key handler, so
-/// lists move their selection and text popups scroll; a click on a list row
-/// selects it, and a click on the already-selected row activates it (Enter).
-/// Routing through the key handlers keeps each popup's modes and filters.
 fn handle_popup_mouse(app: &mut AppView, m: MouseEvent) -> Result<()> {
     let press = |app: &mut AppView, code: KeyCode| handle_key(app, KeyEvent::from(code));
     match m.kind {
@@ -986,14 +972,10 @@ fn handle_popup_mouse(app: &mut AppView, m: MouseEvent) -> Result<()> {
     }
 }
 
-/// Route mouse events: composer click/drag when no popup is open, else the
-/// open popup.
-#[allow(clippy::too_many_lines)] // one early return per popup that owns the pointer
+#[allow(clippy::too_many_lines)]
 fn handle_mouse(app: &mut AppView, m: MouseEvent, screen: Rect) -> Result<()> {
     if app.popup == Popup::Approval {
-        // The approval sits in the composer's place: the wheel over it
-        // scrolls the request, over the conversation scrolls the transcript.
-        // Clicks never answer an approval.
+        // Mouse clicks must never grant approval.
         let over_panel = app
             .approval_area
             .get()
@@ -1021,8 +1003,6 @@ fn handle_mouse(app: &mut AppView, m: MouseEvent, screen: Rect) -> Result<()> {
         ui::popups::image_viewer::mouse(app, m);
         return Ok(());
     }
-    // The column edge and popup borders resize before anything else sees the
-    // press; a press that misses them falls through unchanged.
     if crate::resize::mouse(app, m, screen) {
         return Ok(());
     }
@@ -1076,7 +1056,7 @@ fn handle_mouse(app: &mut AppView, m: MouseEvent, screen: Rect) -> Result<()> {
         MouseEventKind::Down(MouseButton::Left) => {
             if let Some((p, inner, offset)) = panel {
                 let index = offset + (m.row - inner.y) as usize;
-                app.pick_model_at(p, index)?; // no-op if index is past the list
+                app.pick_model_at(p, index)?;
             }
         }
         MouseEventKind::ScrollDown => {
@@ -1099,12 +1079,12 @@ fn handle_mouse(app: &mut AppView, m: MouseEvent, screen: Rect) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_core::app::App;
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
+    use dugix_core::app::App;
+    use dugix_core::db::Db;
+    use dugix_core::space::Space;
 
     fn test_app() -> AppView {
-        let root = std::env::temp_dir().join(format!("nexus-events-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-events-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
         AppView::new(App::new(
             Db::open_in_memory().unwrap(),
@@ -1122,7 +1102,7 @@ mod tests {
         let mut app = test_app();
         let root = app.space.root.clone();
         let workspace =
-            std::env::temp_dir().join(format!("nexus-approval-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("dugix-approval-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&workspace).unwrap();
         app.run_command(&format!("agent {}", workspace.display()))
             .unwrap();
@@ -1145,7 +1125,7 @@ mod tests {
         assert_ne!(app.popup, Popup::Approval);
         app.apply_event(&AppEvent::HistoryInvalidated);
         assert_eq!(app.popup, Popup::Approval);
-        assert_eq!(app.approval_request, app.pending_approval_request);
+        assert_eq!(app.approval_request, app.approvals.pending_request);
         assert_eq!(
             app.approval_request.as_ref().unwrap().summary,
             "write approved (+1 −0)\ndiff --git aa/workspace/approved bb/workspace/approved\nindex e69de29..396a0ba 100644\n--- aa/workspace/approved\n+++ bb/workspace/approved\n@@ -0,0 +1 @@\n+yes\n\\ No newline at end of file"
@@ -1158,7 +1138,7 @@ mod tests {
             "yes"
         );
         assert_eq!(app.popup, Popup::None);
-        assert!(app.pending_approval_request.is_none());
+        assert!(app.approvals.pending_request.is_none());
         drop(app);
         std::fs::remove_dir_all(root).unwrap();
         std::fs::remove_dir_all(workspace).unwrap();
@@ -1176,8 +1156,8 @@ mod tests {
         let mut app = test_app();
         let root = app.space.root.clone();
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        app.pending_approval = Some(sender);
-        app.pending_approval_request = Some(nexus_core::tools::ApprovalRequest {
+        app.approvals.pending = Some(sender);
+        app.approvals.pending_request = Some(dugix_core::tools::ApprovalRequest {
             tool: "shell".into(),
             class: None,
             detail: None,
@@ -1190,8 +1170,8 @@ mod tests {
         drop(receiver);
         app.sync_approval_popup();
         assert_eq!(app.popup, Popup::None);
-        assert!(app.pending_approval.is_none());
-        assert!(app.pending_approval_request.is_none());
+        assert!(app.approvals.pending.is_none());
+        assert!(app.approvals.pending_request.is_none());
         assert!(app.approval_request.is_none());
         drop(app);
         std::fs::remove_dir_all(root).unwrap();
@@ -1199,7 +1179,7 @@ mod tests {
 
     #[test]
     fn approval_keys_resolve_once_and_other_popups_cannot_replace_the_prompt() {
-        use nexus_core::tools::{ApprovalRequest, Decision};
+        use dugix_core::tools::{ApprovalRequest, Decision};
 
         let mut app = test_app();
         let root = app.space.root.clone();
@@ -1215,7 +1195,7 @@ mod tests {
             (ctrl('c'), Decision::Deny),
         ] {
             let (sender, mut receiver) = tokio::sync::oneshot::channel();
-            app.pending_approval = Some(sender);
+            app.approvals.pending = Some(sender);
             app.approval_request = Some(ApprovalRequest {
                 tool: "shell".into(),
                 class: None,
@@ -1234,7 +1214,7 @@ mod tests {
             handle_key(&mut app, key).unwrap();
             assert_eq!(receiver.try_recv().unwrap(), decision);
             assert_eq!(app.popup, Popup::None);
-            assert!(app.pending_approval.is_none());
+            assert!(app.approvals.pending.is_none());
             assert!(app.approval_request.is_none());
         }
         drop(app);
@@ -1249,8 +1229,9 @@ mod tests {
         for name in ["alpha", "alps"] {
             std::fs::create_dir(cwd.join(name)).unwrap();
         }
-        app.user_shell
-            .set(nexus_core::usershell::UserShell {
+        app.user_command
+            .shell
+            .set(dugix_core::usershell::UserShell {
                 shell: "/bin/sh".into(),
                 snapshot: None,
                 path: String::new(),
@@ -1300,7 +1281,7 @@ mod tests {
         // Programs that need a terminal get it, rather than a captured run.
         assert!(matches!(
             app.pending_editor,
-            Some(nexus_core::app::PendingEditor::UserCommand(ref cmd)) if cmd == "ssh nowhere"
+            Some(dugix_core::app::PendingEditor::UserCommand(ref cmd)) if cmd == "ssh nowhere"
         ));
         assert!(app.session.is_none());
         std::fs::remove_dir_all(root).unwrap();
@@ -1327,6 +1308,62 @@ mod tests {
             handle_normal(&mut app, KeyCode::Down.into()).unwrap();
             assert_eq!(app.input_text(), expected);
         }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn queued_messages_show_above_the_composer_and_up_takes_the_newest_back() {
+        let mut app = test_app();
+        let root = app.space.root.clone();
+        app.models = vec![dugix_core::provider::Model {
+            id: "a/one".into(),
+            name: "One".into(),
+            reasoning_efforts: Vec::new(),
+            context_length: None,
+            supports_images: false,
+            supports_image_generation: false,
+            supports_video_generation: false,
+            backend: dugix_core::provider::BackendTag::OpenRouter,
+            pricing: None,
+            aliases: Vec::new(),
+        }];
+        app.core.current_model = Some("a/one".into());
+        for text in ["first", "then this", "and that"] {
+            app.set_input(text);
+            app.submit().unwrap();
+        }
+        assert_eq!(app.queued_messages(), ["then this", "and that"]);
+        assert_eq!(app.input_text(), "", "the composer is free while it waits");
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 20)).unwrap();
+        terminal.draw(|f| ui::render(f, &mut app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let screen: String = (0..buffer.area.height)
+            .flat_map(|y| {
+                (0..buffer.area.width)
+                    .map(move |x| buffer[(x, y)].symbol())
+                    .chain(["\n"])
+            })
+            .collect();
+        assert!(screen.contains("2 queued"), "{screen}");
+        assert!(screen.contains("1. then this"), "{screen}");
+        assert!(screen.contains("2. and that"), "{screen}");
+
+        handle_normal(&mut app, KeyCode::Up.into()).unwrap();
+        while let Some(event) = app.pop_pending_event() {
+            app.apply_event(&event);
+        }
+        assert_eq!(app.input_text(), "and that");
+        assert_eq!(app.queued_messages(), ["then this"]);
+
+        // Stopping holds the rest; Enter on the empty composer sends the next.
+        app.set_input("");
+        app.stop_stream().unwrap();
+        assert_eq!(app.queued_messages(), ["then this"]);
+        app.submit().unwrap();
+        assert!(app.queued_messages().is_empty());
+        assert!(app.viewing_stream());
+        app.stop_stream().unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -1377,7 +1414,7 @@ mod tests {
     #[test]
     fn shift_tab_toggles_work_mode_reusing_the_root_without_changing_the_draft() {
         let mut app = test_app();
-        let root = std::env::temp_dir().join(format!("nexus-toggle-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-toggle-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         app.execute(AppCommand::SetWorkMode {
             mode: WorkMode::Agent,
@@ -1413,9 +1450,9 @@ mod tests {
         let mut app = test_app();
         app.set_input("keep this draft");
         let source = include_str!("../../core/tests/fixtures/interactive/counter.json");
-        app.messages.push(nexus_core::db::Message {
+        app.messages.push(dugix_core::db::Message {
             role: "assistant".into(),
-            content: format!("```nexus-ui\n{source}\n```"),
+            content: format!("```dugix-ui\n{source}\n```"),
             model: None,
             reasoning: None,
             tokens: None,
@@ -1465,17 +1502,83 @@ mod tests {
     }
 
     #[test]
+    fn interactive_text_editing_routes_modified_keys_without_touching_the_composer() {
+        let mut app = test_app();
+        // The standard keymap: one Esc leaves the panel.
+        app.vim_enabled = false;
+        app.clipboard = None;
+        app.set_input("keep this draft");
+        let source = "root = Panel('Contact', [Input($name, 'Name'), Textarea($notes, 'Notes', 3)])\n$name = 'Ada'\n$notes = ''";
+        app.messages.push(dugix_core::db::Message {
+            role: "assistant".into(),
+            content: format!("```dugix-ui\n{source}\n```"),
+            model: None,
+            reasoning: None,
+            tokens: None,
+            secs: None,
+            cost: None,
+            phrase: None,
+            persona: None,
+            created_at: None,
+        });
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 40)).unwrap();
+        terminal.draw(|frame| ui::render(frame, &mut app)).unwrap();
+        handle_key(&mut app, KeyCode::F(2).into()).unwrap();
+        handle_key(&mut app, KeyCode::Left.into()).unwrap();
+        handle_key(&mut app, KeyCode::Char('X').into()).unwrap();
+        let contents =
+            |app: &mut AppView, terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>| {
+                terminal.draw(|frame| ui::render(frame, app)).unwrap();
+                terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .map(|cell| cell.symbol())
+                    .collect::<String>()
+            };
+        assert!(contents(&mut app, &mut terminal).contains("AdXa"));
+        handle_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT)).unwrap();
+        app.paste("é");
+        assert!(contents(&mut app, &mut terminal).contains("Adéa"));
+        handle_key(&mut app, ctrl('a')).unwrap();
+        handle_key(&mut app, ctrl('c')).unwrap();
+        assert_eq!(
+            app.popup,
+            Popup::InteractiveUi,
+            "copy selection must not close the panel"
+        );
+        handle_key(&mut app, ctrl('x')).unwrap();
+        app.paste("Lin");
+        assert!(contents(&mut app, &mut terminal).contains("Lin"));
+        handle_key(&mut app, KeyCode::Tab.into()).unwrap();
+        app.paste("line one");
+        handle_key(&mut app, KeyCode::Enter.into()).unwrap();
+        app.paste("line two");
+        let before = app.scroll;
+        handle_key(&mut app, KeyCode::PageUp.into()).unwrap();
+        assert_eq!(app.scroll, before, "editing must not scroll the transcript");
+        let rendered = contents(&mut app, &mut terminal);
+        assert!(rendered.contains("line one") && rendered.contains("line two"));
+        handle_key(&mut app, KeyCode::Esc.into()).unwrap();
+        assert_eq!(app.popup, Popup::None);
+        assert_eq!(app.input_text(), "keep this draft");
+        assert_eq!(app.messages.len(), 1);
+    }
+
+    #[test]
     fn proposed_command_fills_only_an_empty_composer() {
         let mut app = test_app();
-        app.core.proposed_command = Some("!sudo make install".into());
+        app.core.approvals.proposed_command = Some("!sudo make install".into());
         take_proposed_command(&mut app);
         assert_eq!(app.input_text(), "!sudo make install");
-        assert!(app.core.proposed_command.is_none());
+        assert!(app.core.approvals.proposed_command.is_none());
         app.set_input("keep this draft");
-        app.core.proposed_command = Some("!make".into());
+        app.core.approvals.proposed_command = Some("!make".into());
         take_proposed_command(&mut app);
         assert_eq!(app.input_text(), "keep this draft");
-        assert!(app.core.proposed_command.is_none());
+        assert!(app.core.approvals.proposed_command.is_none());
         assert_eq!(app.last_status(), "proposed: !make");
     }
 
@@ -1533,7 +1636,7 @@ mod tests {
     fn approval_docks_in_the_composer_and_leaves_the_conversation_readable() {
         let mut app = test_app();
         for n in 0..80 {
-            app.messages.push(nexus_core::db::Message {
+            app.messages.push(dugix_core::db::Message {
                 role: "user".into(),
                 content: format!("conversation line {n}"),
                 model: None,
@@ -1547,8 +1650,8 @@ mod tests {
             });
         }
         let (sender, _receiver) = tokio::sync::oneshot::channel();
-        app.pending_approval = Some(sender);
-        app.pending_approval_request = Some(nexus_core::tools::ApprovalRequest {
+        app.approvals.pending = Some(sender);
+        app.approvals.pending_request = Some(dugix_core::tools::ApprovalRequest {
             tool: "shell".into(),
             class: Some("runs a command".into()),
             detail: None,
@@ -1561,7 +1664,7 @@ mod tests {
         let screen = draw(&mut app, 100, 40);
         let title = screen
             .iter()
-            .position(|line| line.contains(" approve "))
+            .position(|line| line.contains("Approve"))
             .expect("approval panel drawn");
         // Docked at the bottom (above the status row), conversation above it.
         assert!(title > 20, "{screen:#?}");
@@ -1608,7 +1711,7 @@ mod tests {
         app.popup = Popup::None;
         app.clipboard = None;
         for path in ["first.rs", "second.rs"] {
-            app.messages.push(nexus_core::db::Message {
+            app.messages.push(dugix_core::db::Message {
                 role: "tool_call".into(),
                 content: serde_json::json!({
                     "name":"fs",
@@ -1687,7 +1790,7 @@ mod tests {
         assert!(app.batch_open.is_empty());
         assert_eq!(app.batch_focus, None);
         app.batch_open.insert((0, 1));
-        app.apply_event(&nexus_core::app::AppEvent::ViewportReset);
+        app.apply_event(&dugix_core::app::AppEvent::ViewportReset);
         assert!(app.batch_open.is_empty());
     }
 
@@ -2011,7 +2114,7 @@ mod tests {
         let mut app = test_app();
         app.core.models = ["a/alpha", "b/bravo", "c/charlie"]
             .iter()
-            .map(|id| nexus_core::provider::Model {
+            .map(|id| dugix_core::provider::Model {
                 id: (*id).into(),
                 name: (*id).into(),
                 reasoning_efforts: Vec::new(),
@@ -2019,8 +2122,9 @@ mod tests {
                 supports_images: false,
                 supports_image_generation: false,
                 supports_video_generation: false,
-                backend: nexus_core::provider::BackendTag::OpenRouter,
+                backend: dugix_core::provider::BackendTag::OpenRouter,
                 pricing: None,
+                aliases: Vec::new(),
             })
             .collect();
         app.core.set_setting("popup_sizes", "model:60x50").unwrap();
@@ -2066,7 +2170,7 @@ mod tests {
         let mut app = test_app();
         app.core.settings.image_viewer = "terminal".into();
         let dir =
-            std::env::temp_dir().join(format!("nexus-events-viewer-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("dugix-events-viewer-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("p.png");
         image::RgbImage::from_pixel(16, 8, image::Rgb([5, 6, 7]))
@@ -2165,5 +2269,176 @@ mod tests {
         handle_mouse(&mut app, event(MouseEventKind::ScrollUp, 40, 10), screen).unwrap();
         assert_ne!(app.image_viewer.zoom(), crate::image_viewer::Zoom::Fit);
         assert_eq!(app.scroll, 0, "the transcript behind it did not scroll");
+    }
+
+    fn type_keys(app: &mut AppView, text: &str) {
+        for c in text.chars() {
+            handle_normal(app, KeyCode::Char(c).into()).unwrap();
+        }
+    }
+
+    #[test]
+    fn vim_is_on_by_default_and_edits_the_composer() {
+        let mut app = test_app();
+        assert!(app.vim_enabled);
+        type_keys(&mut app, "hello");
+        handle_normal(&mut app, KeyCode::Esc.into()).unwrap();
+        assert_eq!(app.vim.mode(), crate::vim::Mode::Normal);
+        assert_eq!(
+            app.input_text(),
+            "hello",
+            "the first Esc only leaves Insert"
+        );
+        type_keys(&mut app, "0x");
+        assert_eq!(app.input_text(), "ello");
+        handle_normal(&mut app, KeyCode::Esc.into()).unwrap();
+        assert_eq!(app.input_text(), "", "Esc in Normal mode clears, as before");
+        assert_eq!(app.vim.mode(), crate::vim::Mode::Insert);
+    }
+
+    #[test]
+    fn vim_normal_enter_submits_and_vim_off_restores_plain_esc() {
+        let mut app = test_app();
+        type_keys(&mut app, "/vim off");
+        // The command menu owns Esc while it shows, so leave Insert from a
+        // plain draft: delete the slash, go Normal, put it back, then send.
+        app.set_input("vim off");
+        handle_normal(&mut app, KeyCode::Esc.into()).unwrap();
+        type_keys(&mut app, "I/");
+        handle_normal(&mut app, KeyCode::Esc.into()).unwrap();
+        assert_eq!(app.input_text(), "/vim off");
+        handle_normal(&mut app, KeyCode::Enter.into()).unwrap();
+        assert!(!app.vim_enabled, "Normal-mode Enter ran /vim off");
+        app.set_input("draft");
+        handle_normal(&mut app, KeyCode::Esc.into()).unwrap();
+        assert_eq!(app.input_text(), "", "one Esc clears without vim");
+        app.set_keymap("on").unwrap();
+        assert!(app.vim_enabled);
+        assert!(app.set_keymap("emacs").is_err());
+    }
+
+    #[test]
+    fn motion_command_toggles_panel_motion_and_persists() {
+        let mut app = test_app();
+        assert!(
+            crate::app_view::load_motion_enabled(&app.core),
+            "motion is on unless the setting says off"
+        );
+        app.set_motion("on").unwrap();
+        assert!(app.interactive.motion);
+        app.set_motion("off").unwrap();
+        assert!(!crate::app_view::load_motion_enabled(&app.core));
+        assert!(!app.interactive.motion);
+        let saved = app.core.db.load_settings().unwrap();
+        assert!(
+            saved
+                .iter()
+                .any(|(key, value)| key == "motion" && value == "off")
+        );
+        app.set_motion("").unwrap();
+        assert!(app.interactive.motion, "no argument toggles");
+        assert!(app.set_motion("sometimes").is_err());
+    }
+
+    #[test]
+    fn vim_keys_edit_panel_fields_and_code_editors() {
+        let mut app = test_app();
+        let source = "root = Panel('Form', [Input($name, 'Name'), Editor($code, 'Solution', 'python', 3)])\n$name = 'Ada'\n$code = 'x = 1'";
+        app.messages.push(dugix_core::db::Message {
+            role: "assistant".into(),
+            content: format!("```dugix-ui\n{source}\n```"),
+            model: None,
+            reasoning: None,
+            tokens: None,
+            secs: None,
+            cost: None,
+            phrase: None,
+            persona: None,
+            created_at: None,
+        });
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 40)).unwrap();
+        let mut screen = |app: &mut AppView| {
+            terminal.draw(|frame| ui::render(frame, app)).unwrap();
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+        };
+        screen(&mut app);
+        handle_key(&mut app, KeyCode::F(2).into()).unwrap();
+        assert_eq!(app.popup, Popup::InteractiveUi);
+        assert!(
+            screen(&mut app).contains("INSERT"),
+            "the hint shows the mode"
+        );
+        handle_key(&mut app, KeyCode::Esc.into()).unwrap();
+        assert_eq!(app.popup, Popup::InteractiveUi, "Esc only left Insert");
+        assert!(screen(&mut app).contains("NORMAL"));
+        for c in "0x".chars() {
+            handle_key(&mut app, KeyCode::Char(c).into()).unwrap();
+        }
+        assert!(screen(&mut app).contains("da"), "x deleted the A");
+        assert!(!screen(&mut app).contains("Ada"));
+        // Normal-mode digits and `p` stay with the field, not panel shortcuts.
+        handle_key(&mut app, KeyCode::Char('p').into()).unwrap();
+        assert!(
+            screen(&mut app).contains("dAa"),
+            "p put the deleted char back"
+        );
+        // Tab moves on to the code editor; Enter starts editing it.
+        handle_key(&mut app, KeyCode::Tab.into()).unwrap();
+        handle_key(&mut app, KeyCode::Enter.into()).unwrap();
+        handle_key(&mut app, KeyCode::Esc.into()).unwrap();
+        assert!(screen(&mut app).contains("NORMAL · i insert · Esc stop editing"));
+        for c in "0dwix".chars() {
+            handle_key(&mut app, KeyCode::Char(c).into()).unwrap();
+        }
+        assert!(screen(&mut app).contains("x= 1"), "dw then ix");
+        handle_key(&mut app, KeyCode::Esc.into()).unwrap();
+        handle_key(&mut app, KeyCode::Char('u').into()).unwrap();
+        assert!(screen(&mut app).contains("= 1"));
+        assert!(!screen(&mut app).contains("x= 1"), "u undid the insert");
+        handle_key(&mut app, KeyCode::Esc.into()).unwrap();
+        handle_key(&mut app, KeyCode::Esc.into()).unwrap();
+        assert_eq!(app.popup, Popup::None, "Esc in Normal leaves as before");
+    }
+
+    #[test]
+    fn ctrl_up_opens_the_sub_agents_only_while_this_chat_has_some() {
+        let mut app = test_app();
+        let session = app
+            .db
+            .create_session("helpers", "a/one", &app.active_space.id, "chat")
+            .unwrap();
+        app.session = Some(session.clone());
+        let ctrl_up = KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL);
+        handle_key(&mut app, ctrl_up).unwrap();
+        assert_eq!(app.popup, Popup::None);
+        app.subagent_runs.push(dugix_core::app::SubagentRun {
+            id: "run".into(),
+            session_id: session.id,
+            number: 1,
+            prompt: "look".into(),
+            model: "m".into(),
+            writable: false,
+            max_steps: 20,
+            status: dugix_core::app::SubagentStatus::Running,
+            started_at: "2026-11-08T00:00:00Z".into(),
+            finished_at: None,
+            steps: 0,
+            tokens: 0,
+            cost: None,
+            secs: 0.0,
+            review: None,
+            rows: Vec::new(),
+            live_reasoning: String::new(),
+            live_content: String::new(),
+        });
+        handle_key(&mut app, ctrl_up).unwrap();
+        assert_eq!(app.popup, Popup::Subagents);
     }
 }

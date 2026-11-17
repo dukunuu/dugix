@@ -36,7 +36,7 @@ pub(super) fn dispatch(app: &mut App, method: &str, path: &str, query: &str) -> 
 }
 
 pub(super) fn refresh_after_merge(app: &mut App) -> Result<()> {
-    app.sessions_cache.clear();
+    app.caches.sessions.clear();
     match app
         .db
         .list_spaces()?
@@ -53,7 +53,8 @@ pub(super) fn refresh_after_merge(app: &mut App) -> Result<()> {
         if let Some(updated) = app.db.get_session(&selected.id)? {
             if app.chat_task_for_session(&selected.id).is_none()
                 && app
-                    .research_running
+                    .research
+                    .running
                     .as_ref()
                     .is_none_or(|(id, _)| id != &selected.id)
             {
@@ -64,7 +65,7 @@ pub(super) fn refresh_after_merge(app: &mut App) -> Result<()> {
             app.new_session();
         }
     }
-    app.files_cache = app.db.list_files(&app.active_space.id)?;
+    app.caches.files = app.db.list_files(&app.active_space.id)?;
     app.refresh_memory_snapshot();
     app.refresh_toolbox();
     Ok(())
@@ -73,7 +74,7 @@ pub(super) fn refresh_after_merge(app: &mut App) -> Result<()> {
 struct Scratch(std::path::PathBuf);
 impl Scratch {
     fn new() -> Result<Self> {
-        let path = std::env::temp_dir().join(format!("nexus-web-sync-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("dugix-web-sync-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&path)?;
         Ok(Self(path))
     }
@@ -87,11 +88,7 @@ impl Drop for Scratch {
 fn pack(app: &App, changeset: &crate::sync::Changeset) -> Result<Vec<u8>> {
     let mut size = 0u64;
     for file in &changeset.files {
-        size = size.saturating_add(
-            u64::try_from(file.size)
-                .unwrap_or(u64::MAX)
-                .saturating_mul(2),
-        );
+        size = size.saturating_add(u64::try_from(file.size).unwrap_or(u64::MAX));
     }
     if size > MAX_EXPANDED {
         bail!("bundle is too large; use direct host sync");
@@ -124,7 +121,8 @@ pub(super) fn bundle(app: &mut App, input: Option<&[u8]>) -> Result<Vec<u8>> {
         let entry = archive.by_index(index)?;
         expanded = expanded.saturating_add(entry.size());
         if expanded > MAX_EXPANDED
-            || (entry.name() == "changeset.json" && entry.size() > 10 * 1024 * 1024)
+            || (entry.name().is_ok_and(|n| n == "changeset.json")
+                && entry.size() > 10 * 1024 * 1024)
         {
             bail!("expanded bundle exceeds limits");
         }

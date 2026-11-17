@@ -1,7 +1,5 @@
 //! Text shaping for decks: fonts, inline Markdown and a greedy typesetter that
-//! measures with the very font database `resvg` renders with. The layout
-//! engine (`layout.rs`) and the SVG renderer (`render.rs`) share it, so a box
-//! is as tall as the text that is drawn in it.
+//! measures with the very font database `resvg` renders with.
 
 #![allow(
     clippy::cast_precision_loss,
@@ -18,9 +16,8 @@ use resvg::{tiny_skia, usvg};
 
 use super::model::{Align, ResolvedFont, Theme, Transform};
 
-/// Numbers shared by the SVG renderer here and the HTML renderer in
-/// `crates/studio/ui` (`studio.css`, `render.js`). Lengths in `em` are
-/// relative to the node's font size.
+/// Layout numbers shared with the HTML renderer; lengths in `em` are relative to
+/// the node's font size.
 pub struct LayoutSpec {
     pub paragraph_gap: f64,
     /// Heading levels 1 to 3 as a multiple of the node's font size.
@@ -30,21 +27,17 @@ pub struct LayoutSpec {
     pub heading_weight: u16,
     pub list_indent: f64,
     pub list_item_padding: f64,
-    /// Padding around a code block.
     pub code_padding: f64,
     pub cell_padding_y: f64,
     pub cell_padding_x: f64,
-    /// Horizontal padding of inline code.
     pub inline_code_padding: f64,
     pub table_border: f64,
     pub chart_width: f64,
     pub chart_height: f64,
-    /// Text with a line height below this has no gap between paragraphs
-    /// (titles), like version 1's `xl` and `xxl` sizes.
+    /// Below this line height, paragraphs get no gap between them (titles).
     pub tight_line_height: f64,
 }
 
-/// The shared layout spec.
 pub const LAYOUT: LayoutSpec = LayoutSpec {
     paragraph_gap: 0.3,
     heading_scale: [1.4, 1.2, 1.05],
@@ -81,8 +74,7 @@ pub fn system_fonts() -> Arc<usvg::fontdb::Database> {
                     .any(|face| face.families.iter().any(|(family, _)| family == name))
             })
         };
-        // Without these, a machine whose default `sans-serif` face is
-        // missing draws nothing.
+        // Without these, a machine whose default `sans-serif` face is missing draws nothing.
         if let Some(name) = first_installed(
             &db,
             &[
@@ -128,7 +120,6 @@ pub fn system_fonts() -> Arc<usvg::fontdb::Database> {
     }))
 }
 
-/// Every installed family name, sorted.
 #[must_use]
 pub fn installed_families() -> Vec<String> {
     let mut names: Vec<String> = system_fonts()
@@ -149,7 +140,6 @@ pub struct FontFamily {
     pub variable: bool,
 }
 
-/// Cached families and available weights from the renderer's font database.
 #[must_use]
 pub fn installed_font_info() -> &'static [FontFamily] {
     static INFO: OnceLock<Vec<FontFamily>> = OnceLock::new();
@@ -190,8 +180,7 @@ fn font_info(db: &usvg::fontdb::Database) -> Vec<FontFamily> {
     result
 }
 
-// A variable OpenType face has an `fvar` table. No shaping or decompression is
-// needed to inspect the sfnt directory (including a face within a collection).
+// A variable face has an `fvar` table; the sfnt directory can be read directly.
 fn variable_font(data: &[u8], index: u32) -> bool {
     let u32_at = |at: usize| -> Option<usize> {
         Some(u32::from_be_bytes(data.get(at..at + 4)?.try_into().ok()?) as usize)
@@ -224,8 +213,7 @@ pub fn imported_font_info(bytes: &[u8]) -> Option<(String, u16, bool)> {
     ))
 }
 
-/// Whether `path` is a font file the core renderer can load (`woff2` is for
-/// the editor's webview only).
+/// Whether the core renderer can load a font file (`woff2` is webview-only).
 #[must_use]
 pub fn loadable_font(file: &str) -> bool {
     Path::new(file)
@@ -234,9 +222,8 @@ pub fn loadable_font(file: &str) -> bool {
         .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "ttf" | "otf" | "ttc"))
 }
 
-/// The system fonts plus the deck's imported font files, each registered
-/// under the family name the theme gives it. Files that are missing, too
-/// large, outside `assets` or not loadable are skipped.
+/// System fonts plus the deck's imported files, registered under the theme's
+/// family names.
 #[must_use]
 pub fn deck_fonts(theme: &Theme, assets: Option<&Path>) -> Arc<usvg::fontdb::Database> {
     let system = system_fonts();
@@ -283,7 +270,6 @@ pub fn deck_fonts(theme: &Theme, assets: Option<&Path>) -> Arc<usvg::fontdb::Dat
     Arc::new(db)
 }
 
-/// XML-escape text and attribute values.
 pub(crate) fn escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -317,8 +303,7 @@ fn clean_family(name: &str) -> String {
         .collect()
 }
 
-/// Font stack for a role or family: the family, its declared fallbacks, then
-/// platform fonts of the same flavor. Mirrors `fontStack` in `render.js`.
+/// Font stack for a role or family; mirrors `fontStack` in `render.js`.
 #[must_use]
 pub fn font_stack(theme: &Theme, family: &str) -> String {
     let name = clean_family(theme.family(family));
@@ -353,7 +338,6 @@ pub fn font_stack(theme: &Theme, family: &str) -> String {
     }
 }
 
-/// The stack for code: the family, then monospace platform fonts.
 #[must_use]
 pub fn code_stack(theme: &Theme, family: &str) -> String {
     let stack = font_stack(theme, family);
@@ -367,7 +351,6 @@ pub fn code_stack(theme: &Theme, family: &str) -> String {
     }
 }
 
-/// The font for inline code and code blocks' default, from the `mono` role.
 fn mono_stack(theme: &Theme) -> String {
     let stack = font_stack(theme, "mono");
     if stack.ends_with("monospace") {
@@ -423,8 +406,7 @@ fn link(rest: &str) -> Option<(&str, usize)> {
     valid.then_some((label, close + end + 4))
 }
 
-/// The inline token at the start of `rest`, in the order `inlineTokens` in
-/// `helpers.js` tries them: bold, italic, code, link.
+/// The inline token at the start of `rest`, in `helpers.js`'s `inlineTokens` order.
 fn token(rest: &str) -> Option<(Run, usize)> {
     let styled = |inner: &str, mark| Run {
         text: inner.into(),
@@ -470,7 +452,7 @@ pub(super) fn inline(text: &str) -> Vec<Run> {
     runs
 }
 
-/// One Markdown line, classified as `markdownTokens` in `helpers.js` does.
+/// One Markdown line, as `markdownTokens` in `helpers.js` classifies it.
 #[derive(Debug, PartialEq)]
 pub(super) enum Row<'a> {
     Heading(usize, &'a str),
@@ -632,8 +614,7 @@ impl<'a> Typesetter<'a> {
         }
     }
 
-    /// Bounding box of `<text>` content in a throwaway SVG. `usvg` lays text
-    /// out with the loaded font database, including fallback and kerning.
+    /// Bounding box of `<text>` content, measured by `usvg` with the loaded fonts.
     fn bounds(&self, body: &str, em: f64) -> Option<tiny_skia::Rect> {
         let source = format!(
             "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"40000\" height=\"2000\"><text x=\"0\" y=\"1000\" font-size=\"{em}\" xml:space=\"preserve\">{body}</text></svg>"
@@ -643,8 +624,7 @@ impl<'a> Typesetter<'a> {
             .map(|tree| tree.root().abs_bounding_box())
     }
 
-    /// Advance of `text`, trailing spaces included: a sentinel glyph after
-    /// the text keeps them inside the measured box and is subtracted again.
+    /// Advance of `text` including trailing spaces, measured via a sentinel glyph.
     pub fn advance(&mut self, face: &Face, em: f64, text: &str) -> f64 {
         if text.is_empty() {
             return 0.0;
@@ -677,7 +657,7 @@ impl<'a> Typesetter<'a> {
         let measured = self
             .bounds(&body, em)
             .map_or(0.0, |b| f64::from(b.width()) - sentinel);
-        // No usable font at all (a bare container): estimate, so layout stays sane.
+        // No usable font (a bare container): estimate so layout stays sane.
         let width = if measured <= 0.0 && !text.trim().is_empty() {
             text.chars().count() as f64 * (em * 0.55 + face.spacing)
         } else {
@@ -687,7 +667,7 @@ impl<'a> Typesetter<'a> {
         width
     }
 
-    /// Font ascent and descent in pixels, from the face the stack resolves to.
+    /// Font ascent and descent in px.
     pub fn ascent_descent(&mut self, face: &Face, em: f64) -> (f64, f64) {
         let key = (face.family.clone(), face.weight, em.to_bits());
         if let Some(found) = self.metrics.get(&key) {
@@ -735,9 +715,7 @@ impl<'a> Typesetter<'a> {
         }
     }
 
-    /// Greedy word wrap into `width`. A word wider than the line is broken
-    /// between characters (`overflow-wrap: anywhere`); trailing whitespace
-    /// hangs past the line end like it does in a browser.
+    /// Greedy word wrap into `width`; overlong words break anywhere, like a browser.
     pub fn wrap(&mut self, runs: &[Run], setting: &Setting<'_>, width: f64) -> Vec<Vec<Piece>> {
         // A hair of slack, so a box sized to its text (rounded) never re-wraps it.
         let width = width + 0.05;
@@ -771,7 +749,6 @@ impl<'a> Typesetter<'a> {
         lines
     }
 
-    /// Width of the longest unbreakable word in `runs`.
     fn longest_word(&mut self, runs: &[Run], setting: &Setting<'_>) -> f64 {
         let mut longest = 0.0_f64;
         for run in runs {
@@ -784,8 +761,7 @@ impl<'a> Typesetter<'a> {
         longest
     }
 
-    /// Set one paragraph at `(x, y)` in a box of `width`. Returns its height,
-    /// where each line starts and the widest line.
+    /// Set one paragraph; returns its height, line starts and widest line.
     pub fn paragraph(
         &mut self,
         out: &mut String,
@@ -811,9 +787,19 @@ impl<'a> Typesetter<'a> {
             let total = line.iter().map(|piece| piece.width).sum::<f64>() - hang;
             widest = widest.max(total);
             let offset = match setting.align {
-                Align::Left => 0.0,
+                Align::Left | Align::Justify => 0.0,
                 Align::Center => (width - total) / 2.0,
                 Align::Right => width - total,
+            };
+            // Justified lines but the last spread their slack over the word gaps.
+            let gaps = line[..line.len().saturating_sub(1)]
+                .iter()
+                .filter(|piece| piece.text.ends_with(char::is_whitespace))
+                .count();
+            let spread = if setting.align == Align::Justify && index + 1 < lines.len() && gaps > 0 {
+                ((width - total) / gaps as f64).max(0.0)
+            } else {
+                0.0
             };
             let top = y + index as f64 * line_box;
             let baseline = top + (line_box - (ascent + descent)) / 2.0 + ascent;
@@ -846,6 +832,9 @@ impl<'a> Typesetter<'a> {
                     );
                 }
                 cursor += piece.width;
+                if !last && piece.text.ends_with(char::is_whitespace) {
+                    cursor += spread;
+                }
             }
         }
         (lines.len() as f64 * line_box, starts, widest)
@@ -864,8 +853,7 @@ impl<'a> Typesetter<'a> {
         }
     }
 
-    /// A text node: the Markdown subset of `markdownTokens`. Returns the
-    /// height and the widest line (list indent included).
+    /// Set a text node's Markdown; returns its height and widest line.
     pub fn markdown(
         &mut self,
         out: &mut String,
@@ -959,7 +947,7 @@ impl<'a> Typesetter<'a> {
         (y - y0 - trailing, widest)
     }
 
-    /// The longest whitespace-delimited word in `source` (one line per line).
+    /// Narrowest width: the longest whitespace-delimited word, per line.
     pub fn plain_min_width(&mut self, style: &TextStyle, source: &str) -> f64 {
         let setting = Self::base_setting(style, &style.stack, style.font.weight);
         let runs = [Run {
@@ -988,7 +976,7 @@ impl<'a> Typesetter<'a> {
         widths.iter().sum()
     }
 
-    /// The longest unbreakable word of a text node, plus list indent.
+    /// Narrowest width of a text node, list indent included.
     pub fn markdown_min_width(&mut self, style: &TextStyle, source: &str) -> f64 {
         let em = style.font.size;
         let mut longest = 0.0_f64;
@@ -1014,8 +1002,8 @@ impl<'a> Typesetter<'a> {
         longest
     }
 
-    /// A code block: monospace, wrapped (`pre-wrap`), on a tinted box at least
-    /// `min_height` tall. Returns the box height and the widest line.
+    /// A code block on a tinted box at least `min_height` tall; returns its height
+    /// and widest line.
     pub fn code(
         &mut self,
         out: &mut String,
@@ -1079,14 +1067,11 @@ impl<'a> Typesetter<'a> {
         natural
     }
 
-    /// The natural width of a whole table.
     pub fn table_width(&mut self, style: &TextStyle, rows: &[Vec<String>]) -> f64 {
         self.table_columns(style, rows).iter().sum()
     }
 
-    /// A table with auto-sized columns (width shared in proportion to each
-    /// column's longest cell, as browsers do) and thin borders. Returns its
-    /// height.
+    /// A table with auto-sized columns and thin borders; returns its height.
     pub fn table(
         &mut self,
         out: &mut String,

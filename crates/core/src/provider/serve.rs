@@ -1,16 +1,5 @@
-//! Managed local-provider servers: start and stop a runtime's own inference
-//! server, detect which endpoints are already answering, and measure what
-//! each one costs in memory.
-//!
-//! Two things are deliberately kept apart. A server Nexus **started** is
-//! owned: it is tracked by child handle and stopped when Nexus stops it or
-//! exits. A server that merely **answers** on the runtime's endpoint — one
-//! started in another terminal, or a system service — is detected and used
-//! but never stopped, because nothing here started it.
-//!
-//! Memory is advisory. Going over budget reports and warns; it never kills a
-//! server, so a reply that is mid-generation is not yanked out from under the
-//! user. `/local stop` stays the only thing that ends a server.
+//! Managed local-provider servers: start/stop servers Dugix owns, detect ones
+//! already answering, and measure memory. Memory is advisory; it never kills.
 
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -22,9 +11,7 @@ use tokio::process::{Child, Command};
 
 use super::local::{LocalConfig, LocalRuntime};
 
-/// Fraction of physical memory a local server may take before Nexus warns,
-/// when no explicit `memory_budget_mb` is configured. Local inference is
-/// supposed to leave the machine usable; past this the box starts swapping.
+/// Fraction of physical memory a local server may take before Dugix warns.
 const DEFAULT_BUDGET_FRACTION: f64 = 0.70;
 
 /// How long a readiness/liveness probe waits before calling an endpoint down.
@@ -33,12 +20,12 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
 /// How a runtime's server is started.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Launch {
-    /// A foreground server Nexus owns for as long as it runs.
+    /// A foreground server Dugix owns for as long as it runs.
     Owned {
         argv: Vec<String>,
         env: Vec<(String, String)>,
     },
-    /// A helper command that hands the server to a background daemon Nexus
+    /// A helper command that hands the server to a background daemon Dugix
     /// does not own (LM Studio). Stopping runs the paired command rather than
     /// killing a child.
     Detached {
@@ -57,9 +44,7 @@ pub struct LaunchOptions {
 }
 
 impl LocalRuntime {
-    /// Whether starting this runtime's server requires naming a model.
-    /// Ollama, llama.cpp (router mode), mlx-serve and LM Studio load models on
-    /// demand through their own API;
+    /// Whether starting this runtime's server requires naming a model;
     /// mlx-lm and edge0 each serve exactly one model, chosen at launch.
     #[must_use]
     pub const fn serves_one_model(self) -> bool {
@@ -67,9 +52,6 @@ impl LocalRuntime {
     }
 
     /// The command that starts this runtime's server on `port`.
-    ///
-    /// # Errors
-    /// Reports the missing model for runtimes that serve exactly one.
     pub fn launch(self, model: Option<&str>, port: u16, options: LaunchOptions) -> Result<Launch> {
         let model = || -> Result<String> {
             model
@@ -162,7 +144,7 @@ pub struct RuntimeStatus {
     pub port: Option<u16>,
     /// The endpoint answered a `/v1/models` probe.
     pub running: bool,
-    /// Nexus started this server and will stop it on exit.
+    /// Dugix started this server and will stop it on exit.
     pub managed: bool,
     /// Resident memory of the listener's whole process tree, in KiB.
     pub rss_kb: Option<u64>,
@@ -206,18 +188,18 @@ pub fn format_kb(kb: u64) -> String {
     }
 }
 
-/// The servers Nexus started, and only those. Dropping the registry kills the
+/// The servers Dugix started, and only those. Dropping the registry kills the
 /// owned children (`kill_on_drop`), so quitting never leaves a multi-gigabyte
 /// server behind; detached daemons are stopped explicitly.
 #[derive(Default)]
 pub struct ManagedServers {
     owned: HashMap<LocalRuntime, Child>,
-    /// Runtimes whose detached daemon Nexus started, and so may stop.
+    /// Runtimes whose detached daemon Dugix started, and so may stop.
     detached: Vec<LocalRuntime>,
 }
 
 impl ManagedServers {
-    /// Whether Nexus started this runtime's server.
+    /// Whether Dugix started this runtime's server.
     #[must_use]
     pub fn manages(&self, runtime: LocalRuntime) -> bool {
         self.owned.contains_key(&runtime) || self.detached.contains(&runtime)
@@ -236,12 +218,7 @@ impl ManagedServers {
             .retain(|_, child| !matches!(child.try_wait(), Ok(Some(_))));
     }
 
-    /// Start `runtime`'s server. Returns the argv that was launched, for the
-    /// status line.
-    ///
-    /// # Errors
-    /// Reports an already-managed runtime, a missing model, and a server
-    /// binary that is not installed.
+    /// Start `runtime`'s server. Returns the launched argv for the status line.
     pub fn start(
         &mut self,
         runtime: LocalRuntime,
@@ -252,7 +229,7 @@ impl ManagedServers {
         self.reap();
         anyhow::ensure!(
             !self.manages(runtime),
-            "{} is already started by Nexus — /local stop {} first",
+            "{} is already started by Dugix — /local stop {} first",
             runtime.label(),
             runtime.token()
         );
@@ -290,16 +267,9 @@ impl ManagedServers {
         Ok(argv.join(" "))
     }
 
-    /// Stop a server Nexus started. Servers it did not start are left alone.
-    /// Signalling is synchronous so the caller stays sync; the wait that
-    /// reaps the child, and the detached daemon's stop helper, run detached.
-    ///
-    /// `wait_for_exit` is for restarts: the killed server only releases the
-    /// port as it is torn down, so starting its replacement immediately can
-    /// race it onto a still-bound address. Reaping first removes the race.
-    ///
-    /// # Errors
-    /// Reports a runtime Nexus is not managing.
+    /// Stop a server Dugix started; servers it did not start are left alone.
+    /// `wait_for_exit` is for restarts: the killed server releases the port as it
+    /// is torn down, so reaping first avoids racing the replacement onto it.
     pub fn stop(&mut self, runtime: LocalRuntime, port: u16, wait_for_exit: bool) -> Result<()> {
         if let Some(mut child) = self.owned.remove(&runtime) {
             let _ = child.start_kill();
@@ -333,12 +303,12 @@ impl ManagedServers {
             return Ok(());
         }
         anyhow::bail!(
-            "Nexus did not start {} — stop it where you started it",
+            "Dugix did not start {} — stop it where you started it",
             runtime.label()
         )
     }
 
-    /// Every runtime Nexus currently manages.
+    /// Every runtime Dugix currently manages.
     #[must_use]
     pub fn managed_runtimes(&self) -> Vec<LocalRuntime> {
         self.owned
@@ -348,7 +318,7 @@ impl ManagedServers {
             .collect()
     }
 
-    /// Stop every server Nexus started and wait for the owned ones to go.
+    /// Stop every server Dugix started and wait for the owned ones to go.
     /// This is the exit path: quitting must not leave gigabytes behind.
     pub async fn stop_all(&mut self) {
         for (_, mut child) in self.owned.drain() {
@@ -375,11 +345,7 @@ impl ManagedServers {
 }
 
 /// Wait, briefly and synchronously, for a just-killed child to be reaped.
-///
-/// This blocks the caller, which is the point: it runs only on the restart
-/// path, where the next step needs the port back. A `SIGKILL`ed process is
-/// normally gone within a millisecond or two, and the bound caps the stall at
-/// half a second even if something is wedged.
+/// This blocks only on the restart path, where the next step needs the port back.
 fn reap_blocking(child: &mut Child) {
     let deadline = std::time::Instant::now() + Duration::from_millis(500);
     while std::time::Instant::now() < deadline {
@@ -405,7 +371,7 @@ pub async fn probe(endpoint: &str) -> bool {
 }
 
 /// The pid listening on a loopback TCP port, via `lsof`. Used only for
-/// servers Nexus did not start; an owned server reports its child pid
+/// servers Dugix did not start; an owned server reports its child pid
 /// directly. Absent `lsof` simply means no memory reading.
 pub async fn listener_pid(port: u16) -> Option<u32> {
     let output = Command::new("lsof")
@@ -423,11 +389,7 @@ pub async fn listener_pid(port: u16) -> Option<u32> {
 }
 
 /// Resident memory of `root` and every process descended from it, in KiB.
-///
-/// The tree matters: Ollama's server spawns a `runner` child that holds the
-/// weights, and edge0/MLX servers are Python parents of their own workers.
-/// Charging only the listener would report a few megabytes for a server
-/// holding gigabytes.
+/// The tree matters: Ollama's server spawns a `runner` child that holds the weights.
 pub async fn tree_rss_kb(root: u32) -> Option<u64> {
     let output = Command::new("ps")
         .args(["-axo", "pid=,ppid=,rss="])
@@ -504,12 +466,8 @@ fn parse_mem_total(meminfo: &str) -> Option<u64> {
         .and_then(|rest| rest.split_whitespace().next()?.parse().ok())
 }
 
-/// Probe every runtime and price the ones that answer.
-///
-/// `configured` supplies the endpoint override and budget for whichever
-/// runtime is selected; the others are probed at their default endpoints, so
-/// a server left running under a runtime you are not currently using still
-/// shows up as occupying memory.
+/// Probe every runtime and price the ones that answer. `configured` supplies the
+/// override for the selected runtime; the others are probed at their defaults.
 pub async fn survey(
     configured: Option<&LocalConfig>,
     managed: &[(LocalRuntime, Option<u32>)],
@@ -524,7 +482,7 @@ pub async fn survey(
         let endpoint = config.endpoint().to_string();
         let port = config.port();
         let running = probe(&endpoint).await;
-        // A server Nexus owns reports its own child pid. A detached daemon it
+        // A server Dugix owns reports its own child pid. A detached daemon it
         // started, and any server it did not start, is found on the port.
         let entry = managed.iter().find(|(candidate, _)| *candidate == runtime);
         let pid = match entry.and_then(|(_, pid)| *pid) {
@@ -553,7 +511,7 @@ pub async fn survey(
     statuses
 }
 
-/// The memory a local server may take before Nexus warns, in KiB: the
+/// The memory a local server may take before Dugix warns, in KiB: the
 /// configured `memory_budget_mb`, else a fraction of physical memory.
 pub async fn budget_kb(configured: Option<&LocalConfig>) -> Option<u64> {
     if let Some(mb) = configured.and_then(|config| config.memory_budget_mb) {
@@ -569,7 +527,7 @@ pub async fn budget_kb(configured: Option<&LocalConfig>) -> Option<u64> {
 }
 
 /// `llama-server` in router mode: no model at launch; it serves every cached
-/// model and loads the requested one on demand. nexus is not a browser, so
+/// model and loads the requested one on demand. dugix is not a browser, so
 /// CORS is narrowed to the server itself instead of `*`.
 fn llama_server_argv(port: u16, options: LaunchOptions) -> Vec<String> {
     let mut argv: Vec<String> = vec![

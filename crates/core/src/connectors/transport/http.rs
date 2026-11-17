@@ -1,13 +1,5 @@
-//! Streamable HTTP: every JSON-RPC message is a POST; the answer is either
-//! one JSON body or a Server-Sent-Events stream that carries the response
-//! (and possibly notifications) before it ends. No resumability: a stream
-//! that breaks surfaces as `Interrupted` and the client decides whether
-//! re-asking is safe.
-//!
-//! Safety rules enforced here: `https` only (plain `http` for loopback),
-//! redirects are never followed (a redirect would carry the bearer token to
-//! another origin), credentials are marked sensitive and scrubbed from every
-//! error text, and no single message may exceed 8 MB.
+//! Streamable HTTP: every JSON-RPC message is a POST; the answer is one JSON body
+//! or a Server-Sent-Events stream that carries the response before it ends.
 
 use std::sync::{Arc, Mutex};
 
@@ -31,7 +23,6 @@ struct State {
     stateless: bool,
 }
 
-/// One server, reached over HTTP.
 pub struct HttpTransport {
     client: reqwest::Client,
     url: reqwest::Url,
@@ -43,10 +34,6 @@ pub struct HttpTransport {
 }
 
 impl HttpTransport {
-    /// Prepare a transport. Nothing is sent yet.
-    ///
-    /// # Errors
-    /// The URL is not allowed or a header is malformed.
     pub fn new(
         url: &str,
         bearer: Option<String>,
@@ -72,7 +59,7 @@ impl HttpTransport {
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(connect_timeout)
-            .user_agent(concat!("nexus-chat/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("dugix/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|error| McpError::Transport(error.without_url().to_string()))?;
         Ok(Self {
@@ -86,7 +73,7 @@ impl HttpTransport {
         })
     }
 
-    /// Record the negotiated protocol (decides which headers are sent).
+    /// Record the negotiated protocol; it decides which headers are sent.
     pub fn configure(&self, protocol: &str, stateless: bool) {
         let mut state = self.state.lock().expect("http state");
         state.protocol = Some(protocol.to_string());
@@ -199,7 +186,6 @@ impl HttpTransport {
         })
     }
 
-    /// POST a request and read its response (JSON or SSE).
     pub async fn request(&self, id: u64, message: &Value) -> Result<Value, McpError> {
         let response = self.send(message).await?;
         let is_stream = response
@@ -272,7 +258,6 @@ impl HttpTransport {
     }
 }
 
-/// `resource_metadata="…"` out of a `WWW-Authenticate` header.
 fn resource_metadata(headers: &HeaderMap) -> Option<String> {
     headers
         .get_all(reqwest::header::WWW_AUTHENTICATE)
@@ -319,9 +304,6 @@ pub struct SseParser {
 
 impl SseParser {
     /// Feed a chunk; returns the `data` payload of every event it completed.
-    ///
-    /// # Errors
-    /// An event grew past the message size cap.
     pub fn push(&mut self, chunk: &[u8]) -> Result<Vec<String>, McpError> {
         self.pending.extend_from_slice(chunk);
         let mut events = Vec::new();

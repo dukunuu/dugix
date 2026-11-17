@@ -1,9 +1,5 @@
-//! Bring MCP servers over from the tools people already use: Claude Desktop
-//! (`claude_desktop_config.json`), Claude Code (`~/.claude.json` and a
-//! project `.mcp.json`) and Cursor (`~/.cursor/mcp.json`). Each entry
-//! becomes a proposed connector; secrets found in `env` and `headers` are
-//! carried separately so they go to the keychain, never into `config.toml`.
-//! Paths are injectable so tests read fixture files.
+//! Bring MCP servers over from the tools people already use: Claude Desktop, Claude Code and Cursor.
+//! Secrets found in `env` and `headers` go to the keychain, never into `config.toml`.
 
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
@@ -24,7 +20,6 @@ pub enum Source {
 }
 
 impl Source {
-    /// A short label for lists.
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
@@ -34,7 +29,6 @@ impl Source {
         }
     }
 
-    /// Parse a CLI/command word.
     #[must_use]
     pub fn parse(word: &str) -> Option<Self> {
         match word.trim().to_ascii_lowercase().as_str() {
@@ -46,7 +40,6 @@ impl Source {
     }
 }
 
-/// Where to look.
 #[derive(Debug, Clone, Default)]
 pub struct ImportPaths {
     pub claude_desktop: Option<PathBuf>,
@@ -56,15 +49,13 @@ pub struct ImportPaths {
 }
 
 impl ImportPaths {
-    /// The real locations on this machine; `project_dir` is where to look
-    /// for a `.mcp.json` (the working directory).
+    /// The real locations on this machine; `project_dir` is where to look for a `.mcp.json`.
     #[must_use]
     pub fn system(project_dir: Option<&Path>) -> Self {
         let base = directories::BaseDirs::new();
         let home = base.as_ref().map(|dirs| dirs.home_dir().to_path_buf());
         Self {
-            // macOS: ~/Library/Application Support; Windows: %APPDATA%;
-            // Linux: ~/.config.
+            // macOS: ~/Library/Application Support; Windows: %APPDATA%; Linux: ~/.config.
             claude_desktop: base.as_ref().map(|dirs| {
                 dirs.config_dir()
                     .join("Claude")
@@ -147,7 +138,6 @@ fn string_map(value: Option<&Value>) -> BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
-/// Turn one `mcpServers` entry into a proposal.
 fn parse_entry(
     source: Source,
     origin: &Path,
@@ -156,7 +146,7 @@ fn parse_entry(
 ) -> Result<Proposal, String> {
     let kind = entry.get("type").and_then(Value::as_str);
     if kind == Some("sse") {
-        return Err("uses the legacy SSE transport, which nexus does not support".into());
+        return Err("uses the legacy SSE transport, which dugix does not support".into());
     }
     let mut notes = Vec::new();
     let mut secrets: Vec<(String, String)> = Vec::new();
@@ -241,15 +231,11 @@ fn read_servers(path: &Path) -> Result<Vec<(String, Value)>, String> {
         }
     };
     take(root.get("mcpServers"), "");
-    // Claude Code keeps per-project servers under projects.<path>.mcpServers.
-    // Only the user-level and the current project's `.mcp.json` are imported;
-    // the per-project blocks are skipped on purpose (they belong to other
-    // directories).
+    // Claude Code's per-project servers are skipped on purpose: they belong to other directories.
     Ok(servers)
 }
 
-/// Read every known location. `existing` is the set of connectors already
-/// configured as `(name, target-key)` so repeats are recognised.
+/// Read every known location; `existing` is the connectors already configured, so repeats are recognised.
 #[must_use]
 pub fn discover(paths: &ImportPaths, existing: &BTreeMap<String, ConnectorConfig>) -> Discovery {
     let mut found = Discovery::default();
@@ -312,11 +298,7 @@ pub fn discover(paths: &ImportPaths, existing: &BTreeMap<String, ConnectorConfig
     found
 }
 
-/// Add the chosen proposals (names empty = all not already present).
-/// Returns the names added; secrets go to the keychain first-class.
-///
-/// # Errors
-/// The first connector that could not be added (earlier ones stay added).
+/// Add the chosen proposals; an empty `names` means all not already present.
 pub fn apply(
     registry: &Registry,
     proposals: &[Proposal],
@@ -340,7 +322,7 @@ mod tests {
     use std::sync::Arc;
 
     fn fixtures() -> (PathBuf, ImportPaths) {
-        let dir = std::env::temp_dir().join(format!("nexus-conn-import-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-conn-import-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join("proj")).unwrap();
         let write = |name: &str, body: &str| {
             let path = dir.join(name);
@@ -407,8 +389,6 @@ mod tests {
         assert_eq!(linear.config.headers["X-Team"], "eng");
         let gh = &found.proposals[2];
         assert_eq!(gh.config.headers["X-Api-Key"], "keychain:header-x-api-key");
-        // The duplicate target, the SSE server, the empty entry and the plain-http
-        // server are skipped (the duplicate silently, the rest with reasons).
         let skipped = found.skipped.join("\n");
         assert!(skipped.contains("legacy SSE"), "{skipped}");
         assert!(skipped.contains("neither a url nor a command"), "{skipped}");
@@ -454,7 +434,7 @@ mod tests {
 
     #[test]
     fn missing_or_corrupt_files_are_skipped_not_fatal() {
-        let dir = std::env::temp_dir().join(format!("nexus-conn-import-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-conn-import-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let bad = dir.join("bad.json");
         std::fs::write(&bad, "{ not json").unwrap();
@@ -505,7 +485,6 @@ mod tests {
         assert!(!text.contains("lin_tok_123"), "{text}");
         let loaded = config::load_at(&config_path).unwrap();
         assert_eq!(loaded.connectors.len(), 2);
-        // Re-running recognises what is there.
         let again = discover(&paths, &loaded.connectors);
         assert!(again.proposals.iter().filter(|p| p.already).count() >= 2);
         assert!(

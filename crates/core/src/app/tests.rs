@@ -1,6 +1,90 @@
 use super::*;
 
 #[test]
+fn with_creds_configures_all_backends_and_announces_loading_once() {
+    let saved = config::SavedCreds {
+        keys: std::collections::HashMap::from([
+            (BackendTag::OpenAi, "sk-openai-test".into()),
+            (BackendTag::Mistral, "mistral-test".into()),
+        ]),
+        ..Default::default()
+    };
+    let mut app = App::with_creds(Db::open_in_memory().unwrap(), test_space(), saved);
+    let root = app.space.root.clone();
+    assert_eq!(
+        app.backends.configured_tags(),
+        [BackendTag::OpenAi, BackendTag::Mistral]
+    );
+    assert_eq!(app.saved.key(BackendTag::OpenAi), Some("sk-openai-test"));
+    assert_eq!(app.saved.key(BackendTag::Mistral), Some("mistral-test"));
+    assert_eq!(app.index.embedding_model, "openai:text-embedding-3-small");
+    let mut loading = 0;
+    while let Some(event) = app.pop_pending_event() {
+        if let AppEvent::Status(status) = event
+            && status.starts_with("loading models…")
+        {
+            loading += 1;
+        }
+    }
+    assert_eq!(loading, 1);
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn codex_refresh_does_nothing_for_unexpired_credentials() {
+    let saved = config::SavedCreds {
+        codex: Some(config::CodexCredentials {
+            access: "codex-test-access".into(),
+            refresh: "codex-test-refresh".into(),
+            expires: Utc::now().timestamp_millis() + 3_600_000,
+            account_id: "test-account".into(),
+        }),
+        ..Default::default()
+    };
+    let mut app = App::with_creds(Db::open_in_memory().unwrap(), test_space(), saved);
+    let root = app.space.root.clone();
+    app.refresh_codex_in_background();
+    assert!(app.codex_refresh_rx.is_none());
+    assert_eq!(
+        app.saved.codex.as_ref().unwrap().access,
+        "codex-test-access"
+    );
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn codex_refresh_failure_reports_login_hint_and_keeps_stored_credentials() {
+    let saved = config::SavedCreds {
+        codex: Some(config::CodexCredentials {
+            access: "stored-codex-access".into(),
+            refresh: "stored-codex-refresh".into(),
+            expires: 0,
+            account_id: "test-account".into(),
+        }),
+        ..Default::default()
+    };
+    let mut app = App::with_creds(Db::open_in_memory().unwrap(), test_space(), saved);
+    let root = app.space.root.clone();
+    while app.pop_pending_event().is_some() {}
+    let (tx, rx) = mpsc::unbounded_channel();
+    app.codex_refresh_rx = Some(rx);
+    tx.send(Err("offline".into())).unwrap();
+    let event = app.next_event().await;
+    assert!(matches!(event, AppEvent::Status(status) if status ==
+        "Codex sign-in could not refresh (offline) — run /login and pick Codex"));
+    assert!(app.codex_refresh_rx.is_none());
+    let creds = app.saved.codex.as_ref().unwrap();
+    assert_eq!(creds.access, "stored-codex-access");
+    assert_eq!(creds.refresh, "stored-codex-refresh");
+    assert_eq!(creds.expires, 0);
+    assert!(app.backends.configured(BackendTag::Codex));
+    drop(app);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn auto_refuses_chat_and_restores_its_device_local_mode() {
     let mut app = app_with_key();
     app.run_command("auto").unwrap();
@@ -22,7 +106,11 @@ fn auto_refuses_chat_and_restores_its_device_local_mode() {
         Some("auto")
     );
     assert!(app.toolbox.defs().iter().any(|tool| tool.name == "fs"));
-    assert!(app.system_prompt().contains("## Agent mode"));
+    assert!(app.mode_note_text().contains("## Agent mode"));
+    assert!(
+        app.mode_note_text()
+            .contains("- Mode: agent·auto · workspace ")
+    );
     app.new_session();
     app.switch_to_session_by_id(&session.id).unwrap();
     assert_eq!(app.work_mode, WorkMode::AgentAuto);
@@ -123,7 +211,7 @@ async fn installed_approver_round_trip_writes_only_after_the_approval_command() 
         .unwrap();
     assert!(matches!(event, AppEvent::Status(status) if status == "approval needed · fs write"));
     assert_eq!(
-        app.pending_approval_request.as_ref().unwrap(),
+        app.approvals.pending_request.as_ref().unwrap(),
         &ApprovalRequest {
             tool: "fs".into(),
             class: Some("write in workspace".into()),
@@ -133,14 +221,14 @@ async fn installed_approver_round_trip_writes_only_after_the_approval_command() 
             allow_session: true,
         }
     );
-    assert!(app.pending_approval.is_some());
+    assert!(app.approvals.pending.is_some());
     assert!(!path.exists());
     app.execute(AppCommand::Approve {
         decision: Decision::Allow,
     })
     .unwrap();
-    assert!(app.pending_approval.is_none());
-    assert!(app.pending_approval_request.is_none());
+    assert!(app.approvals.pending.is_none());
+    assert!(app.approvals.pending_request.is_none());
     let (result, status) = call.await.unwrap();
     assert!(result.starts_with("wrote approved"), "{result}");
     assert_ne!(status, "blocked");
@@ -206,7 +294,7 @@ async fn installed_session_grants_reset_on_refresh_and_mode_switches() {
         assert!(workspace.join("first").exists());
         if reset_mode {
             app.run_command("chat").unwrap();
-            assert!(app.approval_rx.is_some());
+            assert!(app.approvals.rx.is_some());
             app.run_command(&format!("agent {}", workspace.display()))
                 .unwrap();
             while app.pop_pending_event().is_some() {}
@@ -284,8 +372,8 @@ async fn dropped_tool_call_clears_the_pending_approval_in_next_event() {
         .await
         .unwrap();
     assert!(matches!(event, AppEvent::Status(status) if status == "approval cancelled"));
-    assert!(app.pending_approval.is_none());
-    assert!(app.pending_approval_request.is_none());
+    assert!(app.approvals.pending.is_none());
+    assert!(app.approvals.pending_request.is_none());
     assert!(!workspace.join("cancelled").exists());
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
@@ -346,8 +434,8 @@ async fn finishing_or_cancelling_chat_clears_its_pending_approval() {
             app.on_chat_event(1, StreamEvent::Done).unwrap();
             assert_eq!(call.await.unwrap().1, "blocked");
         }
-        assert!(app.pending_approval.is_none());
-        assert!(app.pending_approval_request.is_none());
+        assert!(app.approvals.pending.is_none());
+        assert!(app.approvals.pending_request.is_none());
         assert!(!workspace.join("cancelled").exists());
         drop(app);
         std::fs::remove_dir_all(root).unwrap();
@@ -418,10 +506,10 @@ async fn approval_command_answers_a_pending_channel_request() {
         let (decision, ()) = tokio::join!(approver.request(request.clone()), async {
             let (shown, reply) = receiver.recv().await.unwrap();
             assert_eq!(shown, request);
-            app.pending_approval = Some(reply);
+            app.approvals.pending = Some(reply);
             app.execute(AppCommand::Approve { decision: answer })
                 .unwrap();
-            assert!(app.pending_approval.is_none());
+            assert!(app.approvals.pending.is_none());
         });
         assert_eq!(decision, answer);
     }
@@ -516,10 +604,9 @@ fn model_profile_caps_local_tool_replay_without_changing_hosted_or_stored_result
     }
 }
 
-/// A throwaway space dir under the OS temp dir, unique per test.
 fn test_space() -> Space {
     Space {
-        root: std::env::temp_dir().join(format!("nexus-test-{}", uuid::Uuid::new_v4())),
+        root: std::env::temp_dir().join(format!("dugix-test-{}", uuid::Uuid::new_v4())),
     }
 }
 
@@ -670,7 +757,7 @@ fn start_stream_sets_trace_context_only_when_training_is_on() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn local_backend_discovers_models_and_uses_local_utility_fallback() {
+async fn local_backend_discovers_models_and_uses_the_session_model() {
     let mut app = App::new(Db::open_in_memory().unwrap(), None, test_space());
     app.saved.local = Some(crate::provider::local::LocalConfig {
         provider: crate::provider::local::LocalRuntime::Mlx,
@@ -697,15 +784,14 @@ async fn local_backend_discovers_models_and_uses_local_utility_fallback() {
         "local:mlx-community/test-model"
     );
     app.current_model = Some(composite_id(&app.models[0]));
-    let (provider, model) = app.resolve_utility_model_backend("gpt-4.1-mini").unwrap();
+    let (provider, model) = app.session_backend().unwrap();
     assert_eq!(provider.backend_tag(), BackendTag::Local);
     assert_eq!(model, "mlx-community/test-model");
 }
 
 #[test]
 fn bare_local_command_reports_the_current_runtime() {
-    // The status path is the headless half of `/local`; applying a spec
-    // writes the user's real config file, so it stays out of the suite.
+    // Applying a runtime spec would write the user's real config file.
     let mut app = App::new(Db::open_in_memory().unwrap(), None, test_space());
     let last_status = |app: &mut App| {
         app.pending_events
@@ -742,8 +828,7 @@ fn bare_local_command_reports_the_current_runtime() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn local_prompt_budget_warning_is_advisory_once_per_epoch_and_never_hosted() {
-    // Never yield: abort each request before the single-threaded runtime can
-    // poll its provider task, so this exercises start_stream without network.
+    // Do not yield: polling the spawned provider tasks would access the network.
     for (backend, context_length, warns) in [
         (BackendTag::Local, Some(2048), true),
         (BackendTag::OpenRouter, Some(2048), false),
@@ -846,10 +931,8 @@ fn local_survey_reports_liveness_and_warns_without_stopping_anything() {
             .collect::<Vec<_>>()
     };
 
-    // A survey the user asked for reports a line per runtime, and warns about
-    // the one over budget. (Boot queues a "no API key" line first.)
     let _ = drain(&mut app);
-    app.local_status_announce = true;
+    app.local.status_announce = true;
     app.on_local_status(Some(statuses(true)));
     let lines = drain(&mut app);
     assert!(lines[0].contains("edge0 ●4.2 GB ⚠"), "{lines:?}");
@@ -857,19 +940,16 @@ fn local_survey_reports_liveness_and_warns_without_stopping_anything() {
     let warning = lines.last().unwrap();
     assert!(warning.contains("over the 2.9 GB budget"), "{warning}");
     assert!(warning.contains("/local stop edge0"), "{warning}");
-    // Advisory only: warning about a server does not stop it.
-    assert!(!app.local_servers.manages(LocalRuntime::Edge0));
-    assert_eq!(app.local_status.len(), 2);
+    assert!(!app.local.servers.manages(LocalRuntime::Edge0));
+    assert_eq!(app.local.status.len(), 2);
 
-    // A background refresh (the picker opening) caches without announcing;
-    // nothing is over budget, so it says nothing at all.
     app.on_local_status(Some(statuses(false)));
     assert!(drain(&mut app).is_empty());
-    assert!(app.local_status_rx.is_none());
+    assert!(app.local.status_rx.is_none());
 }
 
 #[test]
-fn stopping_a_server_nexus_did_not_start_is_refused() {
+fn stopping_a_server_dugix_did_not_start_is_refused() {
     use crate::provider::local::LocalRuntime;
 
     let mut app = App::new(Db::open_in_memory().unwrap(), None, test_space());
@@ -886,11 +966,10 @@ fn stopping_a_server_nexus_did_not_start_is_refused() {
     app.manage_local_server("stop", "edge0");
     let status = last_status(&mut app);
     assert!(status.contains("did not start"), "{status}");
-    // A runtime that is off and unnamed cannot be started by guesswork.
     app.manage_local_server("start", "");
     let status = last_status(&mut app);
     assert!(status.contains("local inference is off"), "{status}");
-    assert!(!app.local_servers.manages(LocalRuntime::Edge0));
+    assert!(!app.local.servers.manages(LocalRuntime::Edge0));
 }
 
 #[test]
@@ -898,7 +977,6 @@ fn parse_topic_extracts_and_slugifies() {
     let (t, s) = parse_topic(r#"{"topic": "Rust Async Runtimes", "id": "rust async!"}"#).unwrap();
     assert_eq!(t, "Rust Async Runtimes");
     assert_eq!(s, "rust-async");
-    // Tolerates surrounding prose / fences.
     let (t, s) =
         parse_topic("sure:\n```json\n{\"topic\":\"Hi There\",\"id\":\"hi\"}\n```").unwrap();
     assert_eq!(t, "Hi There");
@@ -976,7 +1054,7 @@ fn invalid_agent_root_preserves_the_mode_binding_and_cache_epoch() {
     assert_eq!(app.workspace.as_ref().unwrap().root(), root);
     assert_eq!(app.db.session_workspace(&session.id), Some(root));
     assert_eq!(app.cache_epoch, bound_epoch);
-    assert!(bound_epoch > epoch);
+    assert_eq!(bound_epoch, epoch, "a mode change keeps the cached prompt");
     assert!(app.last_status().contains("workspace error"));
     app.run_command("chat").unwrap();
     app.run_command(&format!("agent {}", missing.display()))
@@ -1021,7 +1099,10 @@ async fn pre_session_agent_mode_binds_on_send_and_new_sessions_start_in_chat() {
     let epoch = app.cache_epoch;
     app.run_command("agent .").unwrap();
     assert!(app.session.is_none());
-    assert!(app.cache_epoch > epoch);
+    assert_eq!(
+        app.cache_epoch, epoch,
+        "a mode change keeps the cached prompt"
+    );
     let root = app.workspace.as_ref().unwrap().root().to_path_buf();
     app.send_message("hello".into()).unwrap();
     let id = app.session.as_ref().unwrap().id.clone();
@@ -1040,7 +1121,10 @@ async fn pre_session_agent_mode_binds_on_send_and_new_sessions_start_in_chat() {
     assert_eq!(app.session.as_ref().unwrap().id, id);
     assert!(!app.messages.is_empty());
     assert_eq!(app.db.session_workspace(&id), None);
-    assert!(app.cache_epoch > epoch);
+    assert_eq!(
+        app.cache_epoch, epoch,
+        "leaving agent mode keeps the cached prompt"
+    );
     app.switch_to_session_by_id(&id).unwrap();
     assert_eq!(app.work_mode, WorkMode::Chat);
 }
@@ -1156,29 +1240,117 @@ async fn agent_toolbox_reads_but_blocks_mutations_and_chat_hides_workspace_tools
 }
 
 #[test]
-fn agent_prompt_is_after_environment_and_included_in_context_counts() {
+fn the_system_prompt_never_names_the_mode_and_the_mode_note_carries_the_agent_prompt() {
     let mut app = app_with_key();
     app.system_prompt_overlay = "user additions".into();
+    let chat = app.system_prompt();
     let before = app.context_breakdown().system_tokens;
-    let environment_len = app.environment_section().chars().count();
     app.run_command("agent .").unwrap();
-    let prompt = app.system_prompt();
-    let environment = prompt.find("## Environment").unwrap();
-    let agent = prompt.find("\n\n## Agent mode\n").unwrap();
-    let overlay = prompt.find("\n\nuser additions").unwrap();
-    assert!(environment < agent && agent < overlay);
-    assert!(prompt.contains("- Mode: agent · workspace "));
-    let extra_chars = app.environment_section().chars().count() - environment_len
-        + crate::prompts::render(crate::prompts::AGENT, &[])
-            .chars()
-            .count();
-    let delta = app.context_breakdown().system_tokens - before;
-    let expected = u64::try_from(extra_chars / 4).unwrap();
-    assert!((expected..=expected + 1).contains(&delta));
-    app.run_command("chat").unwrap();
-    assert!(!app.system_prompt().contains("## Agent mode"));
-    assert!(!app.system_prompt().contains("- Mode:"));
+    assert_eq!(
+        app.system_prompt(),
+        chat,
+        "the cached prompt is the same in every mode"
+    );
     assert_eq!(app.context_breakdown().system_tokens, before);
+    let note = app.mode_note_text();
+    assert!(note.starts_with("[The user switched this conversation to agent mode."));
+    assert!(note.contains(&crate::prompts::render(crate::prompts::AGENT, &[])));
+    assert!(note.contains("- Mode: agent · workspace "));
+    app.run_command("chat").unwrap();
+    assert_eq!(app.system_prompt(), chat);
+    let note = app.mode_note_text();
+    assert!(note.contains("switched this conversation to chat mode"));
+    assert!(!note.contains("## Agent mode"));
+}
+
+#[tokio::test]
+async fn a_mode_change_is_a_note_at_the_switch_and_keeps_every_earlier_request_byte() {
+    let mut app = app_with_key();
+    app.current_model = Some("a/one".into());
+    let finish = |app: &mut App| {
+        let task = app.active_chat_task().unwrap().id;
+        app.on_chat_event(task, StreamEvent::Token("ok".into()))
+            .unwrap();
+        app.on_chat_event(task, StreamEvent::Done).unwrap();
+    };
+    let wire = |app: &mut App| -> Vec<(String, String)> {
+        app.build_history()
+            .into_iter()
+            .map(|m| (m.role, m.content))
+            .collect()
+    };
+    let roles =
+        |app: &App| -> Vec<String> { app.messages.iter().map(|m| m.role.clone()).collect() };
+
+    app.send_message("plain question".into()).unwrap();
+    finish(&mut app);
+    assert_eq!(
+        roles(&app),
+        ["user", "assistant"],
+        "chat is the default: no note"
+    );
+    let chat_history = wire(&mut app);
+    let chat_tools = app.active_prefix().unwrap().tools.len();
+    let key = app.prompt_cache_key_for(&app.session.as_ref().unwrap().id.clone());
+
+    // Chat to agent: the system prompt and every earlier message are unchanged.
+    app.run_command("agent .").unwrap();
+    app.run_command("chat").unwrap();
+    app.run_command("agent .").unwrap();
+    app.send_message("now edit the file".into()).unwrap();
+    assert_eq!(
+        roles(&app),
+        ["user", "assistant", "mode", "user"],
+        "one note, however often the mode was toggled in between"
+    );
+    let agent_history = wire(&mut app);
+    assert_eq!(agent_history[..chat_history.len()], chat_history[..]);
+    let note = &agent_history[chat_history.len()];
+    assert_eq!(note.0, "user");
+    assert!(note.1.contains("## Agent mode"), "{}", note.1);
+    // The first agent turn adds the workspace tools: the one rebuild there is.
+    let agent_tools = app.active_prefix().unwrap().tools.clone();
+    assert!(agent_tools.len() > chat_tools);
+    assert!(agent_tools.iter().any(|tool| tool.name == "fs"));
+    let agent_key = app.prompt_cache_key_for(&app.session.as_ref().unwrap().id.clone());
+    assert_ne!(agent_key, key);
+    finish(&mut app);
+
+    // From here every switch is free: same lane, same tools, same bytes.
+    let before = wire(&mut app);
+    for command in ["chat", "agent .", "auto", "chat"] {
+        app.run_command(command).unwrap();
+    }
+    app.send_message("back to talking".into()).unwrap();
+    let after = wire(&mut app);
+    assert_eq!(after[..before.len()], before[..]);
+    assert!(
+        after[before.len()]
+            .1
+            .contains("switched this conversation to chat mode")
+    );
+    let prefix = app.active_prefix().unwrap();
+    assert_eq!(
+        serde_json::to_string(&prefix.tools).unwrap(),
+        serde_json::to_string(&agent_tools).unwrap(),
+        "the tool list stays, so the provider cache does"
+    );
+    assert_eq!(
+        app.prompt_cache_key_for(&app.session.as_ref().unwrap().id.clone()),
+        agent_key
+    );
+    // In chat mode the workspace tools are listed but refuse.
+    let (refused, _) = app
+        .toolbox
+        .run("fs", r#"{"action":"list","path":"."}"#)
+        .await;
+    assert!(refused.contains("needs an agent workspace"), "{refused}");
+    finish(&mut app);
+
+    // Sending again in the same mode adds nothing.
+    app.send_message("still chatting".into()).unwrap();
+    assert_eq!(roles(&app).iter().filter(|role| *role == "mode").count(), 2);
+    app.stop_stream().unwrap();
 }
 
 pub fn app_with_key() -> App {
@@ -1195,6 +1367,7 @@ pub fn app_with_key() -> App {
             supports_video_generation: false,
             backend: BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         },
         Model {
             id: "b/two".into(),
@@ -1206,44 +1379,10 @@ pub fn app_with_key() -> App {
             supports_video_generation: false,
             backend: BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         },
     ];
     a
-}
-
-#[test]
-fn web_mode_clause_instructs_search_first_and_cites_inline() {
-    let c = chat::web_mode_clause("2026-07-06");
-    assert!(c.contains("2026-07-06"));
-    assert!(c.contains("search with mode=web"));
-    assert!(c.contains("[n]"));
-    assert!(c.contains("Sources:"));
-    assert!(c.contains("Do not fabricate"));
-}
-
-#[tokio::test]
-async fn web_mode_toggles_persists_and_shows_in_system_prompt() {
-    let mut a = app_with_key();
-    a.current_model = Some("a/one".into());
-    assert!(!a.web_mode);
-    a.toggle_web_mode();
-    assert!(a.web_mode);
-    let (_, status) = a.drain_ui_events();
-    assert!(status.contains("web mode on"));
-
-    a.execute(AppCommand::Send {
-        text: "hi".to_string(),
-    })
-    .unwrap();
-    let sid = a.session.as_ref().unwrap().id.clone();
-    let sessions = a.db.list_sessions(&a.active_space.id).unwrap();
-    assert!(sessions.iter().find(|s| s.id == sid).unwrap().web_mode);
-    assert!(a.system_prompt().contains("Web answer mode is ON"));
-
-    a.toggle_web_mode(); // off, same session
-    assert!(!a.system_prompt().contains("Web answer mode is ON"));
-    let sessions = a.db.list_sessions(&a.active_space.id).unwrap();
-    assert!(!sessions.iter().find(|s| s.id == sid).unwrap().web_mode);
 }
 
 #[test]
@@ -1267,7 +1406,6 @@ fn message_without_model_is_rejected() {
     })
     .unwrap();
     assert!(a.session.is_none());
-    // The composer restore is an event — the view re-applies it.
     let (sets, status) = a.drain_ui_events();
     assert_eq!(sets, vec!["hello".to_string()]);
     assert!(status.contains("pick a model"));
@@ -1722,7 +1860,6 @@ async fn stream_is_tagged_with_its_origin_session() {
     );
     assert!(a.viewing_stream());
 
-    // Switch to a blank chat: still streaming, but not viewing it.
     a.new_session();
     assert!(a.is_streaming());
     assert!(!a.viewing_stream());
@@ -1738,13 +1875,12 @@ async fn background_finish_lands_in_origin_session_and_notifies() {
     .unwrap();
     let origin = a.session.as_ref().unwrap().id.clone();
 
-    a.new_session(); // switch away mid-stream
+    a.new_session();
     a.on_stream_event(crate::provider::StreamEvent::Token("late answer".into()))
         .unwrap();
     a.on_stream_event(crate::provider::StreamEvent::Done)
         .unwrap();
 
-    // Landed in the origin session, not the (blank) active one.
     assert!(a.messages.is_empty());
     let stored = a.db.load_messages(&origin).unwrap();
     assert_eq!(stored.last().unwrap().role, "assistant");
@@ -1771,16 +1907,17 @@ async fn each_tool_round_keeps_its_own_thinking_and_the_reply_only_the_last() {
             id: "call_0".into(),
             reasoning: Some("plan A".into()),
             assistant_content: Some("Let me look.".into()),
+            step_start: true,
             name: "web_search".into(),
             arguments: "{}".into(),
             result: "ok".into(),
         },
-        // A backend that streams reasoning without attaching it to the call.
         StreamEvent::Reasoning("plan B".into()),
         StreamEvent::ToolCall {
             id: "call_1".into(),
             reasoning: None,
             assistant_content: None,
+            step_start: false,
             name: "web_search".into(),
             arguments: "{}".into(),
             result: "ok".into(),
@@ -1826,13 +1963,14 @@ async fn background_tool_call_persists_to_origin_session_only() {
         id: "call_0".into(),
         reasoning: None,
         assistant_content: None,
+        step_start: true,
         name: "web_search".into(),
         arguments: "{}".into(),
         result: "ok".into(),
     })
     .unwrap();
 
-    assert!(a.messages.is_empty()); // active transcript untouched
+    assert!(a.messages.is_empty());
     let stored = a.db.load_messages(&origin).unwrap();
     assert_eq!(stored.last().unwrap().role, "tool_call");
 }
@@ -1853,34 +1991,266 @@ async fn send_in_another_session_is_allowed_while_one_streams() {
     assert_eq!(a.chat_task_count(), 2);
 }
 
+fn user_texts(a: &App) -> Vec<String> {
+    a.messages
+        .iter()
+        .filter(|m| m.role == "user")
+        .map(|m| m.content.lines().last().unwrap_or_default().to_string())
+        .collect()
+}
+
+fn send(a: &mut App, text: &str) {
+    a.execute(AppCommand::Send {
+        text: text.to_string(),
+    })
+    .unwrap();
+}
+
 #[tokio::test]
-async fn second_send_in_the_same_session_is_rejected() {
+async fn sends_during_a_reply_queue_and_go_out_in_order_as_replies_finish() {
     let mut a = app_with_key();
     a.current_model = Some("a/one".into());
-    a.execute(AppCommand::Send {
-        text: "first".to_string(),
-    })
-    .unwrap();
-    a.execute(AppCommand::Send {
-        text: "second".to_string(),
-    })
-    .unwrap();
+    send(&mut a, "first");
+    send(&mut a, "second");
+    send(&mut a, "third");
 
     assert_eq!(a.chat_task_count(), 1);
+    assert_eq!(a.queued_messages(), ["second", "third"]);
     let (sets, status) = a.drain_ui_events();
-    assert_eq!(sets, vec!["second".to_string()]);
-    assert!(status.contains("still streaming in"));
+    assert!(sets.is_empty(), "the composer stays free: {sets:?}");
+    assert!(status.contains("queued (2 waiting)"), "{status}");
+    assert_eq!(user_texts(&a), ["first"]);
+
+    let task = a.active_chat_task().unwrap().id;
+    a.on_chat_event(task, StreamEvent::Token("one".into()))
+        .unwrap();
+    a.on_chat_event(task, StreamEvent::Done).unwrap();
+    assert_eq!(a.queued_messages(), ["third"]);
+    assert_eq!(user_texts(&a), ["first", "second"]);
+    let next = a.active_chat_task().unwrap().id;
+    assert_ne!(next, task, "the queued message started its own reply");
+
+    a.on_chat_event(next, StreamEvent::Done).unwrap();
+    assert!(a.queued_messages().is_empty());
+    assert_eq!(user_texts(&a), ["first", "second", "third"]);
+    a.stop_stream().unwrap();
+}
+
+#[tokio::test]
+async fn a_stopped_reply_holds_the_queue_until_the_user_sends_again() {
+    let mut a = app_with_key();
+    a.current_model = Some("a/one".into());
+    send(&mut a, "first");
+    send(&mut a, "second");
+    send(&mut a, "third");
+    a.stop_stream().unwrap();
+
+    assert_eq!(a.chat_task_count(), 0, "nothing fires after a stop");
+    assert_eq!(a.queued_messages(), ["second", "third"]);
+    assert!(a.last_status().contains("2 queued messages held"));
+
+    // A new message goes behind the waiting ones; the oldest is sent.
+    send(&mut a, "fourth");
+    assert_eq!(user_texts(&a), ["first", "second"]);
+    assert_eq!(a.queued_messages(), ["third", "fourth"]);
+    a.stop_stream().unwrap();
+
+    // Enter on an empty composer sends the next one.
+    assert!(a.send_next_queued().unwrap());
+    assert_eq!(user_texts(&a), ["first", "second", "third"]);
+    assert!(!a.send_next_queued().unwrap(), "busy again");
+    a.stop_stream().unwrap();
+}
+
+#[tokio::test]
+async fn queue_command_edits_drops_and_clears_waiting_messages() {
+    let mut a = app_with_key();
+    a.current_model = Some("a/one".into());
+    a.run_command("queue").unwrap();
+    assert_eq!(a.last_status(), "no messages queued");
+    send(&mut a, "first");
+    for text in ["one", "two", "three", "four"] {
+        send(&mut a, text);
+    }
+    a.drain_ui_events();
+
+    a.run_command("queue").unwrap();
+    assert_eq!(
+        a.last_status(),
+        "queued: 1. one · 2. two · 3. three · 4. four"
+    );
+    a.run_command("queue edit 2").unwrap();
+    let (sets, _) = a.drain_ui_events();
+    assert_eq!(sets, ["two"], "the message is back in the composer");
+    assert_eq!(a.queued_messages(), ["one", "three", "four"]);
+    a.run_command("queue edit").unwrap();
+    assert_eq!(
+        a.drain_ui_events().0,
+        ["four"],
+        "no number edits the newest"
+    );
+    a.run_command("queue drop 1").unwrap();
+    assert_eq!(a.queued_messages(), ["three"]);
+    a.run_command("queue drop 5").unwrap();
+    assert!(a.last_status().contains("no queued message 5"));
+    a.run_command("queue send").unwrap();
+    assert!(a.last_status().contains("still streaming"));
+    a.run_command("queue clear").unwrap();
+    assert!(a.queued_messages().is_empty());
+    assert!(a.parse_command("queue drop").is_err());
+
+    for i in 0..=crate::app::MAX_QUEUED_MESSAGES {
+        send(&mut a, &format!("m{i}"));
+    }
+    assert_eq!(a.queued_messages().len(), crate::app::MAX_QUEUED_MESSAGES);
+    let (sets, status) = a.drain_ui_events();
+    assert_eq!(
+        sets.last().unwrap(),
+        &format!("m{}", crate::app::MAX_QUEUED_MESSAGES)
+    );
+    assert!(status.contains("queue full"), "{status}");
+    a.stop_stream().unwrap();
+}
+
+#[tokio::test]
+async fn a_queue_belongs_to_its_conversation() {
+    let mut a = app_with_key();
+    a.current_model = Some("a/one".into());
+    send(&mut a, "first");
+    send(&mut a, "second");
+    let task = a.active_chat_task().unwrap().id;
+    a.new_session();
+    assert!(a.queued_messages().is_empty());
+
+    a.on_chat_event(task, StreamEvent::Done).unwrap();
+    assert_eq!(
+        a.chat_task_count(),
+        0,
+        "never sent into another conversation"
+    );
+    assert_eq!(a.queued.values().next().unwrap(), &["second".to_string()]);
+}
+
+#[tokio::test]
+async fn a_background_agents_report_comes_back_as_a_message_when_the_chat_is_idle() {
+    use crate::subagent::BackgroundMsg;
+    let mut a = app_with_key();
+    a.current_model = Some("a/one".into());
+    send(&mut a, "first");
+    let session = a.session.as_ref().unwrap().id.clone();
+    let task = a.active_chat_task().unwrap().id;
+
+    // It finishes while the reply is still being written: the report waits.
+    a.background
+        .insert_finished(&session, 4, "dig into the parser", "found it");
+    a.on_background(BackgroundMsg::Finished {
+        session_id: session.clone(),
+    });
+    assert_eq!(user_texts(&a), ["first"]);
+    assert!(a.queued_messages().is_empty(), "still in the registry");
+
+    a.on_chat_event(task, StreamEvent::Token("ok".into()))
+        .unwrap();
+    a.on_chat_event(task, StreamEvent::Done).unwrap();
+    let sent = a.messages.iter().rev().find(|m| m.role == "user").unwrap();
+    assert!(
+        sent.content
+            .ends_with("[background agent 4 finished: dig into the parser]\nfound it"),
+        "{}",
+        sent.content
+    );
+    let next = a.active_chat_task().unwrap().id;
+    assert_ne!(next, task, "the report started a new turn");
+    a.on_chat_event(next, StreamEvent::Token("thanks".into()))
+        .unwrap();
+    a.on_chat_event(next, StreamEvent::Done).unwrap();
+    assert_eq!(a.chat_task_count(), 0);
+
+    // Idle: the next report goes out at once.
+    a.background
+        .insert_finished(&session, 5, "second look", "also fine");
+    a.on_background(BackgroundMsg::Finished {
+        session_id: session.clone(),
+    });
+    assert_eq!(a.chat_task_count(), 1);
+    assert!(
+        a.messages
+            .iter()
+            .any(|m| m.content.contains("agent 5 finished"))
+    );
+    a.stop_stream().unwrap();
+
+    // A held queue stays held: the report joins it instead of starting it.
+    a.queued.insert(session.clone(), vec!["held".into()]);
+    a.background.insert_finished(&session, 6, "third", "done");
+    a.on_background(BackgroundMsg::Finished {
+        session_id: session.clone(),
+    });
+    assert_eq!(a.chat_task_count(), 0);
+    assert_eq!(a.queued_messages().len(), 2);
+    assert!(a.queued_messages()[1].contains("agent 6 finished"));
+
+    // Another conversation is open: it waits there, marked unread.
+    a.queued.clear();
+    a.new_session();
+    a.background.insert_finished(&session, 7, "fourth", "done");
+    a.on_background(BackgroundMsg::Finished {
+        session_id: session.clone(),
+    });
+    assert_eq!(a.chat_task_count(), 0);
+    assert!(a.unread.contains(&session));
+    assert!(a.queued[&session][0].contains("agent 7 finished"));
+    assert!(a.last_status().contains("background agent finished in:"));
+}
+
+#[tokio::test]
+async fn a_turn_ending_leaves_background_agents_running_in_agents() {
+    use crate::provider::{SubagentEvent, SubagentUpdate};
+    use crate::subagent::BackgroundMsg;
+    let mut a = app_with_key();
+    a.current_model = Some("a/one".into());
+    send(&mut a, "first");
+    let session = a.session.as_ref().unwrap().id.clone();
+    let task = a.active_chat_task().unwrap().id;
+    let update = |event| BackgroundMsg::Update {
+        session_id: session.clone(),
+        update: Box::new(SubagentUpdate {
+            id: "run-1".into(),
+            number: 9,
+            event,
+        }),
+    };
+    a.on_background(update(SubagentEvent::Started {
+        prompt: "long job".into(),
+        model: "a/one".into(),
+        writable: false,
+        max_steps: 20,
+    }));
+    a.on_chat_event(task, StreamEvent::Token("ok".into()))
+        .unwrap();
+    a.on_chat_event(task, StreamEvent::Done).unwrap();
+    let run = a.live_subagent("run-1").unwrap();
+    assert_eq!(run.status, crate::app::SubagentStatus::Running);
+
+    a.on_background(BackgroundMsg::Stopped {
+        session_id: session.clone(),
+        number: 9,
+    });
+    let run = a.live_subagent("run-1").unwrap();
+    assert_eq!(run.status, crate::app::SubagentStatus::Failed);
+    assert_eq!(run.rows.last().unwrap().content, "stopped");
+
+    // In incognito, and where the process ends with the reply, nothing detaches.
+    assert!(a.chat_tool_defs().iter().all(|def| def.name != "agents"));
 }
 
 #[tokio::test]
 async fn update_check_notifies_only_for_newer_versions() {
     let mut a = app_with_key();
-    // Newer published version -> status + notification.
     a.on_update_check(Some("99.0.0".into()));
     let (_, status) = a.drain_ui_events();
-    assert!(status.contains("update available"));
+    assert!(status.contains("run `dugix update`"));
     assert_eq!(a.notifications.len(), 1);
-    // Same/older version or a failed check -> silent.
     a.on_update_check(Some("0.0.1".into()));
     a.on_update_check(None);
     assert_eq!(a.notifications.len(), 1, "only newer versions notify");
@@ -1939,9 +2309,6 @@ async fn concurrent_chat_tasks_route_results_to_their_origin_sessions() {
 
 #[tokio::test]
 async fn opencode_split_usage_merges_cost_into_one_row() {
-    // OpenCode Zen sends accounting as two events: the finish chunk carries
-    // real usage, then a trailing chunk carries only the provider cost.
-    // Both must merge into a single usage_log row — not two.
     let mut a = app_with_key();
     a.current_model = Some("go:deepseek-v4-pro".into());
     a.execute(AppCommand::Send {
@@ -1984,7 +2351,7 @@ async fn opencode_split_usage_merges_cost_into_one_row() {
     assert_eq!(rows[0].completion_tokens, 20);
     assert_eq!(rows[0].cache_read_tokens, 60);
     assert_eq!(rows[0].cost, Some(0.0042));
-    assert!(a.last_cache_rate.is_some());
+    assert!(a.meter.last_cache_rate.is_some());
 }
 
 #[tokio::test]
@@ -2022,9 +2389,6 @@ async fn each_real_api_usage_event_gets_its_own_row() {
 
 #[tokio::test]
 async fn cost_only_usage_event_is_logged_with_zero_tokens() {
-    // OpenCode Zen free models never report usage — the trailing cost chunk
-    // is the only accounting. It must still land in the log (provider cost
-    // beats the catalog's unknown price) and not clobber the cache rate.
     let mut a = app_with_key();
     a.current_model = Some("deepseek-v4-flash-free".into());
     a.execute(AppCommand::Send {
@@ -2033,7 +2397,7 @@ async fn cost_only_usage_event_is_logged_with_zero_tokens() {
     .unwrap();
     let session = a.session.as_ref().unwrap().id.clone();
     let task = a.chat_task_for_session(&session).map(|t| t.id).unwrap();
-    a.last_cache_rate = Some(0.5);
+    a.meter.last_cache_rate = Some(0.5);
 
     a.on_chat_event(
         task,
@@ -2054,7 +2418,7 @@ async fn cost_only_usage_event_is_logged_with_zero_tokens() {
     assert_eq!(rows[0].prompt_tokens, 0);
     assert_eq!(rows[0].cost, Some(0.0));
     assert_eq!(
-        a.last_cache_rate,
+        a.meter.last_cache_rate,
         Some(0.5),
         "cost-only events must not clear the cache rate"
     );
@@ -2132,7 +2496,7 @@ async fn opening_a_session_clears_its_unread_marker() {
     a.switch_to_session_by_id(&origin).unwrap();
     assert_eq!(a.session.as_ref().unwrap().id, origin);
     assert!(!a.unread.contains(&origin));
-    assert_eq!(a.messages.last().unwrap().content, "done"); // reloaded from db
+    assert_eq!(a.messages.last().unwrap().content, "done");
 }
 
 #[tokio::test]
@@ -2143,9 +2507,9 @@ async fn welcome_screen_shows_while_a_stream_runs_elsewhere() {
         text: "hello".to_string(),
     })
     .unwrap();
-    assert!(!a.is_welcome()); // viewing the streaming session
+    assert!(!a.is_welcome());
     a.new_session();
-    assert!(a.is_welcome()); // blank chat, stream backgrounded
+    assert!(a.is_welcome());
 }
 
 #[tokio::test]
@@ -2163,7 +2527,6 @@ async fn esc_stop_keeps_partial_response() {
     assert!(a.chat_tasks.is_empty());
     assert_eq!(a.messages.last().unwrap().content, "partial answer");
     assert_eq!(a.last_status(), "response stopped");
-    // No-op when nothing streams.
     a.stop_stream().unwrap();
 }
 
@@ -2182,6 +2545,7 @@ fn effort_accepted_follows_the_models_own_list() {
             supports_video_generation: false,
             backend: BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         },
         Model {
             id: "dumb".into(),
@@ -2193,16 +2557,13 @@ fn effort_accepted_follows_the_models_own_list() {
             supports_video_generation: false,
             backend: BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         },
     ];
-    // Claude's own list: minimal/low/medium/high.
     assert!(a.effort_accepted("claude", "minimal"));
     assert!(a.effort_accepted("claude", "high"));
-    assert!(!a.effort_accepted("claude", "max")); // not in the accepted set
-    // No reasoning mode → nothing is accepted.
+    assert!(!a.effort_accepted("claude", "max"));
     assert!(!a.effort_accepted("dumb", "low"));
-    // Unknown model → accept anything, so a stored value is never silently
-    // dropped just because the catalog isn't loaded.
     assert!(a.effort_accepted("not-in-catalog", "high"));
 }
 
@@ -2260,10 +2621,10 @@ fn settings_groups_cover_every_field_exactly_once() {
 fn base_system_prompt_is_always_present_and_resolves_verbosity() {
     let a = app_with_key();
     assert!(!a.base_system_prompt.is_empty());
-    assert!(a.base_system_prompt.contains("{{verbosity}}")); // placeholder present in the raw file
+    assert!(a.base_system_prompt.contains("{{verbosity}}"));
     let resolved = a.system_prompt();
-    assert!(!resolved.contains("{{verbosity}}")); // placeholder gets swapped
-    assert!(resolved.contains(verbosity_clause("concise"))); // default level
+    assert!(!resolved.contains("{{verbosity}}"));
+    assert!(resolved.contains(verbosity_clause("concise")));
 }
 
 #[test]
@@ -2292,7 +2653,6 @@ fn system_prompt_is_static_first() {
         "Use examples.",
     );
     a.memory_snapshot = "The user prefers Rust.".into();
-    a.web_mode = true;
     a.interactive_ui = true;
 
     let prompt = a.system_prompt();
@@ -2306,17 +2666,16 @@ fn system_prompt_is_static_first() {
         "## Skills",
         "## Memory",
         "## Now",
-        "Web answer mode is ON",
     ]
     .map(|text| prompt.find(text).unwrap());
     assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(!prompt[positions[positions.len() - 1]..].contains("\n\n## "));
 }
 
 #[test]
 fn two_epochs_share_the_whole_prefix_before_now() {
     let mut a = app_with_key();
     a.interactive_ui = true;
-    a.web_mode = true;
     a.prompt_datetime = "2026-07-06 12:00 UTC".into();
     let first = a.system_prompt();
     a.prompt_datetime = "2026-07-07 13:00 UTC".into();
@@ -2371,7 +2730,7 @@ fn prompt_mentions_only_tools_that_exist() {
             );
         }
     }
-    assert!(now.contains("use `search` with mode=web"));
+    assert!(now.starts_with("## Now"));
 }
 
 #[test]
@@ -2413,7 +2772,7 @@ fn last_used_model_restored_on_startup() {
     let db = Db::open_in_memory().unwrap();
     db.mark_model_used("a/one").unwrap();
     std::thread::sleep(std::time::Duration::from_millis(2));
-    db.mark_model_used("b/two").unwrap(); // more recent
+    db.mark_model_used("b/two").unwrap();
     let a = App::new(db, Some("k"), test_space());
     assert_eq!(a.current_model.as_deref(), Some("b/two"));
 }
@@ -2421,15 +2780,15 @@ fn last_used_model_restored_on_startup() {
 #[test]
 fn context_used_and_limit() {
     let mut a = app_with_key();
-    a.skills.clear(); // isolate this test from installed skills
-    a.base_system_prompt = String::new(); // isolate from the base system prompt
+    a.skills.clear();
+    a.base_system_prompt = String::new();
     a.models[0].context_length = Some(1000);
     a.current_model = Some("a/one".into());
     assert_eq!(a.context_limit(), Some(1000));
     let prompt_only = a.context_used();
     a.messages.push(Message {
         role: "user".into(),
-        content: "x".repeat(40), // ~10 tokens
+        content: "x".repeat(40),
         model: None,
         reasoning: None,
         tokens: None,
@@ -2462,15 +2821,13 @@ fn context_bar_adds_only_what_changed_since_the_last_exact_count() {
     let mut a = app_with_key();
     a.skills.clear();
     a.base_system_prompt = String::new();
-    // JSON-heavy rows the ~4 chars/token rule overestimates.
     a.messages
         .push(context_row("user", "\\\"x\\\" ".repeat(20_000)));
     a.observe_context(1, 30_000);
     assert_eq!(a.context_used(), 30_000, "idle with nothing new: exact");
 
     a.messages.push(context_row("assistant", "y".repeat(400)));
-    // 400 chars ≈ 100 estimated tokens, scaled by the learned ratio.
-    let ratio = a.context_ratio.unwrap();
+    let ratio = a.meter.ratio.unwrap();
     assert_eq!(a.context_used(), 30_000 + (100.0 * ratio).round() as u64);
     assert!(
         a.context_used() < 31_000,
@@ -2485,13 +2842,12 @@ fn smaller_count_inside_a_turn_is_a_sub_agent_and_does_not_move_the_bar() {
     a.base_system_prompt = String::new();
     a.messages.push(context_row("user", "x".repeat(4_000)));
     a.observe_context(7, 50_000);
-    a.observe_context(7, 3_000); // a `task` sub-agent's own request
-    assert_eq!(a.context_total, Some(50_000));
+    a.observe_context(7, 3_000);
+    assert_eq!(a.meter.total, Some(50_000));
     a.observe_context(7, 51_000);
-    assert_eq!(a.context_total, Some(51_000));
-    // A new turn's first count is always taken, even if smaller (/retry).
+    assert_eq!(a.meter.total, Some(51_000));
     a.observe_context(8, 45_000);
-    assert_eq!(a.context_total, Some(45_000));
+    assert_eq!(a.meter.total, Some(45_000));
 }
 
 #[test]
@@ -2499,11 +2855,10 @@ fn estimate_without_an_exact_count_uses_the_learned_ratio() {
     let mut a = app_with_key();
     a.skills.clear();
     a.base_system_prompt = String::new();
-    a.messages.push(context_row("user", "x".repeat(4_000))); // ~1,000 estimated
+    a.messages.push(context_row("user", "x".repeat(4_000)));
     a.observe_context(1, 1_500);
     assert_eq!(a.context_used(), 1_500);
-    // A prompt-cache epoch boundary drops the exact count.
-    a.context_total = None;
+    a.meter.total = None;
     assert_eq!(a.context_used(), 1_500, "no jump back to the raw estimate");
 }
 
@@ -2512,7 +2867,7 @@ async fn streaming_context_estimate_does_not_shrink_below_last_exact_total() {
     let mut a = app_with_key();
     a.base_system_prompt.clear();
     a.skills.clear();
-    a.context_total = Some(10_000);
+    a.meter.total = Some(10_000);
     let task = tokio::spawn(async {});
     let abort = task.abort_handle();
     let _ = task.await;
@@ -2545,8 +2900,8 @@ async fn streaming_context_estimate_does_not_shrink_below_last_exact_total() {
 #[test]
 fn compaction_narrows_effective_messages_and_context_used() {
     let mut a = app_with_key();
-    a.skills.clear(); // isolate this test from installed skills
-    a.base_system_prompt = String::new(); // isolate from the base system prompt
+    a.skills.clear();
+    a.base_system_prompt = String::new();
     a.models[0].context_length = Some(1000);
     a.current_model = Some("a/one".into());
     let prompt_only = a.context_used();
@@ -2555,7 +2910,7 @@ fn compaction_narrows_effective_messages_and_context_used() {
     for i in 0..4 {
         a.messages.push(Message {
             role: if i % 2 == 0 { "user" } else { "assistant" }.into(),
-            content: "x".repeat(40), // ~10 tokens each
+            content: "x".repeat(40),
             model: None,
             reasoning: None,
             tokens: None,
@@ -2566,13 +2921,11 @@ fn compaction_narrows_effective_messages_and_context_used() {
             created_at: None,
         });
     }
-    s.compact_summary = Some("y".repeat(80)); // ~20 tokens
-    s.compact_through = 2; // first two raw messages folded away
+    s.compact_summary = Some("y".repeat(80));
+    s.compact_through = 2;
     a.session = Some(s);
 
     assert_eq!(a.effective_messages().len(), 2);
-    // 20 (summary) + 2*10 (tail) = 40 tokens on top of the system prompt's
-    // own cost; the two compacted-away messages must NOT be counted.
     assert_eq!(a.context_used(), prompt_only + 40);
 }
 
@@ -2585,7 +2938,7 @@ fn on_compact_result_persists_and_clears_stale_total() {
     let s = a.db.create_session("t", "a/one", &space, "chat").unwrap();
     let sid = s.id.clone();
     a.session = Some(s);
-    a.context_total = Some(999); // stale exact usage from before compaction
+    a.meter.total = Some(999);
 
     a.on_compact_result(Some((sid.clone(), "digest".into(), 3, 61)));
 
@@ -2594,10 +2947,9 @@ fn on_compact_result_persists_and_clears_stale_total() {
         Some("digest")
     );
     assert_eq!(a.session.as_ref().unwrap().compact_through, 3);
-    assert!(a.context_total.is_none()); // stale total dropped
+    assert!(a.meter.total.is_none());
     let (_, status) = a.drain_ui_events();
     assert!(status.contains("compacted: 61%"));
-    // Persisted to the db too.
     let reloaded = &a.db.list_sessions(&space).unwrap()[0];
     assert_eq!(reloaded.compact_summary.as_deref(), Some("digest"));
 }
@@ -2607,14 +2959,13 @@ fn maybe_compact_noop_when_disabled_or_under_threshold() {
     let mut a = app_with_key();
     a.models[0].context_length = Some(1000);
     a.current_model = Some("a/one".into());
-    a.settings.compact_threshold = 0; // disabled
+    a.settings.compact_threshold = 0;
     a.maybe_compact();
-    assert!(a.compact_rx.is_none());
+    assert!(a.compaction.rx.is_none());
 
     a.settings.compact_threshold = 60;
-    // No session / far under threshold — should still no-op.
     a.maybe_compact();
-    assert!(a.compact_rx.is_none());
+    assert!(a.compaction.rx.is_none());
 }
 
 #[tokio::test]
@@ -2622,23 +2973,20 @@ async fn force_compact_reports_why_it_no_ops() {
     let mut a = app_with_key();
     a.current_model = Some("a/one".into());
 
-    // No active session yet.
     a.force_compact();
-    assert!(a.compact_rx.is_none());
+    assert!(a.compaction.rx.is_none());
     let (_, status) = a.drain_ui_events();
     assert!(status.contains("no active session"));
 
-    // Session exists but everything in it is already covered.
     let space = a.active_space.id.clone();
     let mut s = a.db.create_session("t", "a/one", &space, "chat").unwrap();
     s.compact_through = 0;
     a.session = Some(s);
     a.force_compact();
-    assert!(a.compact_rx.is_none());
+    assert!(a.compaction.rx.is_none());
     let (_, status) = a.drain_ui_events();
     assert!(status.contains("nothing new"));
 
-    // Now there's an uncompacted message — should actually kick off a job.
     a.messages.push(Message {
         role: "user".into(),
         content: "hi".into(),
@@ -2652,7 +3000,7 @@ async fn force_compact_reports_why_it_no_ops() {
         created_at: None,
     });
     a.force_compact();
-    assert!(a.compact_rx.is_some());
+    assert!(a.compaction.rx.is_some());
 }
 
 #[test]
@@ -2674,7 +3022,7 @@ fn context_breakdown_reports_system_memory_conversation() {
     });
     let b = a.context_breakdown();
     assert_eq!(b.conversation_tokens, 10);
-    assert!(b.system_tokens > 0); // base system prompt is always present
+    assert!(b.system_tokens > 0);
     assert_eq!(b.limit, Some(1000));
     assert!(!b.compacted);
 }
@@ -2682,7 +3030,7 @@ fn context_breakdown_reports_system_memory_conversation() {
 #[test]
 fn compact_summary_view_and_edit_roundtrip() {
     let mut a = app_with_key();
-    assert!(a.compact_summary_path().is_none()); // not compacted yet
+    assert!(a.compact_summary_path().is_none());
 
     let space = a.active_space.id.clone();
     let mut s = a.db.create_session("t", "a/one", &space, "chat").unwrap();
@@ -2693,7 +3041,6 @@ fn compact_summary_view_and_edit_roundtrip() {
     let path = a.compact_summary_path().unwrap();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "original digest");
 
-    // Simulate a hand-edit in $EDITOR, then reload.
     std::fs::write(&path, "hand-edited digest\n").unwrap();
     a.reload_compact_summary(&path).unwrap();
     assert_eq!(
@@ -2705,12 +3052,13 @@ fn compact_summary_view_and_edit_roundtrip() {
         reloaded.compact_summary.as_deref(),
         Some("hand-edited digest")
     );
-    assert_eq!(reloaded.compact_through, 2); // boundary untouched by the edit
+    assert_eq!(reloaded.compact_through, 2);
 }
 
 #[test]
-fn system_prompt_lists_files_but_not_their_content() {
+fn imported_files_stay_out_of_the_system_prompt() {
     let mut a = app_with_key();
+    let before = a.system_prompt();
     let dir = a.space.files_dir(&a.active_space.name);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("plan.md"), "SECRET-CONTENT-MARKER inside").unwrap();
@@ -2718,54 +3066,36 @@ fn system_prompt_lists_files_but_not_their_content() {
         a.rescan_files();
     });
 
-    let sp = a.system_prompt();
-    assert!(sp.contains("## Files"));
-    assert!(sp.contains("plan.md"));
-    assert!(sp.contains("files(action=search"));
-    assert!(!sp.contains("SECRET-CONTENT-MARKER")); // names only, never content
-
-    // No files → no section.
-    std::fs::remove_file(dir.join("plan.md")).unwrap();
-    tokio::runtime::Runtime::new().unwrap().block_on(async {
-        a.rescan_files();
-    });
-    assert!(!a.system_prompt().contains("## Files"));
+    let prefix = |prompt: &str| prompt.split("## Now").next().unwrap().to_string();
+    assert_eq!(prefix(&a.system_prompt()), prefix(&before));
+    assert!(!a.system_prompt().contains("plan.md"));
 }
 
 #[test]
 fn memory_snapshot_stays_stable_until_refresh() {
     let mut a = app_with_key();
-    let path = a.space.memory_path(&a.active_space.name);
-    std::fs::write(&path, "1. first fact\n").unwrap();
+    let space = a.active_space.id.clone();
+    crate::memory::add(
+        a.db.conn(),
+        &space,
+        "About you",
+        "first fact",
+        None,
+        Some(true),
+    )
+    .unwrap();
     a.refresh_memory_snapshot();
     let first_epoch = a.cache_epoch;
     assert!(a.system_prompt().contains("first fact"));
 
-    std::fs::write(&path, "1. newer fact\n").unwrap();
-    assert!(a.system_prompt().contains("first fact"));
+    crate::memory::add(a.db.conn(), &space, "About you", "newer fact", None, None).unwrap();
     assert!(!a.system_prompt().contains("newer fact"));
     assert_eq!(a.cache_epoch, first_epoch);
 
     a.refresh_memory_snapshot();
-    assert!(!a.system_prompt().contains("first fact"));
     assert!(a.system_prompt().contains("newer fact"));
-    assert!(a.cache_epoch > first_epoch);
-}
-
-#[test]
-fn clear_helper_model_returns_to_auto() {
-    let mut a = app_with_key();
-    a.helper_model = "some/model".into();
-    a.clear_helper_model().unwrap();
-    assert!(a.helper_model.is_empty());
-    assert_eq!(
-        a.db.load_settings()
-            .unwrap()
-            .iter()
-            .find(|(k, _)| k == "helper_model")
-            .map(|(_, v)| v.clone()),
-        Some(String::new())
-    );
+    // The snapshot reaches a conversation only when its frozen prefix is rebuilt.
+    assert_eq!(a.cache_epoch, first_epoch);
 }
 
 #[test]
@@ -2773,33 +3103,7 @@ fn embedding_default_is_prefixed_for_non_openrouter_bootstrap_backend() {
     let db = Db::open_in_memory().unwrap();
     let a = App::new(db, Some("sk-openai-test-key"), test_space());
 
-    assert!(a.helper_model.is_empty(), "the helper model starts on auto");
-    assert_eq!(a.embedding_model, "openai:text-embedding-3-small");
-}
-
-#[test]
-fn utility_model_resolution_falls_back_from_legacy_openrouter_id_on_openai() {
-    let db = Db::open_in_memory().unwrap();
-    let mut a = App::new(db, Some("sk-openai-test-key"), test_space());
-    a.models = vec![Model {
-        id: "gpt-4.1-mini".into(),
-        name: "GPT-4.1 mini".into(),
-        reasoning_efforts: Vec::new(),
-        context_length: None,
-        supports_images: false,
-        supports_image_generation: false,
-        supports_video_generation: false,
-        backend: BackendTag::OpenAi,
-        pricing: None,
-    }];
-    a.current_model = Some("openai:gpt-4.1-mini".into());
-
-    let (provider, raw) = a
-        .resolve_utility_model_backend("google/gemini-2.5-flash-lite")
-        .unwrap();
-
-    assert_eq!(provider.backend_tag(), BackendTag::OpenAi);
-    assert_eq!(raw, "gpt-4.1-mini");
+    assert_eq!(a.index.embedding_model, "openai:text-embedding-3-small");
 }
 
 #[tokio::test]
@@ -2877,7 +3181,6 @@ fn build_history_compresses_duplicate_tool_results_and_keeps_changed_ones() {
         })
         .to_string()
     };
-    // read v1 → re-read (identical) → edit → re-read v2 (changed).
     for result in ["v1", "v1", "v2"] {
         a.messages.push(Message {
             role: "tool_call".into(),
@@ -3001,6 +3304,7 @@ fn hundred_turns_preserve_messages_tool_inputs_results_and_wire_prefixes() {
                 id,
                 reasoning: (call_index == 0).then(|| format!("reasoning for turn {turn}")),
                 assistant_content: (call_index == 0).then(|| format!("tool batch for turn {turn}")),
+                step_start: call_index == 0,
                 name,
                 arguments,
                 result,
@@ -3041,7 +3345,7 @@ fn hundred_turns_preserve_messages_tool_inputs_results_and_wire_prefixes() {
     }
 
     let history = a.build_history();
-    let mut cursor = 1; // the stable system message
+    let mut cursor = 1;
     for turn in 0..100 {
         assert_eq!(history[cursor].role, "user");
         assert_eq!(
@@ -3087,7 +3391,6 @@ fn hundred_turns_preserve_messages_tool_inputs_results_and_wire_prefixes() {
     }
     assert_eq!(cursor, history.len());
 
-    // Reload exactly what was persisted and require the same wire history.
     let persisted = a.db.load_messages(&session.id).unwrap();
     assert_eq!(persisted.len(), 100 * 4);
     a.messages = persisted;
@@ -3101,7 +3404,7 @@ fn hundred_turns_preserve_messages_tool_inputs_results_and_wire_prefixes() {
 }
 
 fn install_test_skill(a: &mut App, name: &str, desc: &str, body: &str) {
-    let dir = std::env::temp_dir().join(format!("nexus-test-skill-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-test-skill-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("SKILL.md"),
@@ -3126,7 +3429,7 @@ async fn forced_skill_with_trailing_text_sends_immediately() {
         "search instructions",
     );
     a.run_command("web-search rust news").unwrap();
-    assert!(a.forced_skill.is_none()); // consumed by send_message
+    assert!(a.forced_skill.is_none());
     assert_eq!(a.messages.last().unwrap().content, "rust news");
     assert!(a.is_streaming());
 }
@@ -3187,7 +3490,6 @@ async fn skill_row_replays_as_a_user_message_every_later_turn() {
     a.run_command("web-search rust news").unwrap();
     let first_history = a.build_history();
 
-    // Reload the snapshot, then change the source file before a later turn.
     a.messages = a.db.load_messages(&a.session.as_ref().unwrap().id).unwrap();
     std::fs::write(
         a.skills.last().unwrap().dir.join("SKILL.md"),
@@ -3290,14 +3592,11 @@ fn split_inline_reasoning_strips_think_tags() {
     assert_eq!(content, "the actual answer");
     assert_eq!(reasoning.as_deref(), Some("let me work this out"));
 
-    // Multiple blocks join; text around/between them stays in content.
     let (content, reasoning) =
         split_inline_reasoning("intro <think>step one</think>middle<think>step two</think> outro");
     assert_eq!(content, "intro middle outro");
     assert_eq!(reasoning.as_deref(), Some("step one\nstep two"));
 
-    // Unterminated tag (truncated stream): remainder is reasoning, not a
-    // dangling tag leaked into the answer.
     let (content, reasoning) = split_inline_reasoning("<think>still thinking...");
     assert_eq!(content, "");
     assert_eq!(reasoning.as_deref(), Some("still thinking..."));
@@ -3320,54 +3619,118 @@ async fn finish_stream_strips_inline_think_tags_into_reasoning() {
     let msg = a.messages.last().unwrap();
     assert_eq!(msg.content, "the real answer");
     assert_eq!(msg.reasoning.as_deref(), Some("pondering"));
-
-    // (copy_message's reasoning-strip behavior moved to the TUI copy tests)
 }
 
 #[test]
-fn parse_memory_ops_reads_add_update_delete() {
-    let ops = parse_memory_ops(
-        r#"sure, here:
-        [{"op":"add","text":"likes rust"}, {"op":"update","id":2,"text":"deadline moved"}, {"op":"delete","id":5}, {"bogus":true}]"#,
-    );
-    assert_eq!(ops.len(), 3);
-    assert!(matches!(&ops[0], MemoryOp::Add(t) if t == "likes rust"));
-    assert!(matches!(&ops[1], MemoryOp::Update(2, t) if t == "deadline moved"));
-    assert!(matches!(&ops[2], MemoryOp::Delete(5)));
-    assert!(parse_memory_ops("no json here").is_empty());
-}
-
-#[test]
-fn memory_ops_apply_and_renumber() {
+fn memory_file_is_not_imported_on_session_refresh() {
     let mut a = app_with_key();
-    let space = a.active_space.name.clone();
-    std::fs::write(a_memory_path(&a), "1. likes rust\n2. old fact\n").unwrap();
-
-    let ops = vec![
-        MemoryOp::Delete(1),                        // drop "likes rust"
-        MemoryOp::Update(2, "updated fact".into()), // "old fact" -> "updated fact"
-        MemoryOp::Add("new fact".into()),
-    ];
-    a.on_memory_result(Some((space, ops)));
-
-    let saved = std::fs::read_to_string(a_memory_path(&a)).unwrap();
-    assert_eq!(saved, "1. updated fact\n2. new fact\n");
-}
-
-#[test]
-fn memory_ops_dropped_if_space_switched_meanwhile() {
-    let mut a = app_with_key();
-    std::fs::write(a_memory_path(&a), "1. keep me\n").unwrap();
-    a.on_memory_result(Some(("some-other-space".into(), vec![MemoryOp::Delete(1)])));
-    assert_eq!(
-        std::fs::read_to_string(a_memory_path(&a)).unwrap(),
-        "1. keep me\n"
-    );
-}
-
-fn a_memory_path(a: &App) -> std::path::PathBuf {
     a.space.ensure_space_dir(&a.active_space.name).unwrap();
-    a.space.memory_path(&a.active_space.name)
+    let path = a.space.memory_path(&a.active_space.name);
+    std::fs::write(&path, "1. likes rust\n2. uses vim\n").unwrap();
+    a.refresh_memory_snapshot();
+    assert!(path.exists());
+    assert!(!a.system_prompt().contains("] likes rust"));
+}
+
+#[test]
+fn memory_hints_replay_as_a_stable_user_prefix() {
+    let mut a = app_with_key();
+    a.current_model = Some("a/one".into());
+    let space = a.active_space.id.clone();
+    crate::memory::add(
+        a.db.conn(),
+        &space,
+        "Release process",
+        "tag before publishing to crates.io",
+        None,
+        None,
+    )
+    .unwrap();
+    let question = "how should I release the next crate version?";
+    let hint = a.memory_hint(question).unwrap();
+    assert_eq!(hint.targets[0].label, "Release process");
+    a.messages.push(memory::note("recall", hint.to_row()));
+    a.messages.push(memory::note("user", question.into()));
+    assert!(a.memory_hint(question).is_none());
+
+    let first = a.build_history();
+    let user = first.iter().rfind(|m| m.role == "user").unwrap();
+    assert!(
+        user.content
+            .starts_with("[memory: possibly relevant — \"Release process\"")
+    );
+    assert!(user.content.ends_with(question));
+    assert_eq!(first.iter().filter(|m| m.role == "user").count(), 1);
+    let again = a.build_history();
+    assert_eq!(
+        serde_json::to_string(&first).unwrap(),
+        serde_json::to_string(&again).unwrap()
+    );
+    a.incognito = true;
+    assert!(a.memory_hint(question).is_none());
+}
+
+#[tokio::test]
+async fn memory_tidy_sends_the_request_as_a_chat_turn() {
+    let mut a = app_with_key();
+    a.current_model = Some("a/one".into());
+    a.execute(AppCommand::Memory {
+        action: MemoryAction::Tidy,
+    })
+    .unwrap();
+    let request = crate::prompts::render(crate::prompts::MEMORY_TIDY, &[]);
+    let user = a.messages.iter().find(|m| m.role == "user").unwrap();
+    assert_eq!(user.content, request);
+    let persisted = a.db.load_messages(&a.session.as_ref().unwrap().id).unwrap();
+    assert_eq!(persisted.len(), 1);
+    assert_eq!(persisted[0].role, "user");
+    assert_eq!(persisted[0].content, request);
+}
+
+#[test]
+fn memory_tidy_is_off_in_incognito() {
+    let mut a = app_with_key();
+    a.current_model = Some("a/one".into());
+    a.execute(AppCommand::Incognito { on: true }).unwrap();
+    a.execute(AppCommand::Memory {
+        action: MemoryAction::Tidy,
+    })
+    .unwrap();
+    assert!(a.messages.is_empty());
+    assert!(a.session.is_none());
+    assert_eq!(a.last_status(), "memory is off in incognito");
+}
+
+#[test]
+fn memory_parser_accepts_edit_and_tidy_only() {
+    let a = app_with_key();
+    for (command, action) in [
+        ("memory", MemoryAction::Edit),
+        ("memory edit", MemoryAction::Edit),
+        ("memory tidy", MemoryAction::Tidy),
+    ] {
+        assert_eq!(a.parse_command(command), Ok(AppCommand::Memory { action }));
+    }
+    for command in [
+        "memory apply",
+        "memory discard",
+        "memory undo",
+        "memory invalid",
+    ] {
+        assert_eq!(
+            a.parse_command(command),
+            Err("usage: /memory [edit|tidy]".to_string())
+        );
+    }
+}
+
+#[test]
+fn memory_tool_is_offered_outside_incognito_only() {
+    let mut a = app_with_key();
+    let has_memory = |a: &App| a.toolbox.defs().iter().any(|d| d.name == "memory");
+    assert!(has_memory(&a));
+    a.execute(AppCommand::Incognito { on: true }).unwrap();
+    assert!(!has_memory(&a));
 }
 
 #[tokio::test]
@@ -3376,7 +3739,6 @@ async fn history_carries_markdown_images_as_data_urls_for_vision_models() {
     let s =
         a.db.create_session("t", "vis/model", &a.active_space.id, "chat")
             .unwrap();
-    // A real tiny png on disk, referenced via markdown in content.
     let dir = a.space.files_dir(&a.active_space.name);
     std::fs::create_dir_all(&dir).unwrap();
     let png_path = dir.join("t.png");
@@ -3400,6 +3762,7 @@ async fn history_carries_markdown_images_as_data_urls_for_vision_models() {
             supports_video_generation: false,
             backend: BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         },
         Model {
             id: "txt/model".into(),
@@ -3411,6 +3774,7 @@ async fn history_carries_markdown_images_as_data_urls_for_vision_models() {
             supports_video_generation: false,
             backend: BackendTag::OpenRouter,
             pricing: None,
+            aliases: Vec::new(),
         },
     ];
 
@@ -3420,7 +3784,6 @@ async fn history_carries_markdown_images_as_data_urls_for_vision_models() {
     assert_eq!(user.images.len(), 1);
     assert!(user.images[0].starts_with("data:image/png;base64,"));
 
-    // Non-vision model: markdown stays as text, no data URLs.
     a.current_model = Some("txt/model".into());
     let h = a.build_history();
     let user = h.iter().find(|m| m.role == "user").unwrap();
@@ -3431,7 +3794,7 @@ async fn history_carries_markdown_images_as_data_urls_for_vision_models() {
 #[tokio::test]
 async fn space_images_are_chosen_by_content_not_extension() {
     let mut a = app_with_key();
-    a.embedding_model.clear();
+    a.index.embedding_model.clear();
     let dir = a.space.files_dir(&a.active_space.name);
     std::fs::create_dir_all(&dir).unwrap();
     let png = crate::app::transcribe::encode_png(1, 1, &[0, 0, 0, 255]).unwrap();
@@ -3452,6 +3815,7 @@ async fn space_images_are_chosen_by_content_not_extension() {
         supports_video_generation: false,
         backend: BackendTag::OpenRouter,
         pricing: None,
+        aliases: Vec::new(),
     }];
     a.current_model = Some("vis/model".into());
     let history = a.build_history();
@@ -3477,21 +3841,18 @@ fn tool_call_events_persist_and_replay_into_history() {
         id: "call_search".into(),
         reasoning: None,
         assistant_content: None,
+        step_start: true,
         name: "search_files".into(),
         arguments: r#"{"query":"q3 revenue"}"#.into(),
         result: "report.pdf (page 3): revenue grew".into(),
     })
     .unwrap();
 
-    // Rendered + persisted as a tool_call row…
     assert_eq!(a.messages.last().unwrap().role, "tool_call");
     let stored = a.db.load_messages(&s.id).unwrap();
     assert_eq!(stored.last().unwrap().role, "tool_call");
     assert!(stored.last().unwrap().content.contains("q3 revenue"));
 
-    // …and replayed into the next request as a real assistant/tool pair, so
-    // the model remembers what it already tried in a prior turn — no raw
-    // "tool_call" role ever reaches the wire.
     let h = a.build_history();
     assert!(h.iter().all(|m| m.role != "tool_call"));
     let assistant = h
@@ -3524,6 +3885,7 @@ fn parallel_tool_call_rows_replay_as_one_lossless_assistant_batch() {
             id: id.into(),
             reasoning: reasoning.map(str::to_string),
             assistant_content: (id == "call_a").then(|| "visible fragment".to_string()),
+            step_start: id == "call_a",
             name: name.into(),
             arguments: "{}".into(),
             result: result.into(),
@@ -3568,7 +3930,6 @@ fn research_stage_rows_are_never_replayed_into_history() {
 }
 
 #[test]
-// One assertion per tool call summary — the table is the point.
 #[allow(clippy::too_many_lines)]
 fn tool_call_summaries_name_the_interesting_argument() {
     use crate::app::tool_call_summary;
@@ -3708,7 +4069,6 @@ fn swarm_progress_and_errors_are_visible_in_transcript() {
             .any(|m| { m.role == "error" && m.content.contains("backend failed") })
     );
 
-    // Subsequent progress updates replace only the progress row, not the error.
     a.on_swarm_update(Some((
         sid.clone(),
         super::swarm::SwarmUpdate::Progress("round 1 complete".into()),
@@ -3726,10 +4086,102 @@ fn swarm_progress_and_errors_are_visible_in_transcript() {
     );
 }
 
+#[test]
+fn swarm_agents_show_in_agents_and_their_cost_lands_on_the_reply() {
+    use super::swarm::SwarmUpdate;
+    use crate::provider::{SubagentEvent, SubagentUpdate, Usage};
+    let mut a = app_with_key();
+    let space = a.active_space.id.clone();
+    let s =
+        a.db.create_session("swarm", "a/one", &space, "chat")
+            .unwrap();
+    let sid = s.id.clone();
+    a.session = Some(s);
+    a.swarm.session = Some(sid.clone());
+    let agent = |id: &str, event| {
+        SwarmUpdate::Subagent(Box::new(SubagentUpdate {
+            id: id.into(),
+            number: 1,
+            event,
+        }))
+    };
+    for id in ["draft-a", "draft-b"] {
+        a.on_swarm_update(Some((
+            sid.clone(),
+            agent(
+                id,
+                SubagentEvent::Started {
+                    prompt: format!("Draft {id} · which cache?"),
+                    model: "a/one".into(),
+                    writable: false,
+                    max_steps: 8,
+                },
+            ),
+        )));
+    }
+    a.on_swarm_update(Some((
+        sid.clone(),
+        agent(
+            "draft-a",
+            SubagentEvent::Round {
+                step: 0,
+                reasoning: None,
+                content: "use redis".into(),
+                calls: Vec::new(),
+                usage: Some(Usage {
+                    prompt_tokens: 10,
+                    completion_tokens: 5,
+                    total_tokens: 15,
+                    cost: Some(0.25),
+                    ..Default::default()
+                }),
+                secs: 1.0,
+            },
+        ),
+    )));
+    a.on_swarm_update(Some((
+        sid.clone(),
+        agent(
+            "draft-a",
+            SubagentEvent::Finished {
+                error: None,
+                review: None,
+            },
+        ),
+    )));
+    let runs = a.subagents_for(&sid);
+    assert_eq!(runs.len(), 2);
+    assert!(
+        runs.iter()
+            .any(|run| run.title() == "Draft draft-a · which cache?"
+                && run.status == super::subagents::SubagentStatus::Done
+                && run.cost == Some(0.25))
+    );
+
+    a.on_swarm_update(Some((
+        sid.clone(),
+        SwarmUpdate::Synthesis("use redis".into()),
+    )));
+    let reply = a.messages.last().unwrap();
+    assert_eq!(reply.cost, Some(0.25));
+    assert_eq!(reply.phrase.as_deref(), Some("Drafted"));
+    let stored = a.db.load_messages(&sid).unwrap();
+    assert_eq!(stored.last().unwrap().cost, Some(0.25));
+
+    // The turn ending (or being stopped) settles any agent still running.
+    a.on_swarm_update(None);
+    let stuck = a
+        .subagents_for(&sid)
+        .into_iter()
+        .find(|run| run.id == "draft-b")
+        .unwrap();
+    assert_eq!(stuck.status, super::subagents::SubagentStatus::Failed);
+    assert!(a.swarm.session.is_none());
+}
+
 #[tokio::test]
 async fn swarm_synthesis_triggers_post_reply_jobs_like_normal_chat() {
     let mut a = app_with_key();
-    a.memory_extraction = false; // isolate this test from memory extraction network work
     a.settings.compact_threshold = 0;
     a.current_model = Some("a/one".into());
     let space = a.active_space.id.clone();
@@ -3814,10 +4266,6 @@ fn build_history_skips_persona_round_replies_but_keeps_synthesis() {
     );
 }
 
-// ── the command/event seam ─────────────────────────────────────────────────
-
-/// Every catalog entry must parse: the composer advertised `/help` for a
-/// while with no parser arm behind it ("unknown command: /help").
 #[test]
 fn every_catalog_command_parses() {
     let a = app_with_key();
@@ -3833,12 +4281,12 @@ fn every_catalog_command_parses() {
 fn interactive_ui_is_advertised_only_by_capable_clients() {
     let mut a = app_with_key();
     a.base_system_prompt = "test baseline".into();
-    assert!(!a.system_prompt().contains("nexus-ui"));
+    assert!(!a.system_prompt().contains("dugix-ui"));
     let before = a.context_breakdown().system_tokens;
     a.interactive_ui = true;
     let extra = u64::try_from(crate::interactive::INSTRUCTIONS.chars().count() / 4).unwrap();
     assert!(a.context_breakdown().system_tokens >= before + extra.saturating_sub(1));
-    assert!(a.system_prompt().contains("nexus-ui"));
+    assert!(a.system_prompt().contains("dugix-ui"));
     assert!(a.system_prompt().contains("Prefer interactive UI"));
     assert!(a.parse_command("play rps").is_err());
 }
@@ -3861,12 +4309,20 @@ fn scripted_terminal_app_command_is_removed_but_apps_remains_available() {
 fn parse_command_maps_the_slash_catalog_into_the_seam() {
     let a = app_with_key();
     assert_eq!(a.parse_command("new").unwrap(), AppCommand::NewSession);
-    assert_eq!(a.parse_command("web").unwrap(), AppCommand::ToggleWeb);
+    assert!(a.parse_command("web").is_err());
     assert_eq!(
         a.parse_command("theme opaque").unwrap(),
         AppCommand::SetTheme {
             mode: "opaque".into()
         }
+    );
+    assert_eq!(
+        a.parse_command("vim off").unwrap(),
+        AppCommand::SetKeymap { mode: "off".into() }
+    );
+    assert_eq!(
+        a.parse_command("motion off").unwrap(),
+        AppCommand::SetMotion { mode: "off".into() }
     );
     assert_eq!(
         a.parse_command("research! rust async").unwrap(),
@@ -3915,14 +4371,10 @@ fn parse_command_maps_the_slash_catalog_into_the_seam() {
             topic: Some("rust async".into())
         }
     );
-    // Incognito parses to an absolute on/off (toggle is the string front's
-    // choice) — the app starts off, so the command turns it on.
     assert_eq!(
         a.parse_command("incognito").unwrap(),
         AppCommand::Incognito { on: true }
     );
-    // `/local` opens the picker; the runtime aliases resolve to `local` and
-    // carry themselves through as the spec.
     for (line, spec) in [
         ("local", ""),
         ("local off", "off"),
@@ -3940,8 +4392,6 @@ fn parse_command_maps_the_slash_catalog_into_the_seam() {
             "{line}"
         );
     }
-    // Server verbs split off from runtime selection, in either word order:
-    // `/local stop edge0` and `/edge0 stop` are the same command.
     for (line, verb, runtime) in [
         ("local start", "start", ""),
         ("local stop edge0", "stop", "edge0"),
@@ -3949,7 +4399,6 @@ fn parse_command_maps_the_slash_catalog_into_the_seam() {
         ("local status", "status", ""),
         ("local restart mlx", "restart", "mlx"),
         ("mlx-serve start", "start", "mlx-serve"),
-        // `/serve` is the alias that reads as the verb it is.
         ("serve", "start", ""),
         ("serve ollama", "start", "ollama"),
     ] {
@@ -3963,7 +4412,6 @@ fn parse_command_maps_the_slash_catalog_into_the_seam() {
         );
     }
     assert!(a.parse_command("nosuchcommand").is_err());
-    // Aliases resolve to the canonical command.
     assert_eq!(
         a.parse_command("history").unwrap(),
         AppCommand::OpenSessionPicker
@@ -3993,7 +4441,6 @@ fn set_model_and_setting_commands_apply() {
 #[test]
 fn set_setting_fails_fast_on_unknown_keys_and_invalid_values() {
     let mut a = app_with_key();
-    // Unknown keys bail instead of persisting a no-op as success.
     assert!(
         a.execute(AppCommand::SetSetting {
             key: "verbosityy".into(),
@@ -4001,7 +4448,6 @@ fn set_setting_fails_fast_on_unknown_keys_and_invalid_values() {
         })
         .is_err()
     );
-    // Constrained keys reject values `apply_setting` would drop silently.
     assert!(
         a.execute(AppCommand::SetSetting {
             key: "verbosity".into(),
@@ -4016,7 +4462,7 @@ fn set_setting_fails_fast_on_unknown_keys_and_invalid_values() {
         })
         .is_err()
     );
-    assert_eq!(a.verbosity, "concise"); // untouched by the rejected values
+    assert_eq!(a.verbosity, "concise");
 }
 
 #[test]
@@ -4085,7 +4531,6 @@ fn popup_sizes_setting_validates_strictly_and_loads_leniently() {
     }
     assert_eq!(a.settings.popup_sizes, "", "rejected values change nothing");
 
-    // A stored row with bad entries loads without them instead of failing.
     a.db.set_setting(
         "popup_sizes",
         "settings:80x75,nope:50x50,help:5x50,help:90x85",
@@ -4102,9 +4547,9 @@ fn popup_sizes_setting_validates_strictly_and_loads_leniently() {
 
 #[test]
 fn image_viewer_setting_defaults_auto_validates_and_survives_a_restart() {
-    let root = std::env::temp_dir().join(format!("nexus-viewer-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-viewer-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("spaces")).unwrap();
-    let path = root.join("nexus.db");
+    let path = root.join("dugix.db");
     let mut a = App::new(Db::open(&path).unwrap(), None, Space { root: root.clone() });
     assert_eq!(a.settings.image_viewer, "auto");
     for good in ["terminal", "system", "auto"] {
@@ -4119,7 +4564,6 @@ fn image_viewer_setting_defaults_auto_validates_and_survives_a_restart() {
         "rejected values change nothing"
     );
     a.set_setting("image_viewer", "system").unwrap();
-    // A stored row from a newer build is ignored, not fatal.
     drop(a);
     let mut b = App::new(Db::open(&path).unwrap(), None, Space { root: root.clone() });
     assert_eq!(b.settings.image_viewer, "system");
@@ -4159,19 +4603,17 @@ fn popup_size_helpers_read_replace_and_remove_entries() {
     assert_eq!(sizes, "settings:80x75,help:90x85");
     assert_eq!(popup_size(&sizes, "help"), Some((90, 85)));
     assert_eq!(popup_size(&sizes, "usage"), None);
-    // Replacing keeps one entry per id; out-of-range percentages clamp.
     let sizes = with_popup_size(&sizes, "settings", Some((10, 200)));
     assert_eq!(sizes, "help:90x85,settings:20x100");
-    // Removing, and unknown ids, leave the rest alone.
     assert_eq!(with_popup_size(&sizes, "help", None), "settings:20x100");
     assert_eq!(with_popup_size(&sizes, "nope", Some((50, 50))), sizes);
 }
 
 #[test]
 fn popup_and_column_sizes_survive_a_restart() {
-    let root = std::env::temp_dir().join(format!("nexus-sizes-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-sizes-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("spaces")).unwrap();
-    let path = root.join("nexus.db");
+    let path = root.join("dugix.db");
     let mut a = App::new(Db::open(&path).unwrap(), None, Space { root: root.clone() });
     a.set_setting("column_width", "157").unwrap();
     a.set_setting("popup_sizes", "settings:80x75").unwrap();
@@ -4197,8 +4639,6 @@ async fn gate_in_another_session_never_swallows_typing_and_the_event_carries_its
         a.db.create_session("chat B", "a/one", &space, "chat")
             .unwrap();
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    // App::new queues a launch status event; drain it so the queue holds
-    // exactly the gate event.
     while a.pop_pending_event().is_some() {}
     a.set_survey_gate(Some(SurveyGate {
         session_id: s_a.id.clone(),
@@ -4207,13 +4647,10 @@ async fn gate_in_another_session_never_swallows_typing_and_the_event_carries_its
         prompt_role: "survey".to_string(),
         prompt_content: "q1?".to_string(),
     }));
-    // The Gate event names the session the reply must come from.
     match a.pending_events.pop_front() {
         Some(AppEvent::Gate(Some(g))) => assert_eq!(g.session_id, s_a.id),
         _other => panic!("expected Gate(Some) event, got something else"),
     }
-    // View the other session: Enter must send a normal message, not answer
-    // A's parked gate.
     a.switch_to_session_by_id(&s_b.id).unwrap();
     assert!(!a.survey_gate_targets_current_session());
     a.execute(AppCommand::Send {
@@ -4223,8 +4660,7 @@ async fn gate_in_another_session_never_swallows_typing_and_the_event_carries_its
     let msg = a.messages.last().unwrap();
     assert_eq!(msg.role, "user");
     assert_eq!(msg.content, "hello B");
-    // The gate survives, still parked on A.
-    assert_eq!(a.survey_gate.as_ref().unwrap().session_id, s_a.id);
+    assert_eq!(a.research.survey_gate.as_ref().unwrap().session_id, s_a.id);
 }
 
 #[test]
@@ -4251,7 +4687,6 @@ fn cache_breakpoints_only_go_to_models_that_need_them() {
     assert!(crate::app::model_needs_cache_breakpoints(
         "claude-3-5-haiku"
     ));
-    // Auto-caching families must not be sent a marker they ignore or reject.
     for model in [
         "openai/gpt-5",
         "openai:gpt-5-mini",
@@ -4293,7 +4728,6 @@ fn explicit_cache_breakpoints_mark_the_stable_prefix() {
         .filter(|(_, m)| m.cache_breakpoint)
         .map(|(i, _)| i)
         .collect();
-    // End of the system block, and the message before the live tail.
     assert_eq!(marked, vec![0, history.len() - 2], "history: {history:?}");
     let wire = serde_json::to_value(&history[0]).expect("serializes");
     assert_eq!(
@@ -4301,8 +4735,6 @@ fn explicit_cache_breakpoints_mark_the_stable_prefix() {
         serde_json::json!({"type": "ephemeral"})
     );
 
-    // The same conversation on an auto-caching model carries no markers, and
-    // its content stays a plain string.
     a.current_model = Some("openai/gpt-5".to_string());
     let history = a.build_history();
     assert!(history.iter().all(|m| !m.cache_breakpoint));
@@ -4315,8 +4747,6 @@ fn turn_cache_reports_the_turn_not_its_last_request() {
     use crate::app::CacheTally;
     use crate::provider::{PromptConvention, Usage};
     let mut tally = CacheTally::default();
-    // A tool loop: the first request caches nothing, later ones ride a
-    // growing prefix. The last request alone would claim 90%.
     for (prompt, read) in [(1000u64, 0u64), (1200, 900), (1400, 1260)] {
         tally.observe(&Usage {
             prompt_tokens: prompt,
@@ -4329,8 +4759,6 @@ fn turn_cache_reports_the_turn_not_its_last_request() {
     assert!((rate - 2160.0 / 3600.0).abs() < 1e-9, "rate: {rate}");
     assert!(!tally.is_partial());
 
-    // A request the provider did not account for is excluded and flagged,
-    // never averaged in as a zero.
     tally.observe(&Usage {
         prompt_tokens: 5000,
         prompt_convention: PromptConvention::Unknown,
@@ -4348,10 +4776,10 @@ fn turn_cache_reports_the_turn_not_its_last_request() {
 fn user_command_app() -> App {
     let mut app = app_with_key();
     app.interactive_ui = true;
-    // `!` commands are an agent-mode feature.
     app.work_mode = WorkMode::Agent;
-    // Captured-command tests never read the developer's real shell startup.
-    app.user_shell
+    // Keep captured commands isolated from the developer's shell startup.
+    app.user_command
+        .shell
         .set(crate::usershell::UserShell {
             shell: "/bin/sh".into(),
             snapshot: None,
@@ -4410,7 +4838,6 @@ fn insert_chat_task(app: &mut App, session_id: &str) {
     );
 }
 
-/// Drive `next_event` until the captured command lands, returning the last status.
 async fn finish_captured_command(app: &mut App) -> String {
     let mut status = String::new();
     loop {
@@ -4537,7 +4964,7 @@ async fn user_command_directory_resets_on_work_mode_workspace_and_space_changes(
         root: None,
     })
     .unwrap();
-    assert!(app.user_command_dir.is_none());
+    assert!(app.user_command.dir.is_none());
     app.execute(AppCommand::SetWorkMode {
         mode: WorkMode::Agent,
         root: Some(workspace.to_string_lossy().into_owned()),
@@ -4550,7 +4977,7 @@ async fn user_command_directory_resets_on_work_mode_workspace_and_space_changes(
         name: "other".into(),
     })
     .unwrap();
-    assert!(app.user_command_dir.is_none());
+    assert!(app.user_command.dir.is_none());
     assert_eq!(
         app.user_command_cwd(),
         app.space.space_dir("other").canonicalize().unwrap()
@@ -4579,8 +5006,9 @@ async fn a_finished_command_cannot_change_a_different_sessions_directory() {
 async fn shell_setup_failure_is_reported_only_once_and_commands_still_run() {
     let mut app = user_command_app();
     let root = app.space.root.clone();
-    app.user_shell = std::sync::Arc::new(tokio::sync::OnceCell::new());
-    app.user_shell
+    app.user_command.shell = std::sync::Arc::new(tokio::sync::OnceCell::new());
+    app.user_command
+        .shell
         .set(crate::usershell::UserShell {
             shell: "/bin/sh".into(),
             snapshot: None,
@@ -4614,10 +5042,10 @@ fn terminal_programs_are_not_started_or_recorded() {
         app.run_user_command(format!("{word} ignored")).unwrap();
         assert_eq!(
             app.last_status(),
-            format!("!{word} needs a terminal · run it outside nexus")
+            format!("!{word} needs a terminal · run it outside dugix")
         );
         assert!(app.session.is_none());
-        assert!(app.user_command_rx.is_none());
+        assert!(app.user_command.rx.is_none());
     }
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
@@ -4657,7 +5085,7 @@ async fn user_commands_are_refused_headless_and_while_a_reply_streams() {
         assert_eq!(app.last_status(), "!commands run only in the terminal UI");
     }
     assert!(app.session.is_none());
-    assert!(app.user_command_rx.is_none());
+    assert!(app.user_command.rx.is_none());
     app.interactive_ui = true;
     let session = app
         .db
@@ -4670,7 +5098,7 @@ async fn user_commands_are_refused_headless_and_while_a_reply_streams() {
     let (sets, status) = app.drain_ui_events();
     assert_eq!(status, "wait — response still streaming");
     assert_eq!(sets, vec!["!ls".to_string()]);
-    assert!(app.user_command_rx.is_none());
+    assert!(app.user_command.rx.is_none());
     assert!(app.messages.is_empty());
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
@@ -4763,6 +5191,7 @@ async fn propose_command_tool_call_sets_the_proposal_and_its_reason() {
             id: "call_1".into(),
             reasoning: None,
             assistant_content: None,
+            step_start: true,
             name: "propose_command".into(),
             arguments: r#"{"cmd":"sudo make install","reason":"installs into /usr/local"}"#
                 .into(),
@@ -4770,7 +5199,10 @@ async fn propose_command_tool_call_sets_the_proposal_and_its_reason() {
         },
     )
     .unwrap();
-    assert_eq!(app.proposed_command.as_deref(), Some("!sudo make install"));
+    assert_eq!(
+        app.approvals.proposed_command.as_deref(),
+        Some("!sudo make install")
+    );
     assert_eq!(app.last_status(), "installs into /usr/local");
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
@@ -4814,7 +5246,7 @@ async fn request_workspace_switches_to_agent_mode_only_after_an_approved_turn() 
             matches!(event, AppEvent::Status(status) if status == "approval needed · request_workspace agent")
         );
         assert_eq!(
-            app.pending_approval_request.as_ref().unwrap().summary,
+            app.approvals.pending_request.as_ref().unwrap().summary,
             format!(
                 "switch this session to agent mode in {}\nto run the tests",
                 workspace.display()
@@ -4828,6 +5260,7 @@ async fn request_workspace_switches_to_agent_mode_only_after_an_approved_turn() 
                 id: "call_1".into(),
                 reasoning: None,
                 assistant_content: None,
+                step_start: true,
                 name: "request_workspace".into(),
                 arguments,
                 result,
@@ -4921,11 +5354,11 @@ async fn concurrent_approvals_queue_and_are_answered_in_order() {
     let mut app = app_with_key();
     let root = app.space.root.clone();
     let (sender, receiver) = mpsc::unbounded_channel();
-    app.approval_rx = Some(receiver);
+    app.approvals.rx = Some(receiver);
     let (first, mut first_answer) = queued_request(&sender, "write", "write a");
     let (second, mut second_answer) = queued_request(&sender, "write", "write b");
     receive_approvals(&mut app, 2).await;
-    assert_eq!(app.pending_approval_request.as_ref(), Some(&first));
+    assert_eq!(app.approvals.pending_request.as_ref(), Some(&first));
     assert_eq!(app.approval_count(), 2);
     app.execute(AppCommand::Approve {
         decision: Decision::Allow,
@@ -4933,15 +5366,15 @@ async fn concurrent_approvals_queue_and_are_answered_in_order() {
     .unwrap();
     assert_eq!(first_answer.try_recv().unwrap(), Decision::Allow);
     assert!(second_answer.try_recv().is_err());
-    assert_eq!(app.pending_approval_request.as_ref(), Some(&second));
+    assert_eq!(app.approvals.pending_request.as_ref(), Some(&second));
     assert_eq!(app.approval_count(), 1);
     app.execute(AppCommand::Approve {
         decision: Decision::Deny,
     })
     .unwrap();
     assert_eq!(second_answer.try_recv().unwrap(), Decision::Deny);
-    assert!(app.pending_approval.is_none());
-    assert!(app.pending_approval_request.is_none());
+    assert!(app.approvals.pending.is_none());
+    assert!(app.approvals.pending_request.is_none());
     assert_eq!(app.approval_count(), 0);
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
@@ -4952,14 +5385,13 @@ async fn allow_for_session_answers_waiting_requests_of_the_same_kind_unseen() {
     let mut app = app_with_key();
     let root = app.space.root.clone();
     let (sender, receiver) = mpsc::unbounded_channel();
-    app.approval_rx = Some(receiver);
+    app.approvals.rx = Some(receiver);
     let (_, mut edit_answer) = queued_request(&sender, "edit", "edit a");
     let (delete, mut delete_answer) = queued_request(&sender, "delete", "delete b");
     let (_, mut queued_edit_answer) = queued_request(&sender, "edit", "edit c");
     receive_approvals(&mut app, 3).await;
-    // Still in the channel when the grant lands: answered all the same.
     let (_, mut unreceived_edit_answer) = queued_request(&sender, "edit", "edit d");
-    let shown = app.approval_shown;
+    let shown = app.approvals.shown;
     app.execute(AppCommand::Approve {
         decision: Decision::AllowForSession,
     })
@@ -4967,8 +5399,8 @@ async fn allow_for_session_answers_waiting_requests_of_the_same_kind_unseen() {
     assert_eq!(edit_answer.try_recv().unwrap(), Decision::AllowForSession);
     assert_eq!(queued_edit_answer.try_recv().unwrap(), Decision::Allow);
     assert_eq!(unreceived_edit_answer.try_recv().unwrap(), Decision::Allow);
-    assert_eq!(app.pending_approval_request.as_ref(), Some(&delete));
-    assert_eq!(app.approval_shown, shown + 1);
+    assert_eq!(app.approvals.pending_request.as_ref(), Some(&delete));
+    assert_eq!(app.approvals.shown, shown + 1);
     assert_eq!(app.approval_count(), 1);
     assert!(delete_answer.try_recv().is_err());
     app.execute(AppCommand::Approve {
@@ -4976,7 +5408,7 @@ async fn allow_for_session_answers_waiting_requests_of_the_same_kind_unseen() {
     })
     .unwrap();
     assert_eq!(delete_answer.try_recv().unwrap(), Decision::Deny);
-    assert!(app.pending_approval.is_none());
+    assert!(app.approvals.pending.is_none());
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -5120,20 +5552,20 @@ fn remembering_shell_permission_keeps_queued_unparseable_commands_for_individual
     let shell = wave_requests().pop().unwrap();
     let (first, mut first_answer) = oneshot::channel();
     let (second, mut second_answer) = oneshot::channel();
-    app.pending_approval = Some(first);
-    app.pending_approval_request = Some(shell.clone());
+    app.approvals.pending = Some(first);
+    app.approvals.pending_request = Some(shell.clone());
     let unparseable = ApprovalRequest {
         summary: "could not parse safely: computed command word\n$ \"$COMMAND\"".into(),
         ..shell
     };
-    app.approval_queue.push_back((unparseable.clone(), second));
+    app.approvals.queue.push_back((unparseable.clone(), second));
     app.execute(AppCommand::Approve {
         decision: Decision::AllowForSession,
     })
     .unwrap();
     assert_eq!(first_answer.try_recv().unwrap(), Decision::AllowForSession);
     assert!(second_answer.try_recv().is_err());
-    assert_eq!(app.pending_approval_request.as_ref(), Some(&unparseable));
+    assert_eq!(app.approvals.pending_request.as_ref(), Some(&unparseable));
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -5174,9 +5606,9 @@ fn allowing_a_wave_for_the_session_never_allows_an_unrelated_queued_wave_by_coun
     };
     let (first, mut first_answer) = oneshot::channel();
     let (second, mut second_answer) = oneshot::channel();
-    app.pending_approval = Some(first);
-    app.pending_approval_request = Some(request.clone());
-    app.approval_queue.push_back((
+    app.approvals.pending = Some(first);
+    app.approvals.pending_request = Some(request.clone());
+    app.approvals.queue.push_back((
         ApprovalRequest {
             summary: "2 deletes".into(),
             ..request
@@ -5190,7 +5622,7 @@ fn allowing_a_wave_for_the_session_never_allows_an_unrelated_queued_wave_by_coun
     assert_eq!(first_answer.try_recv().unwrap(), Decision::AllowForSession);
     assert!(second_answer.try_recv().is_err());
     assert_eq!(
-        app.pending_approval_request.as_ref().unwrap().summary,
+        app.approvals.pending_request.as_ref().unwrap().summary,
         "2 deletes"
     );
     drop(app);
@@ -5202,7 +5634,7 @@ async fn approvals_whose_tool_call_went_away_are_skipped() {
     let mut app = app_with_key();
     let root = app.space.root.clone();
     let (sender, receiver) = mpsc::unbounded_channel();
-    app.approval_rx = Some(receiver);
+    app.approvals.rx = Some(receiver);
     let (_, mut first_answer) = queued_request(&sender, "write", "write a");
     let (_, dropped_answer) = queued_request(&sender, "write", "write b");
     let (third, third_answer) = queued_request(&sender, "write", "write c");
@@ -5214,23 +5646,22 @@ async fn approvals_whose_tool_call_went_away_are_skipped() {
     })
     .unwrap();
     assert_eq!(first_answer.try_recv().unwrap(), Decision::Allow);
-    assert_eq!(app.pending_approval_request.as_ref(), Some(&third));
-    assert!(app.approval_queue.is_empty());
-    // The displayed request going away shows nothing further.
+    assert_eq!(app.approvals.pending_request.as_ref(), Some(&third));
+    assert!(app.approvals.queue.is_empty());
     drop(third_answer);
     let event = tokio::time::timeout(std::time::Duration::from_secs(5), app.next_event())
         .await
         .unwrap();
     assert!(matches!(event, AppEvent::Status(status) if status == "approval cancelled"));
-    assert!(app.pending_approval.is_none());
-    assert!(app.pending_approval_request.is_none());
+    assert!(app.approvals.pending.is_none());
+    assert!(app.approvals.pending_request.is_none());
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
 }
 
 const BROKEN_UI: &str =
-    "```nexus-ui\n{\"version\":1,\"title\":\"Choice\",\"view\":[{\"type\":\"radio\"}]}\n```";
-const FIXED_UI: &str = "```nexus-ui\n{\"version\":1,\"title\":\"Choice\",\"view\":[{\"type\":\"text\",\"text\":\"Fixed\"}]}\n```";
+    "```dugix-ui\n{\"version\":1,\"title\":\"Choice\",\"view\":[{\"type\":\"radio\"}]}\n```";
+const FIXED_UI: &str = "```dugix-ui\n{\"version\":1,\"title\":\"Choice\",\"view\":[{\"type\":\"text\",\"text\":\"Fixed\"}]}\n```";
 
 async fn ui_repair_app(
     response: &str,
@@ -5255,9 +5686,7 @@ async fn ui_repair_app(
     app.backends.set(BackendTag::OpenRouter, provider);
     app.interactive_ui = true;
     app.incognito = incognito;
-    app.memory_extraction = false;
     app.settings.compact_threshold = 0;
-    // Repair must use the finished task's model, not a newly selected model.
     app.current_model = Some("b/two".into());
     let mut session = if incognito {
         crate::db::Session {
@@ -5268,7 +5697,6 @@ async fn ui_repair_app(
             created_at: chrono::Utc::now().to_rfc3339(),
             compact_summary: None,
             compact_through: 0,
-            web_mode: false,
             swarm_mode: false,
             kind: "chat".into(),
             research_parent_id: None,
@@ -5278,7 +5706,7 @@ async fn ui_repair_app(
             .create_session("UI", "a/one", &app.active_space.id, "chat")
             .unwrap()
     };
-    session.slug = Some("ui".into()); // no unrelated title request
+    session.slug = Some("ui".into());
     insert_chat_task(&mut app, &session.id);
     app.session = Some(session);
     (app, server)
@@ -5328,12 +5756,12 @@ async fn ui_repair_replaces_only_the_failing_fence_and_logs_its_usage() {
         request["messages"][0]["content"]
             .as_str()
             .unwrap()
-            .contains("nexus-ui")
+            .contains("dugix-ui")
     );
     assert_eq!(request["messages"][1]["content"], format!("{BROKEN_UI}\n"));
     let prompt = request["messages"][2]["content"].as_str().unwrap();
-    assert!(prompt.contains("Your nexus-ui block \"Choice\" failed validation:\nview[0]: unknown node type \"radio\""), "{prompt}");
-    assert!(prompt.contains("Reply with ONLY the corrected nexus-ui fenced block, nothing else."));
+    assert!(prompt.contains("Your dugix-ui block \"Choice\" failed validation:\nview[0]: unknown node type \"radio\""), "{prompt}");
+    assert!(prompt.contains("Reply with ONLY the corrected dugix-ui fenced block, nothing else."));
     let usage = app.db.usage_recent(10, None).unwrap();
     assert_eq!(usage.len(), 1);
     assert_eq!(usage[0].model, "a/one");
@@ -5357,7 +5785,7 @@ async fn ui_repair_failure_keeps_the_reply_and_never_retries() {
         (
             "no fenced block",
             200,
-            "expected 1 corrected nexus-ui block",
+            "expected 1 corrected dugix-ui block",
         ),
         ("bad request", 400, ""),
     ] {
@@ -5401,9 +5829,9 @@ async fn ui_repair_is_skipped_for_valid_disabled_open_or_unviewed_blocks() {
     for (content, enabled, viewing) in [
         (FIXED_UI, true, true),
         (BROKEN_UI, false, true),
-        ("```nexus-ui\n{", true, true),
+        ("```dugix-ui\n{", true, true),
         (BROKEN_UI, true, false),
-        ("````markdown\n```nexus-ui\n{\n```\n````", true, true),
+        ("````markdown\n```dugix-ui\n{\n```\n````", true, true),
     ] {
         let (mut app, server) = ui_repair_app(FIXED_UI, 200, false).await;
         let root = app.space.root.clone();
@@ -5413,7 +5841,7 @@ async fn ui_repair_is_skipped_for_valid_disabled_open_or_unviewed_blocks() {
         }
         finish_ui_reply(&mut app, content);
         assert!(!app.last_status().contains("fixing"));
-        assert!(app.ui_repair_messages.is_empty());
+        assert!(app.ui_repair.messages.is_empty());
         assert!(app.db.usage_recent(10, None).unwrap().is_empty());
         server.abort();
         drop(app);
@@ -5450,7 +5878,6 @@ async fn a_new_user_turn_cancels_applying_the_old_ui_repair() {
         let sid = app.session.as_ref().unwrap().id.clone();
         finish_ui_reply(&mut app, BROKEN_UI);
         assert_eq!(app.last_status(), "fixing the UI…");
-        // The result is ready, but has not yet been applied by next_event.
         assert_eq!(server.await.unwrap().len(), 1);
         app.next_chat_task_id = 2;
         app.send_message("another turn".into()).unwrap();
@@ -5478,8 +5905,8 @@ async fn a_new_user_turn_cancels_applying_the_old_ui_repair() {
 
 #[tokio::test]
 async fn several_failing_ui_blocks_are_repaired_in_one_request() {
-    let second = "~~~nexus-ui\n{\"version\":1,\"title\":\"Second\",\"view\":[{\"type\":\"text\",\"text\":42}]}\n~~~";
-    let fixed_second = "```nexus-ui\n{\"version\":1,\"title\":\"Second\",\"view\":[{\"type\":\"text\",\"text\":\"Second fix\"}]}\n```";
+    let second = "~~~dugix-ui\n{\"version\":1,\"title\":\"Second\",\"view\":[{\"type\":\"text\",\"text\":42}]}\n~~~";
+    let fixed_second = "```dugix-ui\n{\"version\":1,\"title\":\"Second\",\"view\":[{\"type\":\"text\",\"text\":\"Second fix\"}]}\n```";
     let (mut app, server) = ui_repair_app(&format!("{FIXED_UI}\n{fixed_second}"), 200, false).await;
     let root = app.space.root.clone();
     let quoted = BROKEN_UI
@@ -5543,8 +5970,6 @@ async fn ui_repair_matches_the_stored_message_id_after_reload_and_rejects_newer_
         std::fs::remove_dir_all(root).unwrap();
     }
 }
-
-// ----- connectors ----------------------------------------------------------
 
 #[test]
 fn connectors_slash_command_parses_every_form() {
@@ -5619,7 +6044,6 @@ fn connectors_slash_command_parses_every_form() {
         assert!(app.parse_command(bad).is_err(), "{bad}");
     }
     assert!(COMMANDS.iter().any(|command| command.name == "connectors"));
-    // Every variant survives the host wire format.
     for command in [
         C::OpenConnectors,
         C::SetConnectorPolicy {
@@ -5647,7 +6071,6 @@ fn connector_commands_run_through_the_seam_and_local_commands_need_the_terminal_
     })
     .unwrap();
     assert_eq!(app.connectors.infos().len(), 1);
-    // A command connector starts a process: refused unless this is the TUI.
     let local = C::AddConnector {
         name: "files".into(),
         url: None,
@@ -5762,7 +6185,7 @@ async fn connector_approvals_keep_grants_in_the_registry_not_in_the_approver() {
     let mut app = app_with_key();
     let root = app.space.root.clone();
     let (sender, receiver) = mpsc::unbounded_channel();
-    app.approval_rx = Some(receiver);
+    app.approvals.rx = Some(receiver);
     let approver = Arc::new(ChannelApprover::new(sender));
     let ask_with = |class: Option<&'static str>| {
         let approver = Arc::clone(&approver);
@@ -5779,25 +6202,20 @@ async fn connector_approvals_keep_grants_in_the_registry_not_in_the_approver() {
                 .await
         })
     };
-    // "Allow for the session" on a connector tool is answered, but the
-    // approver does not remember it: asking again prompts again, so a
-    // changed definition can never ride an old name-only grant.
     for round in 0..2 {
         let ask = ask_with(Some("connector"));
         receive_approvals(&mut app, 1).await;
         assert!(
-            app.pending_approval_request.is_some(),
+            app.approvals.pending_request.is_some(),
             "round {round} prompted"
         );
         app.answer_approval(Decision::AllowForSession);
         assert_eq!(ask.await.unwrap(), Decision::AllowForSession);
     }
-    // Always passes through for a connector...
     let ask = ask_with(Some("connector"));
     receive_approvals(&mut app, 1).await;
     app.answer_approval(Decision::AllowAlways);
     assert_eq!(ask.await.unwrap(), Decision::AllowAlways);
-    // ...and is a plain allow for anything else.
     let ask = ask_with(None);
     receive_approvals(&mut app, 1).await;
     app.answer_approval(Decision::AllowAlways);
@@ -5850,7 +6268,6 @@ fn toolboxes_get_the_connector_registry_but_evals_do_not() {
             crate::connectors::ConnectorConfig::remote("https://demo.example/mcp"),
         )
         .unwrap();
-    // Connecting/disconnected connectors add nothing to the model's list.
     assert_eq!(serde_json::to_string(&app.toolbox.defs()).unwrap(), before);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -5896,7 +6313,7 @@ async fn chat_toolbox_connector_writes_reach_the_existing_app_approval_channel()
             .await
     });
     receive_approvals(&mut app, 1).await;
-    let request = app.pending_approval_request.as_ref().unwrap();
+    let request = app.approvals.pending_request.as_ref().unwrap();
     assert_eq!(request.class.as_deref(), Some("connector"));
     assert_eq!(request.tool, "chat-fixture");
     assert!(request.summary.contains("a note"));
@@ -5904,8 +6321,6 @@ async fn chat_toolbox_connector_writes_reach_the_existing_app_approval_channel()
     assert!(call.await.unwrap().0.starts_with("denied by the user"));
     std::fs::remove_dir_all(root).unwrap();
 }
-
-// --- the helper model and the automatic defaults behind the removed rows ---
 
 fn catalog_model(backend: BackendTag, id: &str) -> Model {
     Model {
@@ -5918,11 +6333,10 @@ fn catalog_model(backend: BackendTag, id: &str) -> Model {
         supports_video_generation: false,
         backend,
         pricing: None,
+        aliases: Vec::new(),
     }
 }
 
-/// An app whose only backend is `provider` and whose session is on
-/// `chat_model` (a composite id), with an unknown (not yet fetched) catalog.
 fn app_on(provider: OpenRouter, chat_model: &str) -> App {
     let mut a = App::new(Db::open_in_memory().unwrap(), None, test_space());
     a.backends = Backends::default();
@@ -5931,224 +6345,44 @@ fn app_on(provider: OpenRouter, chat_model: &str) -> App {
     a
 }
 
-fn helper_of(a: &App) -> Option<(BackendTag, String)> {
-    a.helper_backend()
-        .map(|(provider, raw)| (provider.backend_tag(), raw))
-}
-
 #[test]
-fn auto_helper_table_has_one_entry_per_backend() {
-    for (tag, expected) in [
-        (BackendTag::OpenRouter, "openai/gpt-6-luna"),
-        (BackendTag::OpenAi, "gpt-6-luna"),
-        (BackendTag::Codex, "gpt-6-luna"),
-        (BackendTag::OpencodeGo, "gpt-6-luna"),
-        // A local runtime serves whatever the user installed: no cheap pick.
-        (BackendTag::Local, ""),
-    ] {
-        assert_eq!(OpenRouter::default_helper_for(tag), expected, "{tag:?}");
-    }
-}
-
-#[test]
-fn auto_helper_is_the_cheap_model_of_the_active_backend() {
-    for (provider, chat, tag, expected) in [
+fn background_jobs_use_the_session_model() {
+    for (provider, chat, expected) in [
         (
             OpenRouter::openrouter_flavor("k".into()),
             "a/chat",
-            BackendTag::OpenRouter,
-            "openai/gpt-6-luna",
+            "a/chat",
         ),
-        (
-            OpenRouter::openai("k".into()),
-            "openai:gpt-5",
-            BackendTag::OpenAi,
-            "gpt-6-luna",
-        ),
+        (OpenRouter::openai("k".into()), "openai:gpt-5", "gpt-5"),
         (
             OpenRouter::openai_codex("k".into()),
             "codex:gpt-5.5",
-            BackendTag::Codex,
-            "gpt-6-luna",
+            "gpt-5.5",
         ),
         (
             OpenRouter::opencode_go("k".into()),
             "opencode:kimi-k2.7-code",
-            BackendTag::OpencodeGo,
-            "gpt-6-luna",
+            "kimi-k2.7-code",
+        ),
+        (
+            OpenRouter::local("http://127.0.0.1:9/v1").unwrap(),
+            "local:big",
+            "big",
+        ),
+        (
+            OpenRouter::mistral("k".into()),
+            "mistral:mistral-vibe-cli-latest",
+            "mistral-vibe-cli-latest",
         ),
     ] {
-        let a = app_on(provider, chat);
-        assert!(a.helper_model.is_empty(), "{tag:?} starts on auto");
-        assert_eq!(helper_of(&a), Some((tag, expected.to_string())), "{tag:?}");
+        let tag = provider.backend_tag();
+        let mut a = app_on(provider, chat);
+        let (provider, model) = a.session_backend().unwrap();
+        assert_eq!(provider.backend_tag(), tag);
+        assert_eq!(model, expected);
+        a.current_model = None;
+        assert!(a.session_backend().is_none());
     }
-}
-
-#[test]
-fn auto_helper_follows_the_session_backend_and_never_switches_providers() {
-    let mut a = app_on(OpenRouter::openrouter_flavor("k".into()), "a/chat");
-    a.backends
-        .set(BackendTag::OpenAi, OpenRouter::openai("k".into()));
-    assert_eq!(
-        helper_of(&a),
-        Some((BackendTag::OpenRouter, "openai/gpt-6-luna".into()))
-    );
-    a.current_model = Some("openai:gpt-5".into());
-    assert_eq!(
-        helper_of(&a),
-        Some((BackendTag::OpenAi, "gpt-6-luna".into()))
-    );
-    // A picked id on a backend that is not configured resolves like auto,
-    // on the session's backend, instead of reaching for the other provider.
-    a.helper_model = "codex:gpt-5.6-luna".into();
-    assert_eq!(
-        helper_of(&a),
-        Some((BackendTag::OpenAi, "gpt-6-luna".into()))
-    );
-    // A picked id on a configured backend wins.
-    a.helper_model = "google/gemini-2.5-flash".into();
-    assert_eq!(
-        helper_of(&a),
-        Some((BackendTag::OpenRouter, "google/gemini-2.5-flash".into()))
-    );
-    // Nothing signed in: nothing to run on.
-    a.backends = Backends::default();
-    assert_eq!(helper_of(&a), None);
-}
-
-#[test]
-fn auto_helper_falls_back_to_the_session_model_without_a_cheap_option() {
-    // Local runtimes have no cheap default: the session's installed model,
-    // else the first installed one.
-    let local = OpenRouter::local("http://127.0.0.1:9/v1").unwrap();
-    let mut a = app_on(local, "local:big");
-    a.models = vec![
-        catalog_model(BackendTag::Local, "small"),
-        catalog_model(BackendTag::Local, "big"),
-    ];
-    assert_eq!(helper_of(&a), Some((BackendTag::Local, "big".into())));
-    a.current_model = None;
-    assert_eq!(helper_of(&a), Some((BackendTag::Local, "small".into())));
-
-    // A backend whose catalog no longer lists its cheap model uses the
-    // session's own model on that same backend.
-    let mut a = app_on(OpenRouter::openai_codex("k".into()), "codex:gpt-5.5");
-    a.models = vec![catalog_model(BackendTag::Codex, "gpt-5.5")];
-    assert_eq!(helper_of(&a), Some((BackendTag::Codex, "gpt-5.5".into())));
-    // ... and the cheap model again once the catalog lists it.
-    a.models
-        .push(catalog_model(BackendTag::Codex, "gpt-6-luna"));
-    assert_eq!(
-        helper_of(&a),
-        Some((BackendTag::Codex, "gpt-6-luna".into()))
-    );
-}
-
-#[test]
-fn auto_helper_moves_up_to_the_newest_listed_version_of_its_family() {
-    let mut a = app_on(OpenRouter::openai_codex("k".into()), "codex:gpt-5.5");
-    a.models = vec![
-        catalog_model(BackendTag::Codex, "gpt-5.5"),
-        catalog_model(BackendTag::Codex, "gpt-6-luna"),
-        catalog_model(BackendTag::Codex, "gpt-6.1-luna"),
-        // Other families and variants are not upgrades.
-        catalog_model(BackendTag::Codex, "gpt-6.2-sol"),
-        catalog_model(BackendTag::Codex, "gpt-6.9-luna-pro"),
-        // Another backend's newer luna is not this backend's.
-        catalog_model(BackendTag::OpenAi, "gpt-7-luna"),
-    ];
-    assert_eq!(
-        helper_of(&a),
-        Some((BackendTag::Codex, "gpt-6.1-luna".into()))
-    );
-    // Versions compare as numbers, not text.
-    a.models
-        .push(catalog_model(BackendTag::Codex, "gpt-6.10-luna"));
-    assert_eq!(
-        helper_of(&a),
-        Some((BackendTag::Codex, "gpt-6.10-luna".into()))
-    );
-    // Only the built-in floor listed: the floor.
-    a.models = vec![catalog_model(BackendTag::Codex, "gpt-6-luna")];
-    assert_eq!(
-        helper_of(&a),
-        Some((BackendTag::Codex, "gpt-6-luna".into()))
-    );
-    // A backend-prefixed OpenRouter id keeps its prefix.
-    let mut a = app_on(OpenRouter::openrouter_flavor("k".into()), "a/chat");
-    a.models = vec![
-        catalog_model(BackendTag::OpenRouter, "openai/gpt-6-luna"),
-        catalog_model(BackendTag::OpenRouter, "openai/gpt-6-luna:batch"),
-        catalog_model(BackendTag::OpenRouter, "openai/gpt-6.5-luna"),
-    ];
-    assert_eq!(
-        helper_of(&a),
-        Some((BackendTag::OpenRouter, "openai/gpt-6.5-luna".into()))
-    );
-}
-
-fn stored_pairs(rows: &[(&str, &str)]) -> Vec<(String, String)> {
-    rows.iter()
-        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
-        .collect()
-}
-
-#[test]
-fn a_chosen_memory_model_migrates_once_into_helper_model() {
-    let mut a = app_with_key();
-    a.db.set_setting("memory_model", "my/pinned-model").unwrap();
-    a.load_settings();
-    assert_eq!(a.helper_model, "my/pinned-model");
-    assert_eq!(
-        a.db.setting("helper_model").as_deref(),
-        Some("my/pinned-model")
-    );
-
-    // Once: a later pick is never overwritten by the stale legacy row.
-    a.helper_model = "other/model".into();
-    a.db.set_setting("helper_model", "other/model").unwrap();
-    a.load_settings();
-    assert_eq!(a.helper_model, "other/model");
-}
-
-#[test]
-fn legacy_memory_model_that_was_only_a_default_stays_auto() {
-    // Older builds wrote the backend default into memory_model the first
-    // time /config closed; that was never a choice.
-    for default in [
-        "google/gemini-2.5-flash-lite",
-        "openai:gpt-4.1-mini",
-        "gpt-4.1-mini",
-        "codex:gpt-5.6-luna",
-        "opencode:deepseek-v4-flash",
-        "",
-    ] {
-        assert_eq!(
-            settings::legacy_helper_model(&stored_pairs(&[("memory_model", default)])),
-            None,
-            "{default:?}"
-        );
-    }
-    assert_eq!(
-        settings::legacy_helper_model(&stored_pairs(&[("memory_model", "my/model")])),
-        Some("my/model".to_string())
-    );
-    // An existing helper_model always wins.
-    assert_eq!(
-        settings::legacy_helper_model(&stored_pairs(&[
-            ("memory_model", "my/model"),
-            ("helper_model", "newer/model"),
-        ])),
-        None
-    );
-    // An empty helper_model row (auto) does not block the migration.
-    assert_eq!(
-        settings::legacy_helper_model(&stored_pairs(&[
-            ("memory_model", "my/model"),
-            ("helper_model", ""),
-        ])),
-        Some("my/model".to_string())
-    );
 }
 
 #[test]
@@ -6157,22 +6391,20 @@ fn removed_model_settings_are_ignored_on_read_and_rejected_on_set() {
         ("memory_model", "x/mem"),
         ("transcriber_model", "x/vision"),
         ("ocr_model", "x/ocr"),
-        ("ocr_engine", "tesseract"),
+        ("ocr_engine", "auto"),
         ("local_ocr_model", "glm-ocr"),
+        ("ocr_images", "true"),
         ("embedding_model", ""),
         ("image_gen_model", "x/img"),
         ("video_gen_model", "x/vid"),
     ];
     let mut a = app_with_key();
-    let embedding_before = a.embedding_model.clone();
+    let embedding_before = a.index.embedding_model.clone();
     for (key, value) in removed {
         a.db.set_setting(key, value).unwrap();
     }
-    // Reading them (including a legacy blank embedding_model) must not crash
-    // or change anything but the one-time memory_model migration.
     a.load_settings();
-    assert_eq!(a.embedding_model, embedding_before);
-    assert_eq!(a.helper_model, "x/mem");
+    assert_eq!(a.index.embedding_model, embedding_before);
     let stored = a.db.load_settings().unwrap();
     for (key, value) in removed {
         assert!(
@@ -6181,19 +6413,18 @@ fn removed_model_settings_are_ignored_on_read_and_rejected_on_set() {
         );
     }
 
-    // Setting them is an error that names the replacement, and stores nothing.
     for (key, _) in removed {
         let error = a.set_setting(key, "new").unwrap_err().to_string();
-        assert!(error.contains(key) && error.contains("removed"), "{error}");
-        assert!(is_removed_setting(key));
+        assert_eq!(error, format!("unknown setting: {key}"));
     }
-    assert_eq!(a.helper_model, "x/mem");
     assert_eq!(a.db.setting("ocr_model").as_deref(), Some("x/ocr"));
-    // The one model setting that replaced them is accepted.
-    a.set_setting("helper_model", "y/helper").unwrap();
-    assert_eq!(a.helper_model, "y/helper");
-    assert!(!is_removed_setting("helper_model"));
-    // Unknown keys are still just unknown.
+    assert_eq!(a.db.setting("ocr_images").as_deref(), Some("true"));
+    assert_eq!(
+        a.set_setting("ocr_images", "false")
+            .unwrap_err()
+            .to_string(),
+        "unknown setting: ocr_images"
+    );
     assert!(
         !a.set_setting("nonsense", "1")
             .unwrap_err()
@@ -6203,7 +6434,7 @@ fn removed_model_settings_are_ignored_on_read_and_rejected_on_set() {
 }
 
 #[test]
-fn the_settings_popup_has_exactly_one_model_row() {
+fn the_settings_popup_has_no_model_rows() {
     let model_rows: Vec<_> = SETTINGS_GROUPS
         .iter()
         .flat_map(|group| group.fields)
@@ -6216,8 +6447,7 @@ fn the_settings_popup_has_exactly_one_model_row() {
                 .ends_with("model")
         })
         .collect();
-    assert!(model_rows == [&SettingsField::HelperModel]);
-    assert!(SettingsField::ALL.contains(&SettingsField::HelperModel));
+    assert!(model_rows.is_empty());
     assert_eq!(
         SettingsField::ALL
             .iter()
@@ -6228,9 +6458,8 @@ fn the_settings_popup_has_exactly_one_model_row() {
                 .unwrap_or("")
                 .ends_with("model"))
             .count(),
-        1
+        0
     );
-    // Every field is reachable through a group.
     for field in SettingsField::ALL {
         assert!(
             SETTINGS_GROUPS.iter().any(|g| g.fields.contains(&field)),
@@ -6259,7 +6488,6 @@ fn generation_follows_the_active_backends_default_model() {
         Some((BackendTag::OpenRouter, "google/veo-3.1".into()))
     );
 
-    // OpenAI generates images only.
     let a = app_on(OpenRouter::openai("k".into()), "openai:gpt-5");
     assert_eq!(
         pair(&a, image),
@@ -6267,7 +6495,6 @@ fn generation_follows_the_active_backends_default_model() {
     );
     assert_eq!(pair(&a, video), None);
 
-    // Backends without a generation model, and local runtimes, have none.
     for (provider, chat) in [
         (OpenRouter::openai_codex("k".into()), "codex:gpt-5.5"),
         (
@@ -6284,8 +6511,6 @@ fn generation_follows_the_active_backends_default_model() {
         assert_eq!(pair(&a, video), None, "{chat}");
     }
 
-    // It follows the session across configured backends, never silently
-    // reaching for another provider's model.
     let mut a = app_on(OpenRouter::openrouter_flavor("k".into()), "a/chat");
     a.backends
         .set(BackendTag::Codex, OpenRouter::openai_codex("k".into()));

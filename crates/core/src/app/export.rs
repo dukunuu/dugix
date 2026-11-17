@@ -1,14 +1,8 @@
-//! `/export`: write a research session's latest report + bibliography to a
-//! markdown file in the active space's files dir, overwritten on every run
-//! so it stays a living document.
+//! Export research reports with their bibliography.
 
 use anyhow::Result;
 use std::fmt::Write as _;
 
-/// Append a numbered `## Sources` bibliography built from `citations`
-/// (`(report_file, url, title)` rows, as returned by `Db::search_citations`)
-/// to `report_body`. No section at all when `citations` is empty — an
-/// export with nothing to cite shouldn't show an empty heading.
 pub fn assemble_report(report_body: &str, citations: &[(String, String, String)]) -> String {
     if citations.is_empty() {
         return report_body.to_string();
@@ -26,11 +20,6 @@ pub fn assemble_report(report_body: &str, citations: &[(String, String, String)]
 }
 
 impl super::App {
-    /// `/export`: write the active session's latest research report (the
-    /// most recent `assistant` message) plus its citations to
-    /// `<space>/files/reports/<session-slug>.md`, overwriting any earlier
-    /// export of the same session. No-op with a status message if the
-    /// session has no research report yet.
     pub fn export_report(&mut self) -> Result<()> {
         let Some(session) = &self.session else {
             self.push_status("no active session".to_string());

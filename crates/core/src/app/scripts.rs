@@ -1,6 +1,3 @@
-// Casts here are on bounded values: token counts, byte sizes, and
-// selection indices — never on unbounded input. JSON-derived indices in
-// provider/tools go through try_from instead.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -10,12 +7,10 @@
 use super::App;
 
 impl App {
-    /// Read the space's scripts dir and populate `scripts_cache`. A missing or
-    /// empty dir produces an empty cache, never an error.
     pub fn refresh_scripts(&mut self) {
         let dir = self.space.scripts_dir(&self.active_space.name);
         let _ = std::fs::create_dir_all(&dir);
-        self.scripts_cache = match std::fs::read_dir(&dir) {
+        self.caches.scripts = match std::fs::read_dir(&dir) {
             Err(_) => Vec::new(),
             Ok(entries) => entries
                 .flatten()
@@ -41,11 +36,9 @@ impl App {
                 })
                 .collect(),
         };
-        self.scripts_cache.sort_by(|a, b| a.name.cmp(&b.name));
+        self.caches.scripts.sort_by(|a, b| a.name.cmp(&b.name));
     }
 
-    /// Touch the script file (if absent) and refresh the cache. Returns the
-    /// created path.
     pub fn ensure_script_file(&mut self, name: &str) -> anyhow::Result<std::path::PathBuf> {
         use anyhow::Context as _;
         let dir = self.space.scripts_dir(&self.active_space.name);
@@ -58,9 +51,6 @@ impl App {
         Ok(path)
     }
 
-    /// Domain half of script rename: move the file on disk. Returns an error
-    /// message string when the target already exists (the view turns it into
-    /// a status line); Ok otherwise.
     pub fn rename_script_file(&mut self, from: &str, to: &str) -> anyhow::Result<()> {
         use anyhow::Context as _;
         let dir = self.space.scripts_dir(&self.active_space.name);
@@ -76,8 +66,6 @@ impl App {
         Ok(())
     }
 
-    /// Domain half of script delete: remove the file from disk and refresh.
-    /// Returns whether a row existed.
     pub fn delete_script_file(&mut self, name: &str) -> anyhow::Result<bool> {
         use anyhow::Context as _;
         let dir = self.space.scripts_dir(&self.active_space.name);

@@ -1,6 +1,5 @@
-// Casts here are on terminal-bounded values (u16/u32 dims, byte colors,
-// glyph counts) — never on unbounded user data. JSON-derived indices in
-// provider/tools go through try_from instead.
+// Casts here are on terminal-bounded values (dims, byte colors, glyph counts),
+// never on unbounded user data.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
@@ -14,7 +13,7 @@ use ratatui::text::Span;
 use ratatui::widgets::Block;
 
 use crate::app_view::AppView;
-use nexus_core::app::Popup;
+use dugix_core::app::Popup;
 
 mod cards;
 pub mod citations_style;
@@ -47,22 +46,19 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
         app.interactive.unfocus();
     }
     // Paint the base first so widgets that only set foreground colors inherit
-    // the configured opaque or terminal-transparent surface.
+    // the configured surface.
     f.render_widget(
         Block::default().style(app.theme.background_style()),
         f.area(),
     );
 
-    // Transcript, composer, and status share one reading column.
     let column = reading_column(f.area(), &app.settings.column_width);
 
-    // Grow the input box with its wrapped content (1–20 rows) plus 2 for the
-    // border. `measure` wants the width the widget renders at: inside the
-    // border and its one-column padding on each side.
+    // `measure` wants the width the widget renders at: inside the border and
+    // its one-column padding on each side.
     let inner_w = column.width.saturating_sub(4);
     let content_rows = app.input.measure(inner_w).preferred_rows;
-    // A pending approval takes the composer's place (Claude Code-style) and
-    // sizes it to the request, so the conversation stays readable above.
+    // An approval takes the composer's place and sizes to the request.
     let approving = app.popup == Popup::Approval;
     let input_h = if approving {
         popups::approval::docked_height(app, column)
@@ -70,35 +66,43 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
         content_rows.saturating_add(2)
     };
 
+    // Messages waiting for the running reply sit between the transcript and
+    // the composer; an approval hides them like it hides the composer.
+    let queue_h = if approving {
+        0
+    } else {
+        input::queue_height(app)
+    };
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(1),          // history
-            Constraint::Length(input_h), // input (auto-height, max 22)
-            Constraint::Length(1),       // status (with inline context bar)
+            Constraint::Min(1),
+            Constraint::Length(queue_h),
+            Constraint::Length(input_h),
+            Constraint::Length(1),
         ])
         .split(column);
 
     render_history(f, app, chunks[0]);
     crate::resize::paint_column_handles(f, app, column);
     if approving {
-        popups::approval::render_in(f, app, chunks[1]);
+        popups::approval::render_in(f, app, chunks[2]);
     } else {
-        render_input(f, app, chunks[1]);
+        input::render_queue(f, app, chunks[1]);
+        render_input(f, app, chunks[2]);
     }
-    render_status(f, app, chunks[2]);
-    // Autocomplete floats above the input; only when no modal popup is open.
+    render_status(f, app, chunks[3]);
     if app.popup == Popup::None {
-        render_command_popup(f, app, chunks[1]);
-        render_at_popup(f, app, chunks[1]);
+        render_command_popup(f, app, chunks[2]);
+        render_at_popup(f, app, chunks[2]);
         render_notifications(f, app, chunks[0]);
     } else {
         app.notification_areas.clear();
     }
 
-    // Recede everything behind an open popup into the quiet border color, so
-    // the modal reads as the focus even on a transparent terminal (every
-    // popup clears its own rect first, so it stays at full strength).
+    // Recede everything behind an open popup; each popup clears its own rect
+    // first, so it stays at full strength.
     if app.popup != Popup::None && !approving {
         let area = f.area();
         f.buffer_mut().set_style(
@@ -121,14 +125,15 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
         Popup::Files => popups::files::render(f, app),
         Popup::Apps => popups::apps::render(f, app),
         Popup::Library => popups::library::render(f, app),
+        Popup::Subagents => popups::subagents::render(f, app),
         Popup::InteractiveUi => crate::interactive::render_popup(f, app),
-        Popup::Watch => popups::watches::render(f, app),
         Popup::ResearchLive => popups::research_live::render(f, app),
         Popup::Swarm => popups::swarm::render(f, app),
         Popup::Usage => popups::usage::render(f, app),
         Popup::Jobs => popups::jobs::render(f, app),
         Popup::Harness => popups::harness::render(f, app),
         Popup::Procs => popups::procs::render(f, app),
+        Popup::Fleet => popups::fleet::render(f, app),
         Popup::Login => popups::login::render(f, app),
         Popup::Local => popups::local::render(f, app),
         Popup::Help => popups::help::render(f, app),
@@ -140,18 +145,13 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
     crate::resize::paint_popup_resize(f, app);
 }
 
-/// Widest the `auto` column grows, and the narrowest it shrinks to once the
-/// terminal is wide enough to center it.
+/// Bounds of the `auto` column once the terminal is wide enough to center it.
 const AUTO_COLUMN_MIN: u16 = 112;
 const AUTO_COLUMN_MAX: u16 = 180;
-/// Terminals up to this wide use the whole width in `auto` mode.
 const AUTO_FULL_UNTIL: u16 = 120;
 
-/// The centered column the conversation lives in, sized by the
-/// `column_width` setting: `full` (the width minus a one-cell margin each
-/// side), a cell count (capped to the screen), or `auto` — full width on
-/// ordinary terminals, and 85% of the width (112..=180 cells) on wide ones, so
-/// a big screen isn't mostly empty gutter and lines still read comfortably.
+/// The centered column the conversation lives in, sized by the `column_width`
+/// setting.
 pub(crate) fn reading_column(area: Rect, setting: &str) -> Rect {
     if area.width <= 40 {
         return area;
@@ -180,11 +180,11 @@ pub fn dim(s: impl Into<String>, theme: &crate::theme::Theme) -> Span<'static> {
 }
 
 /// Map core's abstract spinner palette onto terminal colors.
-pub fn to_color(c: nexus_core::app::SpinnerColor) -> Color {
+pub fn to_color(c: dugix_core::app::SpinnerColor) -> Color {
     match c {
-        nexus_core::app::SpinnerColor::Green => Color::Green,
-        nexus_core::app::SpinnerColor::Cyan => Color::Cyan,
-        nexus_core::app::SpinnerColor::Magenta => Color::Magenta,
+        dugix_core::app::SpinnerColor::Green => Color::Green,
+        dugix_core::app::SpinnerColor::Cyan => Color::Cyan,
+        dugix_core::app::SpinnerColor::Magenta => Color::Magenta,
     }
 }
 
@@ -199,8 +199,8 @@ fn humanize(n: u64) -> String {
     }
 }
 
-/// `$0.0042`, `$1.23`, `$0.000012`, or `—` when the price is unknown.
-/// Small-but-real costs keep enough decimals that they never read `$0.0000`.
+/// `$0.0042`, `$1.23`, or `—` when the price is unknown; small-but-real costs
+/// keep enough decimals that they never read `$0.0000`.
 fn fmt_cost(cost: Option<f64>) -> String {
     match cost {
         Some(c) if c > 0.0 && c < 1.0 => {
@@ -263,11 +263,9 @@ mod tests {
 
     #[test]
     fn auto_uses_the_full_width_up_to_120_then_grows_to_85_percent() {
-        // Up to 120 cells: the whole width minus a one-cell margin each side.
         assert_eq!(column(80, "auto"), (1, 78));
         assert_eq!(column(114, "auto"), (1, 112));
         assert_eq!(column(120, "auto"), (1, 118));
-        // Wider: 85% of the screen, never under 112 or over 180, centered.
         assert_eq!(column(121, "auto"), (4, 112));
         assert_eq!(column(160, "auto"), (12, 136));
         assert_eq!(column(200, "auto"), (15, 170));
@@ -280,10 +278,8 @@ mod tests {
         assert_eq!(column(200, "full"), (1, 198));
         assert_eq!(column(200, "100"), (50, 100));
         assert_eq!(column(200, "140"), (30, 140));
-        // A number past the screen fills it (minus the margins) instead.
         assert_eq!(column(120, "220"), (1, 118));
         assert_eq!(column(200, "400"), (1, 198));
-        // Garbage falls back to auto rather than collapsing the layout.
         assert_eq!(column(200, "wide"), column(200, "auto"));
         assert_eq!(column(200, ""), column(200, "auto"));
     }
@@ -304,8 +300,8 @@ mod tests {
         assert_eq!(c.x, 3 + 15);
     }
 
-    fn message(role: &str, content: &str) -> nexus_core::db::Message {
-        nexus_core::db::Message {
+    fn message(role: &str, content: &str) -> dugix_core::db::Message {
+        dugix_core::db::Message {
             role: role.into(),
             content: content.into(),
             model: None,
@@ -321,11 +317,11 @@ mod tests {
 
     #[test]
     fn a_wide_screen_lays_the_conversation_out_in_the_auto_column() {
-        use nexus_core::app::App;
-        let root = std::env::temp_dir().join(format!("nexus-wide-{}", uuid::Uuid::new_v4()));
+        use dugix_core::app::App;
+        let root = std::env::temp_dir().join(format!("dugix-wide-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
-        let db = nexus_core::db::Db::open_in_memory().unwrap();
-        let mut app = AppView::new(App::new(db, Some("k"), nexus_core::space::Space { root }));
+        let db = dugix_core::db::Db::open_in_memory().unwrap();
+        let mut app = AppView::new(App::new(db, Some("k"), dugix_core::space::Space { root }));
         app.messages
             .push(message("user", "How wide should this column be?"));
         app.messages.push(message(
@@ -340,8 +336,6 @@ mod tests {
         let rows: Vec<String> = (0..16)
             .map(|y| (0..200).map(|x| buffer[(x, y)].symbol()).collect())
             .collect();
-        // Everything lives in cells 15..185, with the long reply wrapped at
-        // the column rather than at the old 112.
         let widest = rows
             .iter()
             .map(|r| r.trim_end().chars().count())

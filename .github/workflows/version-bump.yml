@@ -51,12 +51,12 @@ jobs:
           # Lockfile: workspace versions live in [workspace.package]; all
           # member packages ride the same bump (a full re-resolve would
           # churn every dependency).
-          sed -i '/^name = "nexus-chat"$/{n;s/^version = ".*"/version = "'"$new"'"/;}' Cargo.lock
-          sed -i '/^name = "nexus-chat-core"$/{n;s/^version = ".*"/version = "'"$new"'"/;}' Cargo.lock
-          sed -i '/^name = "nexus-studio"$/{n;s/^version = ".*"/version = "'"$new"'"/;}' Cargo.lock
-          # The TUI pins nexus-chat-core exactly (a caret let fresh installs
+          sed -i '/^name = "dugix"$/{n;s/^version = ".*"/version = "'"$new"'"/;}' Cargo.lock
+          sed -i '/^name = "dugix-core"$/{n;s/^version = ".*"/version = "'"$new"'"/;}' Cargo.lock
+          sed -i '/^name = "dugix-studio"$/{n;s/^version = ".*"/version = "'"$new"'"/;}' Cargo.lock
+          # The TUI pins dugix-core exactly (a caret let fresh installs
           # resolve an older core); move the pin with the bump.
-          sed -i 's|nexus-chat-core = { path = "../core", version = "=[^"]*"|nexus-chat-core = { path = "../core", version = "='"$new"'"|' crates/tui/Cargo.toml
+          sed -i 's|dugix-core = { path = "../core", version = "=[^"]*"|dugix-core = { path = "../core", version = "='"$new"'"|' crates/tui/Cargo.toml
           grep -c 'version = "='"$new"'"' crates/tui/Cargo.toml | grep -qx 1
           # Sanity check: fail loudly if the manifests are inconsistent.
           cargo metadata --no-deps --locked >/dev/null

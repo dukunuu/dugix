@@ -1,13 +1,5 @@
-//! The connector registry: which connectors exist, whether they are
-//! connected, what tools they expose, and what the model is allowed to see
-//! and call.
-//!
-//! One background task per enabled connector connects (never blocking the
-//! UI), lists tools, refreshes them on `list_changed` and `ttlMs`, and
-//! reconnects a crashed stdio server with backoff (three restarts per
-//! minute, then an error state). Everything here is synchronous state
-//! behind a mutex that is never held across an await, so the TUI can read
-//! it from the render path.
+//! The connector registry: which connectors exist, whether they are connected, what tools
+//! they expose, and what the model is allowed to see and call.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
@@ -27,29 +19,20 @@ use super::transport::stdio::{LogSink, StdioSpec, StdioTransport};
 use super::transport::{McpError, Signals, Transport};
 use crate::provider::ToolDef;
 
-/// More than this many exposed tools and the model gets the `connectors`
-/// meta-tool instead of every definition.
+/// More than this many exposed tools and the model gets the `connectors` meta-tool instead.
 pub const META_THRESHOLD: usize = 30;
-/// A model-facing description is cut to this many bytes.
 pub const MAX_DESCRIPTION_BYTES: usize = 1024;
-/// A tool whose input schema serializes larger than this is skipped.
 pub const MAX_SCHEMA_BYTES: usize = 16 * 1024;
 /// The longest tool name providers accept.
 const MAX_NAME_CHARS: usize = 64;
-/// Results returned by `connectors` `search`.
 pub const SEARCH_LIMIT: usize = 8;
 
 /// Where a connector stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
     Connecting,
-    Connected {
-        tools: usize,
-    },
-    /// 401 or a missing bearer token. C2 adds OAuth sign-in.
-    NeedsAuth {
-        resource_metadata: Option<String>,
-    },
+    Connected { tools: usize },
+    NeedsAuth { resource_metadata: Option<String> },
     Error(String),
     Disabled,
 }
@@ -82,8 +65,7 @@ pub struct Env {
     /// Short status-line notes ("linear: could not connect").
     pub notes: Option<UnboundedSender<String>>,
     pub tuning: Tuning,
-    /// Connect in the background when a connector is added, enabled or
-    /// reloaded. Off for one-shot CLI commands that only edit config.
+    /// Connect in the background when a connector is added, enabled or reloaded.
     pub autostart: bool,
 }
 
@@ -172,16 +154,14 @@ pub struct ConnectorInfo {
 /// Whether a call needs the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Access {
-    /// Runs without asking.
     Free,
-    /// Show the approval panel; `changed` when the definition moved since
-    /// the user allowed it.
-    Ask { changed: bool },
-    /// The user denied this tool.
+    /// Show the approval panel; `changed` when the definition moved since the user allowed it.
+    Ask {
+        changed: bool,
+    },
     Denied,
 }
 
-/// One tool in the popup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolRow {
     pub name: String,
@@ -190,7 +170,6 @@ pub struct ToolRow {
     /// Annotations as words ("writes · may delete").
     pub words: String,
     pub read_only: bool,
-    /// The explicit policy, if any.
     pub policy: Option<Policy>,
     pub access: Access,
     /// The name the model sees.
@@ -227,13 +206,11 @@ struct CatalogEntry {
 }
 
 impl Exposure {
-    /// Look a model-supplied name up.
     #[must_use]
     pub fn target(&self, exposed: &str) -> Option<&Target> {
         self.targets.get(exposed)
     }
 
-    /// How many tools could be called.
     #[must_use]
     pub fn tool_count(&self) -> usize {
         self.catalog.len()
@@ -310,8 +287,7 @@ impl Exposure {
     }
 }
 
-/// Note that something the model can see (or that decides what it may do)
-/// changed, so the cached exposure is rebuilt.
+/// Note that what the model can see or do changed, so the cached exposure is rebuilt.
 fn bump(state: &mut State) {
     state.generation += 1;
 }
@@ -336,8 +312,7 @@ fn sanitize(text: &str) -> String {
         .collect()
 }
 
-/// Cut `text` to at most `max` bytes (on a character boundary), ending in an
-/// ellipsis when something was removed.
+/// Cut `text` to at most `max` bytes on a character boundary, ending in an ellipsis.
 fn truncate_bytes(text: &str, max: usize) -> String {
     if text.len() <= max {
         return text.to_string();
@@ -352,7 +327,6 @@ fn truncate_bytes(text: &str, max: usize) -> String {
     out
 }
 
-/// Why a tool cannot be offered to the model, if it cannot.
 fn invalid_reason(tool: &ToolInfo) -> Option<String> {
     let Some(schema) = tool.input_schema.as_object() else {
         return Some("input schema is not an object".into());
@@ -369,15 +343,13 @@ fn invalid_reason(tool: &ToolInfo) -> Option<String> {
     None
 }
 
-/// Display titles by exposed name, for tool cards (which render from the
-/// stored call alone, with no registry in reach).
+/// Display titles by exposed name, for tool cards that render with no registry in reach.
 fn titles() -> &'static std::sync::RwLock<HashMap<String, (String, String)>> {
     static TITLES: std::sync::OnceLock<std::sync::RwLock<HashMap<String, (String, String)>>> =
         std::sync::OnceLock::new();
     TITLES.get_or_init(Default::default)
 }
 
-/// The title a connector tool should be shown under, if one is known.
 #[must_use]
 pub fn display_title(exposed: &str) -> Option<String> {
     titles()
@@ -398,7 +370,7 @@ pub fn display_connector(exposed: &str) -> Option<String> {
 }
 
 impl Registry {
-    /// A registry over `env`. Nothing is read or started yet.
+    /// A registry over `env`; nothing is read or started yet.
     #[must_use]
     pub fn new(env: Env) -> Self {
         Self(Arc::new(Shared {
@@ -408,8 +380,7 @@ impl Registry {
         }))
     }
 
-    /// A registry with no config file and an in-memory vault: connectors
-    /// exist only if added at runtime. What tests and headless tools use.
+    /// A registry with no config file and an in-memory vault: connectors exist only if added at runtime.
     #[must_use]
     pub fn empty() -> Self {
         Self::new(Env {
@@ -422,8 +393,7 @@ impl Registry {
         })
     }
 
-    /// The registry for the real app: `config.toml`, the OS keychain and
-    /// logs under the data directory.
+    /// The registry for the real app: `config.toml`, the OS keychain and logs under the data directory.
     #[must_use]
     pub fn system(
         data_root: &std::path::Path,
@@ -441,13 +411,11 @@ impl Registry {
         })
     }
 
-    /// The vault holding this registry's secrets.
     #[must_use]
     pub fn vault(&self) -> &Arc<Vault> {
         &self.0.env.vault
     }
 
-    /// The config file connectors are saved to.
     #[must_use]
     pub fn config_path(&self) -> Option<&std::path::Path> {
         self.0.env.config_path.as_deref()
@@ -475,12 +443,7 @@ impl Registry {
 
     // ----- configuration ------------------------------------------------
 
-    /// Read `[connectors.*]` and make the registry match it: new entries
-    /// appear, vanished ones are stopped, changed ones restart. Problems with
-    /// individual entries are returned, not fatal.
-    ///
-    /// # Errors
-    /// The config file exists but cannot be read or parsed.
+    /// Read `[connectors.*]` and make the registry match it; per-entry problems are returned, not fatal.
     pub fn load(&self) -> anyhow::Result<Vec<String>> {
         let Some(path) = &self.0.env.config_path else {
             return Ok(Vec::new());
@@ -535,7 +498,6 @@ impl Registry {
         Ok(loaded.problems)
     }
 
-    /// Connect every enabled connector in the background.
     pub fn start(&self) {
         let names: Vec<String> = self
             .0
@@ -557,9 +519,7 @@ impl Registry {
         }
     }
 
-    /// (Re)start one connector's background task. A disabled connector just
-    /// settles into the disabled state; with no async runtime (a bare unit
-    /// test) the state is updated but nothing connects.
+    /// (Re)start one connector's background task; with no async runtime the state is updated but nothing connects.
     pub fn restart(&self, name: &str) {
         let token = {
             let mut state = self.0.state.lock().expect("registry");
@@ -597,20 +557,11 @@ impl Registry {
     }
 
     /// Add a connector: validates, saves to the config file, and connects.
-    ///
-    /// # Errors
-    /// Invalid name or connector, a duplicate, or a failed write.
     pub fn add(&self, name: &str, config: ConnectorConfig) -> anyhow::Result<()> {
         self.add_with_secrets(name, config, &[])
     }
 
-    /// Add a connector together with its secrets (`(kind, value)` pairs for
-    /// the keychain). The config is written first, the secrets next, and only
-    /// then does the connector start, so it never connects without its token.
-    /// A secret that cannot be stored undoes the add.
-    ///
-    /// # Errors
-    /// Invalid name or connector, a duplicate, or a failed write.
+    /// Add a connector and its secrets; the config is written first and the connector starts only once they are stored.
     pub fn add_with_secrets(
         &self,
         name: &str,
@@ -656,9 +607,6 @@ impl Registry {
     }
 
     /// Remove a connector, its saved config and its keychain entries.
-    ///
-    /// # Errors
-    /// The config file could not be written.
     pub fn remove(&self, name: &str) -> anyhow::Result<bool> {
         let in_file = match &self.0.env.config_path {
             Some(path) => config::remove_at(path, name)?,
@@ -682,7 +630,6 @@ impl Registry {
         Ok(true)
     }
 
-    /// Delete every keychain entry a connector owns.
     pub fn forget_secrets(&self, name: &str, config: &ConnectorConfig) {
         let vault = &self.0.env.vault;
         vault.delete(name, "bearer");
@@ -696,10 +643,6 @@ impl Registry {
         }
     }
 
-    /// Enable or disable a connector (and connect or disconnect it).
-    ///
-    /// # Errors
-    /// Unknown connector, or the config could not be written.
     pub fn set_enabled(&self, name: &str, on: bool) -> anyhow::Result<()> {
         if let Some(path) = &self.0.env.config_path {
             config::set_enabled_at(path, name, on)?;
@@ -716,10 +659,6 @@ impl Registry {
         Ok(())
     }
 
-    /// Set or clear the policy for one tool.
-    ///
-    /// # Errors
-    /// Unknown connector, or the config could not be written.
     pub fn set_policy(&self, name: &str, tool: &str, policy: Option<Policy>) -> anyhow::Result<()> {
         let hash = {
             let state = self.0.state.lock().expect("registry");
@@ -772,7 +711,6 @@ impl Registry {
 
     // ----- reading state ------------------------------------------------
 
-    /// Every connector, sorted by name.
     #[must_use]
     pub fn infos(&self) -> Vec<ConnectorInfo> {
         let state = self.0.state.lock().expect("registry");
@@ -795,7 +733,6 @@ impl Registry {
             .collect()
     }
 
-    /// Every connector's configuration, by name.
     #[must_use]
     pub fn configs(&self) -> BTreeMap<String, ConnectorConfig> {
         self.0
@@ -808,7 +745,7 @@ impl Registry {
             .collect()
     }
 
-    /// The configuration of one connector (secrets redacted by `Debug`).
+    /// The configuration of one connector; `Debug` redacts its secrets.
     #[must_use]
     pub fn config_of(&self, name: &str) -> Option<ConnectorConfig> {
         self.0
@@ -820,7 +757,6 @@ impl Registry {
             .map(|entry| entry.config.clone())
     }
 
-    /// One connector's tools with their policies, for the popup.
     #[must_use]
     pub fn tool_rows(&self, name: &str) -> Vec<ToolRow> {
         let exposure = self.exposure();
@@ -853,7 +789,6 @@ impl Registry {
         rows
     }
 
-    /// Wait until no connector is still connecting (or `limit` passes).
     pub async fn wait_ready(&self, limit: Duration) {
         let deadline = Instant::now() + limit;
         while Instant::now() < deadline {
@@ -874,8 +809,7 @@ impl Registry {
 
     // ----- what the model sees -----------------------------------------
 
-    /// The model-facing view of the connectors right now (cached until
-    /// something changes).
+    /// The model-facing view of the connectors, cached until something changes.
     #[must_use]
     pub fn exposure(&self) -> Arc<Exposure> {
         let state = self.0.state.lock().expect("registry");
@@ -904,19 +838,16 @@ impl Registry {
         exposure
     }
 
-    /// Whether any connector tool could reach the model (cheap check).
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.state.lock().expect("registry").entries.is_empty()
     }
 
-    /// The tool behind a model-supplied name.
     #[must_use]
     pub fn resolve(&self, exposed: &str) -> Option<Target> {
         self.exposure().target(exposed).cloned()
     }
 
-    /// The tool's current definition.
     #[must_use]
     pub fn tool_info(&self, target: &Target) -> Option<ToolInfo> {
         self.0
@@ -931,8 +862,7 @@ impl Registry {
             .cloned()
     }
 
-    /// Whether the tool is classed read-only for scheduling: annotated
-    /// read-only (and not destructive), or allowed by policy.
+    /// Whether the tool is classed read-only for scheduling: annotated read-only or allowed by policy.
     #[must_use]
     pub fn is_read_only(&self, target: &Target) -> bool {
         let state = self.0.state.lock().expect("registry");
@@ -960,7 +890,6 @@ impl Registry {
         access_of(&state, &target.connector, entry, tool)
     }
 
-    /// "Allow this tool for the session": remember the definition hash.
     pub fn grant_session(&self, target: &Target) {
         let Some(info) = self.tool_info(target) else {
             return;
@@ -974,9 +903,6 @@ impl Registry {
     }
 
     /// "Always allow": policy `allow` plus the pinned definition hash.
-    ///
-    /// # Errors
-    /// The config could not be written.
     pub fn allow_always(&self, target: &Target) -> anyhow::Result<()> {
         self.set_policy(&target.connector, &target.tool, Some(Policy::Allow))?;
         self.grant_session(target);
@@ -994,7 +920,6 @@ impl Registry {
         bump(&mut state);
     }
 
-    /// Append a tool called through the meta-tool to the regular list.
     pub fn promote(&self, target: &Target) {
         let mut state = self.0.state.lock().expect("registry");
         let key = (target.connector.clone(), target.tool.clone());
@@ -1004,11 +929,6 @@ impl Registry {
         }
     }
 
-    /// Call a tool on its connector.
-    ///
-    /// # Errors
-    /// Not connected, or the call failed. A tool that ran and reported an
-    /// error is `Ok` with `is_error`.
     pub async fn call(&self, target: &Target, arguments: Value) -> Result<CallResult, McpError> {
         let session = {
             let state = self.0.state.lock().expect("registry");
@@ -1044,8 +964,7 @@ impl Registry {
         result
     }
 
-    /// Put a connector into a given state without connecting: lets UI tests
-    /// show every status and a tool list with no network or process.
+    /// Put a connector into a given state without connecting, for UI tests.
     #[doc(hidden)]
     pub fn force_state(&self, name: &str, status: Status, tools: Vec<ToolInfo>) {
         let mut state = self.0.state.lock().expect("registry");
@@ -1088,8 +1007,7 @@ fn access_of(state: &State, connector: &str, entry: &Entry, tool: &ToolInfo) -> 
 }
 
 fn build_exposure(state: &State) -> Exposure {
-    // Names are assigned over every valid tool, denied ones included, so
-    // denying a tool never renames its neighbours.
+    // Names are assigned over every valid tool, denied ones included, so denying a tool never renames its neighbours.
     let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut catalog = Vec::new();
     let mut denied = std::collections::HashSet::new();
@@ -1177,7 +1095,6 @@ fn build_exposure(state: &State) -> Exposure {
     }
 }
 
-/// The single tool offered when connectors bring too many to list.
 fn meta_def() -> ToolDef {
     ToolDef {
         name: "connectors".into(),
@@ -1224,7 +1141,6 @@ fn timeouts_of(config: &ConnectorConfig) -> Timeouts {
     }
 }
 
-/// Resolve secrets and open the transport.
 async fn open(
     registry: &Registry,
     name: &str,
@@ -1234,8 +1150,7 @@ async fn open(
     let vault = Arc::clone(&registry.0.env.vault);
     let lookup_name = name.to_string();
     let lookup_config = config.clone();
-    // The keychain can block (a prompt, a locked store): keep it off the
-    // async workers.
+    // The keychain can block (a prompt, a locked store): keep it off the async workers.
     let resolved = tokio::task::spawn_blocking(move || {
         let bearer = (lookup_config.auth == AuthKind::Bearer)
             .then(|| vault.get(&lookup_name, "bearer"))
@@ -1457,8 +1372,7 @@ async fn refresh_tools(
             if skipped.len() == 1 { "" } else { "s" }
         )
     });
-    // A hand-written `allow` policy has no pin yet: pin its first discovered
-    // definition before exposing it, so later server changes cannot inherit it.
+    // A hand-written `allow` policy has no pin yet: pin its first definition before exposing it, so server changes cannot inherit it.
     let config = registry.config_of(name).unwrap_or_default();
     let mut pins = Vec::new();
     for tool in &valid {

@@ -51,8 +51,8 @@ impl Anchor {
         }
         Ok(())
     }
-    /// Re-find the quote within its block, otherwise fall back to the block,
-    /// or the document when the block disappeared. No cross-block guessing.
+    /// Re-find the quote in its block, falling back to the block or document; no
+    /// cross-block guessing.
     pub fn reanchor(&mut self, doc: &Doc) {
         let Some(block) = self.block.as_deref().and_then(|id| doc.block(id)) else {
             self.block = None;
@@ -111,6 +111,7 @@ impl Edit {
                 }
                 Op::InsertBlocks { .. } | Op::InsertMarkdown { .. } => keys.push("@order".into()),
                 Op::SetPage { .. } => keys.push("@page".into()),
+                Op::SetStyle { .. } => keys.push("@theme".into()),
                 Op::SetTitle { .. } => keys.push("@title".into()),
                 Op::ApplyDesign { .. } => {
                     keys.push("@theme".into());

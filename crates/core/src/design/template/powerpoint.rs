@@ -88,7 +88,7 @@ pub(super) fn merge(
         .context("template has no slide layout")?;
     for (index, slide) in deck.slides.iter().enumerate() {
         let n = index + 1;
-        let mut id = format!("nexusSlide{n}");
+        let mut id = format!("dugixSlide{n}");
         while original_rels
             .kids_named("Relationship")
             .any(|r| r.attr("Id") == Some(&id))
@@ -166,9 +166,9 @@ pub(super) fn merge(
         for (path, bytes) in &generated {
             if path.starts_with(&format!("ppt/media/slide{n}-")) {
                 let filename = path.trim_start_matches("ppt/media/");
-                let mut target = format!("nexus-{filename}");
+                let mut target = format!("dugix-{filename}");
                 while base.contains_key(&format!("ppt/media/{target}")) {
-                    target = format!("nexus-{target}");
+                    target = format!("dugix-{target}");
                 }
                 relationships = relationships.replace(
                     &format!("../media/{filename}"),

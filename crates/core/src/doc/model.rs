@@ -99,8 +99,7 @@ pub enum ImageWidth {
     Full,
 }
 
-/// List items are addressed by one-based dotted paths (`2.1` is the first
-/// child of the second item). Paths are local to their stable block id.
+/// List items are addressed by one-based dotted paths, local to their block id.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ListItem {

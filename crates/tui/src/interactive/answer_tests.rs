@@ -1,6 +1,6 @@
 use super::*;
-use nexus_core::app::AppEvent;
-use nexus_core::provider::{BackendTag, openrouter::OpenRouter};
+use dugix_core::app::AppEvent;
+use dugix_core::provider::{BackendTag, openrouter::OpenRouter};
 use ratatui::{Terminal, backend::TestBackend};
 use serde_json::{Value, json};
 
@@ -25,11 +25,11 @@ fn quiz(label: &str) -> Value {
 }
 
 fn app(data: &Value) -> AppView {
-    let mut app = AppView::new(nexus_core::app::App::new(
-        nexus_core::db::Db::open_in_memory().unwrap(),
+    let mut app = AppView::new(dugix_core::app::App::new(
+        dugix_core::db::Db::open_in_memory().unwrap(),
         None,
-        nexus_core::space::Space {
-            root: std::env::temp_dir().join(format!("nexus-answer-test-{}", uuid::Uuid::new_v4())),
+        dugix_core::space::Space {
+            root: std::env::temp_dir().join(format!("dugix-answer-test-{}", uuid::Uuid::new_v4())),
         },
     ));
     app.backends.set(
@@ -37,9 +37,9 @@ fn app(data: &Value) -> AppView {
         OpenRouter::local("http://127.0.0.1:9/v1").unwrap(),
     );
     app.current_model = Some("answer-test".into());
-    app.messages.push(nexus_core::db::Message {
+    app.messages.push(dugix_core::db::Message {
         role: "assistant".into(),
-        content: format!("```nexus-ui\n{data}\n```"),
+        content: format!("```dugix-ui\n{data}\n```"),
         model: None,
         reasoning: None,
         tokens: None,
@@ -204,7 +204,7 @@ fn invalid_rendered_labels_and_send_preconditions_never_restore_over_a_draft() {
         if no_model {
             app.current_model = None;
         } else {
-            app.backends = nexus_core::app::Backends::default();
+            app.backends = dugix_core::app::Backends::default();
         }
         app.set_input("keep this draft");
         draw(&mut app);
@@ -266,12 +266,10 @@ fn nook() -> Value {
 }
 
 fn entry(data: &Value) -> Entry {
-    Entry {
-        session: Ok(Session::new(Document::parse(&data.to_string()).unwrap()).unwrap()),
-        focus: 0,
-        error: String::new(),
-        scroll: 0,
-    }
+    Entry::new(Ok(Session::new(
+        Document::parse(&data.to_string()).unwrap(),
+    )
+    .unwrap()))
 }
 
 fn rows(buffer: &Buffer) -> Vec<String> {
@@ -288,34 +286,25 @@ fn rows(buffer: &Buffer) -> Vec<String> {
 fn choice_list_card_at_80_columns_has_chips_labels_and_right_edge_arrows() {
     let theme = Theme::default();
     let (canvas, hits) = entry(&nook()).canvas(80, &theme, false, true);
-    let frame = |text: &str| format!("│{text:<78}│");
+    let frame = |text: &str| format!("  {text:<78}");
+    let choice = |text: &str| format!("  {text:<75}→  ");
     let expected = [
-        format!("╭{} ⤢ ╮", "─".repeat(75)),
-        frame(""),
-        frame(" A little memory nook"),
-        frame(""),
-        frame(" Pick one thread, and we'll follow it gently."),
-        frame(""),
-        format!(
-            "│ {:<75}→ │",
-            " 1  I want to tell you about yesterday's warmest moment."
-        ),
-        format!(
-            "│ {:<75}→ │",
-            " 2  I want to tell you about dinner with her brother."
-        ),
-        format!(
-            "│ {:<75}→ │",
-            " 3  I want to tell you about our growing closeness."
-        ),
-        frame(""),
-        format!("╰{} 1–3 pick · F2 keyboard ╯", "─".repeat(54)),
+        format!("{}⤢  ", " ".repeat(77)),
+        " ".repeat(80),
+        frame("A little memory nook"),
+        frame("Pick one thread, and we'll follow it gently."),
+        " ".repeat(80),
+        choice(" 1  I want to tell you about yesterday's warmest moment."),
+        choice(" 2  I want to tell you about dinner with her brother."),
+        choice(" 3  I want to tell you about our growing closeness."),
+        " ".repeat(80),
+        format!("{} 1–3 pick · F2 keyboard ──", "─".repeat(54)),
     ];
     assert_eq!(rows(&canvas), expected);
-    assert_eq!(canvas[(2, 2)].fg, theme.accent2);
+    assert_eq!(canvas[(2, 2)].fg, theme.fg);
     assert!(canvas[(2, 2)].modifier.contains(Modifier::BOLD));
-    assert_eq!(canvas[(2, 4)].fg, theme.fg_dim);
-    for (item, y) in (6..9).enumerate() {
+    assert_eq!(canvas[(2, 3)].fg, theme.fg_dim);
+    for (item, y) in (5..8).enumerate() {
         assert_eq!(hits[item], (Rect::new(2, y, 76, 1), item));
         assert_eq!(canvas[(3, y)].bg, theme.control);
         assert_ne!(canvas[(3, y)].bg, theme.bg);
@@ -323,11 +312,11 @@ fn choice_list_card_at_80_columns_has_chips_labels_and_right_edge_arrows() {
         assert_eq!(canvas[(77, y)].fg, theme.fg_dim);
     }
     let (focused, _) = entry(&nook()).canvas(80, &theme, true, true);
-    assert_eq!(focused[(6, 6)].fg, theme.accent);
+    assert_eq!(focused[(6, 5)].fg, theme.accent);
     for x in 5..78 {
-        assert_eq!(focused[(x, 6)].bg, theme.selection);
+        assert_eq!(focused[(x, 5)].bg, theme.selection);
     }
-    assert_eq!(focused[(6, 7)].bg, theme.bg);
+    assert_eq!(focused[(6, 6)].bg, theme.bg);
     assert!(rows(&focused).last().unwrap().contains("1–3 pick"));
 }
 
@@ -340,7 +329,7 @@ fn long_choices_wrap_under_the_label_and_reserve_exactly_the_drawn_height() {
     for width in [60, 80, 120] {
         let source = data.to_string();
         let rendered = crate::ui::markdown::render(
-            &format!("```nexus-ui\n{source}\n```"),
+            &format!("```dugix-ui\n{source}\n```"),
             usize::from(width),
             crate::ui::markdown::MdColors::default(),
         );
@@ -351,13 +340,13 @@ fn long_choices_wrap_under_the_label_and_reserve_exactly_the_drawn_height() {
         assert_eq!(hits[1].0.width, width - 4);
         assert_eq!(hits[1].0.x, 2);
         if width == 80 {
-            assert_eq!(hits[1].0, Rect::new(2, 7, 76, 2));
+            assert_eq!(hits[1].0, Rect::new(2, 6, 76, 2));
             let text = rows(&canvas);
-            assert!(text[7].starts_with("│  2  I want to tell you about dinner"));
-            assert!(text[8].starts_with("│     home afterwards."));
-            assert_eq!(canvas[(77, 7)].symbol(), "→");
-            assert_eq!(canvas[(77, 8)].symbol(), " ");
-            assert_eq!(hits[2].0.y, 9);
+            assert!(text[6].starts_with("   2  I want to tell you about dinner"));
+            assert!(text[7].starts_with("      home afterwards."));
+            assert_eq!(canvas[(77, 6)].symbol(), "→");
+            assert_eq!(canvas[(77, 7)].symbol(), " ");
+            assert_eq!(hits[2].0.y, 8);
         }
     }
 }
@@ -378,9 +367,9 @@ fn choice_numbers_stop_at_nine_across_groups_and_labels_are_escaped() {
     let mut entry = entry(&data);
     let (canvas, hits) = entry.canvas(80, &Theme::default(), false, true);
     let text = rows(&canvas);
-    assert!(text[usize::from(hits[8].0.y)].starts_with("│  9  Nine"));
+    assert!(text[usize::from(hits[8].0.y)].starts_with("   9  Nine"));
     assert!(text.iter().all(|row| !row.contains('\u{fe0f}')));
-    assert!(text[usize::from(hits[9].0.y)].starts_with("│     Ten"));
+    assert!(text[usize::from(hits[9].0.y)].starts_with("      Ten"));
     assert!(text.last().unwrap().contains("1–9 pick"));
     assert_eq!(entry.choices().len(), 10);
     entry.focus = 9;
@@ -421,7 +410,6 @@ async fn numbered_and_arrow_key_choices_use_the_same_guarded_send_path() {
         let mut app = app(&quiz("First"));
         app.set_input("keep my draft");
         draw(&mut app);
-        // Digits have no effect until the card owns keyboard input.
         app.interactive.key(KeyCode::Char('2').into(), true);
         assert_eq!(app.messages.len(), 1);
         focus(&mut app);
@@ -507,8 +495,7 @@ async fn choice_clicks_include_the_chip_blank_space_arrow_and_wrapped_continuati
 #[tokio::test(flavor = "current_thread")]
 async fn number_choices_are_blocked_while_a_user_command_is_running() {
     let mut app = app(&quiz("First"));
-    // `!` commands are an agent-mode feature.
-    app.work_mode = nexus_core::app::WorkMode::Agent;
+    app.work_mode = dugix_core::app::WorkMode::Agent;
     app.execute(AppCommand::RunUserCommand { cmd: "true".into() })
         .unwrap();
     // No await: the command task cannot start or touch the filesystem.

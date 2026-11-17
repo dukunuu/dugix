@@ -4,9 +4,9 @@ use crate::tools::{ToolBox, is_read_only_tool};
 use serde_json::json;
 
 fn fixture() -> (Db, FilesCtx, String) {
-    let root = std::env::temp_dir().join(format!("nexus-chat-tool-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-tool-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
-    let path = root.join("nexus.db");
+    let path = root.join("dugix.db");
     let db = Db::open(&path).unwrap();
     let space = db.list_spaces().unwrap()[0].id.clone();
     let session = db
@@ -120,7 +120,6 @@ fn transcript_starts_near_the_hit_and_collapses_tool_noise() {
     .unwrap();
     let (text, start) = transcript(&ctx, &format!("chat:{session}#{center}")).unwrap();
     let lines: Vec<&str> = text.lines().collect();
-    // Two messages of context ahead of the hit.
     assert!(
         lines[start - 1].ends_with("] user"),
         "{:?}",
@@ -173,8 +172,6 @@ async fn long_chats_page_by_line_and_a_huge_line_is_split() {
     let next = tb
         .run(
             "fetch_url",
-            // A header, the text and a blank line per message: 300 short
-            // messages run past line 900.
             &json!({"url": format!("chat:{session}"), "offset": 801}).to_string(),
         )
         .await

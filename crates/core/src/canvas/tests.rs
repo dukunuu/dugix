@@ -11,7 +11,7 @@ struct Space(PathBuf);
 
 impl Space {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!("nexus-library-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("dugix-library-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&path).unwrap();
         Self(path.canonicalize().unwrap())
     }
@@ -82,7 +82,7 @@ fn the_library_lists_decks_and_docs_newest_first() {
     assert_eq!(doc.count_label(), "2 blocks");
     assert_eq!(entries[1].kind, Kind::Deck);
     assert_eq!(entries[1].count_label(), "1 slide");
-    assert!(entries[1].design.is_none() || entries[1].design.as_deref() == Some("nexus"));
+    assert!(entries[1].design.is_none() || entries[1].design.as_deref() == Some("dugix"));
     assert!(entries.iter().all(|e| e.revision.len() == 64));
 }
 
@@ -156,7 +156,6 @@ fn thumbnails_are_cached_by_revision_and_rendered_lazily() {
     let doc_thumb = ensure_thumbnail(&space.0, doc).unwrap();
     assert_eq!(&std::fs::read(&doc_thumb).unwrap()[..4], b"\x89PNG");
 
-    // Editing changes the revision, so the key moves and the old doc image goes.
     files::rename(&space.0, "decks/talk.deck.json", "Talk, revised").unwrap();
     files::rename(&space.0, "docs/memo.doc.json", "Memo, revised").unwrap();
     let after = library(&space.0);
@@ -167,12 +166,17 @@ fn thumbnails_are_cached_by_revision_and_rendered_lazily() {
     let doc_thumb2 = ensure_thumbnail(&space.0, doc2).unwrap();
     assert!(doc_thumb2.is_file() && !doc_thumb.exists());
 
-    // Drawing the new slide retires the old one, and a stale entry cannot draw
-    // the newer file under its old key.
     let deck_thumb2 = ensure_thumbnail(&space.0, deck2).unwrap();
     assert_eq!(Some(deck_thumb2), deck2.thumbnail.clone());
-    assert!(!deck_thumb.exists());
-    assert!(ensure_thumbnail(&space.0, deck).is_err());
+    assert!(
+        deck_thumb.is_file(),
+        "a superseded render stays while conversations may still replay it"
+    );
+    assert_eq!(
+        ensure_thumbnail(&space.0, deck).unwrap(),
+        deck_thumb,
+        "a stale entry still has its own revision's thumbnail"
+    );
 }
 
 #[test]
@@ -339,7 +343,6 @@ fn delete_moves_the_file_with_its_comments_and_history_to_the_trash() {
         "already gone"
     );
     assert!(files::delete(&space.0, "../x.deck.json").is_err());
-    // A second delete of a same-named deck does not collide in the trash.
     space.deck("decks/talk.deck.json", "Talk again");
     let second = files::delete(&space.0, "decks/talk.deck.json").unwrap();
     assert_ne!(second, folder);
@@ -371,7 +374,6 @@ fn save_copy_writes_the_file_with_the_assets_it_uses() {
     let target = space.0.join("elsewhere");
     std::fs::create_dir_all(&target).unwrap();
 
-    // The extension is made right whatever the dialog returned.
     let saved = files::save_copy(&source, &target.join("backup.json")).unwrap();
     assert_eq!(saved.path, target.join("backup.deck.json"));
     assert_eq!(saved.assets, 1);
@@ -381,10 +383,8 @@ fn save_copy_writes_the_file_with_the_assets_it_uses() {
         std::fs::read(&saved.path).unwrap(),
         std::fs::read(&source).unwrap()
     );
-    // Saving again replaces the copy and never touches an asset already there.
     let again = files::save_copy(&source, &target.join("backup.deck.json")).unwrap();
     assert_eq!((again.path, again.assets), (saved.path, 0));
-    // Not onto the file being edited, and the folder must exist.
     assert!(files::save_copy(&source, &source).is_err());
     assert!(files::save_copy(&source, &space.0.join("nope/x.deck.json")).is_err());
 }

@@ -22,7 +22,7 @@ fn error(doc: &Doc, raw: Value, path: &str) -> String {
     errors[0].message.clone()
 }
 fn temp() -> std::path::PathBuf {
-    let path = std::env::temp_dir().join(format!("nexus-doc-{}", uuid::Uuid::new_v4()));
+    let path = std::env::temp_dir().join(format!("dugix-doc-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&path).unwrap();
     path
 }
@@ -144,10 +144,19 @@ fn every_operation_applies_in_order_and_keeps_the_original() {
             {"op":"delete_blocks","ids":["b2"]},
             {"op":"insert_markdown","after":"b4","markdown":"## Next\n\nA paragraph [^n].\n\n[^n]: Note"},
             {"op":"set_page","patch":{"footer":"{page} / {pages}"}},
+            {"op":"set_style","style":"body","patch":{"align":"justify"}},
+            {"op":"set_style","style":"lead","patch":{"size":14,"align":"center"}},
             {"op":"set_title","title":"New plan"}
         ]),
     );
     assert_eq!(base.revision(), revision);
+    let body = &doc.theme.text_styles["body"];
+    assert_eq!(body.align, Some(crate::deck::Align::Justify));
+    assert_eq!(
+        body.size, base.theme.text_styles["body"].size,
+        "a style patch merges into the existing style"
+    );
+    assert_eq!(doc.theme.text_styles["lead"].size, Some(14.0));
     assert_eq!(doc.title, "New plan");
     assert_eq!(doc.blocks[1].id, "b5");
     assert!(doc.block("b2").is_none());
@@ -169,7 +178,7 @@ fn every_operation_applies_in_order_and_keeps_the_original() {
         Some("Ship **the docs**. Quarter 4 Quarter 1.")
     );
     let design = Design::default();
-    let applied = edit(&doc, json!([{"op":"apply_design","design":"nexus"}]));
+    let applied = edit(&doc, json!([{"op":"apply_design","design":"dugix"}]));
     assert_eq!(applied.design_rev, Some(design.revision()));
     assert_eq!(
         applied.block("b5").unwrap().style.as_deref(),
@@ -215,6 +224,19 @@ fn bad_operations_have_located_fix_hints_and_are_atomic() {
             "margins_pt",
         ),
         (json!({"op":"apply_design","design":"missing"}), "design"),
+        (
+            json!({"op":"set_style","style":"body","patch":{"align":"both"}}),
+            "patch",
+        ),
+        (
+            json!({"op":"set_style","style":"body","patch":{"spacing":2}}),
+            "patch",
+        ),
+        (json!({"op":"set_style","style":" ","patch":{}}), "style"),
+        (
+            json!({"op":"set_style","style":"bdoy","patch":{"align":"left"}}),
+            "style",
+        ),
         (json!({"op":"set_title","title":2}), "ops[0]"),
     ] {
         error(&doc, op, path);

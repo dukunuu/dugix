@@ -83,20 +83,22 @@ impl State {
                 }));
             }
         } else {
-            if !matches!(input.backend.as_str(), "openai" | "openrouter" | "opencode") {
-                bail!("unknown backend");
-            }
+            let tag = crate::provider::BackendTag::ALL
+                .into_iter()
+                .find(|tag| {
+                    tag.info()
+                        .key
+                        .as_ref()
+                        .is_some_and(|key| key.config_name == input.backend)
+                })
+                .ok_or_else(|| anyhow!("unknown backend"))?;
             let key = input.key.trim();
             if key.is_empty() || key.len() > 16_384 || key.chars().any(char::is_control) {
                 bail!("invalid API key");
             }
             crate::config::save_provider_key(&input.backend, key)
                 .map_err(|_| anyhow!("could not save provider key"))?;
-            match input.backend.as_str() {
-                "openai" => app.saved.openai_key = Some(key.into()),
-                "openrouter" => app.saved.openrouter_key = Some(key.into()),
-                _ => app.saved.opencode_key = Some(key.into()),
-            }
+            app.saved.set_key(tag, key.into());
             app.rebuild_all_backends();
             app.fetch_models();
             app.refresh_toolbox();
@@ -133,11 +135,6 @@ pub(super) fn dispatch(
             let input: Input = serde_json::from_slice(body)?;
             if input.space_id != app.active_space.id {
                 bail!("active space changed; refresh settings");
-            }
-            // A removed key gets a clear error; other failures stay generic so
-            // secrets and credential-bearing URLs are not echoed back.
-            if crate::app::is_removed_setting(&input.key) {
-                bail!("{}", crate::app::removed_setting_message(&input.key));
             }
             app.set_setting(&input.key, input.value.trim())
                 .map_err(|_| anyhow!("setting could not be saved; check the value"))?;
@@ -180,6 +177,33 @@ fn attach_image(app: &mut App, query: &str, body: &[u8]) -> Result<Value> {
     Ok(json!({ "markdown": markdown }))
 }
 
+/// The memory book as editable Markdown; saving applies the edit as a diff.
+fn memory_document(app: &mut App, method: &str, body: &[u8]) -> Result<Value> {
+    #[derive(Deserialize)]
+    struct Edit {
+        content: String,
+        hash: String,
+    }
+    let content = app.memory_markdown()?;
+    let hash = super::api::hex_string(&Sha256::digest(content.as_bytes()));
+    if method == "GET" {
+        return Ok(json!({ "content": content, "hash": hash }));
+    }
+    let edit: Edit = serde_json::from_slice(body)?;
+    if edit.hash != hash {
+        bail!("document changed; reload before saving");
+    }
+    if edit.content.len() > 1024 * 1024 {
+        bail!("document must be 1 MiB or smaller");
+    }
+    app.save_memory_markdown(&edit.content)?;
+    let content = app.memory_markdown()?;
+    Ok(json!({
+        "content": content,
+        "hash": super::api::hex_string(&Sha256::digest(content.as_bytes())),
+    }))
+}
+
 fn document(app: &mut App, method: &str, query: &str, body: &[u8]) -> Result<Value> {
     #[derive(Deserialize)]
     struct Edit {
@@ -191,10 +215,12 @@ fn document(app: &mut App, method: &str, query: &str, body: &[u8]) -> Result<Val
         bail!("active space changed; reload document");
     }
     let kind = super::api::query_param(query, "kind").unwrap_or_default();
+    if kind == "memory" {
+        return memory_document(app, method, body);
+    }
     let path = match kind.as_str() {
         "system" => crate::config::system_prompt_path()?,
         "instructions" => app.space.instructions_path(&app.active_space.name),
-        "memory" => app.space.memory_path(&app.active_space.name),
         _ => bail!("unknown document"),
     };
     let content = match std::fs::read_to_string(&path) {
@@ -234,7 +260,7 @@ mod tests {
 
     #[test]
     fn document_rejects_stale_edits_and_wrong_spaces() {
-        let root = std::env::temp_dir().join(format!("nexus-admin-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-admin-{}", uuid::Uuid::new_v4()));
         let mut app = App::new(
             crate::db::Db::open_in_memory().unwrap(),
             None,
@@ -255,8 +281,8 @@ mod tests {
     }
 
     #[test]
-    fn settings_api_accepts_helper_model_and_rejects_removed_model_keys() {
-        let root = std::env::temp_dir().join(format!("nexus-admin-{}", uuid::Uuid::new_v4()));
+    fn settings_api_rejects_removed_model_keys() {
+        let root = std::env::temp_dir().join(format!("dugix-admin-{}", uuid::Uuid::new_v4()));
         let mut app = App::new(
             crate::db::Db::open_in_memory().unwrap(),
             None,
@@ -271,11 +297,9 @@ mod tests {
             dispatch(app, state, "PUT", "/v1/settings", "", &body)
         };
 
-        put(&mut app, &mut state, "helper_model", " some/model ").unwrap();
-        assert_eq!(app.helper_model, "some/model");
         let settings = dispatch(&mut app, &mut state, "GET", "/v1/settings", "", b"").unwrap();
-        assert_eq!(settings["helper_model"], "some/model");
         for removed in [
+            "helper_model",
             "memory_model",
             "transcriber_model",
             "ocr_model",
@@ -292,10 +316,7 @@ mod tests {
             let error = put(&mut app, &mut state, removed, "x")
                 .unwrap_err()
                 .to_string();
-            assert!(
-                error.contains(removed) && error.contains("removed"),
-                "{removed}: {error}"
-            );
+            assert_eq!(error, "setting could not be saved; check the value");
             assert!(
                 app.db.setting(removed).is_none(),
                 "{removed} must not be stored"
@@ -329,7 +350,7 @@ mod tests {
 
     #[test]
     fn image_upload_uses_incognito_storage_and_validates_space() {
-        let root = std::env::temp_dir().join(format!("nexus-attachment-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-attachment-{}", uuid::Uuid::new_v4()));
         let mut app = App::new(
             crate::db::Db::open_in_memory().unwrap(),
             None,

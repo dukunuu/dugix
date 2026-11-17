@@ -6,7 +6,7 @@ use std::io::Read as _;
 struct Temp(PathBuf);
 impl Temp {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!("nexus-export-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("dugix-export-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&path).unwrap();
         Self(path.canonicalize().unwrap())
     }
@@ -29,7 +29,7 @@ fn unzip(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
     (0..zip.len())
         .map(|i| {
             let mut file = zip.by_index(i).unwrap();
-            let name = file.name().to_string();
+            let name = file.name().unwrap().into_owned();
             let mut bytes = Vec::new();
             file.read_to_end(&mut bytes).unwrap();
             (name, bytes)
@@ -344,8 +344,7 @@ fn pdf_is_vector_with_real_text_unicode_and_determinism() {
         assert_eq!(media[2].as_float().unwrap(), 960.0);
         assert_eq!(media[3].as_float().unwrap(), 540.0);
     }
-    // Text slides are vector: no image XObject covers a page, and the old
-    // invisible-text rendering mode is gone.
+    // Text slides are vector: no image XObject covers a page.
     for object in doc.objects.values() {
         if let Ok(stream) = object.as_stream() {
             assert_ne!(
@@ -387,9 +386,8 @@ fn pdf_is_vector_with_real_text_unicode_and_determinism() {
         assert!(text.contains(needle), "missing {needle}: {text}");
     }
     assert!(!text.contains("Pausehere"));
-    // The code slide's `=` is real text too: every font carries a ToUnicode
-    // map, and one of them maps a glyph to U+003D. (Extractors garble
-    // individually positioned monospace glyphs, so read the map instead.)
+    // The code slide's `=` is real text: a font's ToUnicode map maps a glyph to
+    // U+003D (extractors garble individually positioned monospace glyphs).
     let maps = doc
         .objects
         .values()
@@ -491,7 +489,7 @@ fn export_refuses_symlink_destinations() {
 
 #[test]
 fn write_reviewer_export_samples_when_requested() {
-    let Some(out) = std::env::var_os("NEXUS_EXPORT_OUT") else {
+    let Some(out) = std::env::var_os("DUGIX_EXPORT_OUT") else {
         return;
     };
     let out = PathBuf::from(out);

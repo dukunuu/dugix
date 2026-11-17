@@ -2,28 +2,19 @@ use super::App;
 use tokio::sync::mpsc;
 
 impl App {
-    /// Re-read discovered skills from disk (after an install/remove, an
-    /// external Agent Skills change, or a Ctrl+E hand-edit of `SKILL.md`).
-    /// The view re-clamps its cursor after calling this.
     pub fn reload_skills(&mut self) {
         let skills =
             crate::skills::load_skills_from_dirs(&crate::skills::app_skill_roots(&self.space.root));
         if skills != self.skills {
             self.skills = skills;
-            self.bump_cache_epoch();
         }
     }
 
-    /// Whether the selected skill belongs to Nexus's writable skill root.
-    /// Skills discovered from Agent Skills roots are intentionally read-only
-    /// to the remove action; editing them remains possible through `$EDITOR`.
+    /// External Agent Skills roots cannot be modified by the remove action.
     pub fn skill_is_app_managed(&self, skill: &crate::skills::Skill) -> bool {
         crate::skills::is_app_managed(skill, &self.space.root)
     }
 
-    /// Domain half of `/skills` install: parse the typed `owner/repo/path`
-    /// (or `owner/repo`) and kick off the background GitHub fetch. An invalid
-    /// spec is reported as a status line.
     pub fn start_skill_install(&mut self, spec: &str) {
         let spec = spec.trim().to_string();
         let Some((owner, repo, path)) = crate::skills::parse_gh_shorthand(&spec) else {

@@ -1,11 +1,7 @@
-//! Deck v2 data model: a node tree on a pixel canvas with Figma-style
-//! auto-layout, numeric typography and named text styles.
-//!
-//! Everything here is plain serde data. Layout lives in `layout.rs`, editing
-//! in `ops.rs`, validation in `validate.rs`.
+//! Deck data model: a node tree on a pixel canvas with Figma-style auto-layout,
+//! numeric typography and named text styles. Everything here is plain serde data.
 
-// `serialize_with` and `skip_serializing_if` helpers must take references, and
-// `default` functions must return the field type.
+// serde helpers must take references and `default` fns must return the field type.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::ref_option,
@@ -21,14 +17,11 @@ use serde_json::{Map, Value, json};
 
 use super::effects::{Background, Dash, Fill, Focus, Mask, Overlay, Shadow, ShadowSpec};
 
-/// Default slide width in px.
 pub const SLIDE_WIDTH: f64 = 1920.0;
-/// Default slide height in px.
 pub const SLIDE_HEIGHT: f64 = 1080.0;
-/// One version-1 grid unit in px (`1920 / 32`).
 pub const GRID: f64 = 60.0;
 
-/// Serialize whole numbers as integers so decks stay readable.
+/// Whole numbers serialize as integers so decks stay readable.
 pub(super) fn num<S: Serializer>(value: &f64, serializer: S) -> Result<S::Ok, S::Error> {
     if value.fract() == 0.0 && value.abs() < 1e12 {
         serializer.serialize_i64(*value as i64)
@@ -66,7 +59,6 @@ fn accent() -> String {
     "accent".into()
 }
 
-/// Round to two decimals; used by migration and layout output.
 #[must_use]
 pub fn round2(v: f64) -> f64 {
     (v * 100.0).round() / 100.0
@@ -109,7 +101,6 @@ impl<'de> Deserialize<'de> for Dim {
     }
 }
 
-/// Width, height and their limits.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Sizing {
@@ -139,8 +130,8 @@ impl Sizing {
     }
 }
 
-/// `auto` follows the parent's auto-layout; `absolute` ignores it (and every
-/// child of a `mode: none` parent is absolute).
+/// `auto` follows the parent's auto-layout; `absolute` ignores it, and children
+/// of a `none` parent are always absolute.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum Position {
     #[default]
@@ -191,7 +182,6 @@ impl<'de> Deserialize<'de> for Position {
     }
 }
 
-/// A JSON number that is an integer when it can be.
 #[must_use]
 pub fn number_value(v: f64) -> Value {
     if v.fract() == 0.0 && v.abs() < 1e12 {
@@ -309,6 +299,8 @@ pub enum Align {
     Left,
     Center,
     Right,
+    /// Flush to both edges; a paragraph's last line stays left.
+    Justify,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -330,15 +322,14 @@ pub enum Transform {
     Capitalize,
 }
 
-/// Numeric typography. In a text style every field normally has a value; on a
-/// node only the overridden fields are present.
+/// Numeric typography; on a node only the overridden fields are set.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Font {
     /// An installed family, a deck font, or a theme role (`heading`, `body`, `mono`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub family: Option<String>,
-    /// Size in px.
+    /// In px.
     #[serde(skip_serializing_if = "Option::is_none", serialize_with = "num_opt")]
     pub size: Option<f64>,
     /// 100 to 900.
@@ -440,7 +431,7 @@ pub struct Series {
     pub values: Vec<f64>,
 }
 
-/// A border. It is drawn inside the box and never takes layout space.
+/// A border, drawn inside the box; it takes no layout space.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Stroke {
@@ -495,7 +486,7 @@ fn duration() -> f64 {
     400.0
 }
 
-/// A slide transition, played on entry to the slide.
+/// Played on entry to the slide.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Transition {
@@ -567,7 +558,6 @@ pub enum AnimationSlot {
 }
 
 impl AnimationSlot {
-    /// The slot's JSON key.
     #[must_use]
     pub fn key(self) -> &'static str {
         match self {
@@ -578,7 +568,7 @@ impl AnimationSlot {
     }
 }
 
-/// One timed build. Durations are milliseconds.
+/// One timed build; durations are in milliseconds.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Build {
@@ -624,13 +614,12 @@ pub struct Animation {
 }
 
 impl Animation {
-    /// No slot is set.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.build_in.is_none() && self.emphasis.is_none() && self.build_out.is_none()
     }
 
-    /// Builds in lifecycle order, without empty slots.
+    /// Set slots only, in lifecycle order.
     pub fn sequence(&self) -> impl Iterator<Item = (AnimationSlot, &Build)> {
         [
             (AnimationSlot::BuildIn, self.build_in.as_ref()),
@@ -714,7 +703,6 @@ fn accent_opt() -> Option<Fill> {
 }
 
 impl Kind {
-    /// The lowercase kind name.
     #[must_use]
     pub fn name(&self) -> &'static str {
         match self {
@@ -796,7 +784,6 @@ fn is_auto(p: &Position) -> bool {
 }
 
 impl Node {
-    /// A node with default sizing and position.
     #[must_use]
     pub fn new(id: &str, kind: Kind) -> Self {
         Self {
@@ -851,7 +838,6 @@ impl Node {
         }
     }
 
-    /// The text a node carries, for labels.
     #[must_use]
     pub fn text(&self) -> Option<&str> {
         match &self.kind {
@@ -893,8 +879,7 @@ pub struct Slide {
 }
 
 impl Slide {
-    /// The slide's builds in playback order: each node's slots in lifecycle
-    /// order, nodes in `builds` order (which validation keeps complete).
+    /// The slide's builds in playback order; validation keeps `builds` complete.
     #[must_use]
     pub fn build_sequence(&self) -> Vec<(&Node, AnimationSlot, &Build)> {
         self.builds
@@ -925,7 +910,6 @@ impl Slide {
         }
     }
 
-    /// Every node on the slide, depth first.
     #[must_use]
     pub fn nodes(&self) -> Vec<&Node> {
         let mut out = Vec::new();

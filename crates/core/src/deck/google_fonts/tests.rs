@@ -77,7 +77,7 @@ fn the_families_a_deck_draws_with_resolve_roles_and_snap_weights() {
 #[tokio::test]
 async fn missing_families_are_downloaded_once_into_the_deck_assets() {
     let Some(ttf) = installed_ttf() else { return };
-    let root = std::env::temp_dir().join(format!("nexus-google-fonts-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-google-fonts-{}", uuid::Uuid::new_v4()));
     let mut deck = Deck::titled("Fonts");
     deck.theme.fonts = BTreeMap::from([
         ("heading".into(), "Fraunces".into()),
@@ -142,7 +142,7 @@ async fn missing_families_are_downloaded_once_into_the_deck_assets() {
 
 #[tokio::test]
 async fn unknown_families_and_bad_files_fall_back_with_a_note() {
-    let root = std::env::temp_dir().join(format!("nexus-google-fonts-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-google-fonts-{}", uuid::Uuid::new_v4()));
     let url = "https://fonts.gstatic.com/s/notafont/400.ttf";
     let fixture = Fixture {
         answers: HashMap::from([
@@ -153,13 +153,13 @@ async fn unknown_families_and_bad_files_fall_back_with_a_note() {
     };
     let mut deck = Deck::titled("Fonts");
     deck.theme.fonts = BTreeMap::from([
-        ("heading".into(), "Nexus Imaginary Sans".into()),
+        ("heading".into(), "Dugix Imaginary Sans".into()),
         ("body".into(), "Not A Font".into()),
     ]);
     let problems = provide(&fixture, &root, &mut deck, &[]).await;
     assert!(deck.theme.font_files.is_empty());
     assert!(
-        problems.iter().any(|p| p.contains("Nexus Imaginary Sans")),
+        problems.iter().any(|p| p.contains("Dugix Imaginary Sans")),
         "{problems:?}"
     );
     assert!(

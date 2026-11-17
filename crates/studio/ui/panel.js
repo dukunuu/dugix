@@ -76,7 +76,7 @@ export function panelController(api) {
   }
   function alignMenu(anchor) {
     openToolbarMenu(anchor, 'Text alignment', menu => {
-      for (const align of ['left','center','right']) menuItem(menu, `Align ${align}`, () => textFont({ align }), `align-${align}`, '', textNodes().every(n => resolved(n).align === align));
+      for (const align of ['left','center','right','justify']) menuItem(menu, align === 'justify' ? 'Justify' : `Align ${align}`, () => textFont({ align }), `align-${align}`, '', textNodes().every(n => resolved(n).align === align));
     });
   }
   function colorsMenu(anchor) {

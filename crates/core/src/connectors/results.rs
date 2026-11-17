@@ -1,10 +1,5 @@
 //! Turn a `tools/call` result into the text the model reads.
-//!
-//! Server output is untrusted data: it is rendered as plain text, never
-//! interpreted. Images are saved under the space's files directory in a
-//! `connectors/` folder and referenced as `![…](…)` so the existing vision
-//! injection (which reads `![](file)` references out of tool results) picks
-//! them up; audio becomes a note; links and embedded resources are listed.
+//! Server output is untrusted: it is rendered as plain text, never interpreted.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -14,10 +9,8 @@ use sha2::{Digest as _, Sha256};
 
 use super::protocol::{CallResult, Content};
 
-/// Largest image (decoded) kept from a result.
 const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 
-/// The rendered result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rendered {
     pub text: String,
@@ -41,7 +34,7 @@ fn kilobytes(bytes: usize) -> String {
 /// Save a base64 image and return its markdown reference (or a note why not).
 fn save_image(connector: &str, data: &str, mime: &str, files_dir: &Path) -> String {
     let Some(ext) = extension(mime) else {
-        return format!("[image: {mime} is not a format nexus can show]");
+        return format!("[image: {mime} is not a format dugix can show]");
     };
     let cleaned: String = data.chars().filter(|c| !c.is_whitespace()).collect();
     let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(cleaned) else {
@@ -63,7 +56,6 @@ fn save_image(connector: &str, data: &str, mime: &str, files_dir: &Path) -> Stri
     format!("![image from {connector}](connectors/{file})")
 }
 
-/// Render a result for the model.
 #[must_use]
 pub fn render(connector: &str, tool: &str, result: &CallResult, files_dir: &Path) -> Rendered {
     let mut parts: Vec<String> = Vec::new();
@@ -157,7 +149,7 @@ mod tests {
     use serde_json::json;
 
     fn dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("nexus-conn-results-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-conn-results-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

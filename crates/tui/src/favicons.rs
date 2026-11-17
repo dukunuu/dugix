@@ -1,14 +1,9 @@
-//! Site icons over the link badges the markdown renderer puts before each
-//! `https://` URL (`ui::markdown::badge_links`). With Kitty graphics
-//! (Ghostty, Kitty, `WezTerm`) a badge becomes the site's real icon, drawn in
-//! the badge's two cells; elsewhere the badge takes the icon's color. Icons
-//! come from the shared, vetted image fetcher: this module never touches the
-//! network, and an icon that is missing or still loading leaves the badge.
+//! Site-icon overlays for transcript link badges.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use nexus_core::remote_image::Status;
+use dugix_core::remote_image::Status;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Rect, Size};
 use ratatui::style::{Color, Modifier};
@@ -19,7 +14,6 @@ use ratatui_image::{FilterType, Resize};
 
 use crate::ui::markdown::BADGE_GAP;
 
-/// Decoded icons kept at once; a long session cycles through more.
 const ICONS_MAX: usize = 256;
 
 struct Icon {
@@ -27,24 +21,19 @@ struct Icon {
     color: Option<Color>,
 }
 
-/// Icons decoded for drawing, keyed by their cache file.
 #[derive(Default)]
 pub struct Favicons {
-    /// Only a Kitty picker: its images are sent once and then drawn with
-    /// placeholder cells, cheap enough for a screenful of icons.
+    // Kitty placeholders avoid retransmitting a screenful of icons on every frame.
     picker: Option<Picker>,
     icons: HashMap<PathBuf, Icon>,
 }
 
 impl Favicons {
-    /// Use real icons when the terminal speaks the Kitty graphics protocol.
     pub fn set_picker(&mut self, picker: Picker) {
         self.picker = (picker.protocol_type() == ProtocolType::Kitty).then_some(picker);
     }
 
-    /// Draw icons over the badges in `area`. `lookup` asks the fetcher for an
-    /// origin's icon (scheduling the download); `graphics` is false while a
-    /// popup dims the view, since dimming would corrupt Kitty placeholders.
+    /// Draws badge icons with `graphics` disabled during dimming to preserve Kitty placeholders.
     pub fn paint(
         &mut self,
         buffer: &mut Buffer,
@@ -93,9 +82,7 @@ fn load(path: &Path, picker: Option<&Picker>) -> Icon {
     Icon { protocol, color }
 }
 
-/// `image` scaled smoothly into the pixels of two cells, centred on a
-/// transparent square. The library's default nearest-neighbour resize makes
-/// small icons jagged.
+// Nearest-neighbor resizing makes small icons jagged.
 fn fitted(image: &image::DynamicImage, font: ratatui_image::FontSize) -> image::DynamicImage {
     let (width, height) = (u32::from(font.width) * 2, u32::from(font.height));
     let side = width.min(height).max(1);
@@ -110,7 +97,6 @@ fn fitted(image: &image::DynamicImage, font: ratatui_image::FontSize) -> image::
     image::DynamicImage::ImageRgba8(canvas)
 }
 
-/// The mean color of an icon's visible pixels.
 fn average(image: &image::DynamicImage) -> Option<Color> {
     let pixels = image.to_rgba8();
     let mut sum = [0u64; 3];
@@ -125,9 +111,6 @@ fn average(image: &image::DynamicImage) -> Option<Color> {
     (count > 0).then(|| Color::Rgb(channel(sum[0]), channel(sum[1]), channel(sum[2])))
 }
 
-/// Badges drawn in `area`: the badge's cell and the origin of the URL after
-/// it. A badge is a reversed letter, a no-break space, then `https://`; a URL
-/// whose host runs off the row is skipped, since its host may be cut.
 fn badges(buffer: &Buffer, area: Rect) -> Vec<(u16, u16, String)> {
     let gap = BADGE_GAP.to_string();
     let mut found = Vec::new();
@@ -187,6 +170,7 @@ mod tests {
                 heading: Color::Blue,
                 rule: Color::Gray,
                 code: Color::White,
+                ..crate::ui::markdown::MdColors::default()
             },
         );
         let height = u16::try_from(rendered.lines.len()).unwrap();
@@ -274,7 +258,7 @@ mod tests {
 
     #[test]
     fn ready_icons_color_their_badge_without_graphics() {
-        let dir = std::env::temp_dir().join(format!("nexus-favicon-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-favicon-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("icon.png");
         image::RgbaImage::from_fn(4, 4, |x, _| {

@@ -6,12 +6,7 @@ fn doc(frame: &str, accent: &str, view: Value) -> String {
     json!({"version":1,"title":"Overview","frame":frame,"accent":accent,"view":view}).to_string()
 }
 fn entry(source: &str) -> Entry {
-    Entry {
-        session: Ok(Session::new(Document::parse(source).unwrap()).unwrap()),
-        focus: 0,
-        error: String::new(),
-        scroll: 0,
-    }
+    Entry::new(Ok(Session::new(Document::parse(source).unwrap()).unwrap()))
 }
 fn buffer_text(buffer: &Buffer) -> Vec<String> {
     (0..buffer.area.height)
@@ -32,10 +27,11 @@ fn render_at(source: &str, width: u16) -> (Buffer, Vec<String>) {
 fn render(source: &str) -> Vec<String> {
     render_at(source, 80).1
 }
-/// Expected row of a card: content padded inside the frame's side borders.
-fn framed(left: char, content: &str, right: char, width: usize) -> String {
-    let pad = width - 2 - content.width();
-    format!("{left}{content}{}{right}", " ".repeat(pad))
+fn framed(content: &str) -> String {
+    format!(" {content}")
+}
+fn title_bar(title: &str, _width: usize) -> String {
+    format!("  {title}")
 }
 
 fn rust_vs_go() -> String {
@@ -89,7 +85,7 @@ fn hero() -> String {
         "dashed",
         "warning",
         json!([
-            {"type":"hero","title":"Nexus 0.2","subtitle":"Designed replies land today","badge":"NEW"},
+            {"type":"hero","title":"Dugix 0.2","subtitle":"Designed replies land today","badge":"NEW"},
             {"type":"divider","label":"highlights"},
             {"type":"quote","text":"Simple things stay simple.","by":"Ada"}
         ]),
@@ -99,44 +95,23 @@ fn hero() -> String {
 #[test]
 fn columns_and_callout_render_at_80_columns_in_a_rounded_frame() {
     let rows = render(&rust_vs_go());
-    let mut expected = vec![
-        format!("╭─ Overview {}╮", "─".repeat(80 - "╭─ Overview ╮".width())),
-        framed('│', "", '│', 80),
-        framed('│', " RUST                                   GO", '│', 80),
-        framed(
-            '│',
-            " ✓ tiny static binaries                 ✓ builds in seconds",
-            '│',
-            80,
-        ),
-        framed(
-            '│',
-            " ✓ no runtime                           ✓ simple concurrency",
-            '│',
-            80,
-        ),
-        framed(
-            '│',
-            " ✗ slow compiles                        ✗ GC pauses",
-            '│',
-            80,
-        ),
-        framed('│', "", '│', 80),
-        framed(
-            '│',
-            " ▌ Go if you want to ship this week; Rust if size matters.",
-            '│',
-            80,
-        ),
-        framed('│', "", '│', 80),
+    let expected = vec![
+        title_bar("Overview", 80),
+        framed(""),
+        framed(" RUST                                   GO"),
+        framed(" ✓ tiny static binaries                 ✓ builds in seconds"),
+        framed(" ✓ no runtime                           ✓ simple concurrency"),
+        framed(" ✗ slow compiles                        ✗ GC pauses"),
+        framed(""),
+        framed(" ▌ Go if you want to ship this week; Rust if size matters."),
+        framed(""),
+        "─".repeat(80),
     ];
-    expected.push(format!("╰{}╯", "─".repeat(78)));
     let trimmed: Vec<_> = expected
         .iter()
         .map(|row| row.trim_end().to_string())
         .collect();
     assert_eq!(rows, trimmed);
-    // Static documents carry no expand glyph and no keyboard hint.
     let text = rows.join("\n");
     assert!(
         !text.contains('⤢') && !text.contains("F2 keyboard"),
@@ -161,10 +136,16 @@ fn accent_colors_come_from_the_theme_roles() {
             json!([{"type":"callout","tone":"tip","text":"Note"}]),
         );
         let (canvas, _) = entry(&source).canvas(60, &theme, false, true);
-        assert_eq!(canvas[(3, 0)].fg, color, "{accent} title");
+        assert_eq!(canvas[(3, 0)].bg, theme.bg, "{accent} unfilled title");
+        assert_eq!(canvas[(3, 0)].fg, theme.fg, "{accent} title ink");
         assert_eq!(canvas[(2, 2)].fg, color, "{accent} tip rail");
         assert_eq!(canvas[(2, 2)].symbol(), "▌");
-        assert_eq!(canvas[(0, 0)].fg, theme.border_dim, "frame stays chrome");
+        let bottom = canvas.area.height - 1;
+        assert_eq!(
+            canvas[(0, bottom)].fg,
+            theme.border_dim,
+            "rule stays chrome"
+        );
     }
     let danger = doc(
         "rounded",
@@ -181,12 +162,9 @@ fn accent_colors_come_from_the_theme_roles() {
 fn stats_and_steps_render_at_80_columns_in_a_heavy_frame() {
     let rows = render(&release());
     assert_eq!(rows.len(), 8, "{rows:#?}");
-    assert_eq!(
-        rows[0],
-        format!("┏━ Overview {}┓", "━".repeat(80 - "┏━ Overview ┓".width()))
-    );
-    assert_eq!(rows[7], format!("┗{}┛", "━".repeat(78)));
-    assert!(rows[2].starts_with("┃ 12 "), "{}", rows[2]);
+    assert_eq!(rows[0], title_bar("Overview", 80));
+    assert_eq!(rows[7], "━".repeat(80));
+    assert!(rows[2].starts_with("  12 "), "{}", rows[2]);
     for (value, label) in [
         ("12", "commits"),
         ("3", "fixes"),
@@ -201,7 +179,6 @@ fn stats_and_steps_render_at_80_columns_in_a_heavy_frame() {
     }
     assert!(rows[5].contains("● readable tool calls"), "{}", rows[5]);
     assert!(rows[5].contains("○ web editors"), "{}", rows[5]);
-    assert!(rows[5].ends_with('┃'));
 }
 
 #[test]
@@ -243,8 +220,7 @@ fn steps_fall_back_to_a_connected_timeline_when_they_do_not_fit() {
     assert!(text.contains("◉ Build the renderer"), "{text}");
     assert!(text.contains("○ Ship it"), "{text}");
     assert!(text.contains("│ Nodes and limits"), "{text}");
-    assert!(rows.iter().any(|row| row.starts_with("│ │")), "{text}");
-    // One row when the same steps fit.
+    assert!(rows.iter().any(|row| row.starts_with("  │")), "{text}");
     let wide = render_at(&source, 120).1;
     assert!(
         wide.iter()
@@ -257,54 +233,42 @@ fn steps_fall_back_to_a_connected_timeline_when_they_do_not_fit() {
 }
 
 #[test]
-fn cards_form_a_bordered_responsive_grid() {
+fn cards_form_a_tiled_responsive_grid() {
     let rows = render(&cards());
     let text = rows.join("\n");
-    assert!(rows[0].starts_with("╔═ Overview "), "{text}");
-    // 80 columns fit three cards per row; four cards balance into a 2x2 grid.
-    let tops: Vec<_> = rows.iter().filter(|row| row.contains('╭')).collect();
-    assert_eq!(tops.len(), 2, "{text}");
-    assert_eq!(tops[0].matches('╭').count(), 2, "{text}");
-    assert_eq!(tops[1].matches('╭').count(), 2, "{text}");
-    assert!(text.contains(" fast "), "{text}");
+    assert_eq!(rows[0], "  Overview", "{text}");
+    let row_of = |word: &str| rows.iter().position(|row| row.contains(word)).unwrap();
+    assert_eq!(row_of("Speed"), row_of("Safety"), "{text}");
+    assert_eq!(row_of("Size"), row_of("Cost"), "{text}");
+    assert!(row_of("Size") > row_of("Speed"), "{text}");
+    assert!(text.contains("  fast"), "{text}");
     assert!(text.contains("Builds finish in"), "{text}");
     let narrow = render_at(&cards(), 30).1;
-    assert!(
-        narrow
-            .iter()
-            .filter(|row| row.contains('╭'))
-            .all(|row| row.matches('╭').count() == 1)
-    );
+    assert!(narrow.iter().all(|row| row.matches('▎').count() <= 1));
     let theme = Theme::default();
     let (canvas, _) = entry(&cards()).canvas(80, &theme, false, true);
-    let top = rows.iter().position(|row| row.contains('╭')).unwrap();
-    let x = u16::try_from(rows[top].chars().position(|c| c == '╭').unwrap()).unwrap();
-    assert_eq!(
-        canvas[(x, u16::try_from(top).unwrap())].fg,
-        theme.border_dim
-    );
-    // The first card's title uses its tone, the second falls back to the document accent.
-    assert_eq!(
-        canvas[(x + 2, u16::try_from(top + 1).unwrap())].fg,
-        theme.success
-    );
+    let speed = u16::try_from(row_of("Speed")).unwrap();
+    let x = u16::try_from(
+        rows[usize::from(speed)]
+            .chars()
+            .position(|c| c == 'S')
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(canvas[(2, speed)].symbol(), "▎");
+    assert_eq!(canvas[(2, speed)].fg, theme.success);
+    assert_eq!(canvas[(4, speed)].bg, theme.raised);
+    assert_eq!(canvas[(x, speed)].fg, theme.success);
 }
 
 #[test]
-fn hero_with_badge_places_the_badge_on_the_right() {
+fn hero_badge_is_a_pill_right_after_the_title() {
     let rows = render(&hero());
     let text = rows.join("\n");
-    assert!(
-        rows[0].starts_with("╌ Overview ")
-            || rows[0].starts_with("┌╌ Overview ")
-            || rows[0].contains("Overview"),
-        "{text}"
-    );
-    let title = rows.iter().find(|row| row.contains("Nexus 0.2")).unwrap();
-    assert!(
-        title.trim_end_matches(['╎', ' ']).ends_with("NEW"),
-        "{title}"
-    );
+    assert_eq!(rows[0], "  Overview", "{text}");
+    assert!(rows.last().unwrap().starts_with('╌'), "{text}");
+    let title = rows.iter().find(|row| row.contains("Dugix 0.2")).unwrap();
+    assert!(title.contains("Dugix 0.2    NEW"), "{title}");
     assert!(text.contains("Designed replies land today"), "{text}");
     assert!(text.contains(" highlights "), "{text}");
     assert!(text.contains("│ Simple things stay simple."), "{text}");
@@ -317,7 +281,7 @@ fn plain_frame_has_only_a_title_rule() {
     let rows = render(&source);
     assert_eq!(
         rows[0],
-        format!("─ Overview {}", "─".repeat(80 - "─ Overview ".width()))
+        format!("Overview {}", "─".repeat(80 - "Overview ".width()))
     );
     assert!(
         rows.iter().all(|row| !row.contains(['│', '╰', '╭'])),
@@ -327,20 +291,17 @@ fn plain_frame_has_only_a_title_rule() {
 }
 
 #[test]
-fn frames_pick_their_border_glyphs() {
-    for (frame, corner, rule) in [
-        ("rounded", "╭", "─"),
-        ("double", "╔", "═"),
-        ("heavy", "┏", "━"),
-        ("dashed", "┌", "╌"),
+fn frames_pick_their_bottom_rule_glyphs() {
+    for (frame, rule) in [
+        ("rounded", "─"),
+        ("double", "═"),
+        ("heavy", "━"),
+        ("dashed", "╌"),
     ] {
         let source = doc(frame, "accent", json!([{"type":"text","text":"Body"}]));
         let rows = render_at(&source, 40).1;
-        assert!(
-            rows[0].starts_with(&format!("{corner}{rule} Overview ")),
-            "{frame}: {}",
-            rows[0]
-        );
+        assert_eq!(rows[0], title_bar("Overview", 40), "{frame}");
+        assert_eq!(rows.last().unwrap(), &rule.repeat(40), "{frame}");
     }
 }
 
@@ -389,7 +350,6 @@ fn reserved_height_equals_drawn_height_at_60_80_and_120() {
             let reserved = source_height(source, width);
             let (canvas, rows) = render_at(source, width);
             assert_eq!(canvas.area.height, reserved, "{width}\n{}", rows.join("\n"));
-            // Nothing is clipped: the last content row sits above the bottom padding.
             let regions = node_regions(entry(source).session.as_ref().unwrap(), width);
             assert_eq!(card_height(&regions), reserved);
         }
@@ -429,7 +389,6 @@ fn static_documents_are_not_focusable_expandable_or_pinned() {
         "static layouts are never focusable"
     );
     assert!(!widgets.pinned);
-    // Scrolled past, a layout stays in the history instead of pinning over it.
     terminal
         .draw(|f| {
             widgets.begin_frame(false);
@@ -480,21 +439,12 @@ fn interactive_panels_are_counted_but_layouts_are_not() {
 #[test]
 fn cards_in_a_row_share_one_height_and_badges_sit_on_the_title_row() {
     let lines = render(&cards());
-    // Each grid row's two cards start and end on the same rows.
-    let tops: Vec<_> = lines
-        .iter()
-        .enumerate()
-        .filter(|(_, line)| line.matches('╭').count() == 2)
-        .map(|(row, _)| row)
-        .collect();
-    let bottoms: Vec<_> = lines
-        .iter()
-        .enumerate()
-        .filter(|(_, line)| line.matches('╰').count() == 2)
-        .map(|(row, _)| row)
-        .collect();
-    assert_eq!(tops.len(), 2, "{lines:#?}");
-    assert_eq!(bottoms.len(), 2, "{lines:#?}");
+    let tiled: Vec<_> = lines.iter().filter(|line| line.contains('▎')).collect();
+    assert_eq!(tiled.len(), 10, "{lines:#?}");
+    assert!(
+        tiled.iter().all(|line| line.matches('▎').count() == 2),
+        "{lines:#?}"
+    );
     let speed = lines.iter().find(|line| line.contains("Speed")).unwrap();
     assert!(speed.contains(" fast "), "badge on the title row: {speed}");
 }
@@ -508,9 +458,9 @@ fn first_hero_suppresses_only_a_matching_rendered_border_title() {
         })
         .to_string();
         let (canvas, rows) = render_at(&source, 80);
-        assert_eq!(rows[0], format!("╭{}╮", "─".repeat(78)));
+        assert!(rows[0].is_empty());
         assert!(rows[2].to_lowercase().contains("overview"));
-        assert_eq!(canvas[(2, 2)].fg, Theme::default().accent2);
+        assert_eq!(canvas[(2, 2)].fg, Theme::default().fg);
         assert!(canvas[(2, 2)].modifier.contains(Modifier::BOLD));
     }
     for view in [
@@ -518,6 +468,6 @@ fn first_hero_suppresses_only_a_matching_rendered_border_title() {
         json!([{"type":"text","text":"Before"},{"type":"hero","title":"Overview"}]),
     ] {
         let rows = render(&doc("rounded", "accent", view));
-        assert!(rows[0].starts_with("╭─ Overview "));
+        assert_eq!(rows[0], "  Overview");
     }
 }

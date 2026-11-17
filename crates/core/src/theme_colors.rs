@@ -8,8 +8,8 @@ use serde::Deserialize;
 /// Semantic roles as plain hex colors, safe to send to a canvas frontend.
 pub type ThemeColors = BTreeMap<String, String>;
 
-/// A terminal palette. Unspecified ANSI roles retain their terminal identity
-/// in the TUI; `colors` gives standalone frontends their xterm equivalents.
+/// Unspecified ANSI roles retain their terminal identity in the TUI; `colors` gives
+/// standalone frontends their xterm equivalents.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Palette {
     pub colors: ThemeColors,
@@ -47,7 +47,6 @@ impl Default for Palette {
     }
 }
 
-/// A 256-color terminal index as an opaque CSS hex color.
 #[must_use]
 pub fn indexed_hex(index: u8) -> String {
     let rgb = match index {
@@ -95,7 +94,6 @@ fn parse_hex(s: &str) -> Option<[u8; 3]> {
     ])
 }
 
-/// The subset of Alacritty's configuration used by nexus.
 #[derive(Deserialize)]
 pub struct Alacritty {
     colors: ColorsSection,
@@ -125,7 +123,7 @@ struct Colors {
 }
 
 impl Palette {
-    /// Explicit RGB value of a role, or `None` for a terminal ANSI fallback.
+    /// `None` for a terminal ANSI fallback.
     #[must_use]
     pub fn rgb(&self, role: &str) -> Option<[u8; 3]> {
         self.rgb.get(role).copied()
@@ -136,7 +134,6 @@ impl Palette {
         self.rgb.insert(role.into(), rgb);
     }
 
-    /// Interpret an Alacritty/omarchy palette with nexus's existing roles.
     #[must_use]
     pub fn from_alacritty(a: &Alacritty) -> Self {
         let mut palette = Self::default();
@@ -165,7 +162,7 @@ impl Palette {
         palette
     }
 
-    /// Interpret Ghostty's theme with inline config overrides already applied.
+    /// Inline config overrides are already applied.
     #[must_use]
     pub fn from_ghostty(colors: &HashMap<String, String>) -> Option<Self> {
         let get = |key: &str| colors.get(key).and_then(|v| parse_hex(v));
@@ -199,8 +196,8 @@ impl Palette {
             self.set("control", blend(bg, fg, 0.16));
             self.set("raised", blend(bg, fg, 0.07));
             self.set("border_dim", blend(bg, fg, 0.24));
-            // As in the TUI, an ANSI accent leaves the selection at the
-            // background if there is no explicit selection color.
+            // As in the TUI, an ANSI accent leaves the selection at the background
+            // if there is no explicit selection color.
             let accent = self.rgb("accent").map_or(bg, |a| blend(bg, a, 0.35));
             self.set("selection", selection.unwrap_or(accent));
         }
@@ -221,7 +218,6 @@ fn blend(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
     })
 }
 
-/// Ghostty `key = value` lines; repeated palette entries keep their indices.
 #[must_use]
 pub fn ghostty_pairs(text: &str) -> Vec<(String, String)> {
     text.lines()
@@ -304,13 +300,11 @@ fn omarchy_current_dir() -> Option<PathBuf> {
     Some(std::env::home_dir()?.join(".config/omarchy/current"))
 }
 
-/// The active omarchy symlink target, if present.
 #[must_use]
 pub fn current_link_target() -> Option<PathBuf> {
     std::fs::read_link(omarchy_current_dir()?).ok()
 }
 
-/// Changes when the active omarchy theme or Ghostty configuration changes.
 #[must_use]
 pub fn source_stamp() -> String {
     let ghostty: Vec<_> = ghostty_config_paths()
@@ -320,7 +314,7 @@ pub fn source_stamp() -> String {
     format!("{:?}|{ghostty:?}", current_link_target())
 }
 
-/// The active omarchy, Ghostty, or built-in terminal palette, in that order.
+/// The active omarchy, Ghostty or built-in terminal palette, in that order.
 #[must_use]
 pub fn load() -> Palette {
     omarchy_current_dir()

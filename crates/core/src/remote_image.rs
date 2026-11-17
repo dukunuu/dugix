@@ -1,19 +1,5 @@
-//! Device-local, bounded image downloads for replies, layouts and search
-//! thumbnails. URLs are chosen by a model or a web page, so this is the one
-//! place they are fetched, and every hop is vetted:
-//!
-//! * `https` only, no credentials, no templates (`validate_url`).
-//! * Literal IPs are vetted before connecting; hostnames are resolved by
-//!   [`VettedResolver`], which hands the HTTP client *only* addresses that
-//!   passed the check. The client connects to exactly those addresses, so
-//!   there is no second lookup a rebinding DNS server could answer
-//!   differently.
-//! * Redirects are followed by hand (at most three), each hop re-validated and
-//!   re-resolved through the same vetted path.
-//! * No proxies, cookies, referer or auth; a plain `User-Agent`.
-//! * Six seconds in total, 8 MB, `image/png|jpeg|webp|gif` by content type and
-//!   by actually decoding, downscaled to 1600 px, cached as PNG on this
-//!   device, failures remembered for ten minutes, four fetches in flight.
+//! Device-local, bounded image downloads for replies, layouts and search thumbnails.
+//! URLs come from a model or a web page, so every hop is vetted here.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -41,17 +27,13 @@ const IN_FLIGHT: usize = 4;
 const ICON_BYTES: usize = 1024 * 1024;
 /// Icons are kept at this size: two terminal cells on a high-density screen.
 const ICON_SIDE: u32 = 128;
-/// How much of a home page is read looking for `<link rel=icon>`.
 const PAGE_BYTES: usize = 512 * 1024;
-/// `<link rel=icon>` candidates tried after `/favicon.ico`.
 const ICON_LINKS: usize = 4;
 
 /// A nonblocking preview lookup.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Status {
-    /// Disabled by the user's preference.
     Off,
-    /// Queued or downloading.
     Loading,
     /// Sanitized PNG on this device.
     Ready(PathBuf),
@@ -79,8 +61,7 @@ fn system_lookup() -> Lookup {
     })
 }
 
-/// DNS resolver given to the HTTP client. The client can only ever connect to
-/// the addresses returned here, and none of them is non-public.
+/// The client can only ever connect to the addresses returned here, none of them non-public.
 struct VettedResolver {
     lookup: Lookup,
     allow_loopback: bool,
@@ -105,7 +86,6 @@ impl Resolve for VettedResolver {
     }
 }
 
-/// Shared by reply images, layout images and search thumbnails.
 pub struct Fetcher {
     directory: PathBuf,
     enabled: AtomicBool,
@@ -152,12 +132,11 @@ impl Fetcher {
     }
 
     /// Resolves after a download finishes or the preference flips, so an idle
-    /// event loop can redraw. A change that lands before the call is not lost.
+    /// event loop can redraw.
     pub async fn changed(&self) {
         self.wake.notified().await;
     }
 
-    /// Whether downloads are currently allowed.
     #[must_use]
     pub fn enabled(&self) -> bool {
         self.enabled.load(Ordering::SeqCst)
@@ -169,7 +148,6 @@ impl Fetcher {
         self.changes.load(Ordering::Relaxed)
     }
 
-    /// Return only an already vetted cache file, without scheduling network work.
     #[must_use]
     pub fn cached(&self, url: &str) -> Option<PathBuf> {
         if !self.enabled() || validate_url_with(url, self.allow_loopback).is_err() {
@@ -179,15 +157,12 @@ impl Fetcher {
         path.is_file().then_some(path)
     }
 
-    /// Look up a URL and, if needed, enqueue one bounded background download.
     #[must_use]
     pub fn request(self: &Arc<Self>, url: &str) -> Status {
         self.schedule(url, url, false)
     }
 
-    /// The icon of the site at `origin` (`https://host`): its `/favicon.ico`,
-    /// else the first usable `<link rel=icon>` on its home page. Only that
-    /// site is asked; vetting, caching and failure memory match images.
+    /// The site's `/favicon.ico`, else the first usable `<link rel=icon>` on its home page.
     #[must_use]
     pub fn favicon(self: &Arc<Self>, origin: &str) -> Status {
         self.schedule(&icon_key(origin), origin, true)
@@ -254,8 +229,8 @@ impl Fetcher {
             };
             let mut entries = fetcher.entries.lock().expect("image cache lock");
             match result {
-                // Cancelled by the preference: forget it so turning images back
-                // on retries instead of serving a stale failure.
+                // Cancelled by the preference: forget it so turning images back on
+                // retries instead of serving a stale failure.
                 None => {
                     entries.remove(&key);
                 }
@@ -273,8 +248,8 @@ impl Fetcher {
                 }
             }
             drop(entries);
-            // An icon is drawn over text that is already laid out, so it
-            // only needs a redraw, not a new layout generation.
+            // An icon is drawn over text that is already laid out, so it only needs
+            // a redraw, not a new layout generation.
             if !icon {
                 fetcher.changes.fetch_add(1, Ordering::Relaxed);
             }
@@ -354,7 +329,6 @@ impl Fetcher {
         self.directory.join(name)
     }
 
-    /// Download, vet, decode and cache one image. Waits for a free slot first.
     async fn download(&self, source: &str) -> Result<PathBuf> {
         let _slot = self.slots.acquire().await?;
         ensure!(self.enabled(), "images disabled");
@@ -366,7 +340,7 @@ impl Fetcher {
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .referer(false)
-            .user_agent(concat!("nexus-chat/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("dugix/", env!("CARGO_PKG_VERSION")))
             .dns_resolver(Arc::new(VettedResolver {
                 lookup: Arc::clone(&self.lookup),
                 allow_loopback: self.allow_loopback,
@@ -374,10 +348,8 @@ impl Fetcher {
             .build()?)
     }
 
-    /// GET `source` through vetted redirects: the final URL, the lowercased
-    /// media type (refused unless `accept`ed, before any body is read) and at
-    /// most `limit` bytes. Past the limit a `partial` read stops quietly;
-    /// otherwise it is an error.
+    /// GET `source` through vetted redirects: the final URL, the lowercased media type
+    /// (refused unless `accept`ed, before any body is read) and at most `limit` bytes.
     async fn get(
         &self,
         client: &reqwest::Client,
@@ -388,8 +360,8 @@ impl Fetcher {
         let mut url = validate_url_with(source, self.allow_loopback)?;
         let mut hops = 0;
         let mut response = loop {
-            // Hostnames are vetted by the resolver at connect time; a literal IP
-            // never reaches a resolver, so it is vetted here.
+            // Hostnames are vetted by the resolver at connect time; a literal IP never
+            // reaches a resolver, so it is vetted here.
             if let Some(ip) = literal_ip(&url) {
                 vet_addresses(&[ip], self.allow_loopback)?;
             }
@@ -480,8 +452,8 @@ impl Fetcher {
         let client = self.client()?;
         let key = icon_key(origin);
         let site = validate_url_with(origin, self.allow_loopback)?;
-        // The page's own icons first: they are usually larger than the
-        // 16–32 px `/favicon.ico`, which looks blocky drawn two cells wide.
+        // The page's own icons first: they are usually larger than the 16–32 px
+        // `/favicon.ico`, which looks blocky drawn two cells wide.
         let page = self
             .get(
                 &client,
@@ -512,8 +484,8 @@ impl Fetcher {
         }
     }
 
-    /// An icon's bytes and format. ICO is common and often mislabelled, so an
-    /// unknown media type is sniffed, still only among raster formats.
+    /// ICO is common and often mislabelled, so an unknown media type is sniffed,
+    /// still only among raster formats.
     async fn icon(
         &self,
         client: &reqwest::Client,
@@ -555,14 +527,13 @@ impl Fetcher {
     }
 }
 
-/// Cache key of a site's icon; the version retires icons fetched smallest-first.
+/// The version prefix retires icons fetched smallest-first.
 fn icon_key(origin: &str) -> String {
     format!("favicon2 {origin}")
 }
 
-/// `href`s of a page's `<link rel="… icon …">` tags, largest declared size
-/// first (an Apple touch icon counts as 180 px, an icon without sizes as 0),
-/// without vector icons (they need a renderer) and Safari's mask icons.
+/// `href`s of a page's icon `<link>` tags, largest declared size first, without
+/// vector icons (they need a renderer) and Safari's mask icons.
 fn icon_links(html: &str) -> Vec<String> {
     let lower = html.to_ascii_lowercase();
     let end = lower.find("</head").unwrap_or(lower.len());
@@ -612,7 +583,6 @@ fn icon_links(html: &str) -> Vec<String> {
     links.into_iter().map(|(_, href)| href).collect()
 }
 
-/// `name=value` pairs of one tag, names lowercased; values may be quoted.
 fn tag_attributes(tag: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut rest = tag.trim_start_matches(['/', ' ']);
@@ -647,7 +617,6 @@ fn tag_attributes(tag: &str) -> Vec<(String, String)> {
     out
 }
 
-/// Decode (first frame for animations), downscale, and write a PNG atomically.
 fn sanitize_to_png(
     bytes: Vec<u8>,
     format: image::ImageFormat,
@@ -680,7 +649,7 @@ fn sanitize_to_png(
     Ok(())
 }
 
-/// Validate untrusted image syntax without DNS or I/O. Layouts use this too.
+/// Validate untrusted image syntax without DNS or I/O; layouts use this too.
 /// # Errors
 /// Rejects insecure schemes, credentials, missing hosts and templates.
 pub fn validate_url(source: &str) -> Result<Url> {
@@ -709,8 +678,7 @@ fn validate_url_with(source: &str, allow_test_http: bool) -> Result<Url> {
     Ok(url)
 }
 
-/// `Some` when the URL's host is an IP literal (the URL parser has already
-/// normalised decimal/hex/octal spellings of IPv4 into dotted form).
+/// The URL parser has already normalised decimal/hex/octal IPv4 spellings into dotted form.
 fn literal_ip(url: &Url) -> Option<IpAddr> {
     url.host_str()?.trim_matches(['[', ']']).parse().ok()
 }
@@ -900,14 +868,13 @@ mod tests {
     }
 
     fn dir() -> PathBuf {
-        std::env::temp_dir().join(format!("nexus-image-test-{}", uuid::Uuid::new_v4()))
+        std::env::temp_dir().join(format!("dugix-image-test-{}", uuid::Uuid::new_v4()))
     }
 
     fn test_fetcher() -> Arc<Fetcher> {
         Arc::new(Fetcher::build(&dir(), system_lookup(), true))
     }
 
-    /// A fetcher whose DNS answers come from `table` (name to addresses).
     fn fetcher_with_dns(table: &[(&'static str, &'static str)]) -> Arc<Fetcher> {
         let table: Vec<_> = table.to_vec();
         let lookup: Lookup = Arc::new(move |host: String| {
@@ -988,11 +955,9 @@ mod tests {
             let ip: IpAddr = text.parse().unwrap();
             assert!(public_address(ip), "{text} is public");
         }
-        // One bad record poisons the whole answer.
         let mixed: Vec<IpAddr> = vec!["8.8.8.8".parse().unwrap(), "10.0.0.1".parse().unwrap()];
         assert!(vet_addresses(&mixed, false).is_err());
         assert!(vet_addresses(&[], false).is_err());
-        // The loopback exemption exists only when a test asks for it.
         let loopback: IpAddr = "127.0.0.1".parse().unwrap();
         assert!(vet_addresses(&[loopback], true).is_ok());
         for embedded in [
@@ -1031,7 +996,6 @@ mod tests {
 
     #[tokio::test]
     async fn literal_private_hosts_are_refused_without_connecting() {
-        // A strict fetcher (no loopback exemption) must refuse even a live local server.
         let mock = serve(Duration::ZERO, |_| Reply::ok("image/png", png(8, 8))).await;
         let fetcher = Fetcher::new(dir());
         for url in [
@@ -1046,7 +1010,6 @@ mod tests {
             let text = error_text(fetcher.download(&url).await);
             assert!(text.contains("non-public"), "{url}: {text}");
         }
-        // And plain http is refused before any lookup.
         let text = error_text(fetcher.download(&mock.url("/a.png")).await);
         assert!(text.contains("https"), "{text}");
         assert!(mock.hits().is_empty(), "nothing may reach the server");
@@ -1054,7 +1017,6 @@ mod tests {
 
     #[tokio::test]
     async fn hostnames_resolving_to_private_addresses_are_refused_at_connect() {
-        // Real system resolver: `localhost` is local without touching the network.
         let mock = serve(Duration::ZERO, |_| Reply::ok("image/png", png(8, 8))).await;
         let fetcher = Fetcher::new(dir());
         let text = error_text(
@@ -1068,7 +1030,6 @@ mod tests {
         );
         assert!(mock.hits().is_empty());
 
-        // Fake DNS: each private flavour behind an ordinary-looking name.
         let fetcher = fetcher_with_dns(&[
             ("lan.example", "192.168.1.20"),
             ("meta.example", "169.254.169.254"),
@@ -1093,8 +1054,6 @@ mod tests {
 
     #[tokio::test]
     async fn resolver_returns_only_vetted_addresses_for_every_lookup() {
-        // A rebinding server answers differently on each lookup. The resolver
-        // vets every answer it hands out, so a later private answer is refused.
         let answers = Arc::new(Mutex::new(vec!["10.0.0.5", "8.8.8.8"]));
         let lookup: Lookup = {
             let answers = Arc::clone(&answers);
@@ -1115,8 +1074,6 @@ mod tests {
 
     #[tokio::test]
     async fn dns_pinned_connection_uses_the_vetted_answer() {
-        // The name only resolves (via the injected lookup) to the mock server,
-        // so a successful fetch proves the client dialled the vetted address.
         let mock = serve(Duration::ZERO, |_| Reply::ok("image/png", png(40, 30))).await;
         let fetcher = fetcher_with_dns(&[("cdn.example", "127.0.0.1")]);
         let url = format!("http://cdn.example:{}/a.png", mock.addr.port());
@@ -1142,7 +1099,6 @@ mod tests {
         })
         .await;
         let fetcher = fetcher_with_dns(&[("evil.example", "192.168.5.5")]);
-        // A fetcher that allows plain http in tests but not the private targets.
         for hop in [
             "/to-private-ip",
             "/to-loopback-v6",
@@ -1161,11 +1117,8 @@ mod tests {
         }
         let text = error_text(fetcher.download(&mock.url("/to-private-name")).await);
         assert!(text.contains("non-public"), "{text}");
-        // Only the redirecting requests themselves reached the server.
         assert!(!mock.hits().contains(&"/a.png".to_string()));
-        // A relative redirect to a public resource is followed.
         assert!(fetcher.download(&mock.url("/relative")).await.is_ok());
-        // Redirect loops stop after three hops.
         let before = mock.hits().len();
         let text = error_text(fetcher.download(&mock.url("/loop")).await);
         assert!(text.contains("too many"), "{text}");
@@ -1174,8 +1127,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_decodes_downscales_and_reuses_the_cache() {
-        // The big picture is encoded once, not per request, and this fetcher
-        // gets a generous deadline: a debug build decoding and resizing it on
+        // A generous deadline: a debug build decoding and resizing the big picture on
         // a machine busy with the whole suite can overrun the real 6 s.
         let big = png(3200, 800);
         let mock = serve(Duration::ZERO, move |path| match path {
@@ -1199,7 +1151,6 @@ mod tests {
         let jpeg_path = fetcher.download(&mock.url("/photo.jpg")).await.unwrap();
         assert_eq!(image::open(jpeg_path).unwrap().width(), 20);
 
-        // Through `request`: first Loading, then Ready; a second session reuses the file.
         let url = mock.url("/big.png");
         assert_eq!(settled(&fetcher, &url).await, Status::Ready(path.clone()));
         let hits = mock.hits().len();
@@ -1251,7 +1202,6 @@ mod tests {
             let text = error_text(fetcher.download(&mock.url(path)).await);
             assert!(text.contains(needle), "{path}: {text}");
         }
-        // Nothing unverified was left in the cache.
         let leftovers = std::fs::read_dir(&fetcher.directory)
             .map(|entries| entries.count())
             .unwrap_or(0);
@@ -1395,14 +1345,12 @@ mod tests {
             assert_eq!(fetcher.request(&url), Status::Failed);
         }
         assert_eq!(mock.hits().len(), 1, "negative cache stops the retries");
-        // Age the failure past the TTL: the next request tries again.
         fetcher.entries.lock().unwrap().get_mut(&url).unwrap().since = Instant::now()
             .checked_sub(NEGATIVE_TTL + Duration::from_secs(1))
             .unwrap();
         assert_eq!(fetcher.request(&url), Status::Loading);
         assert_eq!(settled(&fetcher, &url).await, Status::Failed);
         assert_eq!(mock.hits().len(), 2);
-        // A URL that fails validation is a cached failure without any network.
         assert_eq!(fetcher.request("ftp://example.com/a.png"), Status::Failed);
     }
 
@@ -1436,7 +1384,6 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(mock.hits().is_empty());
 
-        // Turning images off mid-download cancels it without a failure entry.
         fetcher.set_enabled(true);
         let url = mock.url("/b.png");
         assert_eq!(fetcher.request(&url), Status::Loading);

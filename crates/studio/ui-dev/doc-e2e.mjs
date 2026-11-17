@@ -323,7 +323,7 @@ Object.assign(tests, {
     await page.locator('.card.draft textarea').waitFor();
     await shot(page, 'doc-comment-composer');
     await page.locator('.card.draft textarea').fill('Is this still the right framing?');
-    await page.locator('.card.draft').getByRole('button', { name: 'Send to nexus' }).click();
+    await page.locator('.card.draft').getByRole('button', { name: 'Send to dugix' }).click();
     await page.locator('.card[data-thread^="new-"]').waitFor();
     const create = await page.evaluate(() => window.__mock.commands.find(c => c.command === 'DocCommentCreate'));
     assert.deepEqual(create.anchor, { block: 'b9', range: { start: 0, end: 15 }, quote: 'Make the report' });
@@ -405,10 +405,10 @@ Object.assign(tests, {
     assert.equal(await page.locator('.resolved-list .card').count(), 2);
     await page.evaluate(() => window.__mock.activity('t1', 'working'));
     await page.waitForTimeout(100);
-    assert.equal(await page.locator('#doc-app .status-line.link').textContent(), 'nexus is working');
+    assert.equal(await page.locator('#doc-app .status-line.link').textContent(), 'dugix is working');
     assert.match(await page.locator('#doc-app .status-dot').getAttribute('class'), /working/);
     await page.locator('.card[data-thread="t1"]').click();
-    assert.match(await page.locator('.card[data-thread="t1"] .activity').textContent(), /nexus is working/);
+    assert.match(await page.locator('.card[data-thread="t1"] .activity').textContent(), /dugix is working/);
     await page.evaluate(() => window.__mock.activity('t1', 'done', 'edited blocks b2'));
     await page.waitForTimeout(100);
     assert.match(await page.locator('.card[data-thread="t1"] .activity').textContent(), /Done/);
@@ -535,6 +535,15 @@ Object.assign(tests, {
     await page.locator('.block-menu').getByRole('menuitem', { name: 'Duplicate' }).click();
     await settle(page);
     assert.equal((await mockDoc(page)).blocks.filter(x => x.text === 'Methodology notes live in the shared drive.').length, 2);
+    // Justify comes from the block's text style, so every body paragraph follows.
+    await page.mouse.move(b.x + 60, b.y + 8);
+    await handle.click();
+    await page.locator('.block-menu').getByRole('menuitem', { name: 'Justify' }).click();
+    await settle(page);
+    const applied = await page.evaluate(() => window.__mock.commands.filter(c => c.command === 'DocApply').at(-1).ops[0]);
+    assert.deepEqual(applied, { op: 'set_style', style: 'body', patch: { align: 'justify' } });
+    assert.equal((await mockDoc(page)).theme.text_styles.body.align, 'justify');
+    assert.equal(await part(page, 'b20').evaluate(n => getComputedStyle(n).textAlign), 'justify', 'the editor shows the justified style');
     await page.close();
   },
   async tableControls() {
@@ -702,6 +711,56 @@ Object.assign(tests, {
     assert.equal(await page.locator('[data-block="b11"]').getAttribute('data-tone'), 'success');
     await page.close();
   },
+  async codeBlocksAreSyntaxColoredWithoutMovingTheCaret() {
+    const page = await open('dark');
+    const painted = key => page.evaluate(key => [...(CSS.highlights.get(`hl-${key}`) || [])].map(r => r.toString()), key);
+    await page.waitForFunction(() => CSS.highlights.get('hl-accent')?.size > 0);
+    assert.ok((await painted('accent')).includes('const'));
+    await caretAt(page, 'b16', 'text', 0);
+    await page.keyboard.type('let s = "hi"; ');
+    await page.waitForFunction(() => [...(CSS.highlights.get('hl-accent2') || [])].some(r => r.toString() === '"hi"'));
+    assert.ok((await painted('accent')).includes('let'));
+    // The repaint changed no DOM, so typing continues where it left off.
+    await page.keyboard.type('q');
+    await settle(page);
+    assert.ok((await blockOf(page, 'b16')).text.startsWith('let s = "hi"; qconst growth'));
+    await page.close();
+  },
+  async markdownSourceViewEditsWithVimKeys() {
+    const page = await open('dark');
+    await page.keyboard.press('Meta+Shift+m');
+    const input = page.locator('.source-input');
+    await input.waitFor();
+    await page.waitForFunction(() => document.querySelector('.source-input').value.startsWith('# '));
+    assert.equal(await page.locator('.doc-body .page-scroll, .page-scroll').first().isHidden(), true, 'the page is swapped out');
+    assert.equal(await page.locator('.source-mode').textContent(), 'NORMAL');
+    const original = await input.inputValue();
+    // `x` deletes the `#`, `.` the space; Esc stays in the view.
+    await page.keyboard.press('x');
+    await page.keyboard.press('.');
+    await page.keyboard.press('Escape');
+    assert.equal(await input.inputValue(), original.slice(2));
+    assert.ok(await page.locator('.source-pane').isVisible());
+    await page.keyboard.press('A');
+    assert.equal(await page.locator('.source-mode').textContent(), 'INSERT');
+    await page.keyboard.type(' (draft)');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('u');
+    assert.equal(await input.inputValue(), original.slice(2), 'u undid the whole insert');
+    await page.waitForFunction(() => window.__mock.source !== undefined, null, { timeout: 3000 });
+    assert.equal(await page.evaluate(() => window.__mock.source), original.slice(2));
+    // Colors come from the backend's Markdown spans.
+    await page.waitForFunction(() => document.querySelector('.source-colors').textContent.trim().length > 0);
+    // vim can be switched off; then keys type.
+    await page.locator('.source-vim').click();
+    await page.keyboard.press('Home');
+    await page.keyboard.type('Z');
+    assert.ok((await input.inputValue()).includes('Z'));
+    await page.evaluate(() => localStorage.removeItem('dugix.studio.sourceVim'));
+    await page.keyboard.press('Meta+Shift+m');
+    await page.locator('.source-pane').waitFor({ state: 'hidden' });
+    await page.close();
+  },
   async imageWidthAndToc() {
     const page = await open('dark');
     await part(page, 'b14', 'caption').scrollIntoViewIfNeeded();
@@ -781,6 +840,24 @@ Object.assign(tests, {
   },
 });
 Object.assign(tests, {
+  async libraryShowsFilesMadeElsewhereWhileOpen() {
+    const page = await open('dark', undefined, { scripts: [libraryMock] });
+    await page.getByRole('button', { name: 'Library', exact: true }).click();
+    await page.locator('#library .lib-card').first().waitFor();
+    const before = await page.locator('#library .lib-card').count();
+    await page.evaluate(() => {
+      const items = window.__library.items;
+      items.unshift({ ...items.find(i => i.kind === 'doc'), relative: 'docs/made-by-model.doc.json', title: 'Made by the model' });
+      window.__library.items = items;
+    });
+    await page.locator('#library .lib-card', { hasText: 'Made by the model' }).waitFor({ timeout: 5000 });
+    assert.equal(await page.locator('#library .lib-card').count(), before + 1);
+    // An unchanged listing leaves the grid alone.
+    await page.locator('#library .lib-card').first().evaluate(n => { n.dataset.kept = '1'; });
+    await page.waitForTimeout(2500);
+    assert.equal(await page.locator('#library .lib-card').first().getAttribute('data-kept'), '1');
+    await page.close();
+  },
   async libraryOpensFromTheBarAndTheKeyboard() {
     const page = await open('dark', undefined, { scripts: [libraryMock] });
     assert.equal(await page.locator('#library').isVisible(), false);
@@ -823,7 +900,7 @@ Object.assign(tests, {
     assert.equal((await cards()).length, 9);
     await page.locator('#library .lib-search').fill('zzz');
     await page.locator('#library .lib-empty h2').waitFor();
-    assert.match(await page.locator('#library .lib-empty h2').textContent(), /No decks or docs match “zzz”/);
+    assert.match(await page.locator('#library .lib-empty h2').textContent(), /No decks, docs or sheets match “zzz”/);
     await page.getByRole('button', { name: 'Clear search' }).click();
     assert.equal((await cards()).length, 9);
     // Arrows move between cards, Enter opens one.
@@ -833,7 +910,7 @@ Object.assign(tests, {
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => window.__library.commands.some(c => c.command === 'LibraryOpen'));
     const open1 = await page.evaluate(() => window.__library.commands.find(c => c.command === 'LibraryOpen'));
-    assert.deepEqual(open1, { command: 'LibraryOpen', path: 'decks/launch.deck.json' });
+    assert.deepEqual(open1, { command: 'LibraryOpen', path: 'decks/launch.deck.json', space: 'career' });
     await page.locator('#library').waitFor({ state: 'hidden' });
     await page.close();
   },
@@ -854,7 +931,7 @@ Object.assign(tests, {
     // Reveal
     menu = await menuFor('Launch review');
     await menu.getByRole('menuitem', { name: /Reveal|Show in/ }).click();
-    assert.deepEqual((await sent()).at(-1), { command: 'LibraryReveal', path: 'decks/launch.deck.json' });
+    assert.deepEqual((await sent()).at(-1), { command: 'LibraryReveal', path: 'decks/launch.deck.json', space: 'career' });
     // Duplicate: the copy appears first and is highlighted.
     menu = await menuFor('Launch review');
     await menu.getByRole('menuitem', { name: 'Duplicate' }).click();
@@ -876,7 +953,7 @@ Object.assign(tests, {
     await page.locator('#library .lib-rename').fill('  Launch v2 ');
     await page.keyboard.press('Enter');
     await page.locator('#library .lib-title', { hasText: 'Launch v2' }).waitFor();
-    assert.deepEqual((await sent()).find(c => c.command === 'LibraryRename'), { command: 'LibraryRename', path: 'decks/launch-copy.deck.json', title: 'Launch v2' });
+    assert.deepEqual((await sent()).find(c => c.command === 'LibraryRename'), { command: 'LibraryRename', path: 'decks/launch-copy.deck.json', space: 'career', title: 'Launch v2' });
     // Export: the formats of the kind, through the Save dialog.
     menu = await menuFor('Launch v2');
     await menu.getByRole('menuitem', { name: 'Export' }).click();
@@ -884,7 +961,7 @@ Object.assign(tests, {
     await shot(page, 'library-menu-export');
     await menu.getByRole('menuitem', { name: /^PDF/ }).click();
     await page.locator('.lib-toast', { hasText: 'Exported Launch v2.pdf' }).waitFor();
-    assert.deepEqual((await sent()).find(c => c.command === 'LibraryExport'), { command: 'LibraryExport', path: 'decks/launch-copy.deck.json', format: 'pdf' });
+    assert.deepEqual((await sent()).find(c => c.command === 'LibraryExport'), { command: 'LibraryExport', path: 'decks/launch-copy.deck.json', space: 'career', format: 'pdf' });
     await page.locator('.lib-toast').getByRole('button', { name: 'Reveal' }).waitFor();
     menu = await menuFor('Q3 strategy');
     await menu.getByRole('menuitem', { name: 'Export' }).click();
@@ -907,7 +984,7 @@ Object.assign(tests, {
     await menu.getByRole('menuitem', { name: 'Delete' }).click();
     await page.locator('.lib-dialog').getByRole('button', { name: 'Delete' }).click();
     await page.locator('#library .lib-title', { hasText: 'Launch v2' }).waitFor({ state: 'detached' });
-    assert.deepEqual((await sent()).find(c => c.command === 'LibraryDelete'), { command: 'LibraryDelete', path: 'decks/launch-copy.deck.json' });
+    assert.deepEqual((await sent()).find(c => c.command === 'LibraryDelete'), { command: 'LibraryDelete', path: 'decks/launch-copy.deck.json', space: 'career' });
     // The right button opens the same menu.
     await card('Roadmap 2027').click({ button: 'right' });
     assert.equal(await page.locator('.lib-menu').count(), 1);
@@ -964,7 +1041,7 @@ Object.assign(tests, {
     assert.deepEqual((await sent()).at(-1), { command: 'ExportAs', format: 'md' });
     await page.getByRole('button', { name: 'Export' }).click();
     await page.locator('.export-pop').getByRole('menuitemcheckbox', { name: /without asking/ }).click();
-    assert.equal(await page.evaluate(() => localStorage.getItem('nexus-quick-export')), '1');
+    assert.equal(await page.evaluate(() => localStorage.getItem('dugix-quick-export')), '1');
     assert.equal(await page.locator('.export-pop').getByRole('menuitemcheckbox', { name: /without asking/ }).getAttribute('aria-checked'), 'true');
     await page.locator('.export-pop .menu-row', { hasText: 'PDF' }).click();
     await page.locator('.doc-toast', { hasText: 'Exported q3-strategy.pdf' }).waitFor();
@@ -980,7 +1057,7 @@ Object.assign(tests, {
     assert.deepEqual((await sent()).at(-1), { command: 'PickTemplate' });
     assert.ok(!(await page.evaluate(() => window.__mock.commands.some(c => c.command === 'ImportTemplateData'))), 'no bytes travel through the page');
     // Cancelling every dialog does nothing: no toast, no change.
-    await page.evaluate(() => { localStorage.removeItem('nexus-quick-export'); window.__library.state.cancel = true; document.querySelector('.doc-toast').hidden = true; });
+    await page.evaluate(() => { localStorage.removeItem('dugix-quick-export'); window.__library.state.cancel = true; document.querySelector('.doc-toast').hidden = true; });
     await page.getByRole('button', { name: 'Export' }).click();
     await page.locator('.export-pop .menu-row', { hasText: 'Word' }).click();
     await page.waitForFunction(() => window.__library.commands.filter(c => c.command === 'ExportAs').length === 2);

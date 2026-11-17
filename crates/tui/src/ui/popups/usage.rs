@@ -1,7 +1,5 @@
-//! The `/usage` popup: lifetime token, prompt-cache, and cost analytics by
-//! backend and model, plus a scrollable log of recent requests. Rendered as
-//! a dashboard: a hero summary with a cache bar, colored per-backend rows,
-//! ranked model list, and a live-looking recent-request feed.
+//! The `/usage` popup: lifetime token, prompt-cache and cost analytics by backend
+//! and model, plus a scrollable log of recent requests.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
@@ -14,7 +12,7 @@ use crate::app_view::AppView;
 use crate::theme::Theme;
 use crate::ui::{fmt_cost, humanize};
 
-use super::chrome;
+use super::chrome::{self, PopupFrame, hint, keys};
 
 #[allow(clippy::too_many_lines)] // usage popup: window header, tables per section
 pub fn render(f: &mut Frame, app: &AppView) {
@@ -24,27 +22,47 @@ pub fn render(f: &mut Frame, app: &AppView) {
     };
     let theme = &app.theme;
     let dim = Style::default().fg(theme.fg_dim);
-    let title = chrome::popup_title(app, format!("usage · {}", app.usage_range.label()));
-    let hint = format!(
-        "{}←→/t {} · ↑↓ recent · Ctrl+R refresh · Esc close",
-        chrome::count_hint(data.totals.requests as usize, "request"),
-        app.usage_range.title()
+    let inner = chrome::render_popup(
+        f,
+        area,
+        &PopupFrame {
+            title: "Usage",
+            count: app.usage_range.label(),
+            hints: &[
+                hint(keys::SIDE, "period"),
+                hint(keys::MOVE, "recent"),
+                hint("r", "refresh"),
+                hint(keys::ESC, "close"),
+            ],
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
+        app,
     );
-    let inner = chrome::render_hinted(f, area, title, &hint, app, true, chrome::Tone::Normal);
+    let active = dugix_core::db::UsageRange::CYCLE
+        .iter()
+        .position(|range| *range == app.usage_range)
+        .unwrap_or_default();
+    let inner = chrome::render_tabs(f, inner, &["24h", "7d", "30d", "All"], active, theme);
     if data.totals.requests == 0 {
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                app.usage_range.empty_message(),
-                dim,
-            ))),
-            inner,
-        );
+        let message = match app.usage_range {
+            dugix_core::db::UsageRange::Day => {
+                "No usage in the last 24 hours. ←→ widens the period."
+            }
+            dugix_core::db::UsageRange::Week => {
+                "No usage in the last 7 days. ←→ widens the period."
+            }
+            dugix_core::db::UsageRange::Month => {
+                "No usage in the last 30 days. ←→ widens the period."
+            }
+            dugix_core::db::UsageRange::All => "No usage logged yet. Send a message first.",
+        };
+        chrome::render_empty(f, inner, message, theme);
         return;
     }
 
-    // Allocate rows top-down by priority — summary, backends, models, then
-    // the recent feed takes what's left — so short terminals lose the feed
-    // first rather than squeezing every section at once.
+    // Rows are allocated top-down by priority, so short terminals lose the
+    // recent feed first rather than squeezing every section.
     let mut next_y = inner.y;
     let mut rows_left = inner.height;
     let mut take = |n: u16| {
@@ -61,6 +79,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
         take(1),                                // gap
         take(1),                                // models header
         take(1 + data.by_model.len() as u16),   // models rows
+        take(1),                                // cache misses
         take(1),                                // gap
         take(1),                                // recent header
         take(u16::MAX),                         // recent rows (scrolls)
@@ -78,18 +97,19 @@ pub fn render(f: &mut Frame, app: &AppView) {
         )),
         rows[1],
     );
-    // Header mirrors the row layout exactly — the "  " prefix matches the
-    // "● " marker and the cached cell carries the row's "% " suffix width,
-    // so every numeric column lines up under its label.
+    // The header mirrors the row layout exactly, so every numeric column lines
+    // up under its label.
     let mut backend_lines: Vec<Line> = vec![Line::from(vec![
         Span::styled("  ", dim),
         Span::styled(format!("{:<14}", "backend"), dim),
         Span::styled(format!("{:>6} {:>9} {:>8} ", "req", "prompt", "out"), dim),
         Span::styled(format!("{:<6}  ", "cached"), dim),
+        Span::styled(format!("{:<6}  ", "reused"), dim),
         Span::styled(format!("{:>9}", "cost"), dim),
     ])];
     for b in &data.by_backend {
         let cached = rate(b.rated_cache_read_tokens, b.rated_prompt_tokens);
+        let reused = rate(b.reused_tokens, b.reusable_tokens);
         let name = chrome::truncate(&b.backend, 14);
         let mut row = vec![
             Span::styled("● ", Style::default().fg(backend_color(theme, &b.backend))),
@@ -103,7 +123,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
             b.requests,
             b.prompt_tokens,
             b.completion_tokens,
-            cached,
+            (cached, reused),
             b.cost,
         ));
         backend_lines.push(Line::from(row));
@@ -127,10 +147,12 @@ pub fn render(f: &mut Frame, app: &AppView) {
         Span::styled(format!("{:<30}", "model"), dim),
         Span::styled(format!("{:>6} {:>9} {:>8} ", "req", "prompt", "out"), dim),
         Span::styled(format!("{:<6}  ", "cached"), dim),
+        Span::styled(format!("{:<6}  ", "reused"), dim),
         Span::styled(format!("{:>9}", "cost"), dim),
     ])];
     for (i, m) in data.by_model.iter().enumerate() {
         let cached = rate(m.rated_cache_read_tokens, m.rated_prompt_tokens);
+        let reused = rate(m.reused_tokens, m.reusable_tokens);
         let rank_style = if i == 0 {
             Style::default()
                 .fg(theme.warning)
@@ -148,7 +170,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
             m.requests,
             m.prompt_tokens,
             m.completion_tokens,
-            cached,
+            (cached, reused),
             m.cost,
         ));
         model_lines.push(Line::from(row));
@@ -158,6 +180,25 @@ pub fn render(f: &mut Frame, app: &AppView) {
         rows[5],
     );
 
+    // --- why requests missed the cache ---
+    if !data.misses.is_empty() {
+        let parts: Vec<String> = data
+            .misses
+            .iter()
+            .map(|(verdict, count)| format!("{} {count}", verdict.replace('_', " ")))
+            .collect();
+        f.render_widget(
+            Paragraph::new(chrome::fit_lines(
+                vec![Line::from(Span::styled(
+                    format!("  cache requests · {}", parts.join(" · ")),
+                    dim,
+                ))],
+                width,
+            )),
+            rows[6],
+        );
+    }
+
     // --- recent requests (scrollable) ---
     f.render_widget(
         Paragraph::new(crate::ui::style::section(
@@ -165,16 +206,15 @@ pub fn render(f: &mut Frame, app: &AppView) {
             "recent requests",
             width as usize,
         )),
-        rows[7],
+        rows[8],
     );
-    let recent_area = rows[8];
+    let recent_area = rows[9];
     let visible = recent_area.height as usize;
     let top = app
         .usage_scroll
         .min(data.recent.len().saturating_sub(visible));
     let mut recent_lines: Vec<Line> = Vec::with_capacity(visible);
     for r in data.recent.iter().skip(top).take(visible) {
-        // Per row: a rate only where the provider's convention is known.
         let cached = r
             .prompt_convention
             .ratio_is_meaningful()
@@ -194,8 +234,8 @@ pub fn render(f: &mut Frame, app: &AppView) {
             Span::styled(format!("{time} "), dim),
             Span::styled("● ", Style::default().fg(backend_color(theme, &r.backend))),
             Span::styled(format!("{model:<24}"), Style::default().fg(theme.fg)),
-            // 13 cells fits the widest possible pair ("999.9m→999.9m"), so
-            // the bar/percent/cost columns never shift row to row.
+            // 13 cells fits the widest pair ("999.9m→999.9m"), so the following
+            // columns never shift row to row.
             Span::styled(format!("{tokens:>13} "), dim),
             Span::styled(
                 "█".repeat(cached.map_or(0, |c| (c * 8.0).round() as usize)),
@@ -223,8 +263,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
     );
 }
 
-/// One line explaining what an absent rate means, so `—` never reads as a
-/// rendering glitch or as a zero.
+/// One line explaining what an absent rate means, so `—` never reads as a zero.
 fn cache_legend(theme: &Theme) -> Line<'static> {
     Line::from(Span::styled(
         "  — = provider reported no cache accounting (or row predates normalization); excluded from rates",
@@ -233,7 +272,7 @@ fn cache_legend(theme: &Theme) -> Line<'static> {
 }
 
 /// Hero summary: colored headline numbers plus a cache bar over all prompt
-/// tokens ever logged.
+/// tokens.
 fn render_summary(f: &mut Frame, app: &AppView, area: Rect) {
     let theme = &app.theme;
     let Some(data) = &app.usage_data else { return };
@@ -268,8 +307,7 @@ fn render_summary(f: &mut Frame, app: &AppView, area: Rect) {
                 .fg(cache_color(theme, cached))
                 .add_modifier(Modifier::BOLD),
         ));
-        // Requests the providers did not account for are excluded from the
-        // rate rather than silently averaged into it.
+        // Unaccounted requests are excluded from the rate, not averaged into it.
         let unrated = t.prompt_tokens.saturating_sub(t.rated_prompt_tokens);
         if unrated > 0 {
             spans.push(Span::styled(
@@ -284,7 +322,6 @@ fn render_summary(f: &mut Frame, app: &AppView, area: Rect) {
     } else {
         Line::from(Span::styled("  no cache data reported", dim))
     };
-    // The legend only earns its line when something was actually excluded.
     let mut lines = vec![headline, Line::from(""), bar_line];
     if t.prompt_tokens > t.rated_prompt_tokens {
         lines.push(cache_legend(theme));
@@ -292,16 +329,14 @@ fn render_summary(f: &mut Frame, app: &AppView, area: Rect) {
     f.render_widget(Paragraph::new(chrome::fit_lines(lines, area.width)), area);
 }
 
-/// The shared `req prompt out cached% cost` cells for a backend/model row.
-/// The header counterpart is built inline with the identical widths (a "  "
-/// name-column prefix and a `{:<6}  ` cached cell carrying the row's "% "
-/// suffix), so label and numbers share column edges.
+/// The shared `req prompt out cached% reused% cost` cells for a backend/model row, at
+/// the same widths as the inline header.
 fn numeric_cells(
     theme: &Theme,
     requests: u64,
     prompt: u64,
     completion: u64,
-    cached: Option<f64>,
+    (cached, reused): (Option<f64>, Option<f64>),
     cost: f64,
 ) -> Vec<Span<'static>> {
     let dim = Style::default().fg(theme.fg_dim);
@@ -320,17 +355,18 @@ fn numeric_cells(
             Style::default().fg(cache_color(theme, cached)),
         ),
         Span::styled(
+            format!("{:>7} ", fmt_rate(reused)),
+            Style::default().fg(cache_color(theme, reused)),
+        ),
+        Span::styled(
             format!("{:>9}", fmt_cost_agg(cost)),
             cost_style(theme, cost),
         ),
     ]
 }
 
-/// Cache hit fraction 0..=1 over the rows whose accounting can be trusted.
-///
-/// `None` when nothing in the window is rateable — a provider that reports no
-/// cache accounting, or rows logged before the prompt-token convention was
-/// normalized. Rendered as `—`, never as a confident `0%`.
+/// Cache hit fraction 0..=1 over the rows whose accounting can be trusted;
+/// `None` when nothing in the window is rateable, rendered as `—`.
 fn rate(rated_cache_read: u64, rated_prompt: u64) -> Option<f64> {
     (rated_prompt > 0).then(|| rated_cache_read as f64 / rated_prompt as f64)
 }
@@ -340,8 +376,8 @@ fn fmt_rate(rate: Option<f64>) -> String {
     rate.map_or_else(|| "—".to_string(), |r| format!("{:.0}%", r * 100.0))
 }
 
-/// Threshold color for a cache rate: green ≥70%, yellow ≥40%, red below.
-/// An absent rate is dim — it is not a bad rate, it is no rate.
+/// Threshold color for a cache rate: green ≥70%, yellow ≥40%, red below. An
+/// absent rate is dim: not a bad rate, no rate.
 fn cache_color(theme: &Theme, rate: Option<f64>) -> Color {
     let Some(rate) = rate else {
         return theme.fg_dim;
@@ -390,8 +426,8 @@ fn cost_style(theme: &Theme, cost: f64) -> Style {
     }
 }
 
-/// Aggregate cost: `—` when nothing was billable (no known prices, or all
-/// free-tier usage) — a `$0.00` would falsely imply a priced bill.
+/// Aggregate cost: `—` when nothing was billable, since `$0.00` would falsely
+/// imply a priced bill.
 fn fmt_cost_agg(cost: f64) -> String {
     if cost > 0.0 {
         fmt_cost(Some(cost))
@@ -401,21 +437,18 @@ fn fmt_cost_agg(cost: f64) -> String {
 }
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) {
-    use nexus_core::app::Popup;
+    use dugix_core::app::Popup;
     match key.code {
         KeyCode::Esc => app.popup = Popup::None,
         KeyCode::Up | KeyCode::Char('k') => app.scroll_usage(-1),
         KeyCode::Down | KeyCode::Char('j') => app.scroll_usage(1),
         KeyCode::PageUp => app.scroll_usage(-10),
         KeyCode::PageDown => app.scroll_usage(10),
-        // Time window: ←/h step back, →/l and t step forward.
+        KeyCode::Home => app.scroll_usage(i32::MIN / 2),
+        KeyCode::End => app.scroll_usage(i32::MAX / 2),
         KeyCode::Left | KeyCode::Char('h') => app.cycle_usage_range(-1),
         KeyCode::Right | KeyCode::Char('l' | 't') => app.cycle_usage_range(1),
-        KeyCode::Char('r')
-            if key
-                .modifiers
-                .contains(crossterm::event::KeyModifiers::CONTROL) =>
-        {
+        KeyCode::Char('r') if !super::is_chord(key) => {
             app.refresh_usage();
         }
         _ => {}

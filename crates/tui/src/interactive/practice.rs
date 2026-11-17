@@ -1,18 +1,18 @@
-//! Practice components: a highlighted code editor with line numbers, choice
-//! lists that mark the right answer once picked, and quizzes that page
-//! through questions. Every quiz reserves its tallest question so paging
-//! never moves the transcript below it.
+//! Practice components: a highlighted code editor, choice lists that mark the
+//! right answer, and quizzes whose tallest question is always reserved.
 
 use super::{Control, Entry, branch_regions, control_style, display, glyph, wrapped_text};
 use crate::theme::Theme;
-use crossterm::event::KeyCode;
-use nexus_core::interactive::{EditorKey, Node, Question, Session};
+use crate::vim::Outcome;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use dugix_core::interactive::{EditorKey, Node, Question, Session, line_col};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use tui_textarea::{CursorMove, TextArea};
+use unicode_width::UnicodeWidthChar;
 
 pub(super) fn height(node: &Node, session: &Session, width: u16) -> Option<u16> {
     Some(match node {
@@ -28,7 +28,6 @@ pub(super) fn height(node: &Node, session: &Session, width: u16) -> Option<u16> 
     })
 }
 
-/// Prompt, answer and explanation lines, wrapped to `width`.
 fn question_text(
     item: &Question,
     session: &Session,
@@ -131,9 +130,13 @@ pub(super) fn render(
             options,
             answer,
         } => {
-            Paragraph::new(display(session, label))
-                .style(Style::default().fg(theme.fg_dim))
-                .render(Rect::new(area.x, area.y, area.width, 1), buffer);
+            super::bold::label(
+                buffer,
+                Rect::new(area.x, area.y, area.width, 1),
+                &display(session, label),
+                false,
+                theme,
+            );
             let picked = session.value(key);
             let mut hits = Vec::new();
             for (option, text) in options.iter().enumerate() {
@@ -199,10 +202,21 @@ fn quiz(
     .style(control_style(theme, focus == Some(control)).add_modifier(Modifier::BOLD))
     .render(header, buffer);
     if let Some((right, total)) = session.quiz_score(index) {
-        Paragraph::new(format!("{right}/{total} right"))
-            .style(Style::default().fg(theme.fg_dim))
-            .right_aligned()
-            .render(header, buffer);
+        let score = format!("{right}/{total} right");
+        let width = super::bold::pill_width(&score).min(header.width);
+        let fill = if right == total && total > 0 {
+            theme.success
+        } else {
+            theme.control
+        };
+        super::bold::pill(
+            buffer,
+            (header.right().saturating_sub(width), header.y),
+            width,
+            &score,
+            (fill, theme.on(fill)),
+            (true, theme),
+        );
     }
     let mut hits = vec![(header, control)];
     let Some(item) = items.get(current) else {
@@ -224,15 +238,16 @@ fn quiz(
         y = view_area.bottom();
     }
     if item.has_answer() {
-        let reveal = Rect::new(area.x, y + 1, area.width, 1);
         let shown = session.revealed(index);
-        Paragraph::new(if shown {
-            "[ Hide answer ]"
-        } else {
-            "[ Show answer ]"
-        })
-        .style(control_style(theme, focus == Some(control + 1)))
-        .render(reveal, buffer);
+        let reveal = super::bold::button(
+            buffer,
+            (area.x, y + 1),
+            area.width,
+            if shown { "Hide answer" } else { "Show answer" },
+            (super::bold::Kind::Secondary, focus == Some(control + 1)),
+            super::accent_color(session.document(), theme),
+            theme,
+        );
         hits.push((reveal, control + 1));
         if shown {
             let rows = u16::try_from(answer.len()).unwrap_or(0);
@@ -250,66 +265,16 @@ fn quiz(
     hits
 }
 
-/// Highlighted lines of `source`, one per `\n`-separated line. Lines the
-/// highlighter reshaped fall back to plain text so the caret stays aligned.
+/// Highlighted lines of `source`, one per `\n`-separated line.
 pub(super) fn highlighted(source: &str, lang: &str, theme: &Theme) -> Vec<Line<'static>> {
-    let plain: Vec<&str> = source.split('\n').collect();
-    let fence = "`".repeat(
-        source
-            .split(|ch| ch != '`')
-            .map(str::len)
-            .max()
-            .unwrap_or(0)
-            .max(3)
-            + 1,
-    );
-    let lang = if lang.eq_ignore_ascii_case("nexus-ui") || lang.eq_ignore_ascii_case("mermaid") {
-        "plain"
-    } else {
-        lang
-    };
-    let rendered = crate::ui::markdown::render(
-        &format!("{fence}{lang}\n{source}\n{fence}"),
-        plain
-            .iter()
-            .map(|line| line.width())
-            .max()
-            .unwrap_or(1)
-            .max(1)
-            .saturating_add(4),
-        crate::ui::markdown::MdColors {
-            heading: theme.accent,
-            rule: theme.border_dim,
-            code: theme.fg,
-        },
-    );
-    let mut lines = rendered.lines.into_iter().skip(1);
-    plain
-        .iter()
-        .map(|text| {
-            let content = lines.next().map(|line| {
-                let count = line.spans.len().saturating_sub(2);
-                Line::from(
-                    line.spans
-                        .into_iter()
-                        .skip(1)
-                        .take(count)
-                        .collect::<Vec<_>>(),
-                )
-            });
-            match content {
-                Some(line)
-                    if crate::ui::markdown::line_text(&line).trim_end() == text.trim_end() =>
-                {
-                    line
-                }
-                _ => Line::styled((*text).to_string(), Style::default().fg(theme.fg)),
-            }
-        })
-        .collect()
+    crate::ui::style::highlighted_lines(
+        source,
+        lang,
+        crate::ui::style::SyntaxColors::from_theme(theme),
+        Style::default().fg(theme.fg),
+    )
 }
 
-/// `line` without its first `skip` display columns, at most `take` wide.
 fn columns(line: &Line<'static>, skip: usize, take: usize) -> Line<'static> {
     let mut spans = Vec::new();
     let mut column = 0;
@@ -369,7 +334,7 @@ fn editor(
     buffer.set_style(body, Style::default().bg(theme.raised));
     let gutter = gutter(&text, state.top, rows);
     let width = usize::from(area.width.saturating_sub(gutter));
-    let (line, column) = nexus_core::interactive::line_col(&text, state.cursor);
+    let (line, column) = dugix_core::interactive::line_col(&text, state.cursor);
     let caret_x = text
         .split('\n')
         .nth(line)
@@ -413,13 +378,21 @@ fn editor(
     }
 }
 
-/// Route a key to the focused editor while it is editing. Returns whether
-/// the key was consumed.
-pub(super) fn editor_key(entry: &mut Entry, node: usize, code: KeyCode) -> bool {
+/// Route a key to the focused editor while it is editing; whether it was consumed.
+pub(super) fn editor_key(entry: &mut Entry, node: usize, key: KeyEvent, vim: bool) -> bool {
+    if vim && let Some(consumed) = vim_editor_key(entry, node, key) {
+        return consumed;
+    }
+    if key
+        .modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+    {
+        return false;
+    }
     let Ok(session) = &mut entry.session else {
         return false;
     };
-    let key = match code {
+    let key = match key.code {
         KeyCode::Esc => {
             entry.error = session
                 .set_editing(node, false)
@@ -448,6 +421,43 @@ pub(super) fn editor_key(entry: &mut Entry, node: usize, code: KeyCode) -> bool 
     true
 }
 
+fn vim_editor_key(entry: &mut Entry, node: usize, key: KeyEvent) -> Option<bool> {
+    let Ok(session) = &mut entry.session else {
+        return Some(false);
+    };
+    let Some(Node::Editor { key: field, .. }) = session.document().node(node) else {
+        return Some(false);
+    };
+    let text = session.value(field);
+    let cursor = session.editor(node).cursor;
+    let (row, column) = line_col(&text, cursor);
+    let mut area = TextArea::new(text.split('\n').map(str::to_owned).collect());
+    area.move_cursor(CursorMove::Jump(
+        u16::try_from(row).unwrap_or(u16::MAX),
+        u16::try_from(column).unwrap_or(u16::MAX),
+    ));
+    match entry.inputs.get_mut().code_vim(node).key(&mut area, key) {
+        Outcome::Passthrough | Outcome::Leave => None,
+        Outcome::Submit => Some(true),
+        Outcome::Handled => {
+            let next = area.lines().join("\n");
+            let (row, column) = area.cursor();
+            let offset = area.lines()[..row]
+                .iter()
+                .map(|line| line.chars().count() + 1)
+                .sum::<usize>()
+                + column;
+            if next != text || offset != cursor {
+                entry.error = session
+                    .set_code(node, &next, offset)
+                    .err()
+                    .map_or_else(String::new, |error| error.to_string());
+            }
+            Some(true)
+        }
+    }
+}
+
 /// Whether the focused control is an editor that is taking keys.
 pub(super) fn editing(entry: &Entry) -> Option<usize> {
     let Some(Control::Editor(node)) = entry.controls().get(entry.focus).cloned() else {
@@ -460,8 +470,7 @@ pub(super) fn editing(entry: &Entry) -> Option<usize> {
         .then_some(node)
 }
 
-/// Clicks: an editor places its caret, a quiz header pages back on its
-/// left arrow and forward elsewhere.
+/// Clicks: an editor places its caret, a quiz header pages.
 pub(super) fn click(
     entry: &mut Entry,
     control: &Control,

@@ -1,10 +1,8 @@
-use nexus_core::app::{CopyOption, Popup, code_blocks};
+use dugix_core::app::{CopyOption, Popup, code_blocks};
 
 use crate::app_view::AppView;
 
 impl AppView {
-    /// Open the `/copy` menu for the last assistant reply: the whole response
-    /// plus one entry per fenced code block.
     pub fn open_copy_menu(&mut self) {
         let opts = {
             let Some(msg) = self
@@ -19,7 +17,7 @@ impl AppView {
             };
             let mut opts = vec![CopyOption {
                 label: "Entire response".into(),
-                text: nexus_core::markdown::to_plain(&msg.content),
+                text: dugix_core::markdown::to_plain(&msg.content),
             }];
             for (i, (lang, code)) in code_blocks(&msg.content).into_iter().enumerate() {
                 let label = match lang {
@@ -35,7 +33,6 @@ impl AppView {
         self.popup = Popup::Copy;
     }
 
-    /// Copy the highlighted `/copy` menu entry and close the menu.
     pub fn confirm_copy(&mut self) {
         if let Some(text) = self
             .copy_options
@@ -49,20 +46,20 @@ impl AppView {
 
     pub fn move_copy_selection(&mut self, delta: i32) {
         self.copy_selected =
-            nexus_core::app::clamp_cursor(self.copy_selected, self.copy_options.len(), delta);
+            dugix_core::app::clamp_cursor(self.copy_selected, self.copy_options.len(), delta);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_core::app::App;
-    use nexus_core::db::{Db, Message};
-    use nexus_core::space::Space;
+    use dugix_core::app::App;
+    use dugix_core::db::{Db, Message};
+    use dugix_core::space::Space;
 
     fn test_space() -> Space {
         Space {
-            root: std::env::temp_dir().join(format!("nexus-copy-flow-{}", uuid::Uuid::new_v4())),
+            root: std::env::temp_dir().join(format!("dugix-copy-flow-{}", uuid::Uuid::new_v4())),
         }
     }
 

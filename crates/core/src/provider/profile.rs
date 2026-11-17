@@ -39,7 +39,6 @@ pub fn profile_for(model: Option<&Model>, local: Option<&LocalConfig>) -> ModelP
         };
     }
     let tier = local.and_then(|config| config.tier).unwrap_or(Tier::Small);
-    // One eighth of the token window at approximately four characters/token.
     let result_cap = context.map_or(4_000, |context| (context / 2).clamp(2_000, 8_000));
     ModelProfile {
         parallel_calls: local
@@ -67,6 +66,7 @@ mod tests {
             supports_video_generation: false,
             backend,
             pricing: None,
+            aliases: Vec::new(),
         }
     }
 
@@ -80,6 +80,7 @@ mod tests {
             BackendTag::OpenAi,
             BackendTag::OpencodeGo,
             BackendTag::Codex,
+            BackendTag::Mistral,
         ] {
             let profile = profile_for(Some(&model(backend, Some(8_000))), Some(&config));
             assert!(profile.parallel_calls);

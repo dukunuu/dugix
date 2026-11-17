@@ -87,9 +87,6 @@ impl Embedder {
     }
 
     /// Use the configured local endpoint; a trailing `/v1` is removed for native APIs.
-    ///
-    /// # Errors
-    /// Rejects unsafe endpoints and HTTP client construction failures.
     pub fn ollama(endpoint: &str, model: String) -> Result<Self> {
         OpenRouter::local(endpoint)?;
         Ok(Self {
@@ -195,9 +192,6 @@ impl Embedder {
     }
 
     /// Probe with synthetic content only; never sends a space's data during discovery.
-    ///
-    /// # Errors
-    /// Reports unavailable runtimes, missing models and invalid responses.
     pub async fn prepare(&self) -> Result<()> {
         self.profile.get_or_try_init(|| self.probe()).await?;
         Ok(())
@@ -210,9 +204,14 @@ impl Embedder {
         let mut images = false;
         let vectors = match &self.backend {
             Backend::OpenAi(provider) => {
-                provider
+                let vectors = provider
                     .embed(&self.model, vec![self.query_text("probe")])
-                    .await?
+                    .await?;
+                images = provider
+                    .embed_values(&self.model, vec![compatible_item(&probe_image()?)])
+                    .await
+                    .is_ok_and(|v| v.len() == 1 && v[0].len() == vectors[0].len());
+                vectors
             }
             Backend::Ollama { client, base } => {
                 // /tags supplies the manifest digest; /show supplies model capabilities.
@@ -348,9 +347,6 @@ impl Embedder {
     }
 
     /// Embed already formatted documents or validated image inputs.
-    ///
-    /// # Errors
-    /// Rejects unsupported modalities, over-budget text and malformed vectors.
     pub async fn embed(&self, inputs: Vec<EmbedInput>) -> Result<Vec<Vec<f32>>> {
         ensure!(!inputs.is_empty(), "empty embedding batch");
         self.prepare().await?;
@@ -377,6 +373,14 @@ impl Embedder {
                 count,
                 Some(profile.identity.dimension),
             )?
+        } else if let Backend::OpenAi(provider) = &self.backend
+            && inputs
+                .iter()
+                .any(|input| matches!(input, EmbedInput::Image { .. }))
+        {
+            provider
+                .embed_values(&self.model, inputs.iter().map(compatible_item).collect())
+                .await?
         } else {
             let texts = inputs
                 .into_iter()
@@ -393,14 +397,24 @@ impl Embedder {
     }
 
     /// Query formatting is applied here, exactly once, never in transport code.
-    ///
-    /// # Errors
-    /// Same as [`Self::embed`].
     pub async fn query(&self, query: &str) -> Result<Vec<f32>> {
         Ok(self
             .embed(vec![EmbedInput::Text(self.query_text(query))])
             .await?
             .remove(0))
+    }
+}
+
+fn compatible_item(input: &EmbedInput) -> Value {
+    match input {
+        EmbedInput::Text(text) => Value::String(text.clone()),
+        EmbedInput::Image { bytes, mime } => {
+            let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+            json!({"content": [{
+                "type": "image_url",
+                "image_url": {"url": format!("data:{mime};base64,{b64}")}
+            }]})
+        }
     }
 }
 
@@ -551,11 +565,7 @@ fn validate_vectors(
 }
 
 /// Bound compressed size and decoded allocations, then convert to RGB PNG.
-/// Google's processor uses 16px patches pooled 3x3, at most 280 soft tokens;
-/// a 768px square uses 256 pooled patches. The runtime retains final preprocessing.
-///
-/// # Errors
-/// Rejects oversized, unsupported or malformed images.
+/// Google's processor uses 16px patches pooled 3x3, at most 280 soft tokens.
 pub fn image_input(path: &Path) -> Result<EmbedInput> {
     ensure!(
         std::fs::metadata(path)?.len() <= 20 * 1024 * 1024,

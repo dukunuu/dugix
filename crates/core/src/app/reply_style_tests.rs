@@ -40,12 +40,11 @@ fn reply_style_defaults_to_interactive_and_round_trips_through_the_db() {
             .iter()
             .any(|(k, v)| k == "reply_style" && v == "rich")
     );
-    // A fresh App over the same db restores it.
     let reloaded = App::new(
         a.db,
         Some("sk-or-test-key"),
         crate::space::Space {
-            root: std::env::temp_dir().join(format!("nexus-test-{}", uuid::Uuid::new_v4())),
+            root: std::env::temp_dir().join(format!("dugix-test-{}", uuid::Uuid::new_v4())),
         },
     );
     assert_eq!(reloaded.settings.reply_style, "rich");
@@ -71,9 +70,7 @@ fn reply_style_controls_the_layout_guidance_in_the_prompt() {
     assert!(rich.contains("Prefer a layout for most substantive answers"));
     let plain = prompt(&mut a, "plain");
     assert!(!plain.contains("## Designed replies"));
-    // The interactive UI guidance is independent of the reply style.
     assert!(plain.contains(crate::interactive::INSTRUCTIONS));
-    // Clients without a renderer never get layout guidance.
     a.interactive_ui = false;
     a.settings.reply_style = "rich".into();
     assert!(!a.system_prompt().contains("## Designed replies"));
@@ -105,7 +102,7 @@ fn context_estimate_counts_layout_guidance_only_when_it_is_sent() {
 }
 
 #[test]
-fn interactive_style_asks_for_a_card_in_chat_but_not_in_agent_mode() {
+fn interactive_style_asks_for_a_card_and_the_agent_mode_note_asks_for_plain_text() {
     let mut a = app_with_key();
     let interactive = prompt(&mut a, "interactive");
     assert!(interactive.contains(crate::interactive::LAYOUTS));
@@ -113,9 +110,14 @@ fn interactive_style_asks_for_a_card_in_chat_but_not_in_agent_mode() {
     for style in ["auto", "rich", "plain"] {
         assert!(!prompt(&mut a, style).contains("## Interactive-first replies"));
     }
-    // Coding replies stay Markdown: agent mode falls back to auto.
-    a.work_mode = WorkMode::Agent;
+    // The system prompt is the same in every mode, so agent mode turns the
+    // card-first rule off in its own note.
     a.settings.reply_style = "interactive".into();
-    let agent = a.layout_guidance().unwrap();
-    assert_eq!(agent, crate::interactive::LAYOUTS);
+    a.interactive_ui = true;
+    let chat = a.layout_guidance();
+    a.run_command("agent .").unwrap();
+    assert_eq!(a.layout_guidance(), chat);
+    assert!(a.mode_note_text().contains("answer in plain text"));
+    a.settings.reply_style = "auto".into();
+    assert!(!a.mode_note_text().contains("answer in plain text"));
 }

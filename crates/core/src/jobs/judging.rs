@@ -51,8 +51,7 @@ fn criteria() -> Value {
 fn mode(app: &App) -> ModelDecider {
     let has_key = app
         .saved
-        .openrouter_key
-        .as_ref()
+        .key(crate::provider::BackendTag::OpenRouter)
         .is_some_and(|key| !key.trim().is_empty());
     match app.saved.agent.selected_decider(has_key) {
         ModelDecider::Jev if !has_key => ModelDecider::Llm,
@@ -96,7 +95,7 @@ async fn evaluate(
             ))
         }
         ModelDecider::Llm => {
-            let (provider, model) = app.helper_backend().context("no helper model backend")?;
+            let (provider, model) = app.session_backend().context("no session model backend")?;
             let provider = provider.usage_kind("judge").for_usage_session(session);
             let response = tokio::time::timeout(
                 std::time::Duration::from_secs(10),
@@ -115,7 +114,7 @@ async fn evaluate(
     }
 }
 
-/// Judge a bounded iteration. Unavailable or uncertain models never stop the loop.
+/// Unavailable or uncertain models never stop the loop.
 pub async fn judge(app: &mut App, state: &JudgeState) -> Judgement {
     let result = async {
         let (answer, cost, by) = evaluate(app, &state.session_id, json!({
@@ -184,9 +183,8 @@ pub async fn judge(app: &mut App, state: &JudgeState) -> Judgement {
 }
 
 pub(super) fn apply(run: &mut JobRun, judgement: &Judgement) -> bool {
-    // With no judge (rules mode or an unavailable model) and no stop command,
-    // nothing can tell the loop it is finished: end after this iteration
-    // rather than spending the whole budget blind.
+    // With no judge and no stop command nothing can finish the loop: end after
+    // this iteration rather than spending the whole budget blind.
     if matches!(judgement.by.as_str(), "rules" | "unavailable") {
         run.status = "done".into();
         return true;

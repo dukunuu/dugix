@@ -1,7 +1,5 @@
-//! Running a connector tool on behalf of the model: the approval flow
-//! (which applies in chat mode too), rug-pull protection, the call itself,
-//! and the `connectors` meta-tool used when there are too many tools to
-//! list.
+//! Running a connector tool on behalf of the model: approval, rug-pull protection,
+//! the call itself, and the `connectors` meta-tool used when there are too many tools.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -17,7 +15,6 @@ use crate::tools::{ApprovalRequest, Approver, Decision};
 
 /// The approval class connector requests carry.
 pub const CLASS: &str = "connector";
-/// The meta-tool's name.
 pub const META_TOOL: &str = "connectors";
 
 const SUMMARY_ARG_CHARS: usize = 1_200;
@@ -30,7 +27,6 @@ pub struct Exec<'a> {
     pub files_dir: &'a Path,
 }
 
-/// Whether `name` is a connector tool or the meta-tool.
 #[must_use]
 pub fn handles(registry: &Registry, name: &str) -> bool {
     !registry.is_empty() && (name == META_TOOL || registry.resolve(name).is_some())
@@ -62,7 +58,6 @@ fn parse_arguments(raw: &Value) -> Result<Value, String> {
     }
 }
 
-/// The approval panel's content for one call.
 fn approval_request(
     target: &Target,
     info: &ToolInfo,
@@ -174,7 +169,7 @@ async fn call_target(exec: &Exec<'_>, target: &Target, arguments: Value) -> Outc
     }
 }
 
-/// Run a connector tool or the meta-tool. Returns `(result, status)`.
+/// Run a connector tool or the meta-tool; returns `(result, status)`.
 pub async fn run(exec: Exec<'_>, name: &str, args: &str) -> (String, String) {
     let raw: Value = if args.trim().is_empty() {
         Value::Null

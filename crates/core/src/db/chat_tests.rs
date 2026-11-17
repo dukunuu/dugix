@@ -132,7 +132,7 @@ fn assert_empty(conn: &Connection) {
 fn synced_messages_are_indexed_and_synced_tombstones_clean_up() {
     let (source, _, session) = fixture();
     let target = Db::open_in_memory().unwrap();
-    let root = std::env::temp_dir().join(format!("nexus-chat-sync-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-sync-{}", uuid::Uuid::new_v4()));
     let layout = crate::space::Space { root: root.clone() };
     let id = source
         .add_user_message(&session, "synced knowledge")

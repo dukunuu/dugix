@@ -276,8 +276,77 @@ fn spend_postfix(budget: &mut usize) -> Result<()> {
     Ok(())
 }
 
-/// Statement boundaries and the minimal suffix for a pending string/call.
-/// Comments and delimiters in strings cannot corrupt the boundary scan.
+/// Byte offsets where an unfinished statement can be cut back to a whole
+/// argument: before each `,` or operator, after each opening bracket, never
+/// inside a string or comment, and only inside brackets still open at the end.
+pub(super) fn argument_cuts(source: &str) -> Vec<usize> {
+    // (offset, index of the bracket that encloses it)
+    let mut cuts: Vec<(usize, usize)> = Vec::new();
+    let mut open: Vec<(usize, char)> = Vec::new();
+    let mut brackets = 0;
+    let mut quote = None;
+    let mut quote_start = 0;
+    let mut escape = false;
+    let mut comment = false;
+    let mut chars = source.char_indices().peekable();
+    while let Some((index, ch)) = chars.next() {
+        if comment {
+            comment = ch != '\n';
+        } else if let Some(delimiter) = quote {
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == delimiter {
+                quote = None;
+            }
+        } else if ch == '#' || ch == '/' && chars.peek().is_some_and(|(_, c)| *c == '/') {
+            comment = true;
+        } else {
+            match ch {
+                '\'' | '"' => {
+                    quote = Some(ch);
+                    quote_start = index + 1;
+                }
+                ',' | '+' | '-' | '*' | '/' | '%' | '<' | '>' | '=' | '!' | '&' | '|' | '?' => {
+                    if let Some(&(bracket, _)) = open.last() {
+                        cuts.push((index, bracket));
+                    }
+                }
+                '(' | '[' | '{' => {
+                    open.push((brackets, closing(ch)));
+                    cuts.push((index + 1, brackets));
+                    brackets += 1;
+                }
+                ')' | ']' | '}' if open.last().is_some_and(|(_, close)| *close == ch) => {
+                    open.pop();
+                }
+                _ => {}
+            }
+        }
+    }
+    // A string still arriving may end in a half-written `{{field}}` template.
+    if quote.is_some()
+        && let Some(&(bracket, _)) = open.last()
+        && let Some(template) = source[quote_start..].rfind("{{")
+        && !source[quote_start + template..].contains("}}")
+    {
+        cuts.push((quote_start + template, bracket));
+    }
+    cuts.into_iter()
+        .filter(|(_, bracket)| open.iter().any(|(still, _)| still == bracket))
+        .map(|(cut, _)| cut)
+        .collect()
+}
+
+fn closing(open: char) -> char {
+    match open {
+        '(' => ')',
+        '[' => ']',
+        _ => '}',
+    }
+}
+
 pub(super) fn boundaries(source: &str) -> (Vec<usize>, String) {
     let mut ends = Vec::new();
     let mut stack = Vec::new();

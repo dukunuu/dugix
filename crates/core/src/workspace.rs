@@ -25,7 +25,6 @@ pub struct Workspace {
     checkpoints: Option<checkpoint::Checkpoints>,
 }
 
-/// The identity of a file's contents at read time.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileStamp {
     pub len: u64,
@@ -34,14 +33,12 @@ pub struct FileStamp {
     pub(crate) text: Option<String>,
 }
 
-/// Whether a resolved path will be read or changed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Access {
     Read,
     Write,
 }
 
-/// A path rejected by the workspace, or a filesystem failure.
 #[derive(Debug)]
 pub enum PathError {
     Invalid(String),
@@ -84,7 +81,6 @@ impl From<std::io::Error> for PathError {
 }
 
 impl Workspace {
-    /// Open an existing directory and canonicalize its hard-denied directories.
     pub fn open(root: &Path, deny: Vec<PathBuf>) -> Result<Self, PathError> {
         let root = root.canonicalize()?;
         if !root.is_dir() {
@@ -105,14 +101,12 @@ impl Workspace {
         })
     }
 
-    /// The canonical directory all workspace paths are confined to.
     pub fn root(&self) -> &Path {
         &self.root
     }
 
-    /// Up to `max` workspace files as sorted root-relative paths, for `@`
-    /// completion: gitignore-aware like the `fs_*` tools, never following
-    /// links, and skipping `.git` and the hard-denied directories.
+    /// Up to `max` sorted root-relative paths for `@` completion: gitignore-aware,
+    /// never following links, skipping `.git` and the hard-denied directories.
     #[must_use]
     pub fn files(&self, max: usize) -> Vec<String> {
         let root = self.root.clone();
@@ -139,8 +133,8 @@ impl Workspace {
         files
     }
 
-    /// Resolve a relative path, or an absolute path inside this workspace.
-    /// Missing targets are resolved through their nearest existing ancestor.
+    /// A relative path, or an absolute path inside this workspace; missing targets
+    /// resolve through their nearest existing ancestor.
     pub fn resolve(&self, rel: &str, access: Access) -> Result<PathBuf, PathError> {
         if rel.is_empty() || rel.contains('\0') {
             return Err(PathError::Invalid(format!("{rel:?}")));
@@ -180,8 +174,8 @@ impl Workspace {
                 Err(error) => return Err(error.into()),
             }
         };
-        // symlink_metadata deliberately sees dangling links: canonicalizing one
-        // must fail, rather than falling back to an apparently safe parent.
+        // symlink_metadata deliberately sees dangling links: canonicalizing one must
+        // fail, rather than falling back to an apparently safe parent.
         let canonical = ancestor.canonicalize().map_err(|error| {
             if metadata.file_type().is_symlink() {
                 PathError::Outside(path.clone())
@@ -211,7 +205,7 @@ impl Workspace {
         {
             Some("git internals — use shell git commands")
         } else if self.deny.iter().any(|deny| path.starts_with(deny)) {
-            Some("nexus data or config directory")
+            Some("dugix data or config directory")
         } else if access == Access::Write
             && path
                 .file_name()
@@ -234,7 +228,7 @@ impl Workspace {
         }
     }
 
-    /// Read a confined file and compute its length, modification time and hash.
+    /// A confined file's length, modification time and hash.
     pub fn stamp(&self, path: &Path) -> Result<FileStamp, PathError> {
         let path = self.resolve(&path.to_string_lossy(), Access::Read)?;
         let mut file = std::fs::File::open(path)?;
@@ -244,7 +238,7 @@ impl Workspace {
         Self::stamp_bytes(&bytes, &metadata)
     }
 
-    /// Stamp bytes already read using metadata from the same open file handle.
+    /// The metadata must come from the same open file handle the bytes were read from.
     pub fn stamp_bytes(bytes: &[u8], metadata: &std::fs::Metadata) -> Result<FileStamp, PathError> {
         Ok(FileStamp {
             len: u64::try_from(bytes.len()).expect("file length fits u64"),
@@ -256,7 +250,6 @@ impl Workspace {
         })
     }
 
-    /// Remember the stamp and bounded text snapshot returned by a successful read.
     pub fn record_read(&self, path: &Path, stamp: FileStamp) {
         self.stamps
             .lock()
@@ -264,7 +257,6 @@ impl Workspace {
             .insert(path.to_path_buf(), stamp);
     }
 
-    /// Forget a file that was moved or deleted.
     pub(crate) fn forget_read(&self, path: &Path) {
         self.stamps
             .lock()
@@ -272,7 +264,6 @@ impl Workspace {
             .remove(path);
     }
 
-    /// The stamp of the last successful read, if any.
     pub fn last_read(&self, path: &Path) -> Option<FileStamp> {
         self.stamps
             .lock()
@@ -291,7 +282,7 @@ mod tests {
     impl TempWorkspace {
         fn new() -> Self {
             let path =
-                std::env::temp_dir().join(format!("nexus-workspace-{}", uuid::Uuid::new_v4()));
+                std::env::temp_dir().join(format!("dugix-workspace-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&path).unwrap();
             Self(path.canonicalize().unwrap())
         }
@@ -361,11 +352,11 @@ mod tests {
     #[test]
     fn hard_denies_and_write_only_secret_denies() {
         let dir = TempWorkspace::new();
-        let denied = dir.0.join("nexus");
+        let denied = dir.0.join("dugix");
         std::fs::create_dir_all(&denied).unwrap();
         let workspace = Workspace::open(&dir.0, vec![denied]).unwrap();
         for access in [Access::Read, Access::Write] {
-            for path in [".git/config", "nexus/new/file"] {
+            for path in [".git/config", "dugix/new/file"] {
                 assert!(matches!(
                     workspace.resolve(path, access),
                     Err(PathError::Denied(_, _))

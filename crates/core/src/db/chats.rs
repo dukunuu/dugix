@@ -11,27 +11,8 @@ pub(crate) const INDEX_BATCH: usize = 16;
 pub(crate) const EMBED_BATCH: usize = 32;
 pub(crate) const CHUNK_TITLE: &str = "chat";
 
-pub(super) fn migrate(conn: &Connection, schema: &str) -> Result<()> {
-    conn.execute_batch(&format!(
-        "CREATE TABLE IF NOT EXISTS {schema}.message_index (
-            message_id TEXT PRIMARY KEY
-        );
-        CREATE VIRTUAL TABLE IF NOT EXISTS {schema}.message_chunks USING fts5(
-            message_id UNINDEXED, seq UNINDEXED, text
-        );
-        CREATE TABLE IF NOT EXISTS {schema}.message_embeddings (
-            message_id TEXT NOT NULL,
-            seq INTEGER NOT NULL,
-            identity TEXT NOT NULL,
-            vec BLOB NOT NULL,
-            PRIMARY KEY (message_id, seq, identity)
-        );"
-    ))?;
-    Ok(())
-}
-
-// TEMP triggers belong to the connection, not the durable schema. They also
-// cover sync's direct SQL deletes and edits made through tool connections.
+// TEMP triggers belong to the connection, not the durable schema; they also
+// cover sync's direct SQL deletes and edits through tool connections.
 pub(super) fn install_cleanup(conn: &Connection) -> Result<()> {
     if !super::has_column(conn, "messages", "id")? {
         return Ok(());
@@ -51,6 +32,7 @@ pub(super) fn install_cleanup(conn: &Connection) -> Result<()> {
             DELETE FROM message_chunks WHERE message_id IN (SELECT id FROM messages WHERE session_id = OLD.id);
             DELETE FROM message_embeddings WHERE message_id IN (SELECT id FROM messages WHERE session_id = OLD.id);
             DELETE FROM message_index WHERE message_id IN (SELECT id FROM messages WHERE session_id = OLD.id);
+            DELETE FROM subagent_runs WHERE session_id = OLD.id;
         END;",
     )?;
     Ok(())
@@ -86,7 +68,7 @@ pub(crate) fn index_pending(conn: &Connection) -> Result<usize> {
     Ok(messages.len())
 }
 
-/// One bounded embedding batch. Sequence numbers remain local to each message.
+/// One bounded embedding batch; sequence numbers are local to each message.
 pub(crate) fn missing_vectors(
     conn: &Connection,
     identity: &str,
@@ -109,7 +91,8 @@ pub(crate) fn missing_vectors(
         .collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-/// Store only chunks that still exist with the same text (a delete/edit can race a job).
+/// Store only chunks that still exist with the same text, since a delete or edit
+/// can race a job.
 pub(crate) fn store_vectors(
     conn: &Connection,
     identity: &str,

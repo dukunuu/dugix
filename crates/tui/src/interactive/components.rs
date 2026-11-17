@@ -2,12 +2,12 @@
 //! local navigation never moves following transcript content.
 
 use super::{
-    Control, Entry, accent_color, branch_regions, clipped, control_style, display, glyph,
+    Control, Entry, accent_color, bold, branch_regions, clipped, control_style, display, glyph,
     tone_color,
 };
 use crate::theme::Theme;
-use nexus_core::interactive::{ChartKind, ChartSeries};
-use nexus_core::interactive::{Node, Session, Tone};
+use dugix_core::interactive::{ChartKind, ChartSeries};
+use dugix_core::interactive::{Node, Session, Tone};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -15,8 +15,18 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 use unicode_width::UnicodeWidthStr;
 
-pub(super) fn control_count(node: &Node) -> usize {
+pub(super) fn control_count(node: &Node, session: &Session) -> usize {
     match node {
+        Node::Tree { items } => {
+            let index = session.document().node_index(node);
+            dugix_core::interactive::tree_branches(items)
+                .iter()
+                .enumerate()
+                .filter(|(branch, (_, item))| {
+                    !item.items.is_empty() && session.branch_visible(index, *branch)
+                })
+                .count()
+        }
         Node::Buttons { items, .. } => items.len(),
         Node::Checklist { items } => items.len(),
         Node::Accordion { items } => items.len(),
@@ -31,6 +41,10 @@ pub(super) fn control_count(node: &Node) -> usize {
         | Node::Code { .. }
         | Node::Editor { .. } => 1,
         Node::Choice { options, .. } => options.len(),
+        Node::Canvas { shapes, .. } => shapes
+            .iter()
+            .filter(|shape| shape.action().is_some())
+            .count(),
         Node::Quiz { .. } => 2,
         Node::Table {
             select,
@@ -51,6 +65,9 @@ pub(super) fn height(node: &Node, session: &Session, width: u16) -> Option<u16> 
     if let Some(height) = super::practice::height(node, session, width) {
         return Some(height);
     }
+    if let Some(height) = super::extras::height(node, session, width) {
+        return Some(height);
+    }
     Some(match node {
         Node::Tabs { items, .. } => {
             1 + items
@@ -63,8 +80,15 @@ pub(super) fn height(node: &Node, session: &Session, width: u16) -> Option<u16> 
             .iter()
             .map(|item| 1 + branch_height(&item.view, session, width))
             .sum(),
-        Node::Form { fields, .. } => 2 + branch_height(fields, session, width),
-        Node::Chart { rows, .. } => *rows,
+        Node::Form { fields, .. } => 3 + branch_height(fields, session, width),
+        Node::Chart { rows, .. } | Node::Canvas { rows, .. } | Node::Spacer { rows } => *rows,
+        Node::Row { .. } | Node::Grid { .. } | Node::Stack { .. } => {
+            container_regions(node, session, Rect::new(0, 0, width, u16::MAX))
+                .iter()
+                .map(|region| region.bottom())
+                .max()
+                .unwrap_or(0)
+        }
         Node::Timeline { .. }
         | Node::Code { .. }
         | Node::Badge { .. }
@@ -86,21 +110,18 @@ pub(super) fn visible_regions(session: &Session, width: u16) -> Vec<(&Node, Rect
     fn visit<'a>(
         session: &'a Session,
         nodes: &'a [Node],
-        area: Rect,
+        regions: Vec<Rect>,
         out: &mut Vec<(&'a Node, Rect)>,
     ) {
-        for (node, region) in nodes.iter().zip(branch_regions(session, nodes, area)) {
+        let stacked = |nodes: &[Node], area: Rect| branch_regions(session, nodes, area);
+        for (node, region) in nodes.iter().zip(regions) {
             out.push((node, region));
             let index = session.document().node_index(node);
             match node {
                 Node::Tabs { items, .. } => {
                     if let Some(item) = items.get(session.tab(index)) {
-                        visit(
-                            session,
-                            &item.view,
-                            body(region, 1, region.height.saturating_sub(1)),
-                            out,
-                        );
+                        let area = body(region, 1, region.height.saturating_sub(1));
+                        visit(session, &item.view, stacked(&item.view, area), out);
                     }
                 }
                 Node::Accordion { items } => {
@@ -108,20 +129,27 @@ pub(super) fn visible_regions(session: &Session, width: u16) -> Vec<(&Node, Rect
                     for (section, item) in items.iter().enumerate() {
                         let height = branch_height(&item.view, session, region.width);
                         if session.section_open(index, section) {
-                            visit(session, &item.view, body(region, offset + 1, height), out);
+                            let area = body(region, offset + 1, height);
+                            visit(session, &item.view, stacked(&item.view, area), out);
                         }
                         offset += 1 + height;
                     }
                 }
-                Node::Form { fields, .. } => visit(
-                    session,
-                    fields,
-                    body(region, 1, region.height.saturating_sub(2)),
-                    out,
-                ),
+                Node::Form { fields, .. } => {
+                    let area = body(region, 1, region.height.saturating_sub(3));
+                    visit(session, fields, stacked(fields, area), out);
+                }
+                Node::Row { items, .. } | Node::Grid { items, .. } | Node::Stack { items, .. } => {
+                    visit(
+                        session,
+                        items,
+                        container_regions(node, session, region),
+                        out,
+                    );
+                }
                 Node::Quiz { .. } => {
                     if let Some((view, area)) = super::practice::quiz_view(node, session, region) {
-                        visit(session, view, area, out);
+                        visit(session, view, stacked(view, area), out);
                     }
                 }
                 _ => {}
@@ -129,18 +157,102 @@ pub(super) fn visible_regions(session: &Session, width: u16) -> Vec<(&Node, Rect
         }
     }
     let mut out = Vec::new();
+    let nodes = session.document().nodes();
+    let area = Rect::new(2, 2, width.saturating_sub(4), u16::MAX);
     visit(
         session,
-        session.document().nodes(),
-        Rect::new(2, 2, width.saturating_sub(4), u16::MAX),
+        nodes,
+        branch_regions(session, nodes, area),
         &mut out,
     );
     out
 }
+const MIN_ROW_SLOT: u16 = 20;
+const MIN_GRID_SLOT: u16 = 18;
+fn measured_height(node: &Node, session: &Session, width: u16) -> u16 {
+    branch_regions(
+        session,
+        std::slice::from_ref(node),
+        Rect::new(0, 0, width, u16::MAX),
+    )
+    .first()
+    .map_or(0, |region| region.height)
+}
+/// Where a layout container's children sit inside `area`.
+pub(super) fn container_regions(node: &Node, session: &Session, area: Rect) -> Vec<Rect> {
+    let columns = |items: &[Node], count: u16, gap: u16, row_gap: u16| {
+        let slot = area.width.saturating_sub(gap * (count - 1)) / count;
+        let mut regions = Vec::new();
+        let mut y = area.y;
+        for chunk in items.chunks(usize::from(count)) {
+            let mut bottom = y;
+            for (column, child) in chunk.iter().enumerate() {
+                let x = area.x + u16::try_from(column).unwrap_or(0) * (slot + gap);
+                let height = measured_height(child, session, slot);
+                regions.push(Rect::new(x, y, slot, height));
+                bottom = bottom.max(y.saturating_add(height));
+            }
+            y = bottom.saturating_add(row_gap);
+        }
+        regions
+    };
+    match node {
+        // A row of badges reads as one line of labels, packed from the left.
+        Node::Row { items, .. } if items.iter().all(|item| matches!(item, Node::Badge { .. })) => {
+            let mut x = area.x;
+            items
+                .iter()
+                .map(|item| {
+                    let Node::Badge { text, .. } = item else {
+                        unreachable!("checked above")
+                    };
+                    let width = bold::pill_width(&display(session, text))
+                        .min(area.right().saturating_sub(x));
+                    let region = Rect::new(x, area.y, width, 1);
+                    x = x.saturating_add(width).saturating_add(1).min(area.right());
+                    region
+                })
+                .collect()
+        }
+        Node::Row { items, gap } => {
+            let count = u16::try_from(items.len()).unwrap_or(1).max(1);
+            let slot = area.width.saturating_sub(gap * (count - 1)) / count;
+            if slot < MIN_ROW_SLOT {
+                branch_regions(session, items, area)
+            } else {
+                columns(items, count, *gap, 0)
+            }
+        }
+        Node::Grid { items, cols } => {
+            let mut count = (*cols).clamp(1, 4);
+            while count > 1 && area.width.saturating_sub(2 * (count - 1)) / count < MIN_GRID_SLOT {
+                count -= 1;
+            }
+            // Grids of hairline readings pack without row gaps.
+            let compact = items
+                .iter()
+                .all(|item| super::run_kind(item) == Some(super::Run::Reading));
+            columns(items, count, 2, u16::from(!compact))
+        }
+        Node::Stack { items, gap } => {
+            let mut y = area.y;
+            items
+                .iter()
+                .map(|child| {
+                    let height = measured_height(child, session, area.width);
+                    let region = Rect::new(area.x, y, area.width, height);
+                    y = y.saturating_add(height).saturating_add(*gap);
+                    region
+                })
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
 fn row(area: Rect, offset: u16) -> Rect {
     Rect::new(area.x, area.y + offset, area.width, 1)
 }
-fn color(tone: Tone, session: &Session, theme: &Theme) -> Color {
+pub(super) fn color(tone: Tone, session: &Session, theme: &Theme) -> Color {
     tone_color(Some(tone), accent_color(session.document(), theme), theme)
 }
 fn body(area: Rect, offset: u16, height: u16) -> Rect {
@@ -164,34 +276,29 @@ pub(super) fn render(
         (focus, control, can_send),
         buffer,
     ) {
-        return Some((control_count(node), hits));
+        return Some((control_count(node, session), hits));
+    }
+    if let Some(hits) = super::extras::render(node, session, area, theme, (focus, control), buffer)
+    {
+        return Some((control_count(node, session), hits));
     }
     let index = session.document().node_index(node);
-    let mut next = control + control_count(node);
+    let mut next = control + control_count(node, session);
     let mut hits = Vec::new();
     match node {
         Node::Tabs { items, .. } => {
-            let count = u16::try_from(items.len()).unwrap_or(1);
-            for (tab, item) in items.iter().enumerate() {
-                let tab = u16::try_from(tab).unwrap_or(0);
-                let start = area.width * tab / count;
-                let end = area.width * (tab + 1) / count;
-                let selected = session.tab(index) == usize::from(tab);
-                Paragraph::new(clipped(
-                    &format!(" {} ", display(session, &item.label)),
-                    end - start,
-                ))
-                .style(
-                    control_style(theme, focus == Some(control))
-                        .fg(if selected { theme.accent } else { theme.fg_dim })
-                        .add_modifier(if selected {
-                            Modifier::UNDERLINED
-                        } else {
-                            Modifier::empty()
-                        }),
-                )
-                .render(Rect::new(area.x + start, area.y, end - start, 1), buffer);
-            }
+            let labels: Vec<_> = items
+                .iter()
+                .map(|item| display(session, &item.label))
+                .collect();
+            let focused = focus == Some(control);
+            let active = session.tab(index);
+            let fill = if focused {
+                theme.accent
+            } else {
+                accent_color(session.document(), theme)
+            };
+            bold::segmented(buffer, row(area, 0), &labels, (active, fill), theme);
             hits.push((row(area, 0), control));
             if let Some(item) = items.get(session.tab(index)) {
                 let regions = branch_regions(
@@ -244,7 +351,7 @@ pub(super) fn render(
             let regions = branch_regions(
                 session,
                 fields,
-                body(area, 1, area.height.saturating_sub(2)),
+                body(area, 1, area.height.saturating_sub(3)),
             );
             hits.extend(Entry::branch(
                 fields, session, &regions, theme, focus, can_send, buffer, &mut next,
@@ -252,23 +359,29 @@ pub(super) fn render(
             let submit = row(area, area.height.saturating_sub(1));
             let enabled =
                 session.form_valid(index) && (can_send || !session.document().sends(action));
-            Paragraph::new(format!(
-                "[ {}{} ]",
+            let label = format!(
+                "{}{}",
                 display(session, submit_label),
                 if session.document().sends(action) {
                     " ↵"
                 } else {
                     ""
                 }
-            ))
-            .style(if enabled {
-                control_style(theme, focus == Some(control))
+            );
+            let kind = if enabled {
+                bold::Kind::Primary
             } else {
-                Style::default()
-                    .fg(theme.fg_dim)
-                    .add_modifier(Modifier::DIM)
-            })
-            .render(submit, buffer);
+                bold::Kind::Disabled
+            };
+            let submit = bold::button(
+                buffer,
+                (submit.x, submit.y),
+                submit.width,
+                &label,
+                (kind, focus == Some(control)),
+                accent_color(session.document(), theme),
+                theme,
+            );
             hits.push((submit, control));
         }
         Node::Chart {
@@ -277,6 +390,40 @@ pub(super) fn render(
             labels,
             ..
         } => chart(*kind, series, labels, session, area, theme, buffer),
+        Node::Canvas { shapes, .. } => {
+            for (rank, (_, rect)) in super::canvas::draw(shapes, session, area, theme, buffer)
+                .into_iter()
+                .enumerate()
+            {
+                if focus == Some(control + rank) {
+                    buffer.set_style(rect, Style::default().bg(theme.selection));
+                }
+                hits.push((rect, control + rank));
+            }
+        }
+        Node::Row { items, .. } | Node::Grid { items, .. } | Node::Stack { items, .. } => {
+            let regions = container_regions(node, session, area);
+            hits.extend(Entry::branch(
+                items, session, &regions, theme, focus, can_send, buffer, &mut next,
+            ));
+            // Side-by-side row items with room between them get a hairline
+            // divider down the middle of the gap.
+            if let Node::Row { gap, .. } = node
+                && *gap >= 3
+            {
+                let bottom = regions.iter().map(|rect| rect.bottom()).max().unwrap_or(0);
+                for pair in regions.windows(2) {
+                    if pair[1].y != pair[0].y {
+                        continue;
+                    }
+                    let x = pair[0].right() + (pair[1].x - pair[0].right()) / 2;
+                    for y in pair[0].y..bottom.min(area.bottom()) {
+                        buffer.set_string(x, y, "│", Style::default().fg(theme.border_dim));
+                    }
+                }
+            }
+        }
+        Node::Spacer { .. } => {}
         Node::Timeline { items } => {
             let mut y = 0;
             for item in items {
@@ -299,25 +446,38 @@ pub(super) fn render(
         }
         Node::Rating { key, label, max } => {
             let value = session.selected_row(key);
-            let stars = (0..*max)
-                .map(|star| {
-                    if usize::from(star) < value {
-                        glyph::FAVORITE
-                    } else {
-                        glyph::RING
-                    }
-                })
-                .collect::<String>();
-            Paragraph::new(format!("{}: {stars}", display(session, label)))
-                .style(control_style(theme, focus == Some(control)))
-                .render(area, buffer);
-            hits.push((area, control));
+            let stars = rating_rect(label, *max, session, area);
+            bold::label(
+                buffer,
+                Rect::new(area.x, area.y, stars.x - area.x, 1),
+                &display(session, label),
+                focus == Some(control),
+                theme,
+            );
+            for star in 0..stars.width {
+                let lit = usize::from(star) < value;
+                buffer.set_string(
+                    stars.x + star,
+                    stars.y,
+                    if lit { glyph::FAVORITE } else { "☆" },
+                    Style::default().fg(if lit { theme.warning } else { theme.fg_dim }),
+                );
+            }
+            hits.push((stars, control));
         }
         Node::Code { source, lang } => {
             let lang = lang.as_deref().unwrap_or("plain");
-            Paragraph::new(format!("{lang}  [Copy]"))
-                .style(control_style(theme, focus == Some(control)))
-                .render(row(area, 0), buffer);
+            bold::label(buffer, row(area, 0), lang, false, theme);
+            let copy = bold::pill_width("Copy");
+            bold::button(
+                buffer,
+                (area.right().saturating_sub(copy), area.y),
+                copy,
+                "Copy",
+                (bold::Kind::Secondary, focus == Some(control)),
+                accent_color(session.document(), theme),
+                theme,
+            );
             let fence = "`".repeat(
                 source
                     .split(|ch| ch != '`')
@@ -327,12 +487,13 @@ pub(super) fn render(
                     .max(3)
                     + 1,
             );
-            let highlight_lang =
-                if lang.eq_ignore_ascii_case("nexus-ui") || lang.eq_ignore_ascii_case("mermaid") {
-                    "plain"
-                } else {
-                    lang
-                };
+            let highlight_lang = if dugix_core::interactive::is_ui_fence(lang)
+                || lang.eq_ignore_ascii_case("mermaid")
+            {
+                "plain"
+            } else {
+                lang
+            };
             let rendered = crate::ui::markdown::render(
                 &format!("{fence}{highlight_lang}\n{source}\n{fence}"),
                 source
@@ -346,6 +507,7 @@ pub(super) fn render(
                     heading: theme.accent,
                     rule: theme.border_dim,
                     code: theme.fg,
+                    syntax: crate::ui::style::SyntaxColors::from_theme(theme),
                 },
             );
             let lines: Vec<_> = rendered
@@ -368,13 +530,14 @@ pub(super) fn render(
             hits.push((row(area, 0), control));
         }
         Node::Badge { text, tone } => {
-            Paragraph::new(format!("[{}]", display(session, text)))
-                .style(
-                    Style::default()
-                        .fg(color(*tone, session, theme))
-                        .add_modifier(Modifier::BOLD),
-                )
-                .render(area, buffer);
+            bold::pill(
+                buffer,
+                (area.x, area.y),
+                area.width,
+                &display(session, text),
+                bold::tone_fill(*tone, session, theme),
+                (true, theme),
+            );
         }
         Node::Meter {
             label,
@@ -383,16 +546,25 @@ pub(super) fn render(
             tone,
         } => {
             let (value, max) = session.progress(value, max).unwrap_or_default();
-            let label = format!("{} {value}/{max}", display(session, label));
-            ratatui::widgets::Gauge::default()
-                .ratio(if max > 0.0 { value / max } else { 0.0 })
-                .label(label)
-                .gauge_style(
-                    Style::default()
-                        .fg(color(*tone, session, theme))
-                        .bg(theme.raised),
-                )
-                .render(area, buffer);
+            let text = super::ratio_text(value, max);
+            let fill = match tone {
+                Tone::Normal => super::accent_color(session.document(), theme),
+                tone => color(*tone, session, theme),
+            };
+            super::render_bar(
+                &super::BarRow {
+                    label: &display(session, label),
+                    control_label: true,
+                    value: &text,
+                    value_width: u16::try_from(text.width()).unwrap_or(0),
+                    ratio: session.eased((index, 0), if max > 0.0 { value / max } else { 0.0 }),
+                    fill,
+                },
+                session,
+                area,
+                theme,
+                buffer,
+            );
         }
         Node::Slider {
             key,
@@ -403,34 +575,70 @@ pub(super) fn render(
         } => {
             let value = session.value(key);
             let ratio = (value.parse::<f64>().unwrap_or(*min) - min) / (max - min);
-            let label_width = slider_offset(label, session, area.width);
-            Paragraph::new(clipped(
-                &format!("{}: {value}", display(session, label)),
-                label_width,
-            ))
-            .style(control_style(theme, focus == Some(control)))
-            .render(Rect::new(area.x, area.y, label_width, 1), buffer);
-            let track = area.width.saturating_sub(label_width);
-            for x in 0..track {
-                let thumb =
-                    (f64::from(x) - ratio * f64::from(track.saturating_sub(1))).abs() <= 0.5;
+            let focused = focus == Some(control);
+            let track = slider_track(label, &value, session, area);
+            bold::label(
+                buffer,
+                Rect::new(area.x, area.y, track.x - area.x, 1),
+                &display(session, label),
+                focused,
+                theme,
+            );
+            let fill = if focused {
+                theme.accent
+            } else {
+                accent_color(session.document(), theme)
+            };
+            let ratio = session.eased((index, 0), ratio).clamp(0.0, 1.0);
+            bold::bar(buffer, track, ratio, fill, theme);
+            if track.width > 0 {
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let thumb = (ratio * f64::from(track.width - 1)).round() as u16;
                 buffer.set_string(
-                    area.x + label_width + x,
-                    area.y,
-                    if thumb { glyph::DOT } else { "─" },
-                    control_style(theme, focus == Some(control)),
+                    track.x + thumb,
+                    track.y,
+                    glyph::DOT,
+                    Style::default().fg(fill),
                 );
             }
-            hits.push((Rect::new(area.x + label_width, area.y, track, 1), control));
+            bold::value(
+                buffer,
+                Rect::new(track.right(), area.y, area.right() - track.right(), 1),
+                &value,
+                theme,
+            );
+            hits.push((track, control));
         }
         _ => return None,
     }
     Some((next - control, hits))
 }
-fn slider_offset(label: &str, session: &Session, width: u16) -> u16 {
-    u16::try_from(display(session, label).width() + 6)
-        .unwrap_or(u16::MAX)
-        .min(width / 2)
+fn slider_track(label: &str, value: &str, session: &Session, area: Rect) -> Rect {
+    let column = if display(session, label).is_empty() {
+        0
+    } else {
+        bold::label_column(session, area.width)
+    };
+    let value_width = u16::try_from(value.width()).unwrap_or(0).saturating_add(2);
+    Rect::new(
+        area.x + column,
+        area.y,
+        area.width.saturating_sub(column + value_width),
+        1,
+    )
+}
+fn rating_rect(label: &str, max: u16, session: &Session, area: Rect) -> Rect {
+    let column = if display(session, label).is_empty() {
+        0
+    } else {
+        bold::label_column(session, area.width)
+    };
+    Rect::new(
+        area.x + column.min(area.width),
+        area.y,
+        max.min(area.width.saturating_sub(column)),
+        1,
+    )
 }
 
 pub(super) fn click(entry: &mut Entry, control: &Control, pos: Position, area: Rect) -> bool {
@@ -442,19 +650,23 @@ pub(super) fn click(entry: &mut Entry, control: &Control, pos: Position, area: R
             let Some(Node::Tabs { items, .. }) = session.document().node(*node) else {
                 return true;
             };
-            let tab = usize::from(pos.x - area.x) * items.len() / usize::from(area.width.max(1));
+            let labels: Vec<_> = items
+                .iter()
+                .map(|item| display(session, &item.label))
+                .collect();
+            let rects = bold::tab_rects(&labels, area);
+            let tab = rects
+                .iter()
+                .position(|rect| pos.x < rect.right())
+                .unwrap_or(rects.len().saturating_sub(1));
             session.select_tab(*node, tab)
         }
         Control::Rating(node) => {
-            let Some(Node::Rating { label, max, .. }) = session.document().node(*node) else {
+            let Some(Node::Rating { max, .. }) = session.document().node(*node) else {
                 return true;
             };
-            let offset = u16::try_from(display(session, label).width() + 2).unwrap_or(u16::MAX);
-            let value = pos
-                .x
-                .saturating_sub(area.x + offset)
-                .saturating_add(1)
-                .min(*max);
+            // `area` is the stars' own hit rect.
+            let value = pos.x.saturating_sub(area.x).saturating_add(1).min(*max);
             session.rate(*node, value)
         }
         Control::Slider(node) => session.slide(
@@ -493,8 +705,13 @@ pub(super) fn click_table(
     let header = u16::from(*search);
     if row == header && *sortable {
         let lead = u16::from(select.is_some());
-        let column = usize::from(x.saturating_sub(lead)) * columns.len()
-            / usize::from(area.width.saturating_sub(lead).max(1));
+        let table = session.document().node(node).expect("table node");
+        let x = x.saturating_sub(lead);
+        // The column drawn under the pointer; a gap belongs to the column on its left.
+        let column = super::table_columns(session, table, area.width.saturating_sub(lead))
+            .iter()
+            .rposition(|&(start, _)| start <= x)
+            .unwrap_or(0);
         return session.sort_table(node, column.min(columns.len() - 1));
     }
     if page_size.is_some() && row + 1 == session.document().node(node).expect("table node").rows() {
@@ -537,34 +754,49 @@ fn chart(
                 .collect()
         })
         .collect();
+    // Series left on the default accent take the next data hue, so several
+    // series never draw in one color.
+    let hues = [
+        accent_color(session.document(), theme),
+        theme.accent2,
+        theme.warning,
+        theme.success,
+        theme.error,
+    ];
     let tones: Vec<_> = series
         .iter()
-        .map(|item| color(item.tone, session, theme))
+        .enumerate()
+        .map(|(index, item)| match item.tone {
+            Tone::Accent if index > 0 => hues[index % hues.len()],
+            tone => color(tone, session, theme),
+        })
         .collect();
     let legend = Line::from(
         series
             .iter()
             .enumerate()
-            .map(|(index, item)| {
-                Span::styled(
-                    format!(
-                        "{} {}{} ",
-                        glyph::DOT,
-                        display(session, &item.name),
-                        if kind == ChartKind::Pie {
-                            format!(
-                                " {}",
-                                values[index]
-                                    .iter()
-                                    .map(|value| value.max(0.0))
-                                    .sum::<f64>()
-                            )
-                        } else {
-                            String::new()
-                        }
+            .flat_map(|(index, item)| {
+                [
+                    Span::styled("■ ", Style::default().fg(tones[index])),
+                    Span::styled(
+                        format!(
+                            "{}{}   ",
+                            display(session, &item.name),
+                            if kind == ChartKind::Pie {
+                                format!(
+                                    " {}",
+                                    values[index]
+                                        .iter()
+                                        .map(|value| value.max(0.0))
+                                        .sum::<f64>()
+                                )
+                            } else {
+                                String::new()
+                            }
+                        ),
+                        Style::default().fg(theme.fg_dim),
                     ),
-                    Style::default().fg(tones[index]),
-                )
+                ]
             })
             .collect::<Vec<_>>(),
     );
@@ -590,13 +822,42 @@ fn chart(
     if kind == ChartKind::Pie {
         ring(&values, &tones, plot, buffer);
     } else {
-        let min = values.iter().flatten().copied().fold(0.0, f64::min);
+        // Bars and areas stand on zero; lines and points use the data's own
+        // range so a small change is visible.
+        let lowest = values
+            .iter()
+            .flatten()
+            .copied()
+            .fold(f64::INFINITY, f64::min);
+        let min = if matches!(kind, ChartKind::Line | ChartKind::Scatter) && lowest.is_finite() {
+            lowest
+        } else {
+            lowest.min(0.0)
+        };
         let max = values
             .iter()
             .flatten()
             .copied()
             .fold(0.0, f64::max)
             .max(min + f64::EPSILON);
+        if kind == ChartKind::Bar && min >= 0.0 {
+            columns(
+                &values,
+                &tones,
+                max,
+                Rect::new(area.x, plot.y, area.width, plot.height),
+                (session, theme),
+                buffer,
+            );
+            column_labels(
+                labels,
+                values.iter().map(Vec::len).max().unwrap_or(0),
+                body(area, area.height - 1, 1),
+                (session, theme),
+                buffer,
+            );
+            return;
+        }
         Paragraph::new(clipped(&format!("{max}"), 5))
             .style(Style::default().fg(theme.fg_dim))
             .render(Rect::new(area.x, plot.y, 5, 1), buffer);
@@ -604,8 +865,39 @@ fn chart(
             .style(Style::default().fg(theme.fg_dim))
             .render(Rect::new(area.x, plot.bottom() - 1, 5, 1), buffer);
         let samples = values.iter().map(Vec::len).max().unwrap_or(1);
+        // Lines and points go on one braille grid shared by every series.
+        let mut dots = super::canvas::Dots::new(plot.width, plot.height);
         for (index, values) in values.iter().enumerate() {
-            for x in 0..plot.width {
+            if kind != ChartKind::Bar {
+                let points = braille_points(values, samples, (min, max), &dots);
+                if kind == ChartKind::Scatter {
+                    // A 2×2 block that never straddles cells stays crisp.
+                    for &(x, y) in &points {
+                        let x = ((x / 2.0).floor() * 2.0).min(dots.width() - 2.0);
+                        let y = ((y / 2.0).floor() * 2.0).min(dots.height() - 2.0);
+                        for (dx, dy) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)] {
+                            dots.set(x + dx, y + dy, tones[index]);
+                        }
+                    }
+                    continue;
+                }
+                for pair in points.windows(2) {
+                    dots.line(pair[0], pair[1], tones[index]);
+                }
+                if let [point] = points[..] {
+                    dots.set(point.0, point.1, tones[index]);
+                }
+                if kind == ChartKind::Area
+                    && let (Some(first), Some(last)) = (points.first(), points.last())
+                {
+                    let zero = (max / (max - min)) * (dots.height() - 1.0);
+                    let mut outline = points.clone();
+                    outline.extend([(last.0, zero), (first.0, zero)]);
+                    dots.shade(&outline, tones[index]);
+                }
+                continue;
+            }
+            for x in 0..bold::revealed(plot.width, session) {
                 let sample = f64::from(x)
                     * f64::from(u16::try_from(samples.saturating_sub(1)).unwrap_or(0))
                     / f64::from(plot.width.saturating_sub(1).max(1));
@@ -616,56 +908,36 @@ fn chart(
                             .total_cmp(&(f64::from(u16::try_from(*b).unwrap_or(0)) - sample).abs())
                     })
                     .unwrap_or(0);
-                let left = (0..samples)
-                    .rev()
-                    .find(|n| f64::from(u16::try_from(*n).unwrap_or(0)) <= sample)
-                    .unwrap_or(0);
-                let value = if matches!(kind, ChartKind::Line | ChartKind::Area) {
-                    let a = values.get(left).copied().unwrap_or_default();
-                    let b = values.get(left + 1).copied().unwrap_or(a);
-                    a + (b - a) * (sample - f64::from(u16::try_from(left).unwrap_or(0)))
-                } else {
-                    values.get(nearest).copied().unwrap_or_default()
-                };
                 if nearest >= values.len() {
                     continue;
                 }
-                let ratio = (value - min) / (max - min);
-                let level = ratio * f64::from(plot.height.saturating_sub(1));
+                let value = values[nearest];
+                let level = (value - min) / (max - min) * f64::from(plot.height.saturating_sub(1));
                 let baseline = (-min / (max - min)) * f64::from(plot.height.saturating_sub(1));
                 for y in 0..plot.height {
                     let pos = f64::from(plot.height - 1 - y);
-                    let point = (pos - level).abs() <= 0.5;
                     let fill = pos >= baseline.min(level) && pos <= baseline.max(level);
-                    let visible = match kind {
-                        ChartKind::Line => point,
-                        ChartKind::Area => point || fill,
-                        ChartKind::Scatter => {
-                            point
-                                && usize::from(x)
-                                    == nearest * usize::from(plot.width.saturating_sub(1))
-                                        / samples.saturating_sub(1).max(1)
-                        }
-                        ChartKind::Bar => fill && usize::from(x) % series.len().max(1) == index,
-                        ChartKind::Pie => false,
-                    };
-                    if visible {
+                    if fill && usize::from(x) % series.len().max(1) == index {
                         buffer.set_string(
                             plot.x + x,
                             plot.y + y,
-                            if kind == ChartKind::Area && !point {
-                                "░"
-                            } else if kind == ChartKind::Bar {
-                                glyph::SECTION
-                            } else {
-                                glyph::DOT
-                            },
+                            glyph::SECTION,
                             Style::default().fg(tones[index]),
                         );
                     }
                 }
             }
         }
+        // Draw in left to right the first time the panel shows.
+        dots.render(
+            Rect::new(
+                plot.x,
+                plot.y,
+                bold::revealed(plot.width, session),
+                plot.height,
+            ),
+            buffer,
+        );
     }
     let first = labels
         .first()
@@ -690,6 +962,119 @@ fn chart(
         .right_aligned()
         .style(Style::default().fg(theme.fg_dim))
         .render(axis, buffer);
+}
+fn columns(
+    values: &[Vec<f64>],
+    tones: &[Color],
+    max: f64,
+    plot: Rect,
+    (session, theme): (&Session, &Theme),
+    buffer: &mut Buffer,
+) {
+    const LOWER: [&str; 7] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇"];
+    let samples = values.iter().map(Vec::len).max().unwrap_or(0);
+    if samples == 0 || plot.height == 0 {
+        return;
+    }
+    let count = u16::try_from(samples).unwrap_or(u16::MAX);
+    let group = (plot.width / count).max(1);
+    let series = u16::try_from(values.len()).unwrap_or(1).max(1);
+    let gap = (group / 4).clamp(u16::from(group > 2), 3);
+    let column = (group.saturating_sub(gap) / series).max(1);
+    let labelled = values.len() == 1;
+    // A single series keeps the top row for its value labels.
+    let rows = plot.height.saturating_sub(u16::from(labelled)).max(1);
+    let revealed = bold::revealed(plot.width, session);
+    for (index, series_values) in values.iter().enumerate() {
+        for (sample, value) in series_values.iter().enumerate() {
+            let x = plot.x
+                + u16::try_from(sample).unwrap_or(0) * group
+                + u16::try_from(index).unwrap_or(0) * column
+                + gap / 2;
+            if x >= plot.x + revealed || x + column > plot.right() {
+                continue;
+            }
+            let ratio = if max > 0.0 { value.max(0.0) / max } else { 0.0 };
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let eighths = (ratio * f64::from(rows) * 8.0).round() as u16;
+            let (whole, part) = (eighths / 8, eighths % 8);
+            let ink = Style::default().fg(tones[index]);
+            let bottom = plot.bottom() - 1;
+            for level in 0..whole.min(rows) {
+                buffer.set_string(x, bottom - level, "█".repeat(usize::from(column)), ink);
+            }
+            if part > 0 && whole < rows {
+                buffer.set_string(
+                    x,
+                    bottom - whole,
+                    LOWER[usize::from(part - 1)].repeat(usize::from(column)),
+                    ink,
+                );
+            }
+            if labelled {
+                let text = clipped(&value.to_string(), group);
+                let top = bottom - whole.min(rows) - u16::from(part > 0);
+                buffer.set_stringn(
+                    x,
+                    top.max(plot.y),
+                    text,
+                    usize::from(group),
+                    Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+                );
+            }
+        }
+    }
+}
+fn column_labels(
+    labels: &[String],
+    samples: usize,
+    axis: Rect,
+    (session, theme): (&Session, &Theme),
+    buffer: &mut Buffer,
+) {
+    let count = u16::try_from(samples.max(1)).unwrap_or(u16::MAX);
+    let group = (axis.width / count).max(1);
+    let style = Style::default().fg(theme.fg_dim);
+    let texts: Vec<_> = labels.iter().map(|label| display(session, label)).collect();
+    if texts.len() == samples && texts.iter().all(|text| text.width() < usize::from(group)) {
+        for (index, text) in texts.iter().enumerate() {
+            let x = axis.x
+                + u16::try_from(index).unwrap_or(0) * group
+                + (group / 4).clamp(u16::from(group > 2), 3) / 2;
+            buffer.set_stringn(x, axis.y, text, usize::from(group), style);
+        }
+    } else {
+        if let Some(first) = texts.first() {
+            buffer.set_stringn(axis.x, axis.y, first, usize::from(axis.width / 2), style);
+        }
+        if let Some(last) = texts.last().filter(|_| texts.len() > 1) {
+            let width = u16::try_from(last.width()).unwrap_or(0).min(axis.width / 2);
+            buffer.set_stringn(
+                axis.right() - width,
+                axis.y,
+                last,
+                usize::from(width),
+                style,
+            );
+        }
+    }
+}
+fn braille_points(
+    values: &[f64],
+    samples: usize,
+    (min, max): (f64, f64),
+    dots: &super::canvas::Dots,
+) -> Vec<(f64, f64)> {
+    let span = f64::from(u16::try_from(samples.saturating_sub(1)).unwrap_or(u16::MAX)).max(1.0);
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let x = f64::from(u16::try_from(index).unwrap_or(u16::MAX)) / span;
+            let y = 1.0 - (value - min) / (max - min);
+            (x * (dots.width() - 1.0), y * (dots.height() - 1.0))
+        })
+        .collect()
 }
 fn ring(values: &[Vec<f64>], colors: &[Color], area: Rect, buffer: &mut Buffer) {
     let width = area.width.min(area.height.saturating_mul(2));

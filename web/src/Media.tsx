@@ -1,12 +1,12 @@
 import { For, Show, createEffect, createSignal, onCleanup, untrack } from "solid-js";
-import type { NexusStore } from "./state";
+import type { DugixStore } from "./state";
 
 type Kind = "files" | "images" | "videos" | "scripts";
 interface MediaEntry { name: string; size: number; modified: string; mime: string; kind: string; hash?: string }
 interface Catalog { space_id: string; files: MediaEntry[]; images: MediaEntry[]; videos: MediaEntry[]; scripts: MediaEntry[] }
 
 /** The media workspace mirrors the TUI's files, images, and scripts flows. */
-export function MediaPage(props: { store: NexusStore; onAttach: (markdown: string) => void }) {
+export function MediaPage(props: { store: DugixStore; onAttach: (markdown: string) => void }) {
   const [kind, setKind] = createSignal<Kind>("files");
   const [catalog, setCatalog] = createSignal<Catalog>();
   const [error, setError] = createSignal("");
@@ -55,10 +55,6 @@ export function MediaPage(props: { store: NexusStore; onAttach: (markdown: strin
     const space = activeSpace(); const next = window.prompt("Rename to", entry.name); if (!space || !next || next === entry.name) return;
     try { await props.store.api.request(`/v1/media/action?space_id=${encodeURIComponent(space)}`, { method: "POST", body: JSON.stringify({ action: "rename", kind: entry.kind, from: entry.name, to: next }) }); if (stillCurrent(space)) await refresh(); } catch (reason) { if (stillCurrent(space)) setError(String(reason)); }
   }
-  async function ocr(entry: MediaEntry) {
-    const space = activeSpace(); if (!space) return;
-    try { await props.store.api.request(`/v1/media/action?space_id=${encodeURIComponent(space)}`, { method: "POST", body: JSON.stringify({ action: "ocr", kind: "file", name: entry.name }) }); if (stillCurrent(space)) { setOutput(`OCR queued for ${entry.name}`); await refresh(); } } catch (reason) { if (stillCurrent(space)) setError(String(reason)); }
-  }
   async function attach(entry: MediaEntry) {
     const space = activeSpace(); if (!space) return;
     try { const result = await props.store.api.request<{ markdown: string; data_url: string }>(`/v1/media/action?space_id=${encodeURIComponent(space)}`, { method: "POST", body: JSON.stringify({ action: "attach", kind: entry.kind, name: entry.name }) }); if (!stillCurrent(space)) return; props.onAttach(result.markdown); setOutput(`Attached ${entry.name}`); if (entry.kind === "image") { const previous = preview(); if (previous) URL.revokeObjectURL(previous.url); setPreview({ url: result.data_url, name: entry.name }); } } catch (reason) { if (stillCurrent(space)) setError(String(reason)); }
@@ -99,7 +95,7 @@ export function MediaPage(props: { store: NexusStore; onAttach: (markdown: strin
     <div role="tablist" aria-label="Media type"><For each={(["files", "images", "videos", "scripts"] as Kind[])}>{(value) => <button role="tab" aria-selected={kind() === value} onClick={() => { setKind(value); setEditing(undefined); }}>{value[0].toUpperCase() + value.slice(1)}</button>}</For></div>
     <label class="upload-button">Upload<input type="file" disabled={busy()} onChange={(event) => { const file = event.currentTarget.files?.[0]; if (file) void upload(file); event.currentTarget.value = ""; }} /></label><button onClick={() => void refresh()} disabled={busy()}>Refresh</button>
     <Show when={error()}><p class="error-banner" role="alert">{error()}</p></Show>
-    <For each={rows()} fallback={<Show when={!busy()}><p class="muted">No {kind()} yet.</p></Show>}>{(entry) => <article class="file-row"><div><strong>{entry.name}</strong><small>{new Intl.NumberFormat().format(entry.size)} bytes · {entry.modified}</small></div><div><Show when={entry.kind === "image"}><button onClick={() => void download(entry)}>Preview</button><button onClick={() => void attach(entry)}>Attach</button></Show><Show when={entry.kind === "video"}><button onClick={() => void download(entry)}>Download</button><button onClick={() => void attach(entry)}>Attach</button><button onClick={() => void transformVideo(entry)} disabled={busy()}>Transform</button></Show><Show when={entry.kind === "file"}><button onClick={() => void download(entry)}>Download</button><button onClick={() => void ocr(entry)}>OCR</button><button onClick={() => void transcribe(entry)}>Read text</button></Show><Show when={entry.kind === "script"}><button onClick={() => void readScript(entry)}>Edit</button><button onClick={() => void runScript(entry)}>Run</button></Show><button onClick={() => void rename(entry)}>Rename</button><button onClick={() => void remove(entry)}>Delete</button></div></article>}</For>
+    <For each={rows()} fallback={<Show when={!busy()}><p class="muted">No {kind()} yet.</p></Show>}>{(entry) => <article class="file-row"><div><strong>{entry.name}</strong><small>{new Intl.NumberFormat().format(entry.size)} bytes · {entry.modified}</small></div><div><Show when={entry.kind === "image"}><button onClick={() => void download(entry)}>Preview</button><button onClick={() => void attach(entry)}>Attach</button></Show><Show when={entry.kind === "video"}><button onClick={() => void download(entry)}>Download</button><button onClick={() => void attach(entry)}>Attach</button><button onClick={() => void transformVideo(entry)} disabled={busy()}>Transform</button></Show><Show when={entry.kind === "file"}><button onClick={() => void download(entry)}>Download</button><button onClick={() => void transcribe(entry)}>Read text</button></Show><Show when={entry.kind === "script"}><button onClick={() => void readScript(entry)}>Edit</button><button onClick={() => void runScript(entry)}>Run</button></Show><button onClick={() => void rename(entry)}>Rename</button><button onClick={() => void remove(entry)}>Delete</button></div></article>}</For>
     <Show when={preview()}>{(value) => <figure><button onClick={() => { URL.revokeObjectURL(value().url); setPreview(undefined); }}>Close preview</button><img class="file-preview" src={value().url} alt={value().name} /><figcaption>{value().name}</figcaption></figure>}</Show>
     <Show when={editing()}>{(value) => <form onSubmit={(event) => { event.preventDefault(); void saveScript(); }}><h2>Edit {value().name}</h2><textarea value={value().content} onInput={(event) => setEditing({ name: value().name, content: event.currentTarget.value, original: value().original, hash: value().hash })} /><button type="submit">Save</button><button type="button" onClick={() => setEditing(undefined)}>Cancel</button></form>}</Show>
     <Show when={output()}><pre class="tool-output">{output()}</pre></Show>

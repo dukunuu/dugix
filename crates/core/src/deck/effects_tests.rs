@@ -51,7 +51,7 @@ fn effects_validate_with_paths_and_repair_two_color_gradients() {
 
 #[test]
 fn svg_draws_gradient_alpha_shadow_and_image_clips() {
-    let root = std::env::temp_dir().join(format!("nexus-effects-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-effects-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     image::RgbImage::from_fn(80, 40, |x, _| {
         if x < 40 {
@@ -136,7 +136,7 @@ fn masks_have_one_geometry_for_paths_and_hit_tests() {
 
 #[test]
 fn svg_clips_images_to_every_mask() {
-    let root = std::env::temp_dir().join(format!("nexus-masks-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-masks-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     image::RgbImage::from_pixel(80, 40, image::Rgb([0, 0, 255]))
         .save(root.join("photo.png"))

@@ -1,0 +1,214 @@
+  Rust vs Go for a CLI
+
+  Rust or Go for your next CLI?    COMPARISON
+  Both ship single binaries; they differ in build speed and footprint.
+
+  2.1 MB         38 s          0.4 s
+  Rust binary    Rust build    Go build
+  ▼ 40%          ▲ 5x
+
+  RUST                               GO
+  ✓ Tiny binaries                    ✓ Fast builds
+  ✗ Slow compiles                    ✗ GC pauses
+
+  ▎                                  ▎
+  ▎  Ship fast                GO     ▎  Ship small             RUST
+  ▎                                  ▎
+  ▎  Go gets you to v1 this week.    ▎  Rust when size and latency
+  ▎                                  ▎  matter.
+  ▎                                  ▎
+
+  ▌ Takeaway
+  ▌ Go to ship this week; Rust when size matters.
+
+────────────────────────────────────────────────────────────────────────
+
+  Trip planner                                                       ⤢
+
+▸ Days           − 5 +
+
+   ✓  Beach (2 days)
+      Hiking (3 days)
+
+  Planned days  ━━━━━━━━━━━━━━━━━━╸────────────────────────────  2 / 5
+
+    Save plan ↵     Reset
+
+─────────────────────────────────── Tab next · Enter press · Esc done ──
+
+  Sign up                                                            ⤢
+
+  Your details
+  Name *
+  Ada Lovelace
+  ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  As on your ID
+  About you
+  A sentence or two
+
+
+  ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+
+  Plan          Free ▕ Pro ▕ Team
+
+    ●  Newsletter
+
+  Experience  ★★★☆☆
+
+  Volume      ━━━━━━━━━━━━━━━━━━━━●───────────────────────────────  40
+
+    Create account ↵
+
+───────────────────────────────────────────────────────── F2 keyboard ──
+
+  Team dashboard                                                     ⤢
+
+    People ▕ Trend ▕ Notes
+   Name                  Role                  Status
+  ▸Ada                   Eng                   Active
+   Bob                   Design                Away
+   Cy                    PM                    Active
+
+
+
+───────────────────────────────────────────────────────── F2 keyboard ──
+
+  Release overview
+
+  █ █ ▀▀█    █▀█ █▀█   █▀▀     ▀█    ▀▀█
+  ▀▀█ █▀▀    ▀▀█ █▀█   ▀▀█      █    █▀▀
+    ▀ ▀▀▀    ▀▀▀ ▀▀▀ ▀ ▀▀▀%    ▀▀▀ ▀ ▀▀▀k
+  builds     uptime            users
+  ▲ 6
+
+  ● Design — Locked   ◉ Build — In review   ○ Ship
+
+  ● Mon Kickoff
+  │ Scope agreed
+  ● Wed Beta
+
+  Owner Ada
+  Due   Friday
+
+  CPU   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────  72%
+
+    BETA
+
+  Rust  ▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆  42
+  Go    ▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆                   30
+  Zig   ▆▆▆▆▆▆▆▆▆▆▆                                                  8
+
+     ▄ █▂
+  ▂█▄█▆██
+
+────────────────────────────────────────────────────────────────────────
+
+  Python interview                                                   ⤢
+
+  ‹ Question 1 of 2 ›                                      0/1 right
+  Which structure gives O(1) lookup?
+
+  Pick one
+  ○ Hash map
+  ○ List
+  ○ Tree
+
+    Show answer
+
+
+
+───────────────────────────────────────────────────────── F2 keyboard ──
+
+  Pick a destination                                                 ⤢
+
+  Where to next?
+  Three quick picks for a long weekend
+
+   1  Lisbon                                                         →
+   2  Kyoto                                                          →
+   3  Oaxaca                                                         →
+
+────────────────────────────────────────────── 1–3 pick · F2 keyboard ──
+
+  Ops dashboard                                                      ⤢
+
+  █▀█ █▀█   █▀█                      CPU     ━━━━━━━━━━━━━━╸─────  72%
+  ▀▀█ ▀▀█   ▀▀█                      Memory  ━━━━━━━━╸───────────  41%
+  ▀▀▀ ▀▀▀ ▀ ▀▀▀%                        ▄▂█▆
+  uptime                             ▅█▇████
+  ▲ 0.1%
+
+
+
+  ▌ API                              ▌ Queue
+  ▌ Healthy                          ▌ Backlog 1.2k
+
+  ▌ DB                               ▌ Cache
+  ▌ Healthy                          ▌ Cold start
+
+  Load    ━━━━━━━━━━━━━●───────  64    ●  Autoscale
+
+                                       Deploy ↵     Roll back
+
+───────────────────────────────────────────────────────── F2 keyboard ──
+
+  Team pulse
+
+  128                                           ⣀⣤⣶⠿⠿⠿⠿⣶⣦⣄
+  signups this week                           ⢀⣮⠟⠋      ⠙⠻⣵⡀
+  ▲ 12%                                      ⢠⣿⠋          ⠙⣿⡄
+                                             ⢸⣿    68%     ⢿⣇
+                                                 CAPACITY
+
+  Mon ░░░░▒▒▓▓░░░░░░
+  Tue ░░▒▒▓▓██▒▒░░░░
+  Wed ░░░░░░████░░░░
+
+  Ship the beta today:
+
+  • write release notes
+  • tag v0.2
+
+────────────────────────────────────────────────────────────────────────
+
+  Planning                                                           ⤢
+
+  ▾ crates
+    ▸ core
+    · tui
+  · docs
+
+
+  TODO   3               DOING   1              DONE   2
+  ─────────────────────  ─────────────────────  ─────────────────────
+  ▎ Docs                 ▎ Specs                ▎ Kickoff
+  ▎ Tests                                       ▎ Design
+  ▎ Polish
+
+  ◇ Plan to build to ship
+
+
+
+
+
+
+
+
+
+
+
+
+───────────────────────────────────────────────────────── F2 keyboard ──
+
+  Orbit
+
+                                  noon
+                               ⣠⠔⠉⠁ ⡇⠈⠉⠢⣄
+                              ⡔⠁    ⡇   ⠈⢢
+                             ⢰⠁   ⢠⣶⣷⡄   ⠈⡆
+                             ⠸⡀   ⠘⠿⠿⠃   ⢀⠇
+                              ⠣⡀        ⢀⠜
+                               ⠙⠢⣀⡀  ⢀⣀⠔⠋
+                                  ⠈⠉⠉⠁
+
+────────────────────────────────────────────────────────────────────────

@@ -6,12 +6,10 @@ fn source(node: Value, state: Value) -> String {
     json!({"version":1,"title":"Demo","view":[node],"state":state,"actions":{"save":[{"op":"send","text":"Name={{name}}"}]}}).to_string()
 }
 fn entry(node: Value, state: Value) -> Entry {
-    Entry {
-        session: Ok(Session::new(Document::parse(&source(node, state)).unwrap()).unwrap()),
-        focus: 0,
-        error: String::new(),
-        scroll: 0,
-    }
+    Entry::new(Ok(Session::new(
+        Document::parse(&source(node, state)).unwrap(),
+    )
+    .unwrap()))
 }
 fn content(entry: &Entry, width: u16) -> (String, Buffer) {
     let (canvas, _) = entry.canvas(width, &Theme::default(), true, true);
@@ -43,14 +41,14 @@ fn tabs() -> Value {
 #[test]
 fn tabs_two_state_snapshots_keep_the_same_height_and_hit_identity() {
     let mut entry = entry(tabs(), json!({"tab":0}));
-    assert_eq!(content(&entry, 24).0, " A         B\nOne");
+    assert_eq!(content(&entry, 24).0, "  A ▕ B\nOne");
     let height = entry
         .canvas(24, &Theme::default(), true, true)
         .0
         .area
         .height;
     assert!(entry.navigate(KeyCode::Right));
-    assert_eq!(content(&entry, 24).0, " A         B\nTwo");
+    assert_eq!(content(&entry, 24).0, "  A ▕ B\nTwo");
     assert_eq!(
         entry
             .canvas(24, &Theme::default(), true, true)
@@ -61,7 +59,8 @@ fn tabs_two_state_snapshots_keep_the_same_height_and_hit_identity() {
     );
     assert_eq!(entry.session.as_ref().unwrap().value("tab"), "1");
     let (_, buffer) = content(&entry, 24);
-    assert_eq!(buffer[(13, 2)].fg, Theme::default().accent);
+    assert_eq!(buffer[(8, 2)].symbol(), "B");
+    assert_eq!(buffer[(8, 2)].bg, Theme::default().accent);
 }
 
 #[test]
@@ -87,7 +86,7 @@ fn every_chart_kind_has_wide_and_narrow_backend_snapshots() {
                 json!({}),
             );
             let (text, buffer) = content(&entry, width);
-            assert!(text.contains("● A"));
+            assert!(text.contains("■ A"));
             assert!(text.contains("Jan") && text.contains("Mar"));
             assert!(
                 buffer
@@ -98,10 +97,16 @@ fn every_chart_kind_has_wide_and_narrow_backend_snapshots() {
             snapshots.push(format!("{kind}/{width}\n{text}"));
         }
     }
-    assert_eq!(
-        snapshots.join("\n---\n"),
-        include_str!("chart_snapshots.txt").trim_end()
-    );
+    let snapshots = snapshots.join("\n---\n");
+    if std::env::var_os("DUGIX_UPDATE_SNAPSHOTS").is_some() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/interactive/chart_snapshots.txt"
+        );
+        std::fs::write(path, format!("{snapshots}\n")).unwrap();
+        return;
+    }
+    assert_eq!(snapshots, include_str!("chart_snapshots.txt").trim_end());
 }
 
 #[test]
@@ -161,12 +166,21 @@ fn form_submit_snapshots_and_actions_respect_required_values_and_send_readiness(
         json!({"type":"form","title":"Profile","fields":[{"type":"input","key":"name","label":"Name","rules":{"required":true}}],"submit_label":"Save","action":"save"}),
         json!({"name":""}),
     );
-    assert_eq!(content(&entry, 36).0, "Profile\nName\n\n[ Save ↵ ]");
+    assert_eq!(
+        content(&entry, 36).0,
+        format!(
+            "Profile\nName *\n\n{}\nRequired\n\n ▸Save ↵",
+            "▔".repeat(32)
+        )
+    );
     assert!(entry.activate(0, true, true).is_none());
     assert!(entry.error.contains("required"));
     entry.focus = 1;
     entry.edit("Ada", false);
-    assert_eq!(content(&entry, 36).0, "Profile\nName  Ada▁\n\n[ Save ↵ ]");
+    assert_eq!(
+        content(&entry, 36).0,
+        format!("Profile\nName *\nAda\n{}\n\n\n  Save ↵", "▔".repeat(32))
+    );
     assert!(entry.activate(0, false, true).is_none());
     assert!(entry.error.contains("draft"));
     assert_eq!(
@@ -189,30 +203,31 @@ fn timeline_rating_badge_meter_slider_and_highlighted_code_snapshots() {
         json!({"type":"rating","key":"score","label":"Score"}),
         json!({"score":2}),
     );
-    assert_eq!(content(&rating, 36).0, "Score: ★★○○○");
+    assert_eq!(content(&rating, 36).0, "Score  ★★☆☆☆");
     let badge = entry(
         json!({"type":"badge","text":"Ready","tone":"success"}),
         json!({}),
     );
-    assert_eq!(content(&badge, 36).0, "[Ready]");
+    assert_eq!(content(&badge, 36).0, "  Ready");
     let meter = entry(
         json!({"type":"meter","label":"Done","value":2,"max":4,"tone":"warning"}),
         json!({}),
     );
     let (text, buffer) = content(&meter, 24);
-    assert_eq!(text, "██████Done 2/4");
-    assert_eq!(buffer[(2, 2)].fg, Theme::default().warning);
+    assert_eq!(text, "Done  ━━━╸───  2 / 4");
+    assert_eq!(buffer[(2, 2)].fg, Theme::default().fg_dim);
+    assert_eq!(buffer[(8, 2)].fg, Theme::default().warning);
     let slider = entry(
         json!({"type":"slider","key":"n","label":"N","min":0,"max":4,"step":1}),
         json!({"n":2}),
     );
-    assert_eq!(content(&slider, 24).0, "N: 2   ──────●──────");
+    assert_eq!(content(&slider, 24).0, "N     ━━━━━●─────  2");
     let mut code = entry(
         json!({"type":"code","source":"let x = 1;","lang":"rust"}),
         json!({}),
     );
     let (text, buffer) = content(&code, 36);
-    assert_eq!(text, "rust  [Copy]\nlet x = 1;");
+    assert_eq!(text, format!("{:<24} ▸Copy\nlet x = 1;", "rust"));
     assert_ne!(
         buffer[(2, 3)].fg,
         buffer[(10, 3)].fg,
@@ -305,7 +320,7 @@ fn tabs_accordion_rating_and_slider_route_mouse_and_keyboard() {
         json!({"n":0}),
     );
     draw(&mut widgets, &src);
-    click(&mut widgets, 0, 9, 0);
+    click(&mut widgets, 0, 2, 0);
     assert_eq!(session(&widgets).value("n"), "3");
     widgets.key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), true);
     assert_eq!(session(&widgets).value("n"), "4");

@@ -471,6 +471,13 @@ pub fn import(bytes: &[u8], assets: &Path) -> Result<Imported> {
     let mut doc = Doc::from_design("Imported document", &crate::design::Design::default());
     doc.design = None;
     doc.design_rev = None;
+    let mut warnings = Vec::new();
+    match crate::design::template::word_design(bytes) {
+        Ok(design) => doc.theme = super::super::Theme::from_design(&design),
+        Err(_) => {
+            warnings.push("Word styles could not be read; default text styles were used.".into());
+        }
+    }
     let core = if let Some(rel) = root_rels.first("/core-properties").filter(|r| !r.external) {
         package.xml(&rel.target)?
     } else if package.has("docProps/core.xml") {
@@ -481,7 +488,6 @@ pub fn import(bytes: &[u8], assets: &Path) -> Result<Imported> {
     if let Some(title) = core.kid("title").map(|t| &t.text).filter(|s| !s.is_empty()) {
         doc.title.clone_from(title);
     }
-    let mut warnings = Vec::new();
     let mut formats = Vec::new();
     number_part.descendants("numFmt", &mut formats);
     if formats

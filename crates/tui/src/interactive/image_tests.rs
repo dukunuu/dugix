@@ -1,5 +1,5 @@
 use super::*;
-use nexus_core::remote_image::Fetcher;
+use dugix_core::remote_image::Fetcher;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -7,7 +7,7 @@ const PIC: &str = "https://img.example.invalid/pic.png";
 
 fn fetcher() -> Arc<Fetcher> {
     let fetcher =
-        Fetcher::new(std::env::temp_dir().join(format!("nexus-ui-img-{}", uuid::Uuid::new_v4())));
+        Fetcher::new(std::env::temp_dir().join(format!("dugix-ui-img-{}", uuid::Uuid::new_v4())));
     crate::app_view::use_fetcher_for_tests(&fetcher);
     fetcher
 }
@@ -34,12 +34,7 @@ fn text_of(buffer: &Buffer) -> Vec<String> {
 }
 
 fn canvas(source: &str) -> Vec<String> {
-    let entry = Entry {
-        session: Ok(Session::new(Document::parse(source).unwrap()).unwrap()),
-        focus: 0,
-        error: String::new(),
-        scroll: 0,
-    };
+    let entry = Entry::new(Ok(Session::new(Document::parse(source).unwrap()).unwrap()));
     text_of(&entry.canvas(80, &Theme::default(), false, true).0)
 }
 
@@ -108,7 +103,6 @@ fn height_is_identical_while_loading_failed_disabled_and_loaded() {
         fetcher.set_enabled(false);
         let off = canvas(&source);
         assert!(
-            // Narrow tiles drop the host before they clip the description.
             off.iter().any(|row| row.contains("\u{25a3}")),
             "{name}: {off:#?}"
         );

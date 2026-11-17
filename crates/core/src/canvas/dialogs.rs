@@ -1,10 +1,5 @@
 //! Native Open and Save dialogs behind a trait, so every caller can be tested
-//! with [`Scripted`] and nothing but a frontend ever opens a real window.
-//!
-//! The real dialogs ([`Native`], feature `native-dialogs`) are `rfd`'s blocking
-//! ones. macOS requires them on the main thread: studio asks from inside its
-//! `tao` event loop and the TUI from its main-thread event loop, which is where
-//! both call these.
+//! with [`Scripted`] and only a frontend opens a real window.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -23,16 +18,13 @@ pub struct Request {
     pub save: bool,
     pub title: String,
     pub start: Option<PathBuf>,
-    /// The file name a Save dialog is pre-filled with.
     pub name: String,
     pub filters: Vec<&'static str>,
 }
 
-/// One Open and one Save dialog. `None` is a cancel (or a dialog that could
-/// not be shown): callers then do nothing.
+/// One Open and one Save dialog; `None` is a cancel, so callers do nothing.
 pub trait Dialogs: Send + Sync {
-    /// Whether a dialog can be shown at all: false over SSH or without a
-    /// display, where callers fall back to a default location.
+    /// False over SSH or without a display, where callers fall back to a default location.
     fn available(&self) -> bool {
         true
     }
@@ -50,8 +42,8 @@ pub trait Dialogs: Send + Sync {
     ) -> Option<PathBuf>;
 }
 
-/// Answers from a queue (an empty queue cancels), and remembers each request.
-/// Clones share the queue, so a test keeps a handle after boxing one.
+/// Answers from a queue (an empty queue cancels) and remembers each request;
+/// clones share the queue.
 #[derive(Clone, Debug)]
 pub struct Scripted {
     answers: Arc<Mutex<VecDeque<Option<PathBuf>>>>,
@@ -60,7 +52,6 @@ pub struct Scripted {
 }
 
 impl Scripted {
-    /// Dialogs that answer `answers` in order, then cancel.
     #[must_use]
     pub fn new(answers: impl IntoIterator<Item = Option<PathBuf>>) -> Self {
         Self {
@@ -70,7 +61,6 @@ impl Scripted {
         }
     }
 
-    /// No dialog at all, as over SSH.
     #[must_use]
     pub fn unavailable() -> Self {
         Self {
@@ -79,7 +69,6 @@ impl Scripted {
         }
     }
 
-    /// Everything asked so far.
     #[must_use]
     pub fn requests(&self) -> Vec<Request> {
         self.requests.lock().expect("requests").clone()
@@ -123,7 +112,8 @@ impl Dialogs for Scripted {
     }
 }
 
-/// The operating system's own dialogs.
+/// The OS dialogs; macOS needs them on the main thread, which is where both
+/// frontends call.
 #[cfg(feature = "native-dialogs")]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Native;
@@ -176,8 +166,8 @@ impl Dialogs for Native {
     }
 }
 
-/// A dialog that cannot be built (rfd panics when macOS has no main thread to
-/// run it on) counts as a cancel rather than taking the program down.
+/// A dialog that cannot be built (rfd panics when macOS has no main thread to run
+/// it on) counts as a cancel rather than taking the program down.
 #[cfg(feature = "native-dialogs")]
 fn guarded(show: impl FnOnce() -> Option<PathBuf>) -> Option<PathBuf> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(show))
@@ -185,8 +175,8 @@ fn guarded(show: impl FnOnce() -> Option<PathBuf>) -> Option<PathBuf> {
         .flatten()
 }
 
-/// Whether the session can show a window: always on macOS and Windows unless
-/// the shell is remote; on Linux a display or a session bus is needed.
+/// Always true on macOS and Windows unless the shell is remote; on Linux a display
+/// or a session bus is needed.
 #[cfg(feature = "native-dialogs")]
 #[must_use]
 pub fn gui_session() -> bool {
@@ -200,12 +190,11 @@ pub fn gui_session() -> bool {
     set("DISPLAY") || set("WAYLAND_DISPLAY") || set("DBUS_SESSION_BUS_ADDRESS")
 }
 
-/// Open filter shared by studio's Open and the library: nexus files and the
-/// Office and Markdown files it imports.
+/// The Open filter shared by studio and the library: dugix files and the imports.
 pub const OPEN: &[Filter] = &[
     Filter {
         name: "Decks, docs and imports",
-        extensions: &["json", "pptx", "docx", "dotx", "md"],
+        extensions: &["json", "pptx", "docx", "dotx", "md", "csv", "xlsx"],
     },
     Filter {
         name: "Decks and docs",
@@ -223,25 +212,28 @@ pub const OPEN: &[Filter] = &[
         name: "Markdown",
         extensions: &["md"],
     },
+    Filter {
+        name: "Spreadsheets",
+        extensions: &["csv", "xlsx"],
+    },
 ];
 
-/// Images studio stores with a deck or doc.
 pub const IMAGES: &[Filter] = &[Filter {
     name: "Images",
     extensions: &["png", "jpg", "jpeg", "webp"],
 }];
 
-/// Templates studio can turn into a design.
 pub const TEMPLATES: &[Filter] = &[Filter {
     name: "Office templates",
     extensions: &["pptx", "potx", "docx", "dotx"],
 }];
 
-/// The Save filter for a file extension (`pptx`, `deck.json`, `zip`, …).
 #[must_use]
 pub fn save_filter(extension: &str) -> Vec<Filter> {
     let (name, extensions): (&'static str, &'static [&'static str]) = match extension {
         "pptx" => ("PowerPoint", &["pptx"]),
+        "csv" => ("CSV", &["csv"]),
+        "xlsx" => ("Excel", &["xlsx"]),
         "docx" => ("Word", &["docx"]),
         "pdf" => ("PDF", &["pdf"]),
         "zip" => ("PNG images (zip)", &["zip"]),

@@ -13,7 +13,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url)), root = path.resolve(here, '../../..');
-const candidates = [path.join(root, 'web/node_modules/playwright-core/index.mjs'), '/Users/dukunuu/work/nexus-chat/web/node_modules/playwright-core/index.mjs'];
+const candidates = [path.join(root, 'web/node_modules/playwright-core/index.mjs'), '/Users/dukunuu/work/dugix/web/node_modules/playwright-core/index.mjs'];
 const installed = candidates.find(p => fs.existsSync(p));
 if (!installed) throw new Error('Use the existing web/node_modules/playwright-core installation.');
 const { chromium } = await import(pathToFileURL(installed).href);

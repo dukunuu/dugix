@@ -1,6 +1,6 @@
 //! Native server-side search, using only this client's backend and credentials.
 
-use super::{OpenRouter, ProviderFlavor, sse_event_data};
+use super::{OpenRouter, sse_event_data};
 use anyhow::{Context as _, Result};
 
 impl OpenRouter {
@@ -33,7 +33,7 @@ impl OpenRouter {
             .as_deref()
             .unwrap_or("http://127.0.0.1:1");
         let prompt = format!("Search the web for: {query}\nList what you found with citations.");
-        let (path, body) = if self.flavor == ProviderFlavor::OpenRouter {
+        let (path, body) = if self.tag == BackendTag::OpenRouter {
             (
                 "chat/completions",
                 serde_json::json!({
@@ -48,14 +48,14 @@ impl OpenRouter {
             )
         } else {
             (
-                if self.flavor == ProviderFlavor::OpenAiCodex {
+                if self.tag == BackendTag::Codex {
                     "codex/responses"
                 } else {
                     "responses"
                 },
                 serde_json::json!({
                     "model": model, "store": false,
-                    "stream": self.flavor == ProviderFlavor::OpenAiCodex,
+                    "stream": self.tag == BackendTag::Codex,
                     "instructions": "Search the web and cite the sources you find.",
                     "input": [{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
                     "tools": [{"type": "web_search"}]
@@ -63,7 +63,7 @@ impl OpenRouter {
             )
         };
         let request = self.client.post(format!("{base}/{path}")).json(&body);
-        let request = if self.flavor == ProviderFlavor::OpenAiCodex {
+        let request = if self.tag == BackendTag::Codex {
             request.headers(self.codex_headers(true)?)
         } else {
             self.authenticate(request)
@@ -75,7 +75,7 @@ impl OpenRouter {
         } else {
             response.replace(&self.key, "[redacted]")
         };
-        let value = if self.flavor == ProviderFlavor::OpenAiCodex {
+        let value = if self.tag == BackendTag::Codex {
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&response) {
                 value
             } else {

@@ -1,9 +1,5 @@
-//! Per-turn pre-images of the files an agent turn changes, and `/undo`.
-//!
-//! Layout beside `nexus.db`: `checkpoints/<session_id>/<turn_seq>/` holds
-//! `manifest.json` (the workspace root and the changed files) and one
-//! `<n>.pre` copy per file that existed before the turn first changed it. A
-//! turn that changes nothing leaves no directory.
+//! Per-turn pre-images of the files an agent turn changes, and `/undo`:
+//! `checkpoints/<session_id>/<turn_seq>/` holds a manifest and one `.pre` per file.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -35,7 +31,7 @@ struct Turn {
     session_id: String,
     /// Created on the turn's first change.
     dir: Option<PathBuf>,
-    /// Entries in first-touch order, with whether the change completed.
+    /// First-touch order, with whether the change completed.
     entries: Vec<(Entry, bool)>,
 }
 
@@ -47,18 +43,16 @@ struct Entry {
     existed: bool,
     /// File name of the pre-image in the turn directory.
     pre_image: Option<String>,
-    /// The file's sha256 after the turn's last change; `None` when deleted.
+    /// `None` when deleted.
     post_sha256: Option<String>,
 }
 
-/// A turn's `manifest.json`: the canonical root its paths are relative to.
 #[derive(serde::Deserialize)]
 struct Manifest {
     root: PathBuf,
     entries: Vec<Entry>,
 }
 
-/// What undoing one manifest entry will do, decided before anything is written.
 enum Verdict {
     Restore { path: PathBuf, pre_image: PathBuf },
     Remove(PathBuf),
@@ -74,13 +68,12 @@ pub struct UndoReport {
     pub skipped_too_large: Vec<String>,
     /// Files whose restore or removal failed, with the error.
     pub failed: Vec<(String, String)>,
-    /// Set when the latest checkpoint belongs to another workspace root; then
-    /// nothing was touched and the checkpoint is kept.
+    /// Set when the latest checkpoint belongs to another workspace root; nothing
+    /// was touched and the checkpoint is kept.
     pub wrong_root: Option<PathBuf>,
 }
 
 impl UndoReport {
-    /// The status line reporting this undo.
     pub fn summary(&self) -> String {
         if let Some(root) = &self.wrong_root {
             return format!(
@@ -124,14 +117,13 @@ impl UndoReport {
 }
 
 impl Workspace {
-    /// Record agent file changes under `dir` (checkpoints are off otherwise).
+    /// Checkpoints are off without this.
     #[must_use]
     pub fn with_checkpoints(mut self, dir: PathBuf) -> Self {
         self.checkpoints = Some(Checkpoints::new(dir));
         self
     }
 
-    /// Start recording a new agent turn for `session_id`.
     pub fn begin_turn(&self, session_id: &str) {
         let Some(checkpoints) = &self.checkpoints else {
             return;
@@ -150,7 +142,7 @@ impl Workspace {
         });
     }
 
-    /// Keep the pre-image of a resolved path the first time this turn touches it.
+    /// Keep the pre-image the first time this turn touches the path.
     pub(crate) fn before_change(&self, path: &Path) -> Result<(), PathError> {
         let Some(checkpoints) = &self.checkpoints else {
             return Ok(());
@@ -197,8 +189,8 @@ impl Workspace {
         Ok(())
     }
 
-    /// Record a path's contents after a completed change. A manifest that
-    /// cannot be written leaves the change out of `/undo`, never wrongly in it.
+    /// A manifest that cannot be written leaves the change out of `/undo`, never
+    /// wrongly in it.
     pub(crate) fn after_change(&self, path: &Path) {
         let Some(checkpoints) = &self.checkpoints else {
             return;
@@ -229,7 +221,6 @@ impl Workspace {
         }
     }
 
-    /// Whether the turn recorded last for `session_id` changed any file.
     pub fn turn_changed_files(&self, session_id: &str) -> bool {
         self.checkpoints.as_ref().is_some_and(|checkpoints| {
             checkpoints
@@ -243,10 +234,10 @@ impl Workspace {
         })
     }
 
-    /// Restore every file the latest checkpointed turn of `session_id` changed
-    /// and the user has not changed since, then drop that checkpoint so the
-    /// next undo goes one turn further back. `None` means nothing to undo; a
-    /// checkpoint taken in another root is reported and left untouched.
+    /// Restore every file the latest checkpointed turn of `session_id` changed and
+    /// the user has not changed since, then drop that checkpoint so the next undo
+    /// goes one turn further back. `None` means nothing to undo; a checkpoint from
+    /// another root is reported and left untouched.
     pub fn undo_last(&self, session_id: &str) -> Result<Option<UndoReport>, PathError> {
         let Some(checkpoints) = &self.checkpoints else {
             return Ok(None);
@@ -311,8 +302,7 @@ impl Workspace {
         Ok(None)
     }
 
-    /// Decide what undoing one entry does, without writing; skips are
-    /// recorded in `report` and yield `None`.
+    /// Decides without writing; skips are recorded in `report` and yield `None`.
     fn undo_verdict(
         &self,
         dir: &Path,
@@ -350,7 +340,6 @@ impl Workspace {
     }
 }
 
-/// The highest turn number stored for a session, if any.
 fn latest_seq(session_dir: &Path) -> Result<Option<u64>, PathError> {
     let entries = match std::fs::read_dir(session_dir) {
         Ok(entries) => entries,
@@ -370,7 +359,6 @@ fn latest_seq(session_dir: &Path) -> Result<Option<u64>, PathError> {
     Ok(latest)
 }
 
-/// A file's hex sha256, or `None` when it does not exist.
 fn file_sha256(path: &Path) -> std::io::Result<Option<String>> {
     match std::fs::read(path) {
         Ok(bytes) => Ok(Some(Sha256::digest(bytes).iter().fold(
@@ -389,7 +377,7 @@ fn file_sha256(path: &Path) -> std::io::Result<Option<String>> {
 fn restore(pre_image: &Path, path: &Path) -> Result<(), PathError> {
     let parent = path.parent().expect("workspace file parent");
     std::fs::create_dir_all(parent)?;
-    let temp = parent.join(format!(".nexus-{}.tmp", uuid::Uuid::new_v4()));
+    let temp = parent.join(format!(".dugix-{}.tmp", uuid::Uuid::new_v4()));
     let result = std::fs::copy(pre_image, &temp).and_then(|_| std::fs::rename(&temp, path));
     if result.is_err() {
         let _ = std::fs::remove_file(&temp);
@@ -409,7 +397,7 @@ mod tests {
     impl Dirs {
         fn new() -> Self {
             let base =
-                std::env::temp_dir().join(format!("nexus-checkpoint-{}", uuid::Uuid::new_v4()));
+                std::env::temp_dir().join(format!("dugix-checkpoint-{}", uuid::Uuid::new_v4()));
             let root = base.join("workspace");
             std::fs::create_dir_all(&root).unwrap();
             let root = root.canonicalize().unwrap();

@@ -1,17 +1,5 @@
-//! Version 1 to version 2, on the JSON value, before validation.
-//!
-//! Rules (idempotent: version 2 input is left alone):
-//! - grid units become px (x60), on a 1920 x 1080 slide;
-//! - every block becomes an absolute, fixed-size child of a `mode: none`
-//!   slide, in the same paint order, with its id kept;
-//! - text size steps map to px through the old size table (rounded to whole
-//!   px: 26, 42, 58, 81, 119) and `xl`/`xxl` keep their tighter line height;
-//!   only values that differ from the default text style are written;
-//! - `style.align` and `style.color` become `font.align` and `font.color`;
-//! - code blocks use the `code` text style; text and tables the `body` style;
-//! - shape `stroke` becomes `{color, width: 2.4}` (the old 2 px at 1600 wide);
-//! - the slide's template name (`title`, `content`, ...) is dropped;
-//! - v1's out-of-grid repair (clamping a block into 32 x 18) still applies.
+//! Version 1 to version 2, on the JSON value, before validation: grid units become
+//! px, blocks become absolute children. Idempotent; version 2 input is left alone.
 
 use serde_json::{Map, Value, json};
 
@@ -27,7 +15,7 @@ const SIZES: [(&str, f64, Option<f64>); 5] = [
     ("xxl", 119.0, Some(1.08)),
 ];
 
-/// Width of the 2 px v1 shape border on the new slide.
+/// The old 2 px shape border, in px on the 1920 wide slide.
 const SHAPE_BORDER: f64 = 2.4;
 
 /// Convert a version-1 deck value in place.

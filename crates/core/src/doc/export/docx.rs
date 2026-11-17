@@ -101,17 +101,32 @@ impl Package {
         }
         out
     }
-    fn rich(&mut self, text: &str, literal: bool, block: &str) -> String {
-        let runs = if literal {
-            vec![inline::Run {
-                text: text.into(),
-                ..Default::default()
-            }]
-        } else {
-            inline::runs(text)
+    /// Runs for `text`; `literal` gives code pieces with an optional syntax color
+    /// (hex without `#`) instead of parsing inline Markdown.
+    fn rich(
+        &mut self,
+        text: &str,
+        literal: Option<Vec<(String, Option<String>)>>,
+        block: &str,
+    ) -> String {
+        let runs: Vec<(inline::Run, Option<String>)> = match literal {
+            Some(pieces) => pieces
+                .into_iter()
+                .map(|(text, color)| {
+                    let run = inline::Run {
+                        text,
+                        ..Default::default()
+                    };
+                    (run, color)
+                })
+                .collect(),
+            None => inline::runs(text)
+                .into_iter()
+                .map(|run| (run, None))
+                .collect(),
         };
         let mut out = self.markers(block, self.offset);
-        for span in runs {
+        for (span, color) in runs {
             let mut properties = String::new();
             if span.bold {
                 properties.push_str("<w:b/>");
@@ -124,6 +139,9 @@ impl Package {
             }
             if span.code {
                 properties.push_str("<w:rStyle w:val=\"CodeChar\"/>");
+            }
+            if let Some(color) = color {
+                let _ = write!(properties, "<w:color w:val=\"{color}\"/>");
             }
             let link = span.link.as_ref().map(|url| {
                 if let Some(id) = self.links.get(url) {
@@ -177,7 +195,8 @@ impl Package {
         out
     }
     fn p(&mut self, block: &str, style: &str, text: &str, properties: &str) -> String {
-        let content = self.rich(text, style == "Code", block);
+        let literal = (style == "Code").then(|| vec![(text.to_string(), None)]);
+        let content = self.rich(text, literal, block);
         format!("<w:p><w:pPr><w:pStyle w:val=\"{style}\"/>{properties}</w:pPr>{content}</w:p>")
     }
     fn list(&mut self, block: &str, items: &[ListItem], depth: usize, number: usize) -> String {
@@ -329,8 +348,14 @@ fn styles(doc: &Doc) -> String {
                 ),
                 _ => String::new(),
             };
+            let jc = match font.align {
+                crate::deck::Align::Left => "",
+                crate::deck::Align::Center => "<w:jc w:val=\"center\"/>",
+                crate::deck::Align::Right => "<w:jc w:val=\"right\"/>",
+                crate::deck::Align::Justify => "<w:jc w:val=\"both\"/>",
+            };
             format!(
-                "<w:pPr>{}{frame}<w:spacing w:before=\"{}\" w:after=\"{}\"/>{}</w:pPr>",
+                "<w:pPr>{}{frame}<w:spacing w:before=\"{}\" w:after=\"{}\"/>{jc}{}</w:pPr>",
                 if heading { "<w:keepNext/>" } else { "" },
                 (before * 20.0) as u64,
                 (after * 20.0) as u64,
@@ -492,7 +517,7 @@ pub fn export(
             .join("\n");
         let _ = write!(
             comments,
-            "<w:comment w:id=\"{id}\" w:author=\"nexus\" w:date=\"2000-01-01T00:00:00Z\"><w:p>{}</w:p></w:comment>",
+            "<w:comment w:id=\"{id}\" w:author=\"dugix\" w:date=\"2000-01-01T00:00:00Z\"><w:p>{}</w:p></w:comment>",
             run(&text, "")
         );
     }
@@ -659,9 +684,21 @@ pub fn export(
                 }
                 body.push_str("<w:p><w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>");
             }
-            Kind::Code { text, .. } => {
+            Kind::Code { text, lang } => {
                 let style = style_id(block, doc);
-                let text = package.rich(text, true, &block.id);
+                let theme = inline::theme(doc);
+                let pieces = crate::highlight::segments(text, lang)
+                    .into_iter()
+                    .map(|(range, role)| {
+                        let color = role.map(|role| {
+                            crate::deck::text::color(&theme, role.color_key())
+                                .trim_start_matches('#')
+                                .to_string()
+                        });
+                        (text[range].to_string(), color)
+                    })
+                    .collect();
+                let text = package.rich(text, Some(pieces), &block.id);
                 let _ = write!(
                     body,
                     "<w:p><w:pPr><w:pStyle w:val=\"{}\"/></w:pPr>{text}</w:p>",
@@ -723,7 +760,7 @@ pub fn export(
         );
         for (id, text) in &doc.footnotes {
             let number = package.footnotes[id];
-            let text = package.rich(text, false, "");
+            let text = package.rich(text, None, "");
             let _ = write!(
                 notes,
                 "<w:footnote w:id=\"{number}\"><w:p>{text}</w:p></w:footnote>"
@@ -762,8 +799,8 @@ pub fn export(
             );
         }
     }
-    package.xml("docProps/core.xml","application/vnd.openxmlformats-package.core-properties+xml",format!("<?xml version=\"1.0\"?><cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>{}</dc:title><dc:creator>nexus</dc:creator></cp:coreProperties>",escape(&doc.title)));
-    package.xml("docProps/app.xml","application/vnd.openxmlformats-officedocument.extended-properties+xml","<?xml version=\"1.0\"?><Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\"><Application>nexus</Application></Properties>".into());
+    package.xml("docProps/core.xml","application/vnd.openxmlformats-package.core-properties+xml",format!("<?xml version=\"1.0\"?><cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>{}</dc:title><dc:creator>dugix</dc:creator></cp:coreProperties>",escape(&doc.title)));
+    package.xml("docProps/app.xml","application/vnd.openxmlformats-officedocument.extended-properties+xml","<?xml version=\"1.0\"?><Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\"><Application>dugix</Application></Properties>".into());
     package.parts.insert("_rels/.rels".into(),format!("<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"{R}/officeDocument\" Target=\"word/document.xml\"/><Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\" Target=\"docProps/core.xml\"/><Relationship Id=\"rId3\" Type=\"{R}/extended-properties\" Target=\"docProps/app.xml\"/></Relationships>").into_bytes());
     let mut types = String::from(
         "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"png\" ContentType=\"image/png\"/><Default Extension=\"jpeg\" ContentType=\"image/jpeg\"/>",

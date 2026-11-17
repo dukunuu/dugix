@@ -1,4 +1,4 @@
-// Shared by doc-shot.mjs and doc-e2e.mjs: a static server for the UI, Chromium from the
+// Used by doc-e2e.mjs: a static server for the UI, Chromium from the
 // existing web/node_modules playwright-core, and the mock backend in doc-mock.js.
 import fs from 'node:fs';
 import http from 'node:http';
@@ -6,7 +6,7 @@ import zlib from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url)), root = path.resolve(here, '../../..');
-const candidates = [path.join(root, 'web/node_modules/playwright-core/index.mjs'), '/Users/dukunuu/work/nexus-chat/web/node_modules/playwright-core/index.mjs'];
+const candidates = [path.join(root, 'web/node_modules/playwright-core/index.mjs'), '/Users/dukunuu/work/dugix/web/node_modules/playwright-core/index.mjs'];
 const installed = candidates.find(p => fs.existsSync(p));
 if (!installed) throw new Error('Use the existing web/node_modules/playwright-core installation.');
 const { chromium } = await import(pathToFileURL(installed).href);

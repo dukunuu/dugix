@@ -3,16 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>nexus studio</title>
+  <title>dugix studio</title>
   <link rel="stylesheet" href="/studio.css">
   <link rel="stylesheet" href="/doc/doc.css">
+  <link rel="stylesheet" href="/sheet/sheet.css">
   <link rel="stylesheet" href="/library.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
   <header id="topbar">
     <button id="toggle-left" class="top-icon icon-button" data-icon="panel" aria-label="Hide slides" title="Hide slides (⌘/Ctrl+Shift+\)"></button>
-    <nav class="crumbs" aria-label="Breadcrumb"><button id="open-library" class="crumb-link" title="Library (⌘/Ctrl+O)">Library</button><span class="crumb-sep" aria-hidden="true">/</span><div class="deck-menu"><button id="deck-title" class="crumb-title" aria-label="Project menu" aria-haspopup="true" aria-expanded="false"><span id="deck-title-label">Untitled</span><span data-icon="chevron"></span></button><div id="deck-menu" class="popover" hidden><button id="rename-deck">Rename</button><button id="new-deck">New deck</button><button id="new-doc">New doc</button><button id="open-deck">Open…</button><button id="save-copy">Save a copy…</button></div></div><span id="status-dot" class="status-dot" role="img" aria-label="Saved"></span><span id="slide-label" class="crumb-detail">Your canvas</span></nav>
+    <nav class="crumbs" aria-label="Breadcrumb"><button id="open-library" class="crumb-link" title="Library (⌘/Ctrl+O)">Library</button><span class="crumb-sep" aria-hidden="true">/</span><div class="deck-menu"><button id="deck-title" class="crumb-title" aria-label="Project menu" aria-haspopup="true" aria-expanded="false"><span id="deck-title-label">Untitled</span><span data-icon="chevron"></span></button><div id="deck-menu" class="popover" hidden><button id="rename-deck">Rename</button><button id="new-deck">New deck</button><button id="new-doc">New doc</button><button id="new-sheet">New sheet</button><button id="open-deck">Open…</button><button id="save-copy">Save a copy…</button></div></div><span id="status-dot" class="status-dot" role="img" aria-label="Saved"></span><span id="slide-label" class="crumb-detail">Your canvas</span></nav>
     <span class="spacer"></span>
     <button id="toggle-comments" class="top-icon with-count" data-icon="comment" aria-label="Comments" title="Comments" aria-pressed="false"><span id="comment-count" class="count">0</span></button>
     <button id="toggle-history" class="top-icon wide-only" data-icon="history" aria-label="Version history" title="Version history" aria-pressed="false"></button>
@@ -38,6 +39,7 @@
   <dialog id="path-dialog"><form method="dialog"><h2 id="path-heading">Open deck</h2><label id="path-label" for="path-input">Path</label><input id="path-input" required autocomplete="off"><p id="path-hint"></p><div class="dialog-actions"><button value="cancel" formnovalidate>Cancel</button><button id="path-confirm" class="primary" value="ok">Open</button></div></form></dialog>
   <dialog id="export-details" aria-labelledby="export-details-heading"><h2 id="export-details-heading">Export approximations</h2><ul id="export-warnings"></ul><form method="dialog"><div class="dialog-actions"><button value="close">Close</button></div></form></dialog>
   <div id="doc-app" hidden></div>
+  <div id="sheet-app" hidden></div>
   <div id="presentation" hidden><div id="present-stage"></div><aside id="presenter"><div class="presenter-label">Next step</div><div id="present-next"></div><div class="presenter-label">Speaker notes</div><div id="present-notes"></div><div id="present-timer">00:00</div></aside><span id="present-counter"></span><span id="present-jump"></span><span id="present-step"></span><button id="presenter-toggle">Presenter · P</button><button id="exit-present">Exit · Esc</button></div>
 </body>
 </html>

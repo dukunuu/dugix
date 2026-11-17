@@ -1,5 +1,5 @@
-//! The doc editor's UI modules: embedded and served, free of HTML injection, kept to the
-//! core's spacing numbers, and (when `node` is installed) tested as pure functions.
+//! The doc editor's UI modules: embedded, served, free of HTML injection, and tested
+//! as pure functions when `node` is installed.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -10,8 +10,8 @@ fn ui_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("ui")
 }
 
-/// `node` 22 or newer, which imports the UI's ES modules directly. Absent on some CI
-/// images; the tests that need it then skip with a note rather than fail.
+/// `node` 22 or newer, which imports the UI's ES modules directly; the tests that
+/// need it skip when it is absent.
 fn node() -> Option<String> {
     let output = Command::new("node").arg("--version").output().ok()?;
     let version = String::from_utf8(output.stdout).ok()?;
@@ -77,8 +77,7 @@ fn every_doc_module_is_embedded_and_every_import_resolves() {
         }
     }
     assert!(seen >= 12, "the doc UI has its modules and stylesheet");
-    // The shell page links the stylesheet and holds the mount point, before the
-    // presentation markup the HTML export embeds.
+    // The mount point must stay out of the presentation markup the HTML export embeds.
     let (_, index) = embedded("/index.html").unwrap();
     assert!(index.contains("href=\"/doc/doc.css\""));
     assert!(
@@ -118,7 +117,7 @@ fn the_doc_ui_builds_the_page_without_markup_injection() {
 
 #[test]
 fn doc_css_uses_the_core_layout_numbers() {
-    use nexus_core::doc::LAYOUT;
+    use dugix_core::doc::LAYOUT;
     let css = std::fs::read_to_string(ui_dir().join("doc/doc.css")).unwrap();
     let n = |value: f64| format!("{value}");
     for (name, value) in [
@@ -179,9 +178,153 @@ fn what_the_editor_writes_reads_back_the_same_through_the_core_parser() {
             pair["plain"].as_str().unwrap(),
         );
         assert_eq!(
-            nexus_core::doc::markdown::plain(md),
+            dugix_core::doc::markdown::plain(md),
             plain,
             "the editor's serialization {md:?} reads differently in the core"
         );
     }
+}
+
+/// Every file of a UI directory is embedded under `/<dir>/` with the right type, and every
+/// relative import in its scripts names an embedded file.
+fn check_embedded_dir(dir: &str) -> usize {
+    let mut seen = 0;
+    for entry in std::fs::read_dir(ui_dir().join(dir)).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let (mime, served) = embedded(&format!("/{dir}/{name}"))
+            .unwrap_or_else(|| panic!("/{dir}/{name} is not embedded"));
+        assert_eq!(served, std::fs::read_to_string(&path).unwrap(), "{name}");
+        assert!(
+            (name.ends_with(".js") && mime == "text/javascript")
+                || (name.ends_with(".css") && mime.starts_with("text/css")),
+            "{name}: {mime}"
+        );
+        seen += 1;
+        if !name.ends_with(".js") {
+            continue;
+        }
+        for line in served
+            .lines()
+            .filter(|l| l.trim_start().starts_with("import "))
+        {
+            let Some(target) = line.split(['\'', '"']).nth(1) else {
+                continue;
+            };
+            let resolved = if let Some(rest) = target.strip_prefix("./") {
+                format!("/{dir}/{rest}")
+            } else if let Some(rest) = target.strip_prefix("../") {
+                format!("/{rest}")
+            } else {
+                panic!("{name}: unexpected import {target}");
+            };
+            assert!(embedded(&resolved).is_some(), "{name} imports {target}");
+        }
+    }
+    seen
+}
+
+#[test]
+fn every_sheet_module_is_embedded_and_every_import_resolves() {
+    let seen = check_embedded_dir("sheet");
+    assert!(seen >= 12, "the sheet UI has its modules and stylesheet");
+    // The modules the doc and sheet UIs share live beside the app.
+    for shared in ["/popup.js", "/threads.js"] {
+        let (mime, source) = embedded(shared).unwrap_or_else(|| panic!("{shared} is not embedded"));
+        assert_eq!(mime, "text/javascript");
+        let name = shared.trim_start_matches('/');
+        assert_eq!(
+            source,
+            std::fs::read_to_string(ui_dir().join(name)).unwrap()
+        );
+    }
+    let (_, index) = embedded("/index.html").unwrap();
+    assert!(index.contains("href=\"/sheet/sheet.css\""));
+    assert!(
+        index.find("id=\"sheet-app\"").unwrap() < index.find("id=\"presentation\"").unwrap(),
+        "the sheet mount stays out of the exported presentation"
+    );
+    // The app loads sheet mode the way it loads doc mode.
+    let (_, app) = embedded("/app.js").unwrap();
+    assert!(app.contains("import('./sheet/sheet.js')") && app.contains("'sheet-mode'"));
+}
+
+#[test]
+fn the_grid_draws_cell_text_with_the_metrics_the_core_sizes_rows_with() {
+    // Wrapped rows are as tall as core's layout says; if the grid's line height,
+    // padding or font size drift from it, wrapped text is cut off or cramped.
+    use dugix_core::sheet::layout::{FONT_SIZE, LINE_HEIGHT, PAD_X, PAD_Y};
+    let (_, css) = embedded("/sheet/sheet.css").unwrap();
+    let text = css
+        .lines()
+        .find(|line| line.starts_with(".sg-text {"))
+        .expect("the cell text rule");
+    let zoomed = |px: f64| format!("calc({px}px * var(--sg-z, 1))");
+    assert!(
+        text.contains(&format!("line-height:{}", zoomed(LINE_HEIGHT))),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("padding:0 {} {}", zoomed(PAD_X), zoomed(PAD_Y))),
+        "{text}"
+    );
+    assert!(css.contains(&format!("font-size:{};", zoomed(FONT_SIZE))));
+    assert!(css.contains(&format!("font:{FONT_SIZE}px/1 var(--s-font")));
+    let mock =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("ui-dev/sheet-mock.js"))
+            .unwrap();
+    assert!(mock.contains(&format!("lines * {LINE_HEIGHT} + {}", 2.0 * PAD_Y)));
+}
+
+#[test]
+fn the_sheet_ui_builds_the_page_without_markup_injection() {
+    // Cell text, comments and pasted content only ever become text nodes.
+    let mut files: Vec<PathBuf> = std::fs::read_dir(ui_dir().join("sheet"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    files.extend(["popup.js", "threads.js"].map(|f| ui_dir().join(f)));
+    let mut scanned = 0;
+    for path in files {
+        if path.extension().is_none_or(|e| e != "js") {
+            continue;
+        }
+        let source = std::fs::read_to_string(&path).unwrap();
+        for forbidden in [
+            "innerHTML",
+            "outerHTML",
+            "insertAdjacentHTML",
+            "document.write",
+            "eval(",
+            "new Function",
+            "fetch(",
+            "XMLHttpRequest",
+            "WebSocket",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{} uses {forbidden}",
+                path.display()
+            );
+        }
+        scanned += 1;
+    }
+    assert!(scanned >= 12);
+}
+
+#[test]
+fn the_sheet_model_and_key_map_pass_their_unit_tests() {
+    let Some(node) = node() else {
+        eprintln!("skipped: node 22+ is not installed");
+        return;
+    };
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("ui-dev/sheet-unit.mjs");
+    let output = Command::new(node).arg(script).output().expect("run node");
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{text}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(text.contains("passed") && !text.contains("FAIL"), "{text}");
 }

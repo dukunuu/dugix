@@ -6,36 +6,27 @@ use ratatui::widgets::ListItem;
 
 use crate::app_view::AppView;
 
-use super::chrome;
+use super::chrome::{self, PopupFrame, ctrl, hint, keys};
 use crate::ui::style::glyph;
 
-/// Live per-searcher activity: the same `research_stage` rows shown inline in
-/// the transcript (one per searcher label, updated in place as
-/// Status/ToolCall events arrive — see `run_searcher` in `app/research.rs`),
-/// isolated into their own view plus a steer input line and a queued-steers
-/// section (steers not yet picked up at a round boundary).
+/// Live per-searcher activity: the transcript's `research_stage` rows plus a
+/// steer input line and the still-queued steers.
 pub fn render(f: &mut Frame, app: &AppView) {
     let area = chrome::popup_area(app, f.area(), "research", chrome::WIDE);
 
     let dim = Style::default().fg(app.theme.fg_dim);
-    // The stage rows come from the job-level mirror (`research_stage_rows`),
-    // kept in sync by `mirror_stage` on every `Stage` update regardless of
-    // which session is viewed — no db read (and no silent fallback) inside
-    // rendering, and opening the popup from another session still shows the
-    // job's searchers and steers.
-    let rows = &app.research_stage_rows;
+    // The rows come from the job-level mirror, so opening the popup from another
+    // session still shows the job's searchers.
+    let rows = &app.research.stage_rows;
     let mut items: Vec<ListItem> = Vec::new();
-    // Steers queued but not yet drained at a round boundary stay visible
-    // here. The pipeline acknowledges drained steers as `steer #N`
-    // stage rows and the App records those positions in
-    // `research_steer_acked` (parsed from `Stage` updates, so it's correct
-    // even when the popup is opened from another session); steer k is
-    // picked up iff k is in the ack set. The retained log drops acked
-    // entries, so it holds exactly the still-queued steers.
+    // The pipeline acknowledges drained steers as `steer #N` stage rows and the
+    // App records those positions; the retained log drops acked entries, so what
+    // is left is exactly the still-queued steers.
     let pending: Vec<&(usize, String)> = app
-        .research_steer_log
+        .research
+        .steer_log
         .iter()
-        .filter(|(pos, _)| !app.research_steer_acked.contains(pos))
+        .filter(|(pos, _)| !app.research.steer_acked.contains(pos))
         .collect();
     let has_pending = !pending.is_empty();
     if has_pending {
@@ -56,18 +47,12 @@ pub fn render(f: &mut Frame, app: &AppView) {
         }
         items.push(ListItem::new(Line::from("")));
     }
-    if rows.is_empty() && !has_pending {
-        items.push(ListItem::new(Line::from(Span::styled(
-            "waiting for the first update…",
-            dim,
-        ))));
-    } else {
-        // Newest agents first so the currently active synthesis/verifier/
-        // writer remains visible even after a full six-searcher fan-out.
+    if !rows.is_empty() {
+        // Newest agents first, so the active synthesis/verifier/writer stays
+        // visible after a full six-searcher fan-out.
         for content in rows.iter().rev() {
             let (label, detail) = content.split_once(':').unwrap_or((content.as_str(), ""));
             let detail = detail.trim();
-            // A working agent is the assistant busy: ⟳ in the agent color.
             let (mark, color, detail) = if let Some(rest) = detail.strip_prefix("done —") {
                 (glyph::OK, app.theme.success, rest.trim())
             } else if let Some(rest) = detail.strip_prefix("error —") {
@@ -84,8 +69,8 @@ pub fn render(f: &mut Frame, app: &AppView) {
                     Style::default().fg(color).add_modifier(Modifier::BOLD),
                 ),
             ])];
-            // Multi-line details (e.g. critic gaps listed as questions) get
-            // one indented row per line.
+            // Multi-line details, e.g. critic gaps listed as questions, get one
+            // indented row per line.
             for detail_line in detail.lines() {
                 lines.push(Line::from(vec![
                     Span::raw("  "),
@@ -96,21 +81,45 @@ pub fn render(f: &mut Frame, app: &AppView) {
         }
     }
 
-    let inner = chrome::render_frame(
+    let stage = rows
+        .iter()
+        .rev()
+        .find(|row| !row.starts_with("steer #"))
+        .map_or("", |row| {
+            row.split_once(':').map_or(row.as_str(), |(label, _)| label)
+        });
+    let inner = chrome::render_popup(
         f,
         area,
-        chrome::input_title(
-            app,
-            "research agents · steer",
-            &app.research_live_input,
-            "type instruction · Enter send · Ctrl+X stop · Esc close",
-        ),
-        &app.theme,
-        true,
-        chrome::Tone::Normal,
+        &PopupFrame {
+            title: "Research",
+            count: stage,
+            hints: &[
+                hint(keys::ENTER, "send"),
+                hint(keys::TAB, "agents"),
+                hint(ctrl('x'), "stop"),
+                hint(keys::ESC, "close"),
+            ],
+            tone: chrome::Tone::Normal,
+            focused: true,
+        },
+        app,
     );
-    let list = chrome::standard_list(items, &app.theme);
-    f.render_widget(list, inner);
+    let inner = chrome::render_field(
+        f,
+        inner,
+        "❯",
+        &app.research.live_input,
+        "Steer the run…",
+        false,
+        &app.theme,
+    );
+    if items.is_empty() {
+        chrome::render_empty(f, inner, "Waiting for the first update…", &app.theme);
+    } else {
+        let list = chrome::standard_list(items, &app.theme);
+        f.render_widget(list, inner);
+    }
 }
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) {
@@ -120,19 +129,21 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
     match key.code {
         KeyCode::Char('x') if ctrl => {
             app.stop_research();
-            app.popup = nexus_core::app::Popup::None;
+            app.popup = dugix_core::app::Popup::None;
         }
-        KeyCode::Esc => app.popup = nexus_core::app::Popup::None,
+        KeyCode::Esc => app.popup = dugix_core::app::Popup::None,
+        // Each stage is a sub-agent run; Tab opens their transcripts.
+        KeyCode::Tab => super::subagents::open(app),
         KeyCode::Enter => {
-            let text = app.research_live_input.trim().to_string();
-            app.research_live_input.clear();
+            let text = app.research.live_input.trim().to_string();
+            app.research.live_input.clear();
             app.steer_research(&text);
         }
         KeyCode::Backspace => {
-            app.research_live_input.pop();
+            app.research.live_input.pop();
         }
         // Unbound Ctrl/Alt chords must not type their letter into the steer.
-        KeyCode::Char(c) if !super::is_chord(key) => app.research_live_input.push(c),
+        KeyCode::Char(c) if !super::is_chord(key) => app.research.live_input.push(c),
         _ => {}
     }
 }

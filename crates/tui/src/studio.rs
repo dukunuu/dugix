@@ -1,10 +1,4 @@
-//! The terminal's half of the studio link: spawn `nexus-studio --attach`,
-//! read what the canvas says, tell it what the model changed, and turn its
-//! comments into ordinary user messages.
-//!
-//! All of this is view state. Core only knows the shared `deck_link` context
-//! (what studio shows, which decks the model changed), so the headless CLI and
-//! the host are unaffected.
+//! Terminal-side studio linking and comment-to-conversation routing.
 
 use std::collections::{BTreeSet, VecDeque};
 use std::io::{BufRead as _, Write as _};
@@ -13,30 +7,25 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context as _, Result, bail};
-use nexus_core::deck::link::{ActivityState, Kind as FileKind, Line, Message, WaitingReason};
-use nexus_core::deck::{Deck, Kind, feedback, render, same_file};
-use nexus_core::doc::{self, Doc};
+use dugix_core::deck::link::{ActivityState, Kind as FileKind, Line, Message, WaitingReason};
+use dugix_core::deck::{Deck, Kind, feedback, render, same_file};
+use dugix_core::doc::{self, Doc};
 use tokio::sync::{Notify, mpsc};
 
 use crate::app_view::AppView;
 
-/// How much of a block's text names it in a comment message.
 const SUMMARY_CHARS: usize = 60;
-/// Characters of the anchored node's text a comment message carries.
 const NODE_TEXT_CHARS: usize = 300;
 
-/// A running studio window.
 struct Canvas {
     child: Option<Child>,
     input: ChildStdin,
     messages: mpsc::UnboundedReceiver<Message>,
     deck: PathBuf,
-    /// Set when the window speaks another link version ("update nexus-studio").
     problem: Arc<Mutex<Option<String>>>,
 }
 
 impl Canvas {
-    /// Best effort: a closed window is noticed through its `Bye`.
     fn send(&mut self, message: Message) {
         if let Ok(line) = Line::encode(message) {
             let _ = self
@@ -50,7 +39,7 @@ impl Canvas {
 impl Drop for Canvas {
     fn drop(&mut self) {
         self.send(Message::Bye);
-        // Reap off-thread; studio also exits when its stdin closes.
+        // Waiting for studio must not block the terminal's event loop.
         if let Some(mut child) = self.child.take() {
             std::thread::spawn(move || {
                 let _ = child.wait();
@@ -59,13 +48,10 @@ impl Drop for Canvas {
     }
 }
 
-/// What studio reported it is looking at.
 #[derive(Clone, PartialEq, Eq)]
 struct Focus {
     deck: PathBuf,
-    /// A slide id, or for a doc the block in view.
     slide: String,
-    /// Selected nodes of a slide, or for a doc the selected text (at most one entry).
     blocks: Vec<String>,
     doc: bool,
 }
@@ -79,10 +65,9 @@ struct StudioComment {
 
 struct CommentTurn {
     comment: StudioComment,
-    task: nexus_core::app::ChatTaskId,
+    task: dugix_core::app::ChatTaskId,
     slides: Vec<(String, String)>,
     edited: BTreeSet<usize>,
-    /// For a doc: each block with its JSON, and the ids that changed in this turn.
     blocks: Vec<(String, String)>,
     edited_blocks: BTreeSet<String>,
     replies: usize,
@@ -94,14 +79,19 @@ impl CommentTurn {
         let mut parts = Vec::new();
         if !self.edited_blocks.is_empty() {
             let ids = self.edited_blocks.iter().cloned().collect::<Vec<_>>();
+            let unit = if is_sheet(&self.comment.deck) {
+                "cell"
+            } else {
+                "block"
+            };
             parts.push(if ids.len() <= 8 {
                 format!(
-                    "edited block{} {}",
+                    "edited {unit}{} {}",
                     if ids.len() == 1 { "" } else { "s" },
                     ids.join(", ")
                 )
             } else {
-                format!("edited {} blocks", ids.len())
+                format!("edited {} {unit}s", ids.len())
             });
         }
         if !self.edited.is_empty() {
@@ -141,7 +131,6 @@ fn slide_revisions(path: &Path) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
-/// Each block of a doc file with its JSON, to tell which ones a turn edited.
 fn block_revisions(path: &Path) -> Vec<(String, String)> {
     std::fs::read_to_string(path)
         .ok()
@@ -160,12 +149,46 @@ fn block_revisions(path: &Path) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
+fn is_sheet(path: &Path) -> bool {
+    FileKind::of_path(path) == FileKind::Sheet
+}
+
+fn cell_revisions(path: &Path) -> Vec<(String, String)> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| dugix_core::sheet::Sheet::check(&s).ok())
+        .map(|sheet| {
+            sheet
+                .tabs
+                .iter()
+                .flat_map(|tab| {
+                    tab.cells.iter().map(|(a1, cell)| {
+                        (
+                            format!("{}!{a1}", tab.name),
+                            serde_json::to_string(cell).expect("cell JSON"),
+                        )
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn is_doc(path: &Path) -> bool {
     FileKind::of_path(path) == FileKind::Doc
 }
 
 fn model_replies(comment: &StudioComment) -> usize {
     let model = |role: &feedback::Role| matches!(role, feedback::Role::Model);
+    if is_sheet(&comment.deck) {
+        return dugix_core::sheet::feedback::load(&comment.deck)
+            .unwrap_or_default()
+            .iter()
+            .filter(|t| t.id == comment.thread)
+            .flat_map(|t| &t.messages)
+            .filter(|m| model(&m.role))
+            .count();
+    }
     if is_doc(&comment.deck) {
         return doc::feedback::load(&comment.deck)
             .unwrap_or_default()
@@ -184,7 +207,6 @@ fn model_replies(comment: &StudioComment) -> usize {
         .count()
 }
 
-/// `paragraph`, `heading 2`, `list`… for a block, as the comment message names it.
 fn block_kind(block: &doc::Block) -> String {
     match &block.kind {
         doc::Kind::Heading { level, .. } => format!("heading {level}"),
@@ -196,11 +218,9 @@ fn block_kind(block: &doc::Block) -> String {
     }
 }
 
-/// Terminal-side link state; lives on `AppView`.
 #[derive(Default)]
 pub struct Studio {
     canvas: Option<Canvas>,
-    /// Comments waiting for a free composer and no streaming reply.
     queued: VecDeque<String>,
     comments: VecDeque<StudioComment>,
     active: Option<CommentTurn>,
@@ -208,19 +228,16 @@ pub struct Studio {
     activities: Vec<Message>,
     last_deck: Option<PathBuf>,
     focus: Option<Focus>,
-    /// What the model was last told, so it hears about a change once.
     told: Option<Focus>,
     warned_draft: bool,
 }
 
 impl Studio {
-    /// Whether a studio window is attached.
     #[must_use]
     pub fn linked(&self) -> bool {
         self.canvas.is_some()
     }
 
-    /// Whether waiting comments or an active comment turn need polling.
     #[must_use]
     pub fn has_queued(&self) -> bool {
         !self.queued.is_empty() || self.active.is_some()
@@ -252,13 +269,10 @@ impl AppView {
         self.space.files_dir(&self.active_space.name)
     }
 
-    /// Wakes the event loop when the model changes a deck or studio speaks.
     pub fn studio_wake(&self) -> Arc<Notify> {
         Arc::clone(&self.deck_link.lock().expect("deck link").notify)
     }
 
-    /// Open or focus the studio linked to this terminal, on `deck` or on the
-    /// one it showed last. With neither, the library opens instead, to choose.
     pub fn open_studio(&mut self, deck: Option<&str>) -> Result<()> {
         if self.incognito {
             bail!("studio isn't available in incognito mode");
@@ -275,6 +289,7 @@ impl AppView {
         };
         std::fs::create_dir_all(files.join("decks"))?;
         std::fs::create_dir_all(files.join("docs"))?;
+        std::fs::create_dir_all(files.join("sheets"))?;
         let path = std::path::absolute(path)?;
         self.studio.last_deck = Some(path.clone());
         if let Some(canvas) = &mut self.studio.canvas {
@@ -291,7 +306,6 @@ impl AppView {
         Ok(())
     }
 
-    /// Send the current terminal palette on attach and after a theme switch.
     pub fn send_studio_theme(&mut self) {
         if let Some(canvas) = &mut self.studio.canvas {
             canvas.send(Message::Theme {
@@ -300,15 +314,18 @@ impl AppView {
         }
     }
 
-    /// Tool cards hint at `/studio` only while no window is attached, so a
-    /// change of link state re-lays them out.
     fn refresh_tool_cards(&mut self) {
         self.tool_open_gen = self.tool_open_gen.wrapping_add(1);
     }
 
-    /// Apply one message from studio.
     pub fn handle_studio_message(&mut self, message: Message) -> Result<()> {
         match message {
+            message @ (Message::SheetFocus { .. } | Message::SheetComment { .. }) => {
+                return self.handle_sheet_message(message);
+            }
+            message @ Message::Reply { .. } if message.path().is_some_and(is_sheet) => {
+                return self.handle_sheet_message(message);
+            }
             message @ (Message::DocFocus { .. } | Message::DocComment { .. }) => {
                 return self.handle_doc_message(message);
             }
@@ -370,7 +387,57 @@ impl AppView {
         Ok(())
     }
 
-    /// What a doc window says: the block in view, and comments and replies on text.
+    fn handle_sheet_message(&mut self, message: Message) -> Result<()> {
+        match message {
+            Message::SheetFocus { path, tab, range } => {
+                let selection = format!("{tab}!{range}");
+                self.deck_link.lock().expect("deck link").focus =
+                    Some((path.clone(), selection.clone(), vec![]));
+                self.studio.focus = Some(Focus {
+                    deck: path,
+                    slide: selection,
+                    blocks: vec![],
+                    doc: false,
+                });
+            }
+            Message::SheetComment {
+                path,
+                thread,
+                tab,
+                range,
+                quote,
+                text,
+            } => {
+                let built = self.sheet_comment_text(&path, &thread, &tab, &range, &quote, &text);
+                self.enqueue_studio_comment(path, thread, built)?;
+            }
+            Message::Reply {
+                deck_path,
+                thread_id,
+                text,
+            } => {
+                let built = (|| {
+                    let threads = dugix_core::sheet::feedback::load(&deck_path)?;
+                    let thread = threads
+                        .iter()
+                        .find(|t| t.id == thread_id)
+                        .context("studio replied in a thread that no longer exists")?;
+                    self.sheet_comment_text(
+                        &deck_path,
+                        &thread_id,
+                        &thread.anchor.tab,
+                        &thread.anchor.range,
+                        &thread.anchor.quote,
+                        &text,
+                    )
+                })();
+                self.enqueue_studio_comment(deck_path, thread_id, built)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn handle_doc_message(&mut self, message: Message) -> Result<()> {
         match message {
             Message::DocFocus {
@@ -455,7 +522,7 @@ impl AppView {
                 reason: None,
             },
             ActivityState::Failed,
-            Some("Could not send this comment; see nexus for details".into()),
+            Some("Could not send this comment; see dugix for details".into()),
         );
     }
 
@@ -471,7 +538,6 @@ impl AppView {
         self.enqueue_studio_comment(deck, thread, built)
     }
 
-    /// Queue a comment's message for the conversation, or report that it could not be built.
     fn enqueue_studio_comment(
         &mut self,
         deck: PathBuf,
@@ -518,9 +584,7 @@ impl AppView {
         }
     }
 
-    /// `Comment on decks/a.deck.json · slide 2 (b4: Make room…): text`, the
-    /// thread id the model replies with, and the slide as an image. The image
-    /// is a durable snapshot, because the message is replayed every turn.
+    // Replayed messages need a durable slide snapshot, not a reference to its mutable file.
     fn comment_text(
         &self,
         path: &Path,
@@ -558,12 +622,10 @@ impl AppView {
         let image = render::render_snapshot(&deck, path, &files, slide)?;
         let shown = path.strip_prefix(&files).unwrap_or(path).display();
         let number = index + 1;
-        // The anchored node and the revision, so the model can edit at once
-        // instead of reading the whole deck first.
         let assets = path.parent().map(|dir| dir.join("assets"));
         let anchored = block
             .and_then(|id| {
-                nexus_core::deck::brief::node_brief(
+                dugix_core::deck::brief::node_brief(
                     &deck,
                     slide,
                     id,
@@ -579,9 +641,6 @@ impl AppView {
         ))
     }
 
-    /// `Comment on docs/q3.doc.json · b4 "Ship the docs canvas": text`, the thread id
-    /// the model replies with, the doc's revision, and the anchored block's text, so
-    /// the model can edit without a `read`. No page image: the text is enough.
     fn doc_comment_text(
         &self,
         path: &Path,
@@ -619,8 +678,38 @@ impl AppView {
         ))
     }
 
-    /// Run from the event loop: apply studio's messages, tell it what the
-    /// model changed, and send a queued comment once nothing is in the way.
+    fn sheet_comment_text(
+        &self,
+        path: &Path,
+        thread: &str,
+        tab: &str,
+        range: &str,
+        quote: &str,
+        text: &str,
+    ) -> Result<String> {
+        let sheet = dugix_core::canvas::files::read_sheet(path)?;
+        let tab = sheet
+            .tabs
+            .iter()
+            .find(|t| t.id == tab || t.name.eq_ignore_ascii_case(tab))
+            .context("the commented tab no longer exists")?;
+        let _: dugix_core::sheet::address::Range = range.parse()?;
+        let shown = path
+            .strip_prefix(self.files_dir())
+            .unwrap_or(path)
+            .display();
+        let quote: String = quote
+            .chars()
+            .map(|c| if c == '\n' { ' ' } else { c })
+            .take(SUMMARY_CHARS)
+            .collect();
+        Ok(format!(
+            "Comment on {shown} · {}!{range} \"{quote}\": {text}\nthread {thread} · revision {}",
+            tab.name,
+            &sheet.revision()[..12]
+        ))
+    }
+
     pub fn poll_studio(&mut self) {
         let mut received = Vec::new();
         let mut problem = None;
@@ -649,7 +738,14 @@ impl AppView {
                         deck_path: path.clone(),
                     });
                 }
-                canvas.send(if is_doc(&path) {
+                canvas.send(if is_sheet(&path) {
+                    let (tab, range) = slide.rsplit_once('!').unwrap_or(("Sheet1", "A1"));
+                    Message::SheetFocus {
+                        path,
+                        tab: tab.into(),
+                        range: range.into(),
+                    }
+                } else if is_doc(&path) {
                     Message::DocFocus {
                         deck_path: path,
                         block: Some(slide).filter(|block| !block.is_empty()),
@@ -675,8 +771,12 @@ impl AppView {
         if !same_file(path, &turn.comment.deck) {
             return;
         }
-        if is_doc(path) {
-            let next = block_revisions(path);
+        if is_doc(path) || is_sheet(path) {
+            let next = if is_sheet(path) {
+                cell_revisions(path)
+            } else {
+                block_revisions(path)
+            };
             let before = turn.edited_blocks.clone();
             for (id, revision) in &next {
                 if !turn
@@ -692,7 +792,6 @@ impl AppView {
                     turn.edited_blocks.insert(id.clone());
                 }
             }
-            // A change that touches no block (the title, the design) still counts.
             if turn.edited_blocks == before && !slide.is_empty() {
                 turn.edited_blocks.insert(slide.to_string());
             }
@@ -715,7 +814,7 @@ impl AppView {
                 turn.edited.insert(index + 1);
             }
         }
-        // Deck-wide changes (for example a theme) need not alter slide JSON.
+        // Slide JSON alone cannot detect deck-wide changes such as a theme.
         if turn.edited == before
             && let Some(index) = next.iter().position(|(id, _)| id == slide)
         {
@@ -785,8 +884,6 @@ impl AppView {
         reason
     }
 
-    /// One queued comment per call, and only when it cannot disturb anything:
-    /// no reply is streaming, the composer holds no draft, a model is ready.
     fn send_queued_comment(&mut self) {
         if self.studio.queued.is_empty() {
             return;
@@ -806,7 +903,9 @@ impl AppView {
         }
         let text = self.studio.queued.pop_front().expect("a queued comment");
         let comment = self.studio.comments.pop_front().expect("queued identity");
-        let (slides, blocks) = if is_doc(&comment.deck) {
+        let (slides, blocks) = if is_sheet(&comment.deck) {
+            (Vec::new(), cell_revisions(&comment.deck))
+        } else if is_doc(&comment.deck) {
             (Vec::new(), block_revisions(&comment.deck))
         } else {
             (slide_revisions(&comment.deck), Vec::new())
@@ -840,14 +939,17 @@ impl AppView {
         self.update_studio_waiting();
     }
 
-    /// Append `studio: viewing slide 3, selected b4` to an outgoing message,
-    /// once per change of what studio shows.
     pub fn with_studio_context(&mut self, text: String) -> String {
         let Some(focus) = self.studio.focus.clone().filter(|_| self.studio.linked()) else {
             return text;
         };
         if self.studio.told.as_ref() == Some(&focus) {
             return text;
+        }
+        if is_sheet(&focus.deck) {
+            let line = format!("studio: viewing {}", focus.slide);
+            self.studio.told = Some(focus);
+            return format!("{text}\n\n{line}");
         }
         if focus.doc {
             let line = match (focus.slide.is_empty(), focus.blocks.first()) {
@@ -878,14 +980,11 @@ impl AppView {
     }
 }
 
-/// `nexus-studio --attach <deck>` with piped stdio, found beside this binary
-/// first and on `PATH` second, plus a reader thread that forwards its lines
-/// and wakes the event loop. EOF becomes a `Bye`.
 fn spawn(deck: &Path, wake: Arc<Notify>) -> Result<Canvas> {
     let name = if cfg!(windows) {
-        "nexus-studio.exe"
+        "dugix-studio.exe"
     } else {
-        "nexus-studio"
+        "dugix-studio"
     };
     let beside = std::env::current_exe()?.with_file_name(name);
     let mut child = None;
@@ -907,11 +1006,10 @@ fn spawn(deck: &Path, wake: Arc<Notify>) -> Result<Canvas> {
         }
     }
     let child =
-        child.context("nexus-studio isn't installed — cargo install --path crates/studio")?;
+        child.context("dugix-studio isn't installed — cargo install --path crates/studio")?;
     attach(child, deck, wake)
 }
 
-/// Wrap a child with piped stdin and stdout as the canvas.
 fn attach(mut child: Child, deck: &Path, wake: Arc<Notify>) -> Result<Canvas> {
     let input = child.stdin.take().context("studio stdin")?;
     let output = child.stdout.take().context("studio stdout")?;
@@ -928,9 +1026,7 @@ fn attach(mut child: Child, deck: &Path, wake: Arc<Notify>) -> Result<Canvas> {
                     }
                     wake.notify_one();
                 }
-                // A window on another link version says so once, instead of
-                // seeming to ignore comments.
-                Err(error) if error.to_string().contains("update nexus") => {
+                Err(error) if error.to_string().contains("update dugix") => {
                     *seen.lock().expect("studio problem") = Some(error.to_string());
                     wake.notify_one();
                 }
@@ -952,7 +1048,7 @@ fn attach(mut child: Child, deck: &Path, wake: Arc<Notify>) -> Result<Canvas> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_core::{app::App, db::Db, space::Space};
+    use dugix_core::{app::App, db::Db, space::Space};
 
     fn view(root: &Path) -> AppView {
         std::fs::create_dir_all(root.join("spaces")).unwrap();
@@ -968,7 +1064,7 @@ mod tests {
     fn deck_file(app: &AppView) -> PathBuf {
         let path = app.files_dir().join("decks/test.deck.json");
         let deck = Deck::new_from_layouts("Test");
-        nexus_core::deck::write_atomic(&path, &serde_json::to_vec(&deck).unwrap()).unwrap();
+        dugix_core::deck::write_atomic(&path, &serde_json::to_vec(&deck).unwrap()).unwrap();
         path
     }
 
@@ -991,7 +1087,7 @@ mod tests {
     }
 
     fn temp() -> Dir {
-        Dir(std::env::temp_dir().join(format!("nexus-studio-link-{}", uuid::Uuid::new_v4())))
+        Dir(std::env::temp_dir().join(format!("dugix-studio-link-{}", uuid::Uuid::new_v4())))
     }
 
     fn ready(app: &mut AppView) {
@@ -1001,7 +1097,7 @@ mod tests {
         app.incognito = true;
     }
 
-    fn start_comment_turn(app: &mut AppView) -> nexus_core::app::ChatTaskId {
+    fn start_comment_turn(app: &mut AppView) -> dugix_core::app::ChatTaskId {
         app.poll_studio();
         let task = app.active_chat_task().expect("comment started");
         task.abort.abort();
@@ -1046,7 +1142,7 @@ mod tests {
         let task = start_comment_turn(&mut app);
         let mut deck = Deck::check(&std::fs::read_to_string(&path).unwrap()).unwrap();
         deck.slides[0].notes = "Changed".into();
-        nexus_core::deck::write_atomic(&path, &serde_json::to_vec(&deck).unwrap()).unwrap();
+        dugix_core::deck::write_atomic(&path, &serde_json::to_vec(&deck).unwrap()).unwrap();
         app.deck_link
             .lock()
             .unwrap()
@@ -1058,7 +1154,7 @@ mod tests {
             Some(&(ActivityState::Progress, Some("edited slide 1")))
         );
         deck.slides[1].notes = "Also changed".into();
-        nexus_core::deck::write_atomic(&path, &serde_json::to_vec(&deck).unwrap()).unwrap();
+        dugix_core::deck::write_atomic(&path, &serde_json::to_vec(&deck).unwrap()).unwrap();
         app.deck_link
             .lock()
             .unwrap()
@@ -1066,7 +1162,7 @@ mod tests {
             .push((path, "s2".into()));
         app.poll_studio();
         app.core
-            .on_chat_event(task, nexus_core::provider::StreamEvent::Done)
+            .on_chat_event(task, dugix_core::provider::StreamEvent::Done)
             .unwrap();
         app.poll_studio();
         assert_eq!(
@@ -1100,14 +1196,14 @@ mod tests {
         let task = start_comment_turn(&mut app);
         let mut deck = Deck::check(&std::fs::read_to_string(&path).unwrap()).unwrap();
         deck.slides[0].notes = "Fixed".into();
-        nexus_core::deck::write_atomic(&path, &serde_json::to_vec(&deck).unwrap()).unwrap();
+        dugix_core::deck::write_atomic(&path, &serde_json::to_vec(&deck).unwrap()).unwrap();
         app.deck_link
             .lock()
             .unwrap()
             .changed
             .push((path.clone(), "s1".into()));
         app.core
-            .on_chat_event(task, nexus_core::provider::StreamEvent::Done)
+            .on_chat_event(task, dugix_core::provider::StreamEvent::Done)
             .unwrap();
         app.poll_studio();
         assert_eq!(
@@ -1152,7 +1248,7 @@ mod tests {
         let task = start_comment_turn(&mut app);
         let error = format!("Bearer sk-123456789012345678901234 {}", "é".repeat(300));
         app.core
-            .on_chat_event(task, nexus_core::provider::StreamEvent::Error(error))
+            .on_chat_event(task, dugix_core::provider::StreamEvent::Error(error))
             .unwrap();
         app.poll_studio();
         let (state, detail) = activities(&app, "t1").pop().unwrap();
@@ -1200,11 +1296,11 @@ mod tests {
         app.core
             .on_chat_event(
                 first,
-                nexus_core::provider::StreamEvent::Token("**Which** audience?".into()),
+                dugix_core::provider::StreamEvent::Token("**Which** audience?".into()),
             )
             .unwrap();
         app.core
-            .on_chat_event(first, nexus_core::provider::StreamEvent::Done)
+            .on_chat_event(first, dugix_core::provider::StreamEvent::Done)
             .unwrap();
         let second = start_comment_turn(&mut app);
         assert_ne!(first, second);
@@ -1213,7 +1309,7 @@ mod tests {
             Some(&(ActivityState::Done, Some("Which audience?")))
         );
         app.core
-            .on_chat_event(second, nexus_core::provider::StreamEvent::Done)
+            .on_chat_event(second, dugix_core::provider::StreamEvent::Done)
             .unwrap();
         app.poll_studio();
         assert_eq!(
@@ -1271,7 +1367,7 @@ mod tests {
             Some(&(ActivityState::Progress, Some("replied in this thread")))
         );
         app.core
-            .on_chat_event(task, nexus_core::provider::StreamEvent::Done)
+            .on_chat_event(task, dugix_core::provider::StreamEvent::Done)
             .unwrap();
         app.poll_studio();
         assert_eq!(
@@ -1375,14 +1471,14 @@ mod tests {
         let abort = tokio::spawn(async {}).abort_handle();
         app.core.chat_tasks.insert(
             1,
-            nexus_core::app::ChatTask {
+            dugix_core::app::ChatTask {
                 id: 1,
                 session_id: "s".into(),
                 session_title: "streaming".into(),
                 space_id: "space".into(),
                 model: "a/one".into(),
                 model_id: "one".into(),
-                backend: nexus_core::provider::BackendTag::OpenRouter,
+                backend: dugix_core::provider::BackendTag::OpenRouter,
                 incognito: false,
                 buffer: "partial".into(),
                 thinking: String::new(),
@@ -1391,7 +1487,7 @@ mod tests {
                 usage_row_id: None,
                 started: std::time::Instant::now(),
                 thinking_idx: 0,
-                spinner_color: nexus_core::app::SpinnerColor::Green,
+                spinner_color: dugix_core::app::SpinnerColor::Green,
                 abort,
             },
         );
@@ -1497,14 +1593,14 @@ mod tests {
 
     fn doc_file(app: &AppView) -> PathBuf {
         let path = app.files_dir().join("docs/test.doc.json");
-        let mut doc = Doc::from_design("Test", &nexus_core::design::Design::default());
+        let mut doc = Doc::from_design("Test", &dugix_core::design::Design::default());
         doc.blocks = doc::markdown::parse_document(
             "# Test\n\nShip the docs canvas this quarter.\n\n- one\n- two\n",
             true,
         )
         .blocks;
         let doc = Doc::check(&serde_json::to_string(&doc).unwrap()).unwrap();
-        nexus_core::deck::write_atomic(&path, &serde_json::to_vec(&doc).unwrap()).unwrap();
+        dugix_core::deck::write_atomic(&path, &serde_json::to_vec(&doc).unwrap()).unwrap();
         path
     }
 
@@ -1568,7 +1664,7 @@ mod tests {
             style: None,
             kind: doc::Kind::Paragraph { text: long },
         };
-        nexus_core::deck::write_atomic(&path, &serde_json::to_vec(&doc).unwrap()).unwrap();
+        dugix_core::deck::write_atomic(&path, &serde_json::to_vec(&doc).unwrap()).unwrap();
         app.studio.queued.clear();
         app.handle_studio_message(doc_comment(path.clone(), "Long"))
             .unwrap();
@@ -1738,7 +1834,7 @@ mod tests {
                 text: "Ship the docs canvas in Q3.".into(),
             },
         };
-        nexus_core::deck::write_atomic(&path, &serde_json::to_vec(&doc).unwrap()).unwrap();
+        dugix_core::deck::write_atomic(&path, &serde_json::to_vec(&doc).unwrap()).unwrap();
         app.deck_link
             .lock()
             .unwrap()
@@ -1754,7 +1850,7 @@ mod tests {
             style: None,
             kind: doc::Kind::Divider,
         };
-        nexus_core::deck::write_atomic(&path, &serde_json::to_vec(&doc).unwrap()).unwrap();
+        dugix_core::deck::write_atomic(&path, &serde_json::to_vec(&doc).unwrap()).unwrap();
         app.deck_link
             .lock()
             .unwrap()
@@ -1762,13 +1858,66 @@ mod tests {
             .push((path, "b3".into()));
         app.poll_studio();
         app.core
-            .on_chat_event(task, nexus_core::provider::StreamEvent::Done)
+            .on_chat_event(task, dugix_core::provider::StreamEvent::Done)
             .unwrap();
         app.poll_studio();
         assert_eq!(
             activities(&app, "t1").last(),
             Some(&(ActivityState::Done, Some("edited blocks b2, b3")))
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sheet_comments_and_focus_are_carried_into_the_conversation() {
+        let dir = temp();
+        let mut app = view(&dir.0);
+        let mut sheet =
+            dugix_core::sheet::Sheet::from_design("Grid", &dugix_core::design::Design::default());
+        sheet.tabs[0].cells.insert(
+            "B4".into(),
+            dugix_core::sheet::Cell {
+                input: "42".into(),
+                ..Default::default()
+            },
+        );
+        let files = app.files_dir();
+        dugix_core::sheet::storage::save(
+            &files,
+            "sheets/grid.sheet.json",
+            &sheet,
+            dugix_core::deck::history::Who::User,
+        )
+        .unwrap();
+        let path = files.join("sheets/grid.sheet.json");
+        app.handle_studio_message(Message::SheetComment {
+            path: path.clone(),
+            thread: "thread-one".into(),
+            tab: "Sheet1".into(),
+            range: "B4".into(),
+            quote: "42".into(),
+            text: "Explain".into(),
+        })
+        .unwrap();
+        let text = app.studio.queued.front().unwrap();
+        assert!(
+            text.starts_with("Comment on sheets/grid.sheet.json · Sheet1!B4 \"42\": Explain\n"),
+            "{text}"
+        );
+        assert!(text.contains("thread thread-one · revision"));
+        assert!(text.contains(&sheet.revision()[..12]));
+        app.attach_fake_studio();
+        app.handle_studio_message(Message::SheetFocus {
+            path,
+            tab: "Sheet1".into(),
+            range: "B2:C5".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            app.with_studio_context("Question".into()),
+            "Question\n\nstudio: viewing Sheet1!B2:C5"
+        );
+        assert_eq!(app.with_studio_context("Next".into()), "Next");
     }
 
     #[cfg(unix)]
@@ -1792,8 +1941,8 @@ mod tests {
         app.poll_studio();
         let status = app.core.last_status();
         assert!(
-            status.contains("update nexus-studio"),
-            "the status line tells the user to update nexus-studio: {status}"
+            status.contains("update dugix-studio"),
+            "the status line tells the user to update dugix-studio: {status}"
         );
         assert!(
             app.studio.last_deck.is_none(),

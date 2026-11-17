@@ -1,5 +1,5 @@
-//! Import other presentation formats as decks. Today that is `PowerPoint`
-//! (`.pptx`), the inverse of [`super::export`]'s writer.
+//! Import other presentation formats as decks: `PowerPoint` (`.pptx`), the inverse
+//! of [`super::export`]'s writer.
 
 pub mod pptx;
 pub(crate) mod xml;
@@ -28,7 +28,6 @@ pub struct ImportedFile {
     pub warnings: Vec<String>,
 }
 
-/// Largest `.pptx` read.
 pub const MAX_PPTX_BYTES: u64 = 250 * 1024 * 1024;
 
 fn slug(text: &str) -> String {
@@ -46,8 +45,8 @@ fn slug(text: &str) -> String {
     }
 }
 
-/// Read and import the `.pptx` at `source`, copying pictures into
-/// `decks_dir/assets/`. `title` replaces the presentation's own title.
+/// Import the `.pptx` at `source`, copying pictures into `decks_dir/assets/`;
+/// `title` replaces the presentation's own title.
 fn read_and_import(source: &Path, decks_dir: &Path, title: Option<&str>) -> Result<Imported> {
     ensure!(
         source
@@ -92,12 +91,11 @@ fn write_new(path: &Path, deck: &Deck) -> Result<()> {
     })
 }
 
-/// Import the `.pptx` at `source` as the new deck `deck_path` (which must not
-/// exist), with pictures under `<deck folder>/assets/`.
+/// Import the `.pptx` at `source` as the new deck `deck_path`, which must not exist,
+/// with pictures under `<deck folder>/assets/`.
 ///
 /// # Errors
-/// When the file cannot be read, is not a `.pptx`, or the deck cannot be
-/// written.
+/// When the file cannot be read, is not a `.pptx`, or the deck cannot be written.
 pub fn import_pptx_to(source: &Path, deck_path: &Path, title: Option<&str>) -> Result<Imported> {
     let dir = deck_path.parent().context("missing deck folder")?;
     let imported = read_and_import(source, dir, title)?;
@@ -105,10 +103,9 @@ pub fn import_pptx_to(source: &Path, deck_path: &Path, title: Option<&str>) -> R
     Ok(imported)
 }
 
-/// Import the `.pptx` at `source` into `decks_dir` as `<slug>.deck.json`,
-/// with its pictures under `decks_dir/assets/`. An existing deck is never
-/// overwritten: the name gets `-2`, `-3`, … instead. `title` replaces the
-/// presentation's own title (and names the file) when given.
+/// Import the `.pptx` at `source` into `decks_dir` as `<slug>.deck.json`, never
+/// overwriting: the name gets `-2`, `-3`, … instead. `title` names the deck and
+/// the file.
 ///
 /// # Errors
 /// When the file cannot be read, is not a `.pptx`, or cannot be written.

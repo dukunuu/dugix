@@ -8,7 +8,7 @@ export interface Discovery {
   authentication: string;
 }
 
-export class NexusApi {
+export class DugixApi {
   readonly baseUrl: string;
   private readonly token: string;
 
@@ -58,7 +58,7 @@ export class NexusApi {
   }
 
   discovery(): Promise<Discovery> {
-    return this.request<Discovery>("/.well-known/nexus");
+    return this.request<Discovery>("/.well-known/dugix");
   }
 
   snapshot(): Promise<Snapshot> {

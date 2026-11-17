@@ -2,9 +2,9 @@ use super::*;
 
 #[test]
 fn deck_export_parses_and_runs_against_temp_space_files() {
-    let temp = std::env::temp_dir().join(format!("nexus-cli-export-{}", uuid::Uuid::new_v4()));
+    let temp = std::env::temp_dir().join(format!("dugix-cli-export-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(temp.join("decks")).unwrap();
-    let deck = nexus_core::deck::Deck::titled("CLI story");
+    let deck = dugix_core::deck::Deck::titled("CLI story");
     std::fs::write(
         temp.join("decks/story.deck.json"),
         serde_json::to_vec(&deck).unwrap(),
@@ -18,7 +18,7 @@ fn deck_export_parses_and_runs_against_temp_space_files() {
         ("json", "deck.json"),
     ] {
         let cli = Cli::try_parse_from([
-            "nexus",
+            "dugix",
             "deck",
             "export",
             "decks/story.deck.json",
@@ -37,7 +37,7 @@ fn deck_export_parses_and_runs_against_temp_space_files() {
     }
     let custom = temp.join("custom.pptx");
     let cli = Cli::try_parse_from([
-        "nexus",
+        "dugix",
         "deck",
         "export",
         temp.join("decks/story.deck.json").to_str().unwrap(),
@@ -52,25 +52,25 @@ fn deck_export_parses_and_runs_against_temp_space_files() {
     };
     deck_export(cmd, &temp).unwrap();
     assert!(custom.is_file());
-    assert!(Cli::try_parse_from(["nexus", "deck", "export", "x", "--format", "svg"]).is_err());
+    assert!(Cli::try_parse_from(["dugix", "deck", "export", "x", "--format", "svg"]).is_err());
     std::fs::remove_dir_all(temp).unwrap();
 }
 
 #[test]
 fn deck_import_parses_and_writes_a_new_deck_without_overwriting() {
-    let temp = std::env::temp_dir().join(format!("nexus-cli-import-{}", uuid::Uuid::new_v4()));
+    let temp = std::env::temp_dir().join(format!("dugix-cli-import-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(temp.join("decks")).unwrap();
-    let deck = nexus_core::deck::Deck::titled("CLI import");
+    let deck = dugix_core::deck::Deck::titled("CLI import");
     std::fs::write(
         temp.join("decks/story.deck.json"),
         serde_json::to_vec(&deck).unwrap(),
     )
     .unwrap();
     // Round trip through the exporter: the file is synthetic.
-    let exported = nexus_core::deck::export::pptx::export_pptx(&deck, None).unwrap();
+    let exported = dugix_core::deck::export::pptx::export_pptx(&deck, None).unwrap();
     std::fs::write(temp.join("talk.pptx"), exported).unwrap();
     let run = |args: &[&str]| {
-        let mut full = vec!["nexus", "deck", "import"];
+        let mut full = vec!["dugix", "deck", "import"];
         full.extend(args);
         let cli = Cli::try_parse_from(full).unwrap();
         let Some(Command::Deck { cmd }) = cli.command else {

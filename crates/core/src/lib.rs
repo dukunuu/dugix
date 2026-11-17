@@ -1,11 +1,5 @@
-//! nexus-chat-core (lib crate `nexus_core`): the engine behind the `nexus`
-//! TUI, CLI, and `nexus host` API. Owns all domain logic — sessions, research
-//! pipeline, provider clients, tools, files, skills, `SQLite` state — with no
-//! knowledge of the terminal UI.
-//!
-//! Doc-lint allows: the domain surface the frontends drive directly (`Db`,
-//! provider, config, `App`'s event handlers) is pub, and per-item error/panic
-//! docs on all of it would be noise.
+//! dugix-core (lib crate `dugix_core`): the engine behind the `dugix` TUI,
+//! CLI and `dugix host` API, owning all domain logic and no terminal UI.
 #![allow(
     clippy::missing_errors_doc,
     clippy::missing_panics_doc,
@@ -27,14 +21,19 @@ pub mod doc;
 pub mod eval;
 pub mod extract;
 pub mod filesearch;
+pub mod fleet;
+pub mod highlight;
 pub mod host;
 pub mod interactive;
 pub mod jobs;
 pub mod markdown;
+pub mod memory;
 pub mod panels;
+pub mod panic_guard;
 pub mod prompts;
 pub mod provider;
 pub mod remote_image;
+pub mod sheet;
 pub mod skills;
 pub mod space;
 pub mod subagent;
@@ -49,13 +48,8 @@ pub mod workspace;
 
 use anyhow::Result;
 
-/// One bootstrap for every frontend (TUI, CLI, host): credentials → space →
-/// db → appserver → toolbox.
+/// One bootstrap for every frontend (TUI, CLI, host).
 pub async fn boot(saved: config::SavedCreds) -> Result<app::App> {
-    // A single bootstrap key just seeds App::new's "reasonable defaults"
-    // guess (utility model strings); rebuild_all_backends below populates
-    // every configured backend regardless of which one this picked.
-    let key = config::first_configured(&saved).map(|(_, k)| k);
     let space = space::Space::open()?;
     let db = db::Db::open(&space.db_path())?;
     if space.traces_dir().join("index.db").exists() {
@@ -70,13 +64,11 @@ pub async fn boot(saved: config::SavedCreds) -> Result<app::App> {
             Ok(())
         })();
     }
-    let prompt_note = config::migrate_system_prompt_overlay();
-    let mut app = app::App::new(db, key.as_deref(), space);
-    app.system_prompt_overlay = config::load_system_prompt_overlay();
-    if let Some(note) = prompt_note {
+    let mut app = app::App::with_creds(db, space, saved);
+    for note in app.db.take_upgrade_notes() {
         app.push_status(note);
     }
-    app.saved = saved;
+    app.system_prompt_overlay = config::load_system_prompt_overlay();
     // Connectors connect in the background; the TUI never waits for them.
     app.connectors =
         connectors::Registry::system(&app.space.root, Some(app.connector_notes_tx.clone()), true);
@@ -88,7 +80,6 @@ pub async fn boot(saved: config::SavedCreds) -> Result<app::App> {
         }
         Err(error) => app.push_status(format!("connectors not loaded: {error:#}")),
     }
-    app.rebuild_all_backends();
     app.discover_embeddings();
     app.app_server = appserver::AppServer::start(app.space.spaces_root()).await;
     app.refresh_toolbox();

@@ -18,7 +18,6 @@ pub struct ProcInfo {
 }
 
 impl ProcInfo {
-    /// Name and current state, including elapsed time while running.
     #[must_use]
     pub fn header(&self) -> String {
         if self.state == "running" {
@@ -70,6 +69,8 @@ mod unix {
     #[cfg(test)]
     const MAX_LOG_BYTES: u64 = 64 * 1024;
     const WINDOW: u64 = 1024 * 1024;
+    /// Longest one `wait` blocks; the model waits again for longer jobs.
+    const MAX_WAIT_S: u64 = 600;
 
     struct Process {
         session_id: String,
@@ -171,6 +172,7 @@ mod unix {
                 match action {
                     "proc_start" => self.start(context, &args).await,
                     "proc_read" => self.read(id, args["since"].as_u64()),
+                    "proc_wait" => self.wait(id, &args).await,
                     "proc_list" => Ok(self
                         .list(context.session_id)
                         .iter()
@@ -323,7 +325,7 @@ mod unix {
             }
         }
 
-        /// All processes, with this session first and stable ordering within it.
+        /// This session first, stable ordering within it.
         #[must_use]
         pub fn list(&self, session_id: &str) -> Vec<ProcInfo> {
             let mut registry = self.0.lock().expect("process registry");
@@ -339,7 +341,6 @@ mod unix {
             rows
         }
 
-        /// Number of commands still running across all sessions.
         #[must_use]
         pub fn running_count(&self) -> usize {
             let mut registry = self.0.lock().expect("process registry");
@@ -351,7 +352,7 @@ mod unix {
             count
         }
 
-        /// Read only output added since the previous read, or a 1-based line.
+        /// Only output added since the previous read, or a 1-based line.
         pub fn read(&self, id: &str, since: Option<u64>) -> Result<String> {
             let mut registry = self.0.lock().expect("process registry");
             let process = registry
@@ -380,6 +381,50 @@ mod unix {
             Ok(format!("{}\n{text}", process.info(id).header()))
         }
 
+        /// Block until the process prints `until`, exits, or `wait_s` passes,
+        /// then return the output since the last read with the reason first.
+        async fn wait(&self, id: &str, args: &Value) -> Result<String> {
+            let seconds = args["wait_s"].as_u64().unwrap_or(60).clamp(1, MAX_WAIT_S);
+            let deadline = Instant::now() + Duration::from_secs(seconds);
+            let pattern = args["until"].as_str().filter(|p| !p.is_empty());
+            let mut scanned = None;
+            let mut pending = String::new();
+            let reason = loop {
+                {
+                    let mut registry = self.0.lock().expect("process registry");
+                    let process = registry
+                        .processes
+                        .get_mut(id)
+                        .ok_or_else(|| anyhow::anyhow!("unknown process id: {id}"))?;
+                    process.reap();
+                    if let Some(pattern) = pattern {
+                        // Unread output counts: the line may already be there.
+                        let from = scanned.unwrap_or(process.cursor);
+                        let (output, end) = output(&process.path, from)?;
+                        scanned = Some(end);
+                        pending.push_str(&output);
+                        if pending.lines().any(|line| line.contains(pattern)) {
+                            break format!("matched {pattern:?}");
+                        }
+                        if let Some((_, last)) = pending.rsplit_once('\n') {
+                            pending = last.to_string();
+                        }
+                        if pending.len() > usize::try_from(WINDOW).expect("window fits usize") {
+                            pending.clear();
+                        }
+                    }
+                    if process.finished {
+                        break "exited".to_string();
+                    }
+                }
+                if Instant::now() >= deadline {
+                    break format!("still running after {seconds}s · wait again or read");
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            };
+            Ok(format!("{reason}\n{}", self.read(id, None)?))
+        }
+
         /// Last 200 lines for the popup, without moving the model's read cursor.
         pub fn last_output(&self, id: &str) -> Result<String> {
             let registry = self.0.lock().expect("process registry");
@@ -390,7 +435,7 @@ mod unix {
             tail(&process.path, 200)
         }
 
-        /// Stop a group. The reaper sends SIGKILL after a two-second grace.
+        /// The reaper sends SIGKILL after a two-second grace.
         pub fn kill(&self, id: &str) -> Result<String> {
             let mut registry = self.0.lock().expect("process registry");
             let process = registry
@@ -403,7 +448,7 @@ mod unix {
             Ok(format!("{} · killed", process.name))
         }
 
-        /// Stop every group before the frontend exits; no future starts allowed.
+        /// Stops every group; no future starts are allowed.
         pub async fn shutdown(&self) {
             let processes = {
                 let mut registry = self.0.lock().expect("process registry");
@@ -463,7 +508,7 @@ mod unix {
         impl Fixture {
             fn new() -> Self {
                 let dir =
-                    std::env::temp_dir().join(format!("nexus-procs-{}", uuid::Uuid::new_v4()));
+                    std::env::temp_dir().join(format!("dugix-procs-{}", uuid::Uuid::new_v4()));
                 fs::create_dir_all(&dir).unwrap();
                 Self {
                     procs: Arc::default(),
@@ -477,7 +522,7 @@ mod unix {
                     .action(
                         Context {
                             workspace: &self.workspace,
-                            db_path: Some(&self.dir.join("nexus.db")),
+                            db_path: Some(&self.dir.join("dugix.db")),
                             confinement: None,
                             session_id: "session-a",
                             allow_unparseable: false,
@@ -495,7 +540,7 @@ mod unix {
                     None,
                     "auto".into(),
                     vec![],
-                    Some(self.dir.join("nexus.db")),
+                    Some(self.dir.join("dugix.db")),
                     None,
                     None,
                 );
@@ -572,6 +617,51 @@ mod unix {
         }
 
         #[tokio::test]
+        async fn wait_returns_on_a_matching_line_on_exit_and_on_timeout() {
+            let fixture = Fixture::new();
+            let result = fixture
+                .start(json!({"cmd":"echo boot; sleep 0.6; echo tests passed; sleep 30", "ready_when":"boot"}))
+                .await;
+            let id = id(&result);
+            let begun = Instant::now();
+            let matched = fixture
+                .procs
+                .wait(id, &json!({"until":"passed", "wait_s":20}))
+                .await
+                .unwrap();
+            assert!(matched.starts_with("matched \"passed\"\n"), "{matched}");
+            assert!(matched.contains("running"), "{matched}");
+            assert!(
+                matched.trim_end().ends_with("boot\ntests passed"),
+                "the unread output: {matched}"
+            );
+            assert!(begun.elapsed() < Duration::from_secs(10));
+
+            let timed_out = fixture.procs.wait(id, &json!({"wait_s":1})).await.unwrap();
+            assert!(
+                timed_out.starts_with("still running after 1s"),
+                "{timed_out}"
+            );
+
+            let result = fixture
+                .start(json!({"cmd":"echo up; sleep 0.5; echo done; exit 3", "ready_when":"up"}))
+                .await;
+            let exited = fixture
+                .procs
+                .wait(self::id(&result), &json!({"until":"never printed"}))
+                .await
+                .unwrap();
+            assert!(exited.starts_with("exited\n"), "{exited}");
+            assert!(exited.contains("exited 3"), "{exited}");
+            assert!(exited.trim_end().ends_with("done"), "{exited}");
+            assert!(
+                fixture.procs.wait("nope0000", &json!({})).await.is_err(),
+                "an unknown id is an error, not a hang"
+            );
+            fixture.procs.shutdown().await;
+        }
+
+        #[tokio::test]
         async fn reads_incremental_output_since_lines_and_list_state() {
             let fixture = Fixture::new();
             let result = fixture.start(json!({"cmd":"echo first; sleep 0.5; echo second; sleep 30", "ready_when":"first", "name":"watcher"})).await;
@@ -630,7 +720,7 @@ mod unix {
                 .action(
                     Context {
                         workspace: &fixture.workspace,
-                        db_path: Some(&fixture.dir.join("nexus.db")),
+                        db_path: Some(&fixture.dir.join("dugix.db")),
                         confinement: None,
                         session_id: "session-b",
                         allow_unparseable: false,
@@ -681,8 +771,6 @@ mod unix {
                     );
                 }
                 if dropping {
-                    // Replacing the fixture's Arc ensures its cleanup cannot
-                    // kill the groups: only the registry's Drop can do that.
                     let mut fixture = fixture;
                     drop(std::mem::take(&mut fixture.procs));
                     for pid in pids {
@@ -862,7 +950,6 @@ mod unix {
 
 #[cfg(not(unix))]
 #[derive(Default)]
-/// Background commands are unavailable on this platform.
 pub struct Procs;
 
 #[cfg(not(unix))]
@@ -876,24 +963,19 @@ impl Procs {
         "proc is only available on Unix".into()
     }
 
-    /// No processes on unsupported platforms.
     #[must_use]
     pub fn list(&self, _session_id: &str) -> Vec<ProcInfo> {
         Vec::new()
     }
-    /// No processes on unsupported platforms.
     #[must_use]
     pub fn running_count(&self) -> usize {
         0
     }
-    /// Background processes are unavailable on this platform.
     pub fn kill(&self, _id: &str) -> anyhow::Result<String> {
         anyhow::bail!("proc is only available on Unix")
     }
-    /// Background processes are unavailable on this platform.
     pub fn last_output(&self, _id: &str) -> anyhow::Result<String> {
         anyhow::bail!("proc is only available on Unix")
     }
-    /// Nothing to shut down on unsupported platforms.
     pub async fn shutdown(&self) {}
 }

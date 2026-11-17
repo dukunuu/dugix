@@ -9,22 +9,22 @@ import { SessionsPage } from "./Sessions";
 import { MarkdownContent, MediaContext } from "./MarkdownContent";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, useContext } from "solid-js";
 import { FilesPage, SpacePicker, workspacePages, type WorkspacePage } from "./Workspace";
-import { NexusApi } from "./api";
+import { DugixApi } from "./api";
 import { knownDevices, rememberDevice } from "./devices";
 import type { KnownDevice } from "./devices";
 import { markdown } from "./markdown";
-import { createNexusStore } from "./state";
+import { createDugixStore } from "./state";
 import type { Gate, Message, StreamDraft } from "./types";
 
-const configuredUrl = import.meta.env.VITE_NEXUS_URL as string | undefined;
-const configuredToken = import.meta.env.VITE_NEXUS_TOKEN as string | undefined;
+const configuredUrl = import.meta.env.VITE_DUGIX_URL as string | undefined;
+const configuredToken = import.meta.env.VITE_DUGIX_TOKEN as string | undefined;
 
 function savedUrl() {
-  return configuredUrl ?? sessionStorage.getItem("nexus.url") ?? window.location.origin;
+  return configuredUrl ?? sessionStorage.getItem("dugix.url") ?? window.location.origin;
 }
 
 function savedToken() {
-  return configuredToken ?? sessionStorage.getItem("nexus.token") ?? "";
+  return configuredToken ?? sessionStorage.getItem("dugix.token") ?? "";
 }
 
 export function App() {
@@ -40,7 +40,7 @@ export function App() {
   const [sidebar, setSidebar] = createSignal(false);
   const [showDetails, setShowDetails] = createSignal(false);
   const [sessionFilter, setSessionFilter] = createSignal("");
-  const [store, setStore] = createSignal<ReturnType<typeof createNexusStore>>();
+  const [store, setStore] = createSignal<ReturnType<typeof createDugixStore>>();
 
   async function connect(candidateUrl = url(), candidateToken = token(), remember = rememberAccess()) {
     const hostUrl = candidateUrl.trim();
@@ -49,16 +49,16 @@ export function App() {
     setConnecting(true);
     setConnectError("");
     try {
-      const api = new NexusApi(hostUrl, hostToken);
+      const api = new DugixApi(hostUrl, hostToken);
       const [discovery] = await Promise.all([api.discovery(), api.snapshot()]);
-      sessionStorage.setItem("nexus.url", hostUrl);
-      sessionStorage.setItem("nexus.token", hostToken);
+      sessionStorage.setItem("dugix.url", hostUrl);
+      sessionStorage.setItem("dugix.token", hostToken);
       if (remember) {
         setKnown(rememberDevice({ hostId: discovery.host_id, name: discovery.product, url: hostUrl, token: hostToken, version: discovery.version, lastSeen: new Date().toISOString() }));
       } else {
         setKnown(rememberDevice({ hostId: discovery.host_id, name: discovery.product, url: hostUrl, version: discovery.version, lastSeen: new Date().toISOString() }));
       }
-      const next = createNexusStore(api);
+      const next = createDugixStore(api);
       setStore(next);
       next.start();
       setConnected(true);
@@ -80,7 +80,7 @@ export function App() {
 
   onMount(() => {
     // Public discovery needs no token; the form already points at this origin.
-    void new NexusApi(savedUrl(), "").discovery().then((host) => setDiscovered(host.product === "nexus-chat")).catch(() => undefined);
+    void new DugixApi(savedUrl(), "").discovery().then((host) => setDiscovered(host.product === "dugix")).catch(() => undefined);
     const currentToken = savedToken();
     if (currentToken) void connect(savedUrl(), currentToken, false);
     else void reconnectKnownDevices(known());
@@ -105,22 +105,22 @@ function ConnectScreen(props: { discovered: boolean; url: string; token: string;
     <section class="connect-card">
       <div class="brand-mark">N</div>
       <p class="eyebrow">LOCAL-FIRST INTELLIGENCE</p>
-      <h1>Nexus Chat</h1>
+      <h1>Dugix Chat</h1>
       <p class="muted">Connect to your local host. Your token stays in this browser session unless you choose to remember access.</p>
       <Show when={props.devices.length > 0}><div class="known-devices"><p class="eyebrow">PREVIOUS HOSTS</p><For each={props.devices}>{(device) => <button class="known-device" onClick={() => props.onReconnect(device)}><span class="device-status">{device.token ? "●" : "○"}</span><span><strong>{device.name}</strong><small>{device.url}</small></span><span>↗</span></button>}</For></div></Show>
-      <Show when={props.discovered}><p class="muted">Nexus host discovered. Enter your token to connect.</p></Show>
+      <Show when={props.discovered}><p class="muted">Dugix host discovered. Enter your token to connect.</p></Show>
       <label>Host URL<input value={props.url} onInput={(event) => props.setUrl(event.currentTarget.value)} placeholder="http://127.0.0.1:8643" /></label>
       <label>Host token<input type="password" value={props.token} onInput={(event) => props.setToken(event.currentTarget.value)} onKeyDown={(event) => event.key === "Enter" && props.onConnect()} placeholder="Bearer token" /></label>
       <label class="remember-access"><input type="checkbox" checked={props.remember} onChange={(event) => props.setRemember(event.currentTarget.checked)} /> Remember access on this browser</label>
       <Show when={props.error}><p class="connect-error">{props.error}</p></Show>
       <button class="primary-button" onClick={props.onConnect} disabled={props.connecting}>{props.connecting ? "Connecting…" : "Connect"} <span>↗</span></button>
-      <p class="hint">Run <code>nexus host</code> to start the local daemon.</p>
+      <p class="hint">Run <code>dugix host</code> to start the local daemon.</p>
     </section>
   </main>;
 }
 
 function ChatShell(props: {
-  store: ReturnType<typeof createNexusStore>;
+  store: ReturnType<typeof createDugixStore>;
   composer: string;
   setComposer: (value: string) => void;
   sidebar: boolean;
@@ -194,7 +194,7 @@ function ChatShell(props: {
   return <MediaContext.Provider value={{ api: props.store.api, space: () => state.snapshot?.active_space_id, showReasoning: () => state.snapshot?.settings.show_reasoning ?? false }}><div class="app-shell" classList={{ "hide-hints": state.snapshot?.settings.hide_hints, "hide-stats": state.snapshot?.settings.show_stats === false }}>
     <Show when={props.sidebar}><button class="scrim" aria-label="Close sidebar" onClick={() => props.setSidebar(false)} /></Show>
     <aside classList={{ sidebar: true, open: props.sidebar }}>
-      <div class="sidebar-top"><div class="wordmark"><span class="brand-mark small">N</span><strong>NEXUS</strong></div><button class="icon-button mobile-only" onClick={() => props.setSidebar(false)}>×</button></div>
+      <div class="sidebar-top"><div class="wordmark"><span class="brand-mark small">N</span><strong>DUGIX</strong></div><button class="icon-button mobile-only" onClick={() => props.setSidebar(false)}>×</button></div>
       <SpacePicker store={props.store} />
       <nav class="workspace-nav" aria-label="Workspace"><For each={workspacePages}>{(item) => <button classList={{ selected: page() === item }} aria-current={page() === item ? "page" : undefined} onClick={() => { setPage(item); props.setSidebar(false); if (item === "Usage") void props.store.loadUsage(); }}>{item}</button>}</For></nav>
       <button class="new-chat" onClick={() => { if (!setPage("Chat")) return; void props.store.command("NewSession"); props.setSidebar(false); }}><span>＋</span> New conversation <kbd>⌘ K</kbd></button>
@@ -210,7 +210,7 @@ function ChatShell(props: {
       <div class="sidebar-footer"><Show when={running() > 0}><div class="running-task">◌ {running()} task{running() === 1 ? "" : "s"} running</div></Show><button class="footer-button" onClick={() => props.setShowDetails(!props.showDetails)}>⚙ Workspace</button><button class="footer-button danger" onClick={() => { if (props.store.canNavigate()) props.onDisconnect(); }}>⇥ Disconnect</button></div>
     </aside>
     <main class="conversation">
-      <header class="topbar"><button class="icon-button mobile-only" onClick={() => props.setSidebar(true)} aria-label="Open sidebar">☰</button><div class="title-block"><span class="eyebrow">{page() === "Chat" ? "CONVERSATION" : "WORKSPACE"}</span><h2>{page() === "Chat" ? activeSession()?.title || "Nexus Chat" : page()}</h2></div><div class="top-actions"><ConnectionDot status={state.connection} /><Show when={running() > 0}><span class="task-count">{running()} active</span></Show><button class="icon-button" onClick={() => props.setShowDetails(!props.showDetails)} aria-label="Toggle details">⋯</button></div></header>
+      <header class="topbar"><button class="icon-button mobile-only" onClick={() => props.setSidebar(true)} aria-label="Open sidebar">☰</button><div class="title-block"><span class="eyebrow">{page() === "Chat" ? "CONVERSATION" : "WORKSPACE"}</span><h2>{page() === "Chat" ? activeSession()?.title || "Dugix Chat" : page()}</h2></div><div class="top-actions"><ConnectionDot status={state.connection} /><Show when={running() > 0}><span class="task-count">{running()} active</span></Show><button class="icon-button" onClick={() => props.setShowDetails(!props.showDetails)} aria-label="Toggle details">⋯</button></div></header>
       <Show when={page() !== "Chat"}><Show when={page() === "Files"}><FilesPage store={props.store} /></Show>
         <Show when={page() === "Research activity"}><ResearchPage store={props.store} sessionId={state.activeSessionId} /></Show>
         <Show when={page() === "Apps"}><AppsPage store={props.store} /></Show>
@@ -266,10 +266,14 @@ function MessageView(props: { message: Message }) {
   if (props.message.role === "tool_call") {
     return <ToolCallView call={parseToolCall(props.message.content)} />;
   }
+  // Memory hints are for the model; the terminal shows them as one dim line.
+  if (props.message.role === "recall") {
+    return null;
+  }
   const assistant = props.message.role !== "user";
   return <article classList={{ message: true, user: !assistant, assistant }}>
     <div class="message-avatar">{assistant ? "✦" : "You"}</div>
-    <div class="message-body"><Show when={assistant}><div class="message-meta"><strong>{props.message.persona || "Nexus"}</strong><Show when={props.message.model}><span>{props.message.model}</span></Show></div></Show>
+    <div class="message-body"><Show when={assistant}><div class="message-meta"><strong>{props.message.persona || "Dugix"}</strong><Show when={props.message.model}><span>{props.message.model}</span></Show></div></Show>
       <Show when={props.message.reasoning}><details class="reasoning" open={preferences?.showReasoning()}><summary>Reasoning</summary><div class="reasoning-copy">{props.message.reasoning}</div></details></Show>
       <MessageContent content={props.message.content} />
       <Show when={props.message.tokens || props.message.cost}><div class="message-stats"><Show when={props.message.tokens}>{props.message.tokens} tokens</Show><Show when={props.message.secs}>{props.message.secs!.toFixed(1)}s</Show><Show when={props.message.cost}>${props.message.cost!.toFixed(4)}</Show></div></Show>
@@ -317,16 +321,16 @@ function toolSummary(call: ToolCallData): string {
 }
 
 function DraftView(props: { draft: StreamDraft; showDetails: boolean }) {
-  return <><Show when={props.draft.tools.length > 10} fallback={<For each={props.draft.tools}>{(tool) => <ToolCallView call={tool} />}</For>}><ToolCallsSummary calls={props.draft.tools} /></Show><article class="message assistant draft-message"><div class="message-avatar">✦</div><div class="message-body"><div class="message-meta"><strong>Nexus</strong><span class="live-label">LIVE</span></div><Show when={props.showDetails && props.draft.reasoning}><details class="reasoning" open><summary>Reasoning</summary><div class="reasoning-copy">{props.draft.reasoning}</div></details></Show><Show when={props.draft.status}><div class="stream-status">◌ {props.draft.status}</div></Show><MessageContent content={props.draft.answer} /><Show when={!props.draft.done && !props.draft.error}><span class="cursor" /></Show><Show when={props.draft.error}><div class="stream-error">{props.draft.error}</div></Show></div></article></>;
+  return <><Show when={props.draft.tools.length > 10} fallback={<For each={props.draft.tools}>{(tool) => <ToolCallView call={tool} />}</For>}><ToolCallsSummary calls={props.draft.tools} /></Show><article class="message assistant draft-message"><div class="message-avatar">✦</div><div class="message-body"><div class="message-meta"><strong>Dugix</strong><span class="live-label">LIVE</span></div><Show when={props.showDetails && props.draft.reasoning}><details class="reasoning" open><summary>Reasoning</summary><div class="reasoning-copy">{props.draft.reasoning}</div></details></Show><Show when={props.draft.status}><div class="stream-status">◌ {props.draft.status}</div></Show><MessageContent content={props.draft.answer} /><Show when={!props.draft.done && !props.draft.error}><span class="cursor" /></Show><Show when={props.draft.error}><div class="stream-error">{props.draft.error}</div></Show></div></article></>;
 }
 
 function Composer(props: { value: string; setValue: (value: string) => void; onSend: () => void; running: boolean; onStop: () => void }) {
-  return <div class="composer-wrap"><div class="composer"><textarea value={props.value} onInput={(event) => props.setValue(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); props.onSend(); } }} placeholder="Ask Nexus anything…" rows="1" /><div class="composer-actions"><span class="composer-hint">Shift + Enter for newline</span><Show when={props.running} fallback={<button class="send-button" onClick={props.onSend} disabled={!props.value.trim()} aria-label="Send">↑</button>}><button class="stop-button" onClick={props.onStop} aria-label="Stop response">■</button></Show></div></div><p class="disclaimer">Nexus can make mistakes. Verify important information.</p></div>;
+  return <div class="composer-wrap"><div class="composer"><textarea value={props.value} onInput={(event) => props.setValue(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); props.onSend(); } }} placeholder="Ask Dugix anything…" rows="1" /><div class="composer-actions"><span class="composer-hint">Shift + Enter for newline</span><Show when={props.running} fallback={<button class="send-button" onClick={props.onSend} disabled={!props.value.trim()} aria-label="Send">↑</button>}><button class="stop-button" onClick={props.onStop} aria-label="Stop response">■</button></Show></div></div><p class="disclaimer">Dugix can make mistakes. Verify important information.</p></div>;
 }
 
 function GateBar(props: { gate: Gate; onAnswer: (answer: string) => Promise<void> }) {
   const [answer, setAnswer] = createSignal("");
-  return <div class="gate-bar"><span>◈ Nexus is waiting for your input</span><input value={answer()} onInput={(event) => setAnswer(event.currentTarget.value)} placeholder="Answer the research question…" onKeyDown={(event) => { if (event.key === "Enter" && answer().trim()) void props.onAnswer(answer()); }} /><button onClick={() => { if (answer().trim()) void props.onAnswer(answer()); }}>Reply</button></div>;
+  return <div class="gate-bar"><span>◈ Dugix is waiting for your input</span><input value={answer()} onInput={(event) => setAnswer(event.currentTarget.value)} placeholder="Answer the research question…" onKeyDown={(event) => { if (event.key === "Enter" && answer().trim()) void props.onAnswer(answer()); }} /><button onClick={() => { if (answer().trim()) void props.onAnswer(answer()); }}>Reply</button></div>;
 }
 
 function EmptyState(props: { onSuggestion: (text: string) => void }) {
@@ -334,9 +338,9 @@ function EmptyState(props: { onSuggestion: (text: string) => void }) {
   return <div class="empty-state"><div class="empty-icon">✦</div><h1>Good to see you.</h1><p>Start a conversation with your local research partner.</p><div class="suggestions"><For each={suggestions}>{(suggestion) => <button onClick={() => props.onSuggestion(suggestion)}>{suggestion}<span>↗</span></button>}</For></div></div>;
 }
 
-function DetailsPanel(props: { store: ReturnType<typeof createNexusStore>; activeSession: { model: string; web_mode: boolean } | undefined; research: unknown; onClose: () => void }) {
+function DetailsPanel(props: { store: ReturnType<typeof createDugixStore>; activeSession: { model: string } | undefined; research: unknown; onClose: () => void }) {
   const state = props.store.state;
-  return <aside class="details-panel"><div class="details-heading"><span>WORKSPACE</span><button class="icon-button" onClick={props.onClose} aria-label="Close workspace">×</button></div><label>MODEL<select value={state.snapshot?.settings.model ?? ""} onChange={(event) => void props.store.command({ SetModel: { id: event.currentTarget.value } })}><For each={state.snapshot?.models ?? []}>{(model) => <option value={model.id}>{model.name}</option>}</For></select></label><div class="toggle-row"><span>Web mode</span><button classList={{ toggle: true, on: state.snapshot?.settings.web_mode }} onClick={() => void props.store.command("ToggleWeb")}><span /></button></div><div class="toggle-row"><span>Incognito</span><button classList={{ toggle: true, on: state.snapshot?.settings.incognito }} onClick={() => void props.store.command({ Incognito: { on: !state.snapshot?.settings.incognito } })}><span /></button></div><Show when={props.research}><div class="research-card"><div class="eyebrow">RESEARCH</div><p>{researchLabel(props.research)}</p></div></Show><div class="details-divider" /><button class="utility-button" onClick={() => void props.store.command("Compact")}>⌁ Compact context</button><button class="utility-button" onClick={() => void props.store.loadUsage()}>◒ Usage analytics</button><Show when={state.usage}>{(usage) => <UsageModal usage={usage()} loading={state.usageLoading} onClose={() => props.store.closeUsage()} onRange={(range) => void props.store.loadUsage(range)} />}</Show></aside>;
+  return <aside class="details-panel"><div class="details-heading"><span>WORKSPACE</span><button class="icon-button" onClick={props.onClose} aria-label="Close workspace">×</button></div><label>MODEL<select value={state.snapshot?.settings.model ?? ""} onChange={(event) => void props.store.command({ SetModel: { id: event.currentTarget.value } })}><For each={state.snapshot?.models ?? []}>{(model) => <option value={model.id}>{model.name}</option>}</For></select></label><div class="toggle-row"><span>Incognito</span><button classList={{ toggle: true, on: state.snapshot?.settings.incognito }} onClick={() => void props.store.command({ Incognito: { on: !state.snapshot?.settings.incognito } })}><span /></button></div><Show when={props.research}><div class="research-card"><div class="eyebrow">RESEARCH</div><p>{researchLabel(props.research)}</p></div></Show><div class="details-divider" /><button class="utility-button" onClick={() => void props.store.command("Compact")}>⌁ Compact context</button><button class="utility-button" onClick={() => void props.store.loadUsage()}>◒ Usage analytics</button><Show when={state.usage}>{(usage) => <UsageModal usage={usage()} loading={state.usageLoading} onClose={() => props.store.closeUsage()} onRange={(range) => void props.store.loadUsage(range)} />}</Show></aside>;
 }
 
 function UsageModal(props: { usage: import("./types").UsageSnapshot; loading: boolean; onClose: () => void; onRange: (range: string) => void }) {
@@ -349,10 +353,10 @@ function cacheRate(totals: { rated_prompt_tokens: number; rated_cache_read_token
 function ConnectionDot(props: { status: string }) { return <span class="connection"><i classList={{ connected: props.status === "connected" }} />{props.status}</span>; }
 function researchLabel(value: unknown) { const entry = value && typeof value === "object" ? Object.entries(value)[0] : undefined; return entry ? `${entry[0]} — ${JSON.stringify(entry[1])}` : "Research in progress"; }
 
-async function runSlashCommand(text: string, store: ReturnType<typeof createNexusStore>) {
+async function runSlashCommand(text: string, store: ReturnType<typeof createDugixStore>) {
   const [command, ...rest] = text.slice(1).trim().split(/\s+/);
   const value = rest.join(" ");
-  const commands: Record<string, unknown> = { new: "NewSession", compact: "Compact", web: "ToggleWeb", cancel: { Cancel: { task: null } }, usage: "OpenUsage" };
+  const commands: Record<string, unknown> = { new: "NewSession", compact: "Compact", cancel: { Cancel: { task: null } }, usage: "OpenUsage" };
   if (command === "research") commands.research = { RunResearch: { topic: value, gated: true } };
   if (command === "model" && value) commands.model = { SetModel: { id: value } };
   if (command === "incognito") commands.incognito = { Incognito: { on: value !== "off" } };

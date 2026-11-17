@@ -21,8 +21,7 @@ pub(super) enum Bullet {
     Numbered,
 }
 
-/// What a run (`a:rPr`, `a:defRPr`) says; every field is optional so that
-/// layers can be merged.
+/// What a run (`a:rPr`, `a:defRPr`) says; every field is optional so layers merge.
 #[derive(Clone, Debug, Default)]
 pub(super) struct RunProps {
     /// Points.
@@ -110,6 +109,7 @@ pub(super) fn para_props(el: &El, theme: &Theme) -> ParaProps {
     let align = el.attr("algn").map(|a| match a {
         "ctr" => Align::Center,
         "r" => Align::Right,
+        "just" | "dist" | "justLow" | "thaiDist" => Align::Justify,
         _ => Align::Left,
     });
     let line = el.kid("lnSpc").and_then(|spacing| {

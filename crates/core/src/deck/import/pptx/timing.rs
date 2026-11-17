@@ -19,8 +19,7 @@ fn direction(value: &str) -> Direction {
     }
 }
 
-/// The `p:transition` of a slide, preferring the `PowerPoint` 2010 form that
-/// carries a duration.
+/// The `p:transition` of a slide, preferring the 2010 form that carries a duration.
 fn transition_el(root: &El) -> Option<&El> {
     if let Some(found) = root.kid("transition") {
         return Some(found);

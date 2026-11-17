@@ -24,12 +24,10 @@ mod timing;
 
 const NS: &str = "xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\"";
 const WIDTH: f64 = 12_192_000.0;
-/// Points across the slide (12700 EMU per point): 960 pt, so 1920 px text
-/// is exported at half its pixel size.
+/// Points across the slide: 960 pt, so 1920 px text exports at half its pixel size.
 const WIDTH_PT: f64 = WIDTH / 12_700.0;
 
-/// Portable families available in Google Slides; other families (including
-/// Google Fonts) retain their author-selected name.
+/// Portable families available in Google Slides; others keep their author-selected name.
 pub(crate) fn google_font(family: &str) -> &str {
     let first = family
         .split(',')
@@ -202,7 +200,7 @@ fn paragraphs(
             Row::Numbered(text) => (text, "<a:buAutoNum type=\"arabicPeriod\"/>", LAYOUT.list_item_padding),
             Row::Paragraph(text) => (text, "<a:buNone/>", if font.line_height < LAYOUT.tight_line_height { 0.0 } else { LAYOUT.paragraph_gap }),
         };
-        let align = match font.align { Align::Left => "l", Align::Center => "ctr", Align::Right => "r" };
+        let align = match font.align { Align::Left => "l", Align::Center => "ctr", Align::Right => "r", Align::Justify => "just" };
         let indent = if matches!(row, Row::Bullet(_) | Row::Numbered(_)) { format!(" marL=\"{}\" indent=\"{}\"", integer(font.size * LAYOUT.list_indent * WIDTH / theme.size.w), -integer(font.size * 0.6 * WIDTH / theme.size.w)) } else { String::new() };
         let runs = if markdown { inline(text).iter().map(|r| run(theme, &font, &r.text, r.mark, opacity)).collect::<String>() } else { run(theme, &font, text, Mark::Plain, opacity) };
         let list = matches!(row, Row::Bullet(_) | Row::Numbered(_));

@@ -1,12 +1,12 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js";
-import type { NexusStore } from "./state";
+import type { DugixStore } from "./state";
 
 export const workspacePages = ["Chat", "Conversations", "Research activity", "Files", "Images/scripts", "Apps", "Management", "Usage", "Settings", "Sync"] as const;
 export type WorkspacePage = typeof workspacePages[number];
 interface Space { id: string; name: string }
 interface WorkspaceFile { id: string; name: string; size: number; status: string }
 
-export function SpacePicker(props: { store: NexusStore }) {
+export function SpacePicker(props: { store: DugixStore }) {
   const [spaces, setSpaces] = createSignal<Space[]>([]);
   const [name, setName] = createSignal("");
   const [error, setError] = createSignal("");
@@ -35,7 +35,7 @@ export function SpacePicker(props: { store: NexusStore }) {
   </div>;
 }
 
-export function FilesPage(props: { store: NexusStore }) {
+export function FilesPage(props: { store: DugixStore }) {
   const [files, setFiles] = createSignal<WorkspaceFile[]>([]);
   const [error, setError] = createSignal("");
   const [busy, setBusy] = createSignal(false);

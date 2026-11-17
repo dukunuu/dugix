@@ -1,62 +1,67 @@
-// Casts here are on bounded values: token counts, byte sizes, and
-// selection indices — never on unbounded input. JSON-derived indices in
-// provider/tools go through try_from instead.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
     clippy::cast_precision_loss,
     clippy::cast_sign_loss
 )]
+mod history;
+mod prompt;
+mod ui_repair;
+mod user_command;
+
+pub use history::{human_size, split_inline_reasoning};
+pub(super) use ui_repair::UiRepairResult;
+pub use ui_repair::code_blocks;
+use ui_repair::{UiRepairTarget, repair_image_links};
+pub(super) use user_command::UserCommandContext;
+pub(crate) use user_command::UserCommandRun;
+pub use user_command::{user_command_outcome, user_command_outcome_label};
+
+#[cfg(test)]
+use ui_repair::{failing_ui_blocks, ui_failure_notes, ui_program_history};
+#[cfg(test)]
+use user_command::{
+    HeadTail, USER_COMMAND_INTERACTIVE_NOTE, USER_COMMAND_KEEP_BYTES,
+    USER_COMMAND_STREAM_OPEN_NOTE, USER_COMMAND_TIMEOUT, capture_user_command, user_command_replay,
+    user_command_row,
+};
+
 use anyhow::Result;
 use chrono::Utc;
-use std::fmt::Write as _;
 use tokio::sync::mpsc;
 
 use crate::db::Message;
 use crate::prompts;
-use crate::provider::profile::{ModelProfile, profile_for};
-use crate::provider::{ChatMessage, ChatParams, StreamEvent, ToolCall, Usage};
+use crate::provider::{ChatMessage, ChatParams, StreamEvent, Usage};
 
-use super::{App, SPINNER_COLORS, SpinnerColor, THINKING, WorkMode, parse_topic, verbosity_clause};
+use super::{
+    App, AppEvent, SPINNER_COLORS, SpinnerColor, THINKING, WorkMode, composite_id,
+    model_needs_cache_breakpoints, parse_topic,
+};
 
-/// The Mermaid kinds the prompt advertises; the TUI tests that each one renders
-/// so the prompt and renderer cannot drift.
 pub const MERMAID_PREVIEW_EXAMPLES: &[&str] = &[
     "flowchart LR\nA-->B",
     "sequenceDiagram\nAlice->>Bob: Hello",
     "stateDiagram-v2\n[*] --> Idle",
 ];
 
-struct UiRepairTarget {
-    session_id: String,
-    message_id: String,
-    original: String,
-    incognito: bool,
-    model_id: String,
-    backend: crate::provider::BackendTag,
-    space_id: String,
-}
-
-pub(super) struct UiRepairResult {
-    target: UiRepairTarget,
-    result: std::result::Result<String, String>,
-    usage: Option<Usage>,
-}
-
 impl App {
-    /// Send one chat message: validation, session auto-creation, persistence.
-    #[allow(clippy::too_many_lines)] // validation, session creation, ordered skill/user persistence
+    /// Send `text` in the open conversation. While a reply is still being
+    /// written there the message waits in the queue (`app/queue.rs`) instead.
     pub fn send_message(&mut self, text: String) -> Result<()> {
-        if let Some(session) = self.session.as_ref()
-            && let Some(task) = self.chat_task_for_session(&session.id)
-        {
-            self.push_status(format!(
-                "wait — response still streaming in: {}",
-                task.session_title
-            ));
-            self.push_composer_set(&text);
+        let Some(id) = self.session.as_ref().map(|session| session.id.clone()) else {
+            return self.send_now(text);
+        };
+        if self.session_busy(&id) {
+            self.enqueue_message(&id, text);
             return Ok(());
         }
+        let text = self.ahead_of_queue(&id, text);
+        self.send_now(text)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    pub(super) fn send_now(&mut self, text: String) -> Result<()> {
         if self.chat_task_count() >= super::MAX_CHAT_TASKS {
             self.push_status(format!(
                 "chat task limit reached ({})",
@@ -70,9 +75,7 @@ impl App {
             self.push_composer_set(&text);
             return Ok(());
         }
-        // A new turn starts a fresh tally: the rate beside the context window
-        // describes this answer, not the previous one.
-        self.turn_cache = super::CacheTally::default();
+        self.meter.turn_cache = super::CacheTally::default();
         let Some(model) = self.current_model.clone() else {
             self.push_status("pick a model first with /model".to_string());
             self.push_composer_set(&text);
@@ -80,6 +83,7 @@ impl App {
         };
 
         let session_id = self.ensure_session(&text, model)?;
+        self.ensure_prompt_prefix();
 
         if let Some(name) = self.forced_skill.take()
             && let Some(skill) = self.skills.iter().find(|s| s.name == name)
@@ -104,10 +108,15 @@ impl App {
                 created_at: None,
             });
         }
+        self.note_mode_change(&session_id)?;
+        if let Some(hint) = self.memory_hint(&text) {
+            self.push_note(&session_id, "recall", hint.to_row())?;
+        }
+        let text = self.dated_user_message(text, Utc::now());
         if !self.incognito {
             self.db.add_user_message(&session_id, &text)?;
         }
-        self.ui_repair_messages.remove(&session_id);
+        self.ui_repair.messages.remove(&session_id);
         self.messages.push(Message {
             role: "user".to_string(),
             content: text,
@@ -128,10 +137,7 @@ impl App {
         self.start_stream()
     }
 
-    /// The active session's id, creating it (titled from `text`) when none is
-    /// open. Refresh the memory snapshot here as well as in `/new` so edits
-    /// made while no session was open are picked up.
-    fn ensure_session(&mut self, text: &str, model: String) -> Result<String> {
+    pub(super) fn ensure_session(&mut self, text: &str, model: String) -> Result<String> {
         if let Some(session) = &self.session {
             return Ok(session.id.clone());
         }
@@ -147,21 +153,13 @@ impl App {
                 created_at: Utc::now().to_rfc3339(),
                 compact_summary: None,
                 compact_through: 0,
-                web_mode: self.web_mode,
                 swarm_mode: false,
                 kind: "chat".to_string(),
                 research_parent_id: None,
             }
         } else {
-            let mut s = self
-                .db
-                .create_session(&title, &model, &self.active_space.id, "chat")?;
-            // Carry a pre-session `/web` toggle onto the session it creates.
-            if self.web_mode {
-                s.web_mode = true;
-                let _ = self.db.set_session_web_mode(&s.id, true);
-            }
-            s
+            self.db
+                .create_session(&title, &model, &self.active_space.id, "chat")?
         };
         if !self.incognito && self.work_mode.is_agent() {
             self.db.set_session_workspace(
@@ -177,7 +175,6 @@ impl App {
         Ok(id)
     }
 
-    /// Regenerate the last reply, retaining its user message and rejecting its trace steps.
     pub fn retry_last_reply(&mut self) -> Result<()> {
         let Some(session) = self.session.as_ref() else {
             self.push_status("nothing to retry — no active session");
@@ -240,7 +237,6 @@ impl App {
         Ok(())
     }
 
-    /// Restore the files the last agent turn changed, unless changed since.
     pub fn undo_last_turn(&mut self) -> Result<()> {
         if self.is_streaming() {
             self.push_status("wait — response still streaming");
@@ -262,545 +258,12 @@ impl App {
         Ok(())
     }
 
-    /// Whether a `!` command is still running (its output becomes the next
-    /// user turn, so nothing else may send until it lands).
-    #[must_use]
-    pub fn user_command_running(&self) -> bool {
-        self.user_command_rx.is_some()
-    }
-
-    /// Where `!` commands run: the workspace root in agent mode, else the
-    /// active space's directory (created if missing; `!` itself is agent-only).
-    pub fn user_command_cwd(&self) -> std::path::PathBuf {
-        if let Some(dir) = &self.user_command_dir {
-            return dir.clone();
-        }
-        let default = self.default_user_command_cwd();
-        default.canonicalize().unwrap_or(default)
-    }
-
-    fn default_user_command_cwd(&self) -> std::path::PathBuf {
-        if let Some(workspace) = self
-            .workspace
-            .as_ref()
-            .filter(|_| self.work_mode.is_agent())
-        {
-            return workspace.root().to_path_buf();
-        }
-        let _ = self.space.ensure_space_dir(&self.active_space.name);
-        self.space.space_dir(&self.active_space.name)
-    }
-
-    pub(super) fn reset_user_command_dir(&mut self) {
-        self.user_command_dir = None;
-        self.user_command_context = None;
-        self.user_command_epoch += 1;
-    }
-
-    pub(super) fn user_command_context(&self) -> UserCommandContext {
-        UserCommandContext {
-            session: self.session.as_ref().map(|session| session.id.clone()),
-            space: self.active_space.id.clone(),
-            mode: self.work_mode,
-            root: self
-                .workspace
-                .as_ref()
-                .map(|workspace| workspace.root().to_path_buf()),
-        }
-    }
-
-    /// Report a cached startup failure only once, also when completion initializes it.
-    pub fn report_user_shell_warning(&mut self) {
-        if !self.user_shell_warning_shown
-            && let Some(reason) = self
-                .user_shell
-                .get()
-                .and_then(|setup| setup.warning.clone())
-        {
-            self.user_shell_warning_shown = true;
-            self.push_status(format!("! runs without your shell setup · {reason}"));
-        }
-    }
-
-    /// `!cmd`: run the user's shell as the user — full environment, no gate, no
-    /// sandbox — on a background task. Its scrubbed, capped output becomes a
-    /// `user_command` row the model sees next turn (`finish_user_command`).
-    /// Agent modes only: in chat mode it is refused with a status line.
-    pub fn run_user_command(&mut self, cmd: String) -> Result<()> {
-        if !self.work_mode.is_agent() {
-            self.push_status(CHAT_MODE_BANG_STATUS);
-            return Ok(());
-        }
-        if !self.interactive_ui {
-            self.push_status("!commands run only in the terminal UI");
-            return Ok(());
-        }
-        if self.is_streaming() || self.user_command_rx.is_some() {
-            self.push_status(if self.is_streaming() {
-                "wait — response still streaming"
-            } else {
-                "wait — a command is still running"
-            });
-            self.push_composer_set(format!("!{cmd}"));
-            return Ok(());
-        }
-        if let Some(word) = crate::usershell::terminal_program(&cmd) {
-            self.push_status(format!("!{word} needs a terminal · run it outside nexus"));
-            return Ok(());
-        }
-        let cwd = self.user_command_cwd();
-        let session_id =
-            self.ensure_session(&cmd, self.current_model.clone().unwrap_or_default())?;
-        self.user_command_context = Some(self.user_command_context());
-        let epoch = self.user_command_epoch;
-        let setup = std::sync::Arc::clone(&self.user_shell);
-        let data = self.space.root.clone();
-        let scrubber = crate::trace::Scrubber::new(self.saved_secrets());
-        let incognito = self.incognito;
-        let (tx, rx) = mpsc::unbounded_channel();
-        self.user_command_rx = Some(rx);
-        self.push_status(format!("running: {cmd}"));
-        tokio::spawn(async move {
-            let setup = setup
-                .get_or_init(|| crate::usershell::UserShell::load(&data))
-                .await;
-            let cwd_file = data.join(format!("shell-cwd-{}", uuid::Uuid::new_v4()));
-            let (exit, started, output) =
-                capture_with_shell(&cmd, &cwd, USER_COMMAND_TIMEOUT, setup, &cwd_file).await;
-            let next_dir = std::fs::read_to_string(&cwd_file)
-                .ok()
-                .map(|text| std::path::PathBuf::from(text.trim_end_matches('\n')))
-                .filter(|path| path.is_absolute() && path.is_dir());
-            let _ = std::fs::remove_file(cwd_file);
-            let _ = tx.send(UserCommandRun {
-                session_id,
-                incognito,
-                cmd,
-                cwd: crate::usershell::display_dir(&cwd),
-                next_dir,
-                epoch,
-                exit,
-                started,
-                output: crate::tools::cap_head_tail(&scrubber.scrub(&output), USER_COMMAND_CHARS),
-            });
-        });
-        Ok(())
-    }
-
-    /// Store a finished captured `!` command in the session it started in.
-    pub(super) fn finish_user_command(&mut self, run: &UserCommandRun) -> Result<()> {
-        if run.epoch == self.user_command_epoch
-            && let Some(dir) = &run.next_dir
-        {
-            self.user_command_dir = Some(dir.clone());
-        }
-        self.push_status(format!(
-            "ran: {} · {}",
-            run.cmd,
-            user_command_outcome_label(run.exit, run.started)
-        ));
-        let content = user_command_row(
-            &run.cmd,
-            &run.cwd,
-            run.exit,
-            run.started,
-            &run.output,
-            false,
-        );
-        self.store_user_command(&run.session_id, run.incognito, content)?;
-        self.report_user_shell_warning();
-        Ok(())
-    }
-
-    /// Record an interactive `!` command the terminal UI ran on the real
-    /// terminal. Its output never passed through nexus.
-    pub fn record_user_command(
-        &mut self,
-        cmd: &str,
-        exit: Option<i32>,
-        started: bool,
-    ) -> Result<()> {
-        if !self.work_mode.is_agent() {
-            self.push_status(CHAT_MODE_BANG_STATUS);
-            return Ok(());
-        }
-        if !self.interactive_ui {
-            self.push_status("!commands run only in the terminal UI");
-            return Ok(());
-        }
-        let cwd = crate::usershell::display_dir(&self.user_command_cwd());
-        let session_id =
-            self.ensure_session(cmd, self.current_model.clone().unwrap_or_default())?;
-        self.push_status(format!(
-            "ran: {cmd} · {}",
-            user_command_outcome_label(exit, started)
-        ));
-        let content = user_command_row(
-            cmd,
-            &cwd,
-            exit,
-            started,
-            USER_COMMAND_INTERACTIVE_NOTE,
-            true,
-        );
-        self.store_user_command(&session_id, self.incognito, content)?;
-        self.push_history_invalidated();
-        Ok(())
-    }
-
-    fn store_user_command(
-        &mut self,
-        session_id: &str,
-        incognito: bool,
-        content: String,
-    ) -> Result<()> {
-        if !incognito {
-            self.db.add_user_command_message(session_id, &content)?;
-        }
-        self.ui_repair_messages.remove(session_id);
-        if self
-            .session
-            .as_ref()
-            .is_some_and(|session| session.id == session_id)
-        {
-            self.messages.push(Message {
-                role: "user_command".to_string(),
-                content,
-                model: None,
-                reasoning: None,
-                tokens: None,
-                secs: None,
-                cost: None,
-                phrase: None,
-                persona: None,
-                created_at: None,
-            });
-        }
-        Ok(())
-    }
-
-    fn model_profile(&self) -> ModelProfile {
-        profile_for(
-            self.models.iter().find(|model| {
-                self.current_model.as_deref() == Some(super::composite_id(model).as_str())
-            }),
-            self.saved.local.as_ref(),
-        )
-    }
-
-    /// After a reply, clear old observations in bulk once the token trigger is met.
-    pub fn maybe_mask(&mut self) {
-        if !self.experiments.mask_tool_results || self.is_streaming() {
-            return;
-        }
-        let trigger = if self.experiments.mask_trigger_tokens > 0 {
-            self.experiments.mask_trigger_tokens
-        } else if self.experiments.compaction_budget_tokens > 0 {
-            self.experiments.compaction_budget_tokens / 2
-        } else if let Some(limit) = self.context_limit() {
-            limit / 2
-        } else {
-            return;
-        };
-        if self.context_used() < trigger {
-            return;
-        }
-        let Some(session) = self.session.as_ref() else {
-            return;
-        };
-        let keep = self.experiments.mask_keep_rounds as usize;
-        let through = if keep == 0 {
-            self.messages.len()
-        } else {
-            let Some((index, _)) = self
-                .messages
-                .iter()
-                .enumerate()
-                .filter(|(i, m)| {
-                    m.role == "tool_call" && (*i == 0 || self.messages[*i - 1].role != "tool_call")
-                })
-                .rev()
-                .nth(keep - 1)
-            else {
-                return;
-            };
-            index
-        };
-        if through <= self.mask_through {
-            return;
-        }
-        // Already compacted or masked observations cannot save any more context.
-        let start = self
-            .mask_through
-            .max(self.messages.len() - self.effective_messages().len());
-        let mut count = 0;
-        let mut chars = 0;
-        for message in &self.messages[start.min(through)..through] {
-            if message.role == "tool_call"
-                && !Self::excluded_from_model_history(message)
-                && let Some(row) = parse_tool_call_row(&message.content)
-                && crate::tools::classify_tool_result(&row.result, "").is_none()
-            {
-                count += 1;
-                chars += row.result.chars().count();
-            }
-        }
-        let tokens = chars / 4;
-        if tokens < 2_000 {
-            return;
-        }
-        if !self.incognito {
-            let _ = self.db.set_session_mask(&session.id, through);
-        }
-        self.mask_through = through;
-        self.bump_cache_epoch();
-        self.push_status(format!(
-            "masked {count} old tool results (~{tokens} tokens) · experiment"
-        ));
-    }
-
-    /// Conversation estimate with cleared observations counted at their masked size.
-    pub(super) fn effective_conversation_chars(&self) -> usize {
-        let effective = self.effective_messages();
-        let offset = self.messages.len() - effective.len();
-        effective
-            .iter()
-            .enumerate()
-            .filter(|(_, m)| m.role != "compaction")
-            .map(|(index, m)| {
-                let chars = m.content.chars().count();
-                if self.experiments.mask_tool_results
-                    && offset + index < self.mask_through
-                    && m.role == "tool_call"
-                    && let Some(row) = parse_tool_call_row(&m.content)
-                    && crate::tools::classify_tool_result(&row.result, "").is_none()
-                {
-                    let note =
-                        crate::tools::tool_result_masked_note(&row.call.name, &row.call.arguments);
-                    return chars.saturating_sub(
-                        serde_json::Value::String(row.result)
-                            .to_string()
-                            .chars()
-                            .count(),
-                    ) + serde_json::Value::String(note).to_string().chars().count();
-                }
-                chars
-            })
-            .sum()
-    }
-
-    /// The exact message list a completion request will carry: system prompt,
-    /// compaction digest, then the effective conversation tail.
-    /// User messages with images become multimodal parts for vision models, or
-    /// get their stored descriptions appended as text for everything else.
     #[allow(clippy::too_many_lines)]
-    pub fn build_history(&mut self) -> Vec<ChatMessage> {
-        let mut history: Vec<ChatMessage> = Vec::with_capacity(self.messages.len() + 3);
-        history.push(ChatMessage::text("system", self.system_prompt()));
-        // Include space-file images inline for vision models.
-        if self.current_model_supports_images()
-            && let Some(img_msg) = self.space_images_message()
-        {
-            history.push(img_msg);
-        }
-        // If this session has been auto-compacted, send the digest instead of
-        // the raw messages it covers — only the tail after it goes verbatim.
-        if let Some(summary) = self
-            .session
-            .as_ref()
-            .and_then(|s| s.compact_summary.clone())
-        {
-            history.push(ChatMessage::text(
-                "system",
-                format!("Summary of earlier conversation (auto-compacted for length):\n{summary}"),
-            ));
-        }
-        let vision = self.current_model_supports_images();
-        let result_cap = self.model_profile().result_cap;
-        // Dedup state for replayed tool results: (tool, arguments) → latest
-        // full result. A row whose result is byte-identical to the latest
-        // one for the same tool+arguments (e.g. a re-read of an unchanged
-        // file) is replayed as a one-line note instead of the full copy, so
-        // duplicates don't re-enter the context on every request. The live
-        // tool loop applies the same rule with the same state (seeded from
-        // this history), keeping the prompt-cache prefix continuous.
-        let mut seen_results: std::collections::HashMap<(String, String), String> =
-            std::collections::HashMap::new();
-        let effective = self.effective_messages();
-        let first_owner = self.messages.len() - effective.len();
-        let (ui_replay, ui_errors) = if self.interactive_ui {
-            ui_program_history(effective, first_owner)
-        } else {
-            (std::collections::BTreeMap::new(), Vec::new())
-        };
-        let ui_feedback_key = effective
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(_, m)| m.role == "assistant")
-            .map(|(index, m)| {
-                use std::hash::{Hash, Hasher};
-                let mut hash = std::collections::hash_map::DefaultHasher::new();
-                m.content.hash(&mut hash);
-                format!(
-                    "{}:{}:{}",
-                    self.session.as_ref().map_or("", |s| s.id.as_str()),
-                    first_owner + index,
-                    hash.finish()
-                )
-            });
-        let mask_through = if self.experiments.mask_tool_results {
-            self.mask_through
-                .saturating_sub(self.messages.len() - effective.len())
-        } else {
-            0
-        };
-        let tool_images_dir = self
-            .toolbox
-            .supports_images()
-            .then(|| self.toolbox.space_files_dir())
-            .flatten();
-        let mut index = 0;
-        while index < effective.len() {
-            let m = &effective[index];
-            // Replay past tool calls as real assistant/tool message pairs so
-            // the model remembers what it already tried (and got back) in
-            // prior turns — dropping these caused it to repeat the same
-            // mistakes on file-writing tools with no memory of the failure.
-            // Skip every row that must never reach the model (shared with
-            // compaction, so a digest can't leak the same rows later):
-            // background-job scratch, UI-only prompts, transport failures,
-            // per-persona swarm round replies, and gate replies (whose
-            // survey/plan sections are excluded, so a bare "the second
-            // option" or "drop Q2" must not reach the model without context).
-            if Self::excluded_from_model_history(m) {
-                index += 1;
-                continue;
-            }
-            if m.role == "tool_call" {
-                append_tool_call_history(
-                    &mut history,
-                    effective,
-                    &mut index,
-                    &mut seen_results,
-                    tool_images_dir.as_deref(),
-                    result_cap,
-                    mask_through,
-                );
-                continue;
-            }
-            let mut cm = if m.role == "user_command" {
-                ChatMessage::text("user", user_command_replay(&m.content))
-            } else if m.role == "skill" {
-                let (name, body) = m
-                    .content
-                    .split_once('\n')
-                    .unwrap_or((m.content.as_str(), ""));
-                ChatMessage::text(
-                    "user",
-                    format!(
-                        "The user invoked the skill '{name}'. Follow these instructions for the rest of this conversation:\n{body}"
-                    ),
-                )
-            } else {
-                ChatMessage::text(m.role.clone(), m.content.clone())
-            };
-            // On every assistant turn with a broken block, not just the
-            // latest: a note that vanished once the turn aged would change
-            // the replayed prefix and miss the prompt cache.
-            if m.role == "assistant" {
-                if let Some(content) = ui_replay.get(&index) {
-                    cm.content.clone_from(content);
-                }
-                cm.content.push_str(&ui_failure_notes(&m.content));
-            }
-            if m.role == "user" && vision {
-                let images_dir = self.space.files_dir(&self.active_space.name);
-                let mut images = Vec::new();
-                let mut rest = m.content.as_str();
-                while let Some(start) = rest.find("![") {
-                    if let Some(end) = rest[start..].find(')') {
-                        let inner = &rest[start + 2..start + end];
-                        if let Some((_alt, file)) = inner.split_once("](")
-                            && let Some(url) =
-                                crate::app::transcribe::image_ref_data_url(&images_dir, file)
-                        {
-                            images.push(url);
-                        }
-                        rest = &rest[start + end + 1..];
-                    } else {
-                        break;
-                    }
-                }
-                cm.images = images;
-            }
-            history.push(cm);
-            index += 1;
-        }
-        if !ui_errors.is_empty()
-            && let Some(key) = ui_feedback_key
-            && self.ui_feedback_seen.insert(key)
-        {
-            history.push(ChatMessage::text(
-                "system",
-                format!("nexus-ui errors: {}", serde_json::Value::Array(ui_errors)),
-            ));
-        }
-        self.mark_cache_breakpoints(&mut history);
-        history
-    }
-
-    /// Mark where the cacheable prefix ends, for models that cache only when
-    /// asked. No-op for backends that cache automatically.
-    ///
-    /// Two breakpoints, on the boundaries [`App::bump_cache_epoch`] already
-    /// keeps byte-identical for the life of a cache epoch:
-    ///
-    /// 1. the end of the leading system block (base prompt, space
-    ///    instructions, file/app/script sections, memory snapshot, skills);
-    /// 2. the last message before the live tail, so a tool loop replays over
-    ///    a cached prefix instead of resending the whole conversation.
-    ///
-    /// Placing them anywhere later would invalidate the cache on every turn,
-    /// which is the failure this exists to avoid.
-    fn mark_cache_breakpoints(&self, history: &mut [ChatMessage]) {
-        if !self.wants_explicit_cache_breakpoints() {
-            return;
-        }
-        let last_system = history
-            .iter()
-            .position(|message| message.role != "system")
-            .unwrap_or(history.len())
-            .saturating_sub(1);
-        if let Some(message) = history.get_mut(last_system) {
-            message.cache_breakpoint = true;
-        }
-        // The tail message is the live one; the prefix worth caching ends
-        // just before it. With fewer than two messages after the system
-        // block there is no separate prefix to mark.
-        if history.len() >= last_system + 3
-            && let Some(message) = history.get_mut(history.len() - 2)
-        {
-            message.cache_breakpoint = true;
-        }
-    }
-
-    /// Whether the active model caches only when the request marks a
-    /// breakpoint. `OpenAI`, Gemini and `DeepSeek`-family models cache
-    /// automatically and reject or ignore the marker; Anthropic-family models
-    /// cache nothing without it.
-    #[must_use]
-    pub fn wants_explicit_cache_breakpoints(&self) -> bool {
-        self.current_model
-            .as_deref()
-            .is_some_and(super::model_needs_cache_breakpoints)
-    }
-
-    /// Build history and fire one independently-routed streaming request.
-    #[allow(clippy::too_many_lines)] // Request/profile setup and independent task registration.
     pub fn start_stream(&mut self) -> Result<()> {
-        if let Some(session) = &self.session {
-            self.ui_repair_messages.remove(&session.id);
+        if let Some(id) = self.session.as_ref().map(|session| session.id.clone()) {
+            self.ui_repair.messages.remove(&id);
+            // A retry after a mode switch has no new message to carry the note.
+            self.note_mode_change(&id)?;
         }
         let Some(model) = self.current_model.clone() else {
             return Ok(());
@@ -812,9 +275,7 @@ impl App {
             return Ok(());
         };
         let history = self.build_history();
-        // Catalog capabilities can change underneath a persisted preference.
-        // Keep the request, in-memory badge, and database in sync rather than
-        // silently omitting a stale value while the picker still shows it.
+        // Catalog changes can invalidate persisted reasoning preferences.
         let stored_effort = self.reasoning.get(&model).cloned();
         let (reasoning_effort, reasoning_warning) = match stored_effort {
             Some(effort) if self.effort_accepted(&model, &effort) => (Some(effort), None),
@@ -829,19 +290,14 @@ impl App {
             None => (None, None),
         };
         self.push_status(reasoning_warning.unwrap_or_default());
-        let profile = self.model_profile();
-        let mut params = self.chat_params(reasoning_effort, provider.backend_tag());
-        params.parallel_tool_calls = (!profile.parallel_calls).then_some(false);
-        params.tool_result_cap = profile.result_cap;
-        params.subagent_fast_model = self
-            .helper_backend()
-            .filter(|(helper, model)| {
-                helper.backend_tag() == provider.backend_tag() && *model != raw_model
-            })
-            .map(|(_, model)| model);
-        let tools = self.chat_tool_defs();
+        self.warn_stale_prefix();
+        self.note_turn_lane();
+        let params = self.chat_params(reasoning_effort, provider.backend_tag());
+        let tools = self
+            .active_prefix()
+            .map_or_else(|| self.chat_tool_defs(), |prefix| prefix.tools.clone());
         if provider.backend_tag() == crate::provider::BackendTag::Local
-            && !self.context_warned
+            && !self.meter.warned
             && let Some(limit) = self.context_limit()
         {
             let defs = serde_json::to_string(&tools)?;
@@ -850,7 +306,7 @@ impl App {
                 self.push_status(format!(
                     "prompt + tool definitions use ~{tokens} of {limit} tokens — raise [local] context_length"
                 ));
-                self.context_warned = true;
+                self.meter.warned = true;
             }
         }
         if self.work_mode.is_agent()
@@ -921,13 +377,10 @@ impl App {
         self.spinner_frame = 0;
         self.thinking_idx = thinking_idx;
         self.spinner_color = spinner_color;
-        // New content is about to arrive below the conversation: the view
-        // resets its scroll/pinning baseline (AppEvent::ViewportReset).
         self.push_viewport_reset();
         Ok(())
     }
 
-    /// Exact tool definitions sent by the next chat request.
     #[must_use]
     pub fn chat_tool_defs(&self) -> Vec<crate::provider::ToolDef> {
         if self.model_profile().compact_tools {
@@ -937,24 +390,45 @@ impl App {
         }
     }
 
-    /// Build the main chat's parameters without starting a provider request.
-    pub(super) fn chat_params(
-        &mut self,
-        reasoning_effort: Option<String>,
-        backend: crate::provider::BackendTag,
-    ) -> ChatParams {
-        let mut params = ChatParams {
+    /// A chat turn's request parameters; compaction sends the same to reuse its cache.
+    /// The parameters and tool list a request needs to share the chat's
+    /// cached prefix: the turn's own, with the effort the catalog still accepts.
+    pub(super) fn turn_shape(&self) -> (ChatParams, Vec<crate::provider::ToolDef>) {
+        let effort = self.current_model.clone().and_then(|model| {
+            let effort = self.reasoning.get(&model).cloned()?;
+            self.effort_accepted(&model, &effort).then_some(effort)
+        });
+        let tools = self
+            .active_prefix()
+            .map_or_else(|| self.chat_tool_defs(), |prefix| prefix.tools.clone());
+        (self.turn_params(effort), tools)
+    }
+
+    pub(super) fn turn_params(&self, reasoning_effort: Option<String>) -> ChatParams {
+        let profile = self.model_profile();
+        ChatParams {
             reasoning_effort,
             prompt_cache_key: self
                 .session
                 .as_ref()
                 .map(|session| self.prompt_cache_key_for(&session.id)),
-            cache_ttl_1h: self.experiments.cache_ttl_1h,
+            cache_ttl_1h: self.settings.cache_lifetime == "extended",
+            cache_long_openai: self.settings.cache_long_openai,
             temperature: self.settings.temperature,
             top_p: self.settings.top_p,
             max_tokens: self.settings.max_tokens,
+            parallel_tool_calls: (!profile.parallel_calls).then_some(false),
+            tool_result_cap: profile.result_cap,
             ..ChatParams::default()
-        };
+        }
+    }
+
+    pub(super) fn chat_params(
+        &mut self,
+        reasoning_effort: Option<String>,
+        backend: crate::provider::BackendTag,
+    ) -> ChatParams {
+        let mut params = self.turn_params(reasoning_effort);
         if self.training_enabled()
             && let Some(session_id) = self.session.as_ref().map(|session| session.id.clone())
             && let Some(store) = self.open_trace_store()
@@ -972,8 +446,6 @@ impl App {
         params
     }
 
-    /// Compatibility entry point for tests and synchronous callers. Runtime
-    /// events use `on_chat_event`, which always includes the task id.
     #[cfg(test)]
     pub fn on_stream_event(&mut self, ev: StreamEvent) -> Result<()> {
         let task_id = self
@@ -987,6 +459,7 @@ impl App {
             id,
             reasoning,
             assistant_content,
+            step_start,
             name,
             arguments,
             result,
@@ -996,6 +469,7 @@ impl App {
                 "id": id,
                 "reasoning_content": reasoning,
                 "assistant_content": assistant_content,
+                "step_start": step_start,
                 "name": name,
                 "arguments": arguments,
                 "result": result,
@@ -1022,7 +496,7 @@ impl App {
         Ok(())
     }
 
-    #[allow(clippy::too_many_lines)] // one match per stream event; arms are short
+    #[allow(clippy::too_many_lines)]
     pub fn on_chat_event(&mut self, task_id: super::ChatTaskId, ev: StreamEvent) -> Result<()> {
         match ev {
             StreamEvent::Token(t) => {
@@ -1036,26 +510,32 @@ impl App {
                 }
             }
             StreamEvent::Usage(u) => {
-                // The provider emits one Usage event per underlying API
-                // request, including each tool-loop round. Keep every real
-                // accounting event as its own row; overwriting one row for
-                // the whole top-level chat turn made a long tool loop look as
-                // if prompt tokens had gone down or vanished.
-                //
-                // OpenCode Zen may follow a real usage event with a
-                // cost-only event. That event belongs to the most recent row
-                // and is merged in place rather than logged separately.
+                // OpenCode Zen's trailing cost-only event revises the latest request's usage row.
                 let has_tokens = u.prompt_tokens + u.completion_tokens > 0;
                 if has_tokens {
-                    self.last_cache_rate = u.cache_hit_rate();
-                    self.turn_cache.observe(&u);
+                    self.meter.last_cache_rate = u.cache_hit_rate();
+                    self.meter.turn_cache.observe(&u);
                 }
                 let Some(task) = self.chat_tasks.get_mut(&task_id) else {
                     return Ok(());
                 };
+                let accounted = has_tokens
+                    .then(|| {
+                        (
+                            task.session_id.clone(),
+                            task.backend,
+                            task.model_id.clone(),
+                            task.incognito,
+                        )
+                    })
+                    .and_then(|(session_id, backend, model_id, incognito)| {
+                        self.account_request(&session_id, backend, &model_id, incognito, &u)
+                    });
+                let Some(task) = self.chat_tasks.get_mut(&task_id) else {
+                    return Ok(());
+                };
                 let merged = if has_tokens {
-                    // A real event starts a new API-request record. Do not
-                    // carry a previous request's provider cost into it.
+                    // A new API request must not inherit the previous request's provider cost.
                     u
                 } else {
                     task.usage.map_or(u, |prev| Usage {
@@ -1071,8 +551,6 @@ impl App {
                         .as_ref()
                         .is_some_and(|session| session.id == session_id)
                 {
-                    // Every request of a tool loop updates the bar, not
-                    // just the turn's last one.
                     let total = if u.total_tokens > 0 {
                         u.total_tokens
                     } else {
@@ -1088,25 +566,29 @@ impl App {
                 let backend = task.backend;
                 let incognito = task.incognito;
                 let row_id = task.usage_row_id;
-                if !incognito
-                    && (merged.prompt_tokens > 0
-                        || merged.completion_tokens > 0
-                        || merged.cost.is_some())
-                {
-                    // Provider-reported cost wins; otherwise estimate from
-                    // cache-aware catalog rates (None when unknown).
-                    // Non-OpenRouter backends price via their OpenRouter
-                    // catalog twin (see `Db::model_price`).
-                    let cost_is_provider = merged.cost.is_some();
-                    let cost = merged.cost.or_else(|| {
-                        self.db.request_cost(
-                            &model_id,
-                            merged.prompt_tokens,
-                            merged.completion_tokens,
-                            merged.cache_read_tokens,
-                            merged.cache_creation_tokens,
-                        )
-                    });
+                let billable = merged.prompt_tokens > 0
+                    || merged.completion_tokens > 0
+                    || merged.cost.is_some();
+                // Other backends use their OpenRouter catalog twin when provider cost is absent.
+                let cost_is_provider = merged.cost.is_some();
+                let cost = merged.cost.or_else(|| {
+                    billable
+                        .then(|| {
+                            self.db.request_cost(
+                                &model_id,
+                                merged.prompt_tokens,
+                                merged.completion_tokens,
+                                merged.cache_read_tokens,
+                                merged.cache_creation_tokens,
+                            )
+                        })
+                        .flatten()
+                });
+                self.turn_usage
+                    .entry(task_id)
+                    .or_default()
+                    .observe(has_tokens.then_some(merged.completion_tokens), cost);
+                if !incognito && billable {
                     if has_tokens || row_id.is_none() {
                         let id = self.db.log_usage(
                             backend.name(),
@@ -1126,6 +608,9 @@ impl App {
                         {
                             let _ = self.db.set_usage_kind(id, "chat");
                             task.usage_row_id = Some(id);
+                            if let Some(request) = &accounted {
+                                self.store_accounted_request(id, request);
+                            }
                         }
                     } else if let Some(row_id) = row_id {
                         let _ = self.db.update_usage(
@@ -1145,10 +630,21 @@ impl App {
                     task.tool_status = Some(s);
                 }
             }
+            StreamEvent::Notice(message) => self.push_status(message),
+            StreamEvent::Subagent(update) => {
+                let Some(task) = self.chat_tasks.get(&task_id) else {
+                    return Ok(());
+                };
+                let (session_id, incognito) = (task.session_id.clone(), task.incognito);
+                if let Some(cost) = self.on_subagent(&session_id, incognito, *update) {
+                    *self.subagent_turn_cost.entry(task_id).or_default() += cost;
+                }
+            }
             StreamEvent::ToolCall {
                 id,
                 reasoning,
                 assistant_content,
+                step_start,
                 name,
                 arguments,
                 result,
@@ -1172,12 +668,7 @@ impl App {
                 {
                     let _ = self.db.add_usage_tool(id, &name);
                 }
-                // What streamed before this round's calls now lives in the
-                // round's first tool row, so the transcript reads thinking →
-                // calls → thinking → answer, and the final reply carries only
-                // what came after the last round. A backend that streams
-                // reasoning without attaching it to the call keeps it as
-                // display-only `thinking` (never replayed to the model).
+                // Unattached provider reasoning is display-only and must not be replayed.
                 let streamed_thinking = std::mem::take(&mut task.thinking);
                 task.buffer.clear();
                 let thinking = (reasoning.is_none() && !streamed_thinking.trim().is_empty())
@@ -1187,6 +678,7 @@ impl App {
                     "reasoning_content": reasoning,
                     "thinking": thinking,
                     "assistant_content": assistant_content,
+                    "step_start": step_start,
                     "name": name,
                     "arguments": arguments,
                     "result": result,
@@ -1224,17 +716,13 @@ impl App {
                         serde_json::from_str::<serde_json::Value>(&arguments).unwrap_or_default();
                     let arg = |key: &str| args[key].as_str().unwrap_or_default().trim().to_string();
                     if name == "propose_command" {
-                        // The status line is the view's wake-up to take it.
-                        self.proposed_command = Some(format!("!{}", arg("cmd")));
+                        self.approvals.proposed_command = Some(format!("!{}", arg("cmd")));
                         self.push_status(arg("reason"));
                     } else {
-                        // Applied when the reply finishes: never swap the toolbox mid-turn.
+                        // Never swap the toolbox mid-turn.
                         self.queued_workspace = Some((task_id, arg("root")));
                     }
                 }
-                // Generated images land on disk but aren't indexed until
-                // rescan_files picks them up. Without this, they'd be missing
-                // from files_cache and never OCR'd for descriptive naming.
                 let media_generated = matches!(
                     name.as_str(),
                     "generate_image" | "generate_video" | "video_transform"
@@ -1267,8 +755,6 @@ impl App {
         Ok(())
     }
 
-    /// Cancel one in-flight chat task by id (kills any in-flight request and
-    /// tool loop) and keep whatever text already arrived.
     pub fn cancel_chat_task(&mut self, task_id: super::ChatTaskId) -> Result<()> {
         if let Some(task) = self.chat_tasks.remove(&task_id) {
             task.abort.abort();
@@ -1277,8 +763,6 @@ impl App {
         Ok(())
     }
 
-    /// Esc while a response streams: abort the background chat task (kills any
-    /// in-flight request and tool loop) and keep whatever text already arrived.
     pub fn stop_stream(&mut self) -> Result<()> {
         let Some(task_id) = self.active_chat_task().map(|task| task.id) else {
             return Ok(());
@@ -1287,6 +771,8 @@ impl App {
     }
 
     pub fn discard_chat_task(&mut self, session_id: &str) {
+        self.queued.remove(session_id);
+        self.background.stop_session(session_id);
         if let Some(task) = self
             .chat_tasks
             .iter()
@@ -1300,8 +786,8 @@ impl App {
                 .as_ref()
                 .is_some_and(|session| session.id == session_id)
             {
-                self.pending_approval = None;
-                self.pending_approval_request = None;
+                self.approvals.pending = None;
+                self.approvals.pending_request = None;
             }
         }
     }
@@ -1326,6 +812,7 @@ impl App {
         use crate::deck::link::{ActivityState, TurnOutcome};
 
         let id = task.id;
+        self.end_subagents(&task.session_id, task.incognito);
         let watching = self
             .deck_link
             .lock()
@@ -1350,20 +837,22 @@ impl App {
                 detail: detail.chars().take(240).collect(),
             }
         });
+        let session_id = task.session_id.clone();
+        let hold = stopped || error.is_some();
         let result = self.persist_chat_task_state(task, error, stopped);
         if let Some(mut outcome) = outcome {
             if result.is_err() {
                 outcome.state = ActivityState::Failed;
-                outcome.detail = "Could not save the response; see nexus for details".into();
+                outcome.detail = "Could not save the response; see dugix for details".into();
             }
             let mut link = self.deck_link.lock().expect("deck link");
             link.turns.insert(id, Some(outcome));
             link.notify.notify_one();
         }
-        result
+        result?;
+        self.after_turn(&session_id, hold)
     }
 
-    // Long by design (long state-transition fn).
     #[allow(clippy::too_many_lines)]
     fn persist_chat_task_state(
         &mut self,
@@ -1371,13 +860,15 @@ impl App {
         error: Option<String>,
         stopped: bool,
     ) -> Result<()> {
+        let helpers_cost = self.subagent_turn_cost.remove(&task.id);
+        let turn = self.turn_usage.remove(&task.id).unwrap_or_default();
         if self
             .session
             .as_ref()
             .is_some_and(|session| session.id == task.session_id)
         {
-            self.pending_approval = None;
-            self.pending_approval_request = None;
+            self.approvals.pending = None;
+            self.approvals.pending_request = None;
         }
         if let Some((_, root)) = self.queued_workspace.take_if(|(id, _)| *id == task.id)
             && self
@@ -1406,49 +897,35 @@ impl App {
             });
             return Ok(());
         }
-        // Some reasoning models (routed without the separate `reasoning` delta
-        // field) inline their thinking as `<think>...</think>` in `content`
-        // itself. Pull that out so the stored/displayed/copied message is just
-        // the actual answer, not the thinking — same treatment as the explicit
-        // reasoning channel above.
+        // Some providers inline reasoning tags in content instead of sending reasoning deltas.
         let viewing = self
             .session
             .as_ref()
             .is_some_and(|session| session.id == task.session_id);
         let model = Some(task.model.clone());
-        // Prefer the provider's exact usage; fall back to a ~4-chars/token estimate.
         let usage = task.usage;
-        let tokens = Some(match usage {
-            Some(u) => u.completion_tokens as i64,
-            None => buf.chars().count().div_ceil(4) as i64,
+        let tokens = Some(if usage.is_some() {
+            turn.output_tokens as i64
+        } else {
+            buf.chars().count().div_ceil(4) as i64
         });
         if viewing && let Some(u) = usage {
-            // Some providers omit total; derive it from prompt + completion.
+            // Some providers omit the total token count.
             let total = if u.total_tokens > 0 {
                 u.total_tokens
             } else {
                 u.prompt_tokens + u.completion_tokens
             };
-            // `observe_context` already took this task's counts as they
-            // arrived; only fill in when it never saw one.
-            if self.context_basis.is_none_or(|basis| basis.task != task.id) {
-                self.context_total = Some(total);
+            if self.meter.basis.is_none_or(|basis| basis.task != task.id) {
+                self.meter.total = Some(total);
             }
         }
         let secs = Some(task.started.elapsed().as_secs_f64());
-        // Prefer the provider's exact charge; otherwise estimate from the
-        // cache-aware catalog. The same value was logged by the Usage event.
-        let cost = usage.and_then(|u| {
-            u.cost.or_else(|| {
-                self.db.request_cost(
-                    &task.model_id,
-                    u.prompt_tokens,
-                    u.completion_tokens,
-                    u.cache_read_tokens,
-                    u.cache_creation_tokens,
-                )
-            })
-        });
+        let cost = turn.cost();
+        let cost = match (cost, helpers_cost) {
+            (Some(own), Some(helpers)) => Some(own + helpers),
+            (own, helpers) => own.or(helpers),
+        };
         let reasoning = (!reasoning.is_empty()).then_some(reasoning);
         let phrase = Some(THINKING[task.thinking_idx].1.to_string());
         let created_at = Some(chrono::Utc::now().to_rfc3339());
@@ -1500,11 +977,9 @@ impl App {
                 persona: None,
                 created_at,
             });
-            // These jobs still use active-session state, so only launch them
-            // when the task's origin is the session currently being viewed.
+            // These jobs read active-session state, not the completed task's origin.
             if !task.incognito {
                 self.maybe_generate_title();
-                self.maybe_extract_memory();
             }
             self.maybe_mask();
             if !task.incognito {
@@ -1585,133 +1060,6 @@ impl App {
         Ok(())
     }
 
-    fn start_ui_repair(&mut self, target: UiRepairTarget) {
-        let blocks = failing_ui_blocks(&target.original);
-        if blocks.is_empty() {
-            return;
-        }
-        let Some(provider) = self.backends.get(target.backend).cloned() else {
-            self.push_status("UI repair failed — model backend unavailable");
-            return;
-        };
-        let messages = ui_repair_history(&blocks);
-        self.ui_repair_messages
-            .insert(target.session_id.clone(), target.message_id.clone());
-        let tx = self.ui_repair_tx.clone();
-        self.push_status("fixing the UI…");
-        tokio::spawn(async move {
-            let completion = provider
-                .complete_with_params(&target.model_id, messages, &ChatParams::default())
-                .await;
-            let (result, usage) = match completion {
-                Ok(completion) => (
-                    repaired_ui_reply(&target.original, &blocks, &completion.text),
-                    completion.usage,
-                ),
-                Err(error) => (Err(error.to_string()), None),
-            };
-            let _ = tx.send(UiRepairResult {
-                target,
-                result,
-                usage,
-            });
-        });
-    }
-
-    pub(super) fn on_ui_repair_result(&mut self, repair: UiRepairResult) -> super::AppEvent {
-        let UiRepairResult {
-            target,
-            result,
-            usage,
-        } = repair;
-        if !target.incognito
-            && let Some(usage) = usage
-        {
-            let _ = self.db.record_usage(
-                target.backend.name(),
-                &target.model_id,
-                usage,
-                &crate::db::UsageLog {
-                    path: self.space.db_path(),
-                    session_id: Some(target.session_id.clone()),
-                    space_id: target.space_id.clone(),
-                },
-                "ui repair",
-            );
-        }
-        if self.ui_repair_messages.get(&target.session_id) != Some(&target.message_id) {
-            return super::AppEvent::Status(String::new());
-        }
-        self.ui_repair_messages.remove(&target.session_id);
-        let viewing = self
-            .session
-            .as_ref()
-            .is_some_and(|s| s.id == target.session_id);
-        let index = viewing
-            .then(|| {
-                self.messages.iter().rposition(|message| {
-                    message.role == "assistant" && message.content == target.original
-                })
-            })
-            .flatten();
-        if (viewing && index.is_none()) || (target.incognito && !viewing) {
-            return super::AppEvent::Status(String::new());
-        }
-        let mut fixed_images = 0;
-        let applied = result.and_then(|content| {
-            let stored = if target.incognito {
-                Vec::new()
-            } else {
-                self.db
-                    .load_messages(&target.session_id)
-                    .map_err(|error| error.to_string())?
-            };
-            let (content, fixed) = repair_image_links(
-                &content,
-                if target.incognito {
-                    &self.messages
-                } else {
-                    &stored
-                },
-            );
-            fixed_images = fixed;
-            if !target.incognito
-                && !self
-                    .db
-                    .update_ui_reply(
-                        &target.session_id,
-                        &target.message_id,
-                        &target.original,
-                        &content,
-                    )
-                    .map_err(|error| error.to_string())?
-            {
-                return Ok(false);
-            }
-            if let Some(index) = index {
-                // Only the latest reply changed; the prefix before it is the
-                // same, so the prompt-cache lane (and its key) stays put.
-                self.messages[index].content = content;
-                self.push_history_invalidated();
-            }
-            Ok(true)
-        });
-        super::AppEvent::Status(match applied {
-            Ok(true) if fixed_images > 0 => format!(
-                "UI fixed · fixed {fixed_images} image link{}",
-                if fixed_images == 1 { "" } else { "s" }
-            ),
-            Ok(true) => "UI fixed".into(),
-            Ok(false) => String::new(),
-            Err(error) => format!(
-                "UI repair failed — {}",
-                error.lines().next().unwrap_or("invalid UI")
-            ),
-        })
-    }
-
-    /// After the first exchange of a session, ask the model for a short topic and
-    /// slug in the background. Runs once per session (guarded by `slug.is_none()`).
     pub fn maybe_generate_title(&mut self) {
         let Some(session) = self.session.as_ref() else {
             return;
@@ -1720,14 +1068,12 @@ impl App {
             .current_model
             .as_deref()
             .and_then(|model| self.resolve_model_backend(model))
-            .or_else(|| self.helper_backend())
         else {
             return;
         };
         if session.slug.is_some() {
-            return; // already named
+            return;
         }
-        // Build a compact transcript of the conversation so far.
         let convo: String = self
             .messages
             .iter()
@@ -1756,7 +1102,6 @@ impl App {
         });
     }
 
-    /// Apply a generated topic/slug to the matching session (in memory + db).
     pub fn on_title_result(&mut self, result: Option<(String, String, String)>) {
         self.title_rx = None;
         let Some((id, topic, slug)) = result else {
@@ -1767,162 +1112,13 @@ impl App {
             s.title.clone_from(&topic);
             s.slug = Some(slug.clone());
         }
-        if let Some(s) = self.sessions_cache.iter_mut().find(|s| s.id == id) {
+        if let Some(s) = self.caches.sessions.iter_mut().find(|s| s.id == id) {
             s.title = topic;
             s.slug = Some(slug);
         }
     }
 
-    /// Instructions + the active session's memory snapshot, combined into one
-    /// system message. Stable base, rendering and environment instructions
-    /// precede space context, user additions, skills and the frozen memory
-    /// snapshot. Volatile date and session-mode instructions come last.
-    pub fn system_prompt(&self) -> String {
-        let mut parts: Vec<String> = Vec::new();
-        let base = self.resolved_base_system_prompt();
-        if !base.is_empty() {
-            parts.push(base);
-        }
-        if self.interactive_ui {
-            parts.push(Self::rendering_section());
-            parts.push(crate::interactive::instructions());
-            if let Some(layouts) = self.layout_guidance() {
-                parts.push(layouts);
-            }
-        }
-        parts.push(self.environment_section());
-        if self.work_mode.is_agent() {
-            parts.push(prompts::render(prompts::AGENT, &[]));
-        }
-        if !self.incognito {
-            if let Some(files) = self.files_section() {
-                parts.push(files);
-            }
-            if let Some(apps) = self.apps_section() {
-                parts.push(apps);
-            }
-            if let Some(scripts) = self.scripts_section() {
-                parts.push(scripts);
-            }
-            let instructions =
-                std::fs::read_to_string(self.space.instructions_path(&self.active_space.name))
-                    .ok()
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty());
-            if let Some(i) = instructions {
-                parts.push(i);
-            }
-        }
-        let overlay = self.resolved_system_prompt_overlay();
-        if !overlay.is_empty() {
-            parts.push(overlay);
-        }
-        if let Some(skills) = self.skills_section() {
-            parts.push(skills);
-        }
-        if !self.incognito {
-            let memory = self.memory_snapshot();
-            if !memory.trim().is_empty() {
-                parts.push(format!("## Memory\n{memory}"));
-            }
-        }
-        parts.push(self.now_section());
-        if self.web_mode {
-            let today = self
-                .prompt_datetime
-                .split_whitespace()
-                .next()
-                .unwrap_or_default();
-            parts.push(web_mode_clause(today));
-        }
-        if self.is_research_session() {
-            parts.push(
-                "This session came from /research — prefer research_lookup with scope=session_sources over search with mode=web for \
-                 follow-ups; only use web search on a miss."
-                    .to_string(),
-            );
-        }
-        parts.join("\n\n")
-    }
-
-    pub(super) fn environment_section(&self) -> String {
-        let mut section = "## Environment\n".to_string();
-        if let Some((provider, raw_model)) = self
-            .current_model
-            .as_deref()
-            .and_then(|model| self.resolve_model_backend(model))
-        {
-            let _ = writeln!(
-                section,
-                "- Backend: {} · model {raw_model}",
-                provider.backend_tag().name()
-            );
-        }
-        let _ = write!(
-            section,
-            "- OS: {} ({})",
-            std::env::consts::OS,
-            std::env::consts::ARCH
-        );
-        if self.work_mode.is_agent()
-            && let Some(workspace) = &self.workspace
-        {
-            let _ = write!(
-                section,
-                "\n- Mode: {} · workspace {}",
-                if self.work_mode == WorkMode::AgentAuto {
-                    "agent·auto"
-                } else {
-                    "agent"
-                },
-                workspace.root().display()
-            );
-        }
-        section
-    }
-
-    pub(super) fn layout_guidance(&self) -> Option<String> {
-        if self.settings.reply_style == "plain" {
-            return None;
-        }
-        let mut guidance = crate::interactive::LAYOUTS.to_string();
-        match self.settings.reply_style.as_str() {
-            "rich" => guidance.push_str("\nPrefer a layout for most substantive answers.\n"),
-            // Coding replies stay Markdown: in agent mode the interactive
-            // style falls back to auto.
-            "interactive" if !self.work_mode.is_agent() => {
-                guidance.push('\n');
-                guidance.push_str(crate::interactive::INTERACTIVE_FIRST);
-            }
-            _ => {}
-        }
-        Some(guidance)
-    }
-
-    pub(super) fn rendering_section() -> String {
-        "## Rendering\nFenced ```mermaid blocks render as inline diagrams for flowchart, sequenceDiagram and stateDiagram-v2 sources. Other Mermaid diagram types are shown as source text, so prefer the supported kinds or a plain list."
-            .to_string()
-    }
-
-    pub(super) fn now_section(&self) -> String {
-        let mut section = format!(
-            "## Now\nCurrent date/time: {}. Your training data has a cutoff well before this — trust this timestamp over any date assumption from training",
-            self.prompt_datetime
-        );
-        if self.toolbox.defs().iter().any(|tool| tool.name == "search") {
-            section.push_str(
-                ", and use `search` with mode=web for anything that may have changed since training (news, releases, prices, \"latest\" anything).",
-            );
-        } else {
-            section.push('.');
-        }
-        section
-    }
-
-    /// Ctrl+O: navigate to the session linked in a `session_link` message
-    /// under the text selection. Expects the message content's first line to
-    /// be the target session id. `owner` is the message index at the
-    /// selection start.
+    /// Follow a session link at the selected transcript message index.
     pub fn open_session_link(&mut self, owner: Option<usize>) {
         let Some(msg) = owner.and_then(|i| self.messages.get(i)) else {
             self.push_status(
@@ -1949,10 +1145,7 @@ impl App {
         }
     }
 
-    /// Pin or discard the `[n]` source under the current history selection
-    /// (same selection→citation resolution as `open_citation_under_selection`).
-    /// Flags are keyed by the message's normalized URL, session-scoped.
-    /// `selected`/`owner` come from the view's `HistorySel` state.
+    /// Pin or discard a citation selected in the transcript.
     pub fn flag_source_under_selection(
         &mut self,
         flag: Option<&str>,
@@ -1995,23 +1188,6 @@ impl App {
         }
     }
 
-    /// `/web`: flip web answer mode for the active (or about-to-be-created)
-    /// session. Persisted immediately if a session already exists; otherwise
-    /// applied to the session created by the next message.
-    pub fn toggle_web_mode(&mut self) {
-        self.web_mode = !self.web_mode;
-        self.bump_cache_epoch();
-        if let Some(session) = self.session.as_mut() {
-            session.web_mode = self.web_mode;
-            let _ = self.db.set_session_web_mode(&session.id, self.web_mode);
-        }
-        self.push_status(if self.web_mode {
-            "🌐 web mode on".to_string()
-        } else {
-            "web mode off".to_string()
-        });
-    }
-
     pub fn toggle_incognito(&mut self) -> Result<()> {
         if self.is_streaming() {
             self.stop_stream()?;
@@ -2020,7 +1196,7 @@ impl App {
         self.messages.clear();
         self.mask_through = 0;
         self.refresh_memory_snapshot();
-        self.context_total = None;
+        self.meter.total = None;
         self.push_composer_clear();
         self.push_viewport_reset();
         self.cleanup_incognito_images();
@@ -2035,705 +1211,11 @@ impl App {
         });
         Ok(())
     }
-
-    /// Bundled base prompt with `{{verbosity}}` and `{{datetime}}` resolved.
-    pub fn resolved_base_system_prompt(&self) -> String {
-        self.base_system_prompt
-            .replace("{{verbosity}}", verbosity_clause(&self.verbosity))
-            .replace("{{datetime}}", &self.prompt_datetime)
-    }
-
-    /// User additions with the same runtime placeholders as the bundled base.
-    pub(super) fn resolved_system_prompt_overlay(&self) -> String {
-        self.system_prompt_overlay
-            .trim()
-            .replace("{{verbosity}}", verbosity_clause(&self.verbosity))
-            .replace("{{datetime}}", &self.prompt_datetime)
-    }
-
-    /// Re-read the user additions in `system_prompt.md` after a Ctrl+E hand-edit.
-    pub fn reload_base_system_prompt(&mut self) {
-        let text = crate::config::load_system_prompt_overlay();
-        if text != self.system_prompt_overlay {
-            self.system_prompt_overlay = text;
-            self.bump_cache_epoch();
-        }
-        self.push_status("system prompt reloaded".to_string());
-    }
-
-    /// Names + descriptions of installed skills and how to invoke one — full
-    /// bodies stay off the wire until the model calls the `skill` tool.
-    fn skills_section(&self) -> Option<String> {
-        if self.skills.is_empty() {
-            return None;
-        }
-        let mut s = "## Skills\nYou have skills available. Their descriptions are metadata only: when a skill \
-                     matches the user's task, call the `skills` tool with action=load and its name before \
-                     acting; the full instructions will be returned. Load bundled resources by their relative \
-                     path only, and do not load every skill spec up front.\n"
-            .to_string();
-        for skill in &self.skills {
-            let _ = writeln!(s, "- {}: {}", skill.name, skill.description);
-        }
-        Some(s.trim_end().to_string())
-    }
-
-    /// Scripts the model has written (or the user has placed) in the space,
-    /// listed so the model reuses them instead of rewriting from scratch.
-    fn scripts_section(&self) -> Option<String> {
-        if self.scripts_cache.is_empty() {
-            return None;
-        }
-        let mut s = "## Scripts\nThe user has reusable scripts in this space. \
-                      Call `scripts(action=read, path=...)` to see one, \
-                      `scripts(action=edit, path=..., edits=...)` to modify, or \
-                      `scripts(action=run, space=true, path=...)` to execute. \
-                      The `path` parameter is relative to the scripts dir — do NOT prefix `scripts/`.\n"
-            .to_string();
-        for script in &self.scripts_cache {
-            let _ = writeln!(s, "- {} ({})", script.name, human_size(script.size));
-        }
-        Some(s.trim_end().to_string())
-    }
-
-    /// Names/types/sizes of the space's imported files — content stays off the
-    /// wire until the model calls `files` with the appropriate action.
-    fn files_section(&self) -> Option<String> {
-        if self.files_cache.is_empty() {
-            return None;
-        }
-        let mut s = "## Files\nThe user has imported these files into this space. Do not guess \
-                     their contents: call `files(action=search, query=...)` to find relevant passages, or \
-                     `files(action=read, name=...)` to read one (200 lines per call, use offset to page). \
-                     Need several at once? Wrap them in one `batch` call.\n"
-            .to_string();
-        for f in &self.files_cache {
-            let kind = std::path::Path::new(&f.name)
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("file")
-                .to_lowercase();
-            let _ = writeln!(
-                s,
-                "- {} ({kind}, {}, {})",
-                f.name,
-                human_size(f.size.unsigned_abs()),
-                f.status
-            );
-        }
-        Some(s.trim_end().to_string())
-    }
-
-    /// How to build/edit locally served web apps, plus the space's existing
-    /// apps. Present whenever the app server is running. Hidden in incognito.
-    fn apps_section(&self) -> Option<String> {
-        if self.incognito {
-            return None;
-        }
-        self.app_server.as_ref()?;
-        let mut s = "## Apps\nYou can build apps served locally. \
-                     ALWAYS use the KV store for persistence (not LocalStorage), the upload endpoint for file \
-                     uploads, and the app tool to bring user data into the app.\n\n\
-                     **CRITICAL: URLs are UUID-based.** The UUID comes from `app(action=write)`'s result \
-                     (\"live at http://...\"). Copy it from there — never invent or guess a UUID. \
-                     If you don't have the result, call `app(action=read)` or `app(action=search)` on the app to \
-                     rediscover it.\n\n"
-            .to_string();
-
-        s.push_str("### Tools\n");
-        s.push_str("- `batch` — wrap several app operations into one round-trip (results come back labeled).\n");
-        s.push_str("- `app(action=write, app, path, content)` — create/replace a file. App can be a name or UUID; a new app gets a UUID.\n");
-        s.push_str("- `app(action=read, app, path)` / `app(action=patch, app, path, edits)` — read and edit by hashline.\n");
-        s.push_str("- `app(action=diff, app, path, content)` — preview a complete-file change without writing it.\n");
-        s.push_str("- `app(action=search, app, pattern)` — search non-ignored app files; respects `.gitignore`.\n");
-        s.push_str(
-            "- `scripts(action=install, app=..., packages=[...])` — npm-install into an app.\n",
-        );
-        s.push_str("- `app(action=list)` — list pasted conversation images.\n");
-        s.push_str("- `app(action=copy_images, image_ids, app)` — copy images into `_images/` for `<img src=\"...\">`.\n");
-        s.push_str("- `app(action=copy_file, file_name, app)` — copy a space file's text into the app's KV store.\n\n");
-
-        s.push_str("### KV Store (persistent key-value per app)\n");
-        s.push_str("Each app has a SQLite-backed KV store. Call these from frontend JS:\n");
-        s.push_str("- `PUT <app_url>/_api/kv/<key>` — upsert a value (body = raw text)\n");
-        s.push_str("- `GET <app_url>/_api/kv/<key>` — read a value\n");
-        s.push_str("- `DELETE <app_url>/_api/kv/<key>` — delete a value\n");
-        s.push_str("- `GET <app_url>/_api/kv` — list all keys (returns JSON array)\n\n");
-
-        s.push_str("### File Upload\n");
-        s.push_str("- `POST <app_url>/_api/upload` with `multipart/form-data` — upload a file. Returns `{\"name\", \"url\"}`. Files persist and are served via GET.\n\n");
-
-        s.push_str("### Using User Images\n");
-        s.push_str("1. `app(action=list)` to see conversation images.\n");
-        s.push_str("2. `app(action=copy_images, image_ids, app)` to copy them into `_images/`.\n");
-        s.push_str("3. Use returned URLs in `<img src=\"...\">` tags.\n\n");
-
-        s.push_str("### Using Space Files\n");
-        s.push_str("- `app(action=copy_file, file_name, app)` copies file text into KV under `_file:<name>`. Read it via `GET <app_url>/_api/kv/_file:<name>`.\n\n");
-
-        let apps = self.list_apps();
-        if apps.is_empty() {
-            s.push_str("No apps exist in this space yet.");
-        } else {
-            s.push_str("Existing apps:\n");
-            for a in &apps {
-                if let Some(uuid) = self
-                    .app_server
-                    .as_ref()
-                    .and_then(|s| s.registry().resolve(&self.active_space.name, a))
-                {
-                    let _ = writeln!(s, "- {a} (uuid {uuid})");
-                } else {
-                    let _ = writeln!(s, "- {a}");
-                }
-            }
-        }
-        Some(s.trim_end().to_string())
-    }
-
-    /// A system message with space-file images inline, for vision models.
-    /// Returns None when there are no image-type space files.
-    fn space_images_message(&self) -> Option<ChatMessage> {
-        let files_dir = self.space.files_dir(&self.active_space.name);
-        let mut urls: Vec<String> = Vec::new();
-        let mut names: Vec<&str> = Vec::new();
-        for f in &self.files_cache {
-            // Judged by content: a renamed PDF is never sent as an image, and
-            // a PNG with a wrong extension still is one.
-            let Ok(bytes) = std::fs::read(files_dir.join(&f.name)) else {
-                continue;
-            };
-            let Some(mime) = crate::extract::vision_mime(&bytes) else {
-                continue;
-            };
-            let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
-            urls.push(format!("data:{mime};base64,{b64}"));
-            names.push(f.name.as_str());
-        }
-        if urls.is_empty() {
-            return None;
-        }
-        let text = format!(
-            "The user has these image files in this space which you can see below: {}",
-            names.join(", ")
-        );
-        Some(ChatMessage {
-            role: "system".to_string(),
-            content: text,
-            reasoning_content: None,
-            tool_calls: None,
-            tool_call_id: None,
-            images: urls,
-            cache_breakpoint: false,
-        })
-    }
-
-    /// Names of the active space's existing apps (directory listing).
-    pub fn list_apps(&self) -> Vec<String> {
-        let dir = self.space.apps_dir(&self.active_space.name);
-        let Ok(rd) = std::fs::read_dir(dir) else {
-            return Vec::new();
-        };
-        let mut apps: Vec<String> = rd
-            .filter_map(std::result::Result::ok)
-            .filter(|e| e.path().is_dir())
-            .filter_map(|e| e.file_name().into_string().ok())
-            .collect();
-        apps.sort();
-        apps
-    }
 }
 
 #[cfg(test)]
 #[path = "ui_language_tests.rs"]
 mod ui_language_tests;
-
-struct UiBlock {
-    range: std::ops::Range<usize>,
-    prefix: String,
-    source: String,
-    title: String,
-}
-
-// Only complete UI fences count. Track other fences too, so literal examples
-// inside longer Markdown fences never become replay diagnostics or repairs.
-fn ui_blocks(content: &str) -> Vec<UiBlock> {
-    let mut fence: Option<(char, usize, bool, usize)> = None;
-    let mut source = String::new();
-    let mut blocks = Vec::new();
-    let mut start = 0;
-    let mut offset = 0;
-    let mut prefix = String::new();
-    for raw in content.split_inclusive('\n') {
-        let line = raw.trim_end_matches('\n').trim_end_matches('\r');
-        if let Some((marker, length, ui, quotes)) = fence {
-            let mut body = line;
-            for _ in 0..quotes {
-                if let Some(rest) = body.trim_start().strip_prefix('>') {
-                    body = rest.strip_prefix(' ').unwrap_or(rest);
-                }
-            }
-            let trimmed = body.trim_start();
-            let count = trimmed.chars().take_while(|ch| *ch == marker).count();
-            if count >= length && trimmed[count..].trim().is_empty() {
-                if ui {
-                    let title = crate::interactive::Document::preview(&source)
-                        .map(|document| document.title().to_string())
-                        .or_else(|| {
-                            serde_json::from_str::<serde_json::Value>(&source)
-                                .ok()
-                                .and_then(|value| {
-                                    value
-                                        .get("title")
-                                        .and_then(serde_json::Value::as_str)
-                                        .map(str::to_string)
-                                })
-                        })
-                        .filter(|title| !title.is_empty())
-                        .unwrap_or_else(|| format!("#{}", blocks.len() + 1));
-                    blocks.push(UiBlock {
-                        range: start..offset + line.len(),
-                        prefix: prefix.clone(),
-                        source: source.clone(),
-                        title,
-                    });
-                }
-                fence = None;
-                source.clear();
-            } else if ui {
-                // Markdown removes blockquote prefixes before handing off JSON.
-                source.push_str(body);
-                source.push('\n');
-            }
-        } else {
-            if line.starts_with("    ") || line.starts_with('\t') {
-                offset += raw.len();
-                continue;
-            }
-            let trimmed = line.trim_start_matches([' ', '\t', '>']);
-            let marker = trimmed.chars().next().unwrap_or_default();
-            let length = trimmed.chars().take_while(|ch| *ch == marker).count();
-            if matches!(marker, '`' | '~') && length >= 3 {
-                let ui = trimmed[length..]
-                    .split_whitespace()
-                    .next()
-                    .is_some_and(|lang| lang.eq_ignore_ascii_case("nexus-ui"));
-                let quotes = line[..line.len() - trimmed.len()]
-                    .chars()
-                    .filter(|ch| *ch == '>')
-                    .count();
-                fence = Some((marker, length, ui, quotes));
-                start = offset;
-                prefix = line[..line.len() - trimmed.len()].into();
-            }
-        }
-        offset += raw.len();
-    }
-    blocks
-}
-
-fn image_distance(left: &str, right: &str) -> usize {
-    let left = left.split('?').next().unwrap_or(left).as_bytes();
-    let right = right.split('?').next().unwrap_or(right).as_bytes();
-    if left.len().abs_diff(right.len()) > 4 {
-        return 5;
-    }
-    let mut row: Vec<_> = (0..=right.len()).collect();
-    for (i, a) in left.iter().enumerate() {
-        let mut diagonal = row[0];
-        row[0] = i + 1;
-        for (j, b) in right.iter().enumerate() {
-            let old = row[j + 1];
-            row[j + 1] = (diagonal + usize::from(a != b))
-                .min(row[j] + 1)
-                .min(old + 1);
-            diagonal = old;
-        }
-        if row.iter().copied().min().unwrap_or(5) > 4 {
-            return 5;
-        }
-    }
-    row[right.len()]
-}
-
-fn result_urls(result: &str) -> Vec<&str> {
-    result
-        .match_indices("https://")
-        .map(|(start, _)| {
-            result[start..]
-                .split(|ch: char| {
-                    ch.is_whitespace() || matches!(ch, '"' | '\'' | '<' | '>' | '\\' | '`')
-                })
-                .next()
-                .unwrap_or_default()
-                .trim_end_matches(['.', ',', ';', ')', ']', '}'])
-        })
-        .collect()
-}
-
-fn markdown_image_ranges(content: &str) -> Vec<std::ops::Range<usize>> {
-    let mut ranges = Vec::new();
-    let mut offset = 0;
-    let mut fence = None;
-    for line in content.split_inclusive('\n') {
-        let trimmed = line.trim_start_matches([' ', '>']);
-        let marker = trimmed.chars().next().unwrap_or_default();
-        let count = trimmed.chars().take_while(|ch| *ch == marker).count();
-        if matches!(marker, '`' | '~') && count >= 3 {
-            if fence.is_none() {
-                fence = Some((marker, count));
-            } else if fence.is_some_and(|(open, length)| open == marker && count >= length) {
-                fence = None;
-            }
-        } else if fence.is_none() && !line.starts_with("    ") {
-            let mut rest = line;
-            let mut consumed = 0;
-            while let Some(start) = rest.find("![") {
-                let Some(close) = rest[start + 2..].find("](") else {
-                    break;
-                };
-                let begin = start + 2 + close + 2;
-                // Inline code is literal, not a rendered image.
-                let prefix = &line[..consumed + start];
-                if prefix.chars().filter(|ch| *ch == '`').count() % 2 == 0
-                    && prefix.chars().rev().take_while(|ch| *ch == '\\').count() % 2 == 0
-                {
-                    let tail = &rest[begin..];
-                    let angle = tail.starts_with('<');
-                    let mut depth = 0usize;
-                    let end = tail.char_indices().find_map(|(index, ch)| {
-                        if angle {
-                            return (ch == '>').then_some(index);
-                        }
-                        match ch {
-                            '(' => depth += 1,
-                            ')' if depth > 0 => depth -= 1,
-                            ')' => return Some(index),
-                            ch if ch.is_whitespace() => return Some(index),
-                            _ => {}
-                        }
-                        None
-                    });
-                    if let Some(end) = end {
-                        ranges.push(
-                            offset + consumed + begin + usize::from(angle)
-                                ..offset + consumed + begin + end,
-                        );
-                    }
-                }
-                consumed += begin;
-                rest = &rest[begin..];
-            }
-        }
-        offset += line.len();
-    }
-    ranges
-}
-
-fn repair_image_links(content: &str, messages: &[Message]) -> (String, usize) {
-    let mut results = Vec::new();
-    for message in messages {
-        if message.role == "tool" {
-            results.push((message.content.clone(), false));
-        } else if message.role == "tool_call"
-            && let Ok(value) = serde_json::from_str::<serde_json::Value>(&message.content)
-            && let Some(result) = value["result"].as_str()
-        {
-            let images = value["name"] == "image_search"
-                || (value["name"] == "search"
-                    && value["arguments"]
-                        .as_str()
-                        .and_then(|args| serde_json::from_str::<serde_json::Value>(args).ok())
-                        .is_some_and(|args| args["mode"] == "images"))
-                || result.contains("\n    image · ");
-            results.push((result.into(), images));
-        }
-    }
-    let mut candidates = std::collections::BTreeSet::new();
-    for (result, images) in &results {
-        for url in result_urls(result) {
-            let lower = url.to_ascii_lowercase();
-            if *images
-                || [".png", ".jpg", ".jpeg", ".webp", ".gif"]
-                    .iter()
-                    .any(|ext| lower.contains(ext))
-            {
-                candidates.insert(url);
-            }
-        }
-    }
-    let replacement = |url: &str| -> Option<&str> {
-        if results.iter().any(|(result, _)| result.contains(url)) {
-            return None;
-        }
-        let parsed = crate::remote_image::validate_url(url).ok()?;
-        let matches: Vec<_> = candidates
-            .iter()
-            .copied()
-            .filter(|candidate| {
-                crate::remote_image::validate_url(candidate)
-                    .is_ok_and(|candidate| candidate.host_str() == parsed.host_str())
-                    && image_distance(url, candidate) <= 4
-            })
-            .collect();
-        (matches.len() == 1).then(|| matches[0])
-    };
-    let mut edits = Vec::new();
-    for range in markdown_image_ranges(content) {
-        if let Some(url) = replacement(&content[range.clone()]) {
-            edits.push((range, url.to_string()));
-        }
-    }
-    for block in ui_blocks(content) {
-        // Read the image fields even when another node needs schema repair.
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&block.source) else {
-            continue;
-        };
-        for node in value["view"].as_array().into_iter().flatten() {
-            let mut urls = Vec::new();
-            match node["type"].as_str() {
-                Some("image") => urls.extend(node["src"].as_str()),
-                Some("hero") => urls.extend(node["image"].as_str()),
-                Some("cards" | "buttons") => {
-                    urls.extend(
-                        node["items"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .filter_map(|item| item["image"].as_str()),
-                    );
-                }
-                _ => {}
-            }
-            for url in urls {
-                if let Some(candidate) = replacement(url) {
-                    let encoded = serde_json::to_string(url).expect("image URL string");
-                    let fixed = serde_json::to_string(candidate).expect("image URL string");
-                    for (index, _) in content[block.range.clone()].match_indices(&encoded) {
-                        let prefix =
-                            content[block.range.start..block.range.start + index].trim_end();
-                        let key = prefix.strip_suffix(':').unwrap_or_default().trim_end();
-                        if !key.ends_with("\"image\"") && !key.ends_with("\"src\"") {
-                            continue;
-                        }
-                        edits.push((
-                            block.range.start + index..block.range.start + index + encoded.len(),
-                            fixed.clone(),
-                        ));
-                    }
-                }
-            }
-        }
-    }
-    edits.sort_by_key(|(range, _)| (range.start, range.end));
-    edits.dedup_by(|left, right| left.0 == right.0);
-    let mut repaired = content.to_string();
-    for (range, url) in edits.iter().rev() {
-        repaired.replace_range(range.clone(), url);
-    }
-    (repaired, edits.len())
-}
-
-fn ui_program_history(
-    messages: &[Message],
-    first_owner: usize,
-) -> (
-    std::collections::BTreeMap<usize, String>,
-    Vec<serde_json::Value>,
-) {
-    use crate::interactive::{Document, edit_patch, merge_program, panel_id};
-    let mut panels = std::collections::BTreeMap::<String, String>::new();
-    let mut replay = std::collections::BTreeMap::new();
-    let mut errors = Vec::new();
-    for (owner, message) in messages
-        .iter()
-        .enumerate()
-        .filter(|(_, m)| m.role == "assistant")
-    {
-        errors.clear();
-        let mut content = message.content.clone();
-        let blocks = ui_blocks(&content);
-        let mut replacements = Vec::new();
-        for (ordinal, block) in blocks.into_iter().enumerate() {
-            let id = panel_id(first_owner + owner, ordinal);
-            let result = if let Some((target, patch)) = edit_patch(&block.source) {
-                let result = panels
-                    .get(target)
-                    .ok_or_else(|| anyhow::anyhow!("unknown panel {target}"))
-                    .and_then(|source| merge_program(source, patch));
-                if let Ok(source) = &result {
-                    panels.insert(target.into(), source.clone());
-                }
-                replacements.push((
-                    block.range,
-                    format!("Patch for nexus-ui panel {target}\n```nexus-ui\n{patch}```"),
-                ));
-                result.map(|_| ()).map_err(|error| {
-                    vec![crate::interactive::CheckError {
-                        path: "edit".into(),
-                        message: error.to_string(),
-                    }]
-                })
-            } else {
-                let result = Document::check(&block.source);
-                if result.is_ok() && !block.source.trim_start().starts_with('{') {
-                    panels.insert(id.clone(), block.source.clone());
-                    replacements.push((
-                        block.range,
-                        format!("nexus-ui panel {id}\n```nexus-ui\n{}```", block.source),
-                    ));
-                }
-                result.map(|_| ())
-            };
-            if let Err(failures) = result {
-                for error in failures.into_iter().take(10 - errors.len().min(10)) {
-                    errors.push(serde_json::json!({
-                        "source":"parser", "code": if error.path == "source" { "parse-failed" } else { "type-mismatch" },
-                        "statementId":id, "path":error.path, "message":format!("failed to render: {}", error.message.chars().take(220).collect::<String>()),
-                        "hint":"Use the terminal signatures and bounded nexus-ui syntax."
-                    }));
-                }
-            }
-        }
-        for (range, replacement) in replacements.into_iter().rev() {
-            content.replace_range(range, &replacement);
-        }
-        replay.insert(owner, content);
-    }
-    for (owner, content) in &mut replay {
-        for (ordinal, block) in ui_blocks(content).into_iter().enumerate().rev() {
-            let id = panel_id(first_owner + owner, ordinal);
-            if let Some(program) = panels.get(&id) {
-                content.replace_range(block.range, &format!("```nexus-ui\n{program}\n```"));
-            }
-        }
-    }
-    (replay, errors)
-}
-
-fn failing_ui_blocks(content: &str) -> Vec<(UiBlock, Vec<crate::interactive::CheckError>)> {
-    ui_blocks(content)
-        .into_iter()
-        .filter(|block| crate::interactive::edit_patch(&block.source).is_none())
-        .filter_map(|block| {
-            crate::interactive::Document::check(&block.source)
-                .err()
-                .map(|errors| (block, errors))
-        })
-        .collect()
-}
-
-fn ui_failure_notes(content: &str) -> String {
-    let mut notes = String::new();
-    for (block, errors) in failing_ui_blocks(content) {
-        let title = block.title;
-        let error = &errors[0];
-        let message = error.message.lines().collect::<Vec<_>>().join(" ");
-        let path = error.path.replace(['\n', '\r'], " ");
-        let _ = write!(
-            notes,
-            "\n[nexus: the nexus-ui block {title:?} failed to render — {path}: {message}. Correct the reported errors and resend it if the user still needs it.]"
-        );
-    }
-    notes
-}
-
-fn ui_repair_history(
-    blocks: &[(UiBlock, Vec<crate::interactive::CheckError>)],
-) -> Vec<ChatMessage> {
-    let mut source = String::new();
-    let mut request = String::new();
-    for (block, errors) in blocks {
-        let _ = writeln!(source, "```nexus-ui\n{}```", block.source);
-        let diagnostics = errors
-            .iter()
-            .take(10)
-            .map(|error| {
-                format!(
-                    "{}: {}",
-                    error.path.replace(['\n', '\r'], " "),
-                    error.message.replace(['\n', '\r'], " ")
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let _ = writeln!(
-            request,
-            "Your nexus-ui block {:?} failed validation:\n{diagnostics}\nReply with ONLY the corrected nexus-ui fenced block, nothing else.",
-            block.title,
-        );
-    }
-    vec![
-        ChatMessage::text(
-            "system",
-            format!(
-                "{}\nIf multiple blocks need repair, return one corrected fenced block per input block, in the same order.",
-                crate::interactive::instructions(),
-            ),
-        ),
-        ChatMessage::text("assistant", source),
-        ChatMessage::text("user", request),
-    ]
-}
-
-fn repaired_ui_reply(
-    original: &str,
-    failures: &[(UiBlock, Vec<crate::interactive::CheckError>)],
-    response: &str,
-) -> std::result::Result<String, String> {
-    let corrected = ui_blocks(response);
-    if corrected.len() != failures.len() {
-        return Err(format!(
-            "expected {} corrected nexus-ui block(s), got {}",
-            failures.len(),
-            corrected.len()
-        ));
-    }
-    for block in &corrected {
-        crate::interactive::Document::check(&block.source)
-            .map_err(|errors| format!("{}: {}", errors[0].path, errors[0].message))?;
-    }
-    let mut content = original.to_string();
-    for ((block, _), corrected) in failures.iter().zip(&corrected).rev() {
-        let fence = format!("```nexus-ui\n{}\n```", corrected.source.trim_end());
-        let replacement = fence
-            .lines()
-            .map(|line| format!("{}{line}", block.prefix))
-            .collect::<Vec<_>>()
-            .join("\n");
-        content.replace_range(block.range.clone(), &replacement);
-    }
-    Ok(content)
-}
-
-/// Each fenced code block in `md` as `(language, code)`.
-pub fn code_blocks(md: &str) -> Vec<(Option<String>, String)> {
-    let mut out = Vec::new();
-    let mut inside = false;
-    let mut lang: Option<String> = None;
-    let mut buf = String::new();
-    for line in md.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") {
-            if inside {
-                out.push((lang.take(), std::mem::take(&mut buf)));
-            } else {
-                let l = trimmed.trim_start_matches('`').trim();
-                lang = (!l.is_empty()).then(|| l.to_string());
-            }
-            inside = !inside;
-            continue;
-        }
-        if inside {
-            buf.push_str(line);
-            buf.push('\n');
-        }
-    }
-    if inside && !buf.is_empty() {
-        out.push((lang.take(), buf)); // unterminated (e.g. mid-stream)
-    }
-    out
-}
 
 pub fn pick_greeting() -> &'static str {
     let n = std::time::SystemTime::now()
@@ -2749,22 +1231,6 @@ pub fn pick_flavor() -> (usize, SpinnerColor) {
     (n % THINKING.len(), SPINNER_COLORS[n % SPINNER_COLORS.len()])
 }
 
-/// The instruction block appended to the system prompt when web mode is on:
-/// forces search-first, inline `[n]` citations, and a trailing Sources list.
-/// `today` keeps the model from hedging with stale training-data dates.
-pub fn web_mode_clause(today: &str) -> String {
-    format!(
-        "Web answer mode is ON for this session. Today's date is {today}. Before answering, you \
-         MUST call search with mode=web and a focused query (and fetch_url on the most promising results) — \
-         never answer from memory alone. You may search more than once with refined queries if the \
-         first results are insufficient. Each search result is numbered [1], [2], ... with title, \
-         URL, and snippet. Cite every claim inline immediately as [n]; do not bunch citations at \
-         the end of a paragraph. End your reply with a line starting exactly with 'Sources:' \
-         followed by every citation you used, one per line, as [n] title — url. Do not fabricate \
-         sources; if a claim is not backed by a search/fetched source, do not cite it."
-    )
-}
-
 pub fn title_from(text: &str) -> String {
     let t: String = text.chars().take(40).collect();
     if t.trim().is_empty() {
@@ -2774,653 +1240,9 @@ pub fn title_from(text: &str) -> String {
     }
 }
 
-/// Append one persisted assistant tool-call batch and its tool results to a
-/// reconstructed request history.
-fn append_tool_call_history(
-    history: &mut Vec<ChatMessage>,
-    effective: &[Message],
-    index: &mut usize,
-    seen_results: &mut std::collections::HashMap<(String, String), String>,
-    tool_images_dir: Option<&std::path::Path>,
-    result_cap: Option<usize>,
-    mask_through: usize,
-) {
-    let start = *index;
-    let mut rows = Vec::new();
-    while *index < effective.len() && effective[*index].role == "tool_call" {
-        if let Some(row) = parse_tool_call_row(&effective[*index].content) {
-            let masked = *index < mask_through
-                && crate::tools::classify_tool_result(&row.result, "").is_none();
-            rows.push((row, masked));
-        }
-        *index += 1;
-    }
-    if rows.is_empty() {
-        // Keep malformed legacy rows out of the model.
-        debug_assert!(*index > start);
-        return;
-    }
-    let calls = rows
-        .iter()
-        .map(|(row, _)| row.call.clone())
-        .collect::<Vec<_>>();
-    let reasoning_content = rows
-        .iter()
-        .find_map(|(row, _)| row.reasoning_content.clone());
-    let assistant_content = rows
-        .iter()
-        .find_map(|(row, _)| row.assistant_content.clone());
-    history.push(ChatMessage {
-        role: "assistant".to_string(),
-        content: assistant_content.unwrap_or_default(),
-        reasoning_content,
-        tool_calls: Some(calls),
-        tool_call_id: None,
-        images: Vec::new(),
-        cache_breakpoint: false,
-    });
-    for (row, masked) in rows {
-        let call = row.call;
-        let images = tool_images_dir
-            .filter(|_| !masked)
-            .and_then(|dir| crate::provider::openrouter::extract_tool_images(&row.result, dir));
-        let key = (call.name.clone(), call.arguments.clone());
-        // Dedup the model-visible result so replay and live-loop seeding agree.
-        let visible = result_cap.map_or_else(
-            || row.result.clone(),
-            |cap| crate::tools::cap_head_tail(&row.result, cap),
-        );
-        let content = if masked {
-            crate::tools::tool_result_masked_note(&call.name, &call.arguments)
-        } else {
-            match seen_results.get(&key) {
-                Some(prev) if *prev == visible => {
-                    crate::tools::tool_result_unchanged_note(&call.name, &call.arguments)
-                }
-                _ => {
-                    seen_results.insert(key, visible.clone());
-                    visible
-                }
-            }
-        };
-        history.push(ChatMessage {
-            role: "tool".to_string(),
-            content,
-            reasoning_content: None,
-            tool_calls: None,
-            tool_call_id: Some(call.id),
-            images: Vec::new(),
-            cache_breakpoint: false,
-        });
-        if let Some(images) = images {
-            history.push(ChatMessage {
-                role: "user".to_string(),
-                content: images.description,
-                reasoning_content: None,
-                tool_calls: None,
-                tool_call_id: None,
-                images: images.urls,
-                cache_breakpoint: false,
-            });
-        }
-    }
-}
-
-/// Status shown when a `!` command reaches chat mode.
-const CHAT_MODE_BANG_STATUS: &str = "! commands run in agent mode";
-
-/// A captured `!` command can run this long before its process group is killed.
-const USER_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(10);
-/// Characters of a captured command's output kept in its row (head and tail).
-const USER_COMMAND_CHARS: usize = 8_000;
-/// Bytes of raw output buffered from each end while a command runs.
-const USER_COMMAND_KEEP_BYTES: usize = 64 * 1024;
-const USER_COMMAND_INTERACTIVE_NOTE: &str =
-    "(interactive — output not captured; paste anything relevant)";
-
-/// How long the output reader may stay open after the command's process
-/// group is gone (a descendant that left the group can hold the pipe).
-const USER_COMMAND_DRAIN: std::time::Duration = std::time::Duration::from_secs(2);
-const USER_COMMAND_STREAM_OPEN_NOTE: &str =
-    "(output stream still open — a background process kept it; not waited for)";
-
-#[derive(PartialEq, Eq)]
-pub(super) struct UserCommandContext {
-    session: Option<String>,
-    space: String,
-    mode: super::WorkMode,
-    root: Option<std::path::PathBuf>,
-}
-
-/// A finished captured `!` command, sent from its task to `next_event`.
-pub(crate) struct UserCommandRun {
-    session_id: String,
-    incognito: bool,
-    cmd: String,
-    cwd: String,
-    next_dir: Option<std::path::PathBuf>,
-    epoch: u64,
-    exit: Option<i32>,
-    started: bool,
-    output: String,
-}
-
-/// How a `!` command ended: `exit <code>`, `killed` (by a signal or the
-/// timeout), or `failed to start`.
-pub fn user_command_outcome_label(exit: Option<i32>, started: bool) -> String {
-    match exit {
-        Some(code) => format!("exit {code}"),
-        None if started => "killed".to_string(),
-        None => "failed to start".to_string(),
-    }
-}
-
-/// A `user_command` row's outcome, shared by the replay and the TUI card.
-pub fn user_command_outcome(row: &serde_json::Value) -> String {
-    user_command_outcome_label(
-        row["exit"]
-            .as_i64()
-            .and_then(|code| i32::try_from(code).ok()),
-        row["started"].as_bool().unwrap_or(true),
-    )
-}
-
-fn user_command_row(
-    cmd: &str,
-    cwd: &str,
-    exit: Option<i32>,
-    started: bool,
-    output: &str,
-    interactive: bool,
-) -> String {
-    serde_json::json!({
-        "cmd": cmd,
-        "cwd": cwd,
-        "exit": exit,
-        "started": started,
-        "output": output,
-        "interactive": interactive,
-    })
-    .to_string()
-}
-
-/// A `user_command` row as the user message the model reads.
-fn user_command_replay(content: &str) -> String {
-    let Ok(row) = serde_json::from_str::<serde_json::Value>(content) else {
-        return content.to_string();
-    };
-    let field = |key: &str| row[key].as_str().unwrap_or_default();
-    let mut text = format!(
-        "I ran `{}` in {} ({}):\n",
-        field("cmd"),
-        field("cwd"),
-        user_command_outcome(&row)
-    );
-    let output = field("output");
-    if row["interactive"].as_bool() == Some(true) {
-        text.push_str(output);
-    } else {
-        // A fence longer than any backtick run in the output keeps it intact.
-        let longest = output
-            .split(|c| c != '`')
-            .map(str::len)
-            .max()
-            .unwrap_or_default();
-        let fence = "`".repeat(longest.max(2) + 1);
-        let _ = write!(text, "{fence}\n{}\n{fence}", output.trim_end());
-    }
-    text
-}
-
-/// Run `sh -c <cmd>` with the user's environment and stdin closed, returning
-/// its exit code, whether it started, and combined stdout+stderr. The process
-/// group is killed when the shell exits (no stray background jobs) or at
-/// `timeout`.
-#[cfg(test)]
-async fn capture_user_command(
-    cmd: &str,
-    cwd: &std::path::Path,
-    timeout: std::time::Duration,
-) -> (Option<i32>, bool, String) {
-    let setup = crate::usershell::UserShell {
-        shell: "/bin/sh".into(),
-        snapshot: None,
-        path: String::new(),
-        names: Vec::new(),
-        warning: None,
-    };
-    capture_with_shell(cmd, cwd, timeout, &setup, std::path::Path::new("/dev/null")).await
-}
-
-async fn capture_with_shell(
-    cmd: &str,
-    cwd: &std::path::Path,
-    timeout: std::time::Duration,
-    setup: &crate::usershell::UserShell,
-    cwd_file: &std::path::Path,
-) -> (Option<i32>, bool, String) {
-    let (child, reader) = match spawn_captured(cmd, cwd, setup, cwd_file) {
-        Ok(spawned) => spawned,
-        Err(error) => return (None, false, format!("could not run: {error}")),
-    };
-    match collect_captured(child, reader, timeout).await {
-        Ok((exit, output)) => (exit, true, output),
-        Err(error) => (None, true, format!("could not read its output: {error}")),
-    }
-}
-
-fn spawn_captured(
-    cmd: &str,
-    cwd: &std::path::Path,
-    setup: &crate::usershell::UserShell,
-    cwd_file: &std::path::Path,
-) -> std::io::Result<(tokio::process::Child, std::io::PipeReader)> {
-    // One pipe behind both descriptors keeps stdout and stderr in write order.
-    let (reader, writer) = std::io::pipe()?;
-    let mut command = tokio::process::Command::new(&setup.shell);
-    command
-        .args(["-c", &setup.wrapper(cmd, cwd)])
-        .env("NEXUS_CWD_FILE", cwd_file)
-        .current_dir(cwd)
-        .stdin(std::process::Stdio::null())
-        .stdout(writer.try_clone()?)
-        .stderr(writer)
-        .kill_on_drop(true);
-    #[cfg(unix)]
-    command.process_group(0);
-    let child = command.spawn()?;
-    // Dropping `command` closes this side's write ends, so the reader sees
-    // EOF once every process holding the pipe has exited.
-    Ok((child, reader))
-}
-
-async fn collect_captured(
-    mut child: tokio::process::Child,
-    reader: std::io::PipeReader,
-    timeout: std::time::Duration,
-) -> std::io::Result<(Option<i32>, String)> {
-    let group = child.id();
-    let sink = std::sync::Arc::new(std::sync::Mutex::new(HeadTail::default()));
-    let reader_sink = std::sync::Arc::clone(&sink);
-    let (done_tx, done_rx) = tokio::sync::oneshot::channel();
-    // A plain thread, not `spawn_blocking`: a reader stuck on an escaped
-    // descendant must never hold up runtime shutdown.
-    std::thread::spawn(move || {
-        let _ = done_tx.send(read_into(reader, &reader_sink));
-    });
-    let (exit, timed_out) = match tokio::time::timeout(timeout, child.wait()).await {
-        Ok(status) => (status?.code(), false),
-        Err(_) => (None, true),
-    };
-    kill_group(group);
-    if timed_out {
-        child.wait().await?;
-    }
-    let stream_open = match tokio::time::timeout(USER_COMMAND_DRAIN, done_rx).await {
-        Ok(Ok(read)) => {
-            read?;
-            false
-        }
-        Ok(Err(closed)) => return Err(std::io::Error::other(closed)),
-        Err(_) => true,
-    };
-    let mut output = sink.lock().expect("output buffer").text();
-    if timed_out {
-        let _ = write!(output, "\n[timed out after {timeout:?} · killed]");
-    }
-    if stream_open {
-        let _ = write!(output, "\n{USER_COMMAND_STREAM_OPEN_NOTE}");
-    }
-    Ok((exit, output))
-}
-
-#[cfg(unix)]
-fn kill_group(group: Option<u32>) {
-    if let Some(pid) = group.and_then(|pid| libc::pid_t::try_from(pid).ok()) {
-        // SAFETY: the pid came from our child, spawned as its own process
-        // group leader; negating it signals only that group.
-        unsafe { libc::kill(-pid, libc::SIGKILL) };
-    }
-}
-
-#[cfg(not(unix))]
-fn kill_group(_group: Option<u32>) {}
-
-/// A stream's first and last `USER_COMMAND_KEEP_BYTES`, so a runaway command
-/// cannot exhaust memory.
-#[derive(Default)]
-struct HeadTail {
-    head: Vec<u8>,
-    tail: std::collections::VecDeque<u8>,
-    total: usize,
-}
-
-impl HeadTail {
-    fn push(&mut self, bytes: &[u8]) {
-        self.total += bytes.len();
-        let split = (USER_COMMAND_KEEP_BYTES - self.head.len()).min(bytes.len());
-        self.head.extend_from_slice(&bytes[..split]);
-        self.tail.extend(&bytes[split..]);
-        if self.tail.len() > USER_COMMAND_KEEP_BYTES {
-            self.tail.drain(..self.tail.len() - USER_COMMAND_KEEP_BYTES);
-        }
-    }
-
-    fn text(&self) -> String {
-        let mut text = String::from_utf8_lossy(&self.head).into_owned();
-        let omitted = self.total - self.head.len() - self.tail.len();
-        if omitted > 0 {
-            let _ = write!(text, "\n… [{omitted} bytes omitted] …\n");
-        }
-        let (front, back) = self.tail.as_slices();
-        text.push_str(&String::from_utf8_lossy(&[front, back].concat()));
-        text
-    }
-}
-
-/// Read a stream to its end into `sink`, which stays readable meanwhile.
-fn read_into(
-    mut reader: impl std::io::Read,
-    sink: &std::sync::Mutex<HeadTail>,
-) -> std::io::Result<()> {
-    let mut chunk = [0; 8192];
-    loop {
-        match reader.read(&mut chunk) {
-            Ok(0) => return Ok(()),
-            Ok(read) => sink.lock().expect("output buffer").push(&chunk[..read]),
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-/// One persisted tool-call transcript row, including the provider call id,
-/// assistant content, and optional reasoning needed to reconstruct the batch.
-struct StoredToolCall {
-    call: ToolCall,
-    result: String,
-    reasoning_content: Option<String>,
-    assistant_content: Option<String>,
-}
-
-/// Recover a stored tool-call row from its JSON content. Older rows did not
-/// persist an id, so they retain the legacy synthetic id as a fallback.
-fn parse_tool_call_row(content: &str) -> Option<StoredToolCall> {
-    let v: serde_json::Value = serde_json::from_str(content).ok()?;
-    let name = v.get("name")?.as_str()?.to_string();
-    let arguments = v.get("arguments")?.as_str()?.to_string();
-    let result = v.get("result")?.as_str()?.to_string();
-    Some(StoredToolCall {
-        call: ToolCall {
-            id: v
-                .get("id")
-                .and_then(serde_json::Value::as_str)
-                .filter(|id| !id.is_empty())
-                .unwrap_or("call_0")
-                .to_string(),
-            name,
-            arguments,
-        },
-        result,
-        reasoning_content: v
-            .get("reasoning_content")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string),
-        assistant_content: v
-            .get("assistant_content")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string),
-    })
-}
-
-/// Compact byte counts: 940 B, 1.2 KB, 3.4 MB.
-pub fn human_size(bytes: u64) -> String {
-    match bytes {
-        b if b < 1024 => format!("{b} B"),
-        b if b < 1024 * 1024 => format!("{:.1} KB", b as f64 / 1024.0),
-        b => format!("{:.1} MB", b as f64 / (1024.0 * 1024.0)),
-    }
-}
-
-/// Strip `<think>...</think>` blocks out of `text`, returning the cleaned
-/// content and the extracted reasoning (blocks joined by newlines), if any. An
-/// unterminated tag (e.g. a truncated stream) treats the remainder as
-/// reasoning rather than leaking a dangling tag into the answer.
-pub fn split_inline_reasoning(text: &str) -> (String, Option<String>) {
-    const OPEN: &str = "<think>";
-    const CLOSE: &str = "</think>";
-    let mut content = String::with_capacity(text.len());
-    let mut reasoning = String::new();
-    let mut rest = text;
-    loop {
-        let Some(start) = rest.find(OPEN) else {
-            content.push_str(rest);
-            break;
-        };
-        content.push_str(&rest[..start]);
-        let after_open = &rest[start + OPEN.len()..];
-        let (block, remainder) = match after_open.find(CLOSE) {
-            Some(end) => (&after_open[..end], &after_open[end + CLOSE.len()..]),
-            None => (after_open, ""),
-        };
-        if !reasoning.is_empty() {
-            reasoning.push('\n');
-        }
-        reasoning.push_str(block.trim());
-        rest = remainder;
-    }
-    let content = content.trim().to_string();
-    (content, (!reasoning.is_empty()).then_some(reasoning))
-}
-
 #[cfg(test)]
 #[path = "chat/image_tests.rs"]
 mod image_source_tests;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ui_failures_are_replay_only_and_stable_across_turns() {
-        fn message(role: &str, content: &str) -> Message {
-            Message {
-                role: role.into(),
-                content: content.into(),
-                model: None,
-                reasoning: None,
-                tokens: None,
-                secs: None,
-                cost: None,
-                phrase: None,
-                persona: None,
-                created_at: None,
-            }
-        }
-        let bad =
-            "```nexus-ui\n{\"version\":1,\"title\":\"Quiz\",\"view\":[{\"type\":\"radio\"}]}\n```";
-        let good = "```nexus-ui\n{\"version\":1,\"title\":\"Quiz\",\"view\":[{\"type\":\"text\",\"text\":\"Hi\"}]}\n```";
-        let mut app = super::super::tests::app_with_key();
-        app.messages = vec![
-            message("assistant", bad),
-            message("user", "again"),
-            message("assistant", bad),
-            message("user", "fix it"),
-        ];
-        let history = app.build_history();
-        let assistants: Vec<_> = history
-            .iter()
-            .filter(|message| message.role == "assistant")
-            .collect();
-        let noted = format!(
-            "{bad}\n[nexus: the nexus-ui block \"Quiz\" failed to render — view[0]: unknown node type \"radio\" — valid: {}. Correct the reported errors and resend it if the user still needs it.]",
-            crate::interactive::NODE_TYPES
-        );
-        // Every broken turn carries its note, so an older turn replays the
-        // same bytes it did when it was the latest (cache-stable prefix).
-        assert_eq!(assistants[0].content, noted);
-        assert_eq!(assistants[1].content, noted);
-        assert_eq!(app.messages[2].content, bad);
-        assert_eq!(
-            app.build_history()[history.len() - 2].content,
-            assistants[1].content
-        );
-        app.messages[0].content = good.into();
-        app.messages[2].content = good.into();
-        let history = app.build_history();
-        assert!(
-            history
-                .iter()
-                .all(|message| !message.content.contains("[nexus: the nexus-ui block"))
-        );
-        app.messages.push(message("assistant", "No UI needed."));
-        assert!(
-            app.build_history()
-                .iter()
-                .all(|message| !message.content.contains("failed to render"))
-        );
-    }
-
-    #[test]
-    fn ui_replay_notes_ignore_open_and_literal_fences_and_number_untitled_blocks() {
-        for source in [
-            "```nexus-ui\n{",
-            "~~~nexus-ui\n{",
-            "````markdown\n```nexus-ui\n{\n```\n````",
-            "    ```nexus-ui\n    {\n    ```",
-        ] {
-            assert!(ui_failure_notes(source).is_empty(), "{source}");
-        }
-        let source = "~~~NeXuS-Ui extra\n{\"version\":1,\"title\":\"Fine\",\"view\":[{\"type\":\"text\",\"text\":\"OK\"}]}\n~~~\n```nexus-ui\n{\n```";
-        let note = ui_failure_notes(source);
-        assert!(
-            note.contains("block \"#2\" failed to render — $:"),
-            "{note}"
-        );
-        assert_eq!(note.lines().count(), 2);
-        let note = ui_failure_notes(
-            "> ```nexus-ui\n> {\"version\":1,\"title\":\"Quoted\",\"view\":[{\"type\":\"radio\"}]}\n> ```",
-        );
-        assert!(note.contains("block \"Quoted\""), "{note}");
-        assert!(ui_failure_notes("> > ```nexus-ui\n> > {\"version\":1,\"title\":\"Fine\",\"view\":[{\"type\":\"text\",\"text\":\"OK\"}]}\n> > ```").is_empty());
-        assert!(!ui_failure_notes("```nexus-ui\n> {\"version\":1,\"title\":\"Fine\",\"view\":[{\"type\":\"text\",\"text\":\"OK\"}]}\n```" ).is_empty());
-    }
-
-    #[test]
-    fn chat_params_pass_the_cache_ttl_experiment() {
-        let mut app = super::super::tests::app_with_key();
-        for enabled in [false, true] {
-            app.experiments.cache_ttl_1h = enabled;
-            let params = app.chat_params(None, crate::provider::BackendTag::OpenRouter);
-            assert_eq!(params.cache_ttl_1h, enabled);
-        }
-    }
-
-    fn temp_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("nexus-usercmd-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    #[tokio::test]
-    async fn captured_command_timeout_kills_its_process_group() {
-        let dir = temp_dir();
-        let started = std::time::Instant::now();
-        let (exit, ran, output) = capture_user_command(
-            "echo started; (sleep 1; touch late) & sleep 5",
-            &dir,
-            std::time::Duration::from_millis(300),
-        )
-        .await;
-        assert!(started.elapsed() < std::time::Duration::from_secs(3));
-        assert_eq!((exit, ran), (None, true));
-        assert_eq!(user_command_outcome_label(exit, ran), "killed");
-        assert!(output.starts_with("started\n"), "{output}");
-        assert!(
-            output.ends_with("[timed out after 300ms · killed]"),
-            "{output}"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-        assert!(
-            !dir.join("late").exists(),
-            "background job outlived the kill"
-        );
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[tokio::test]
-    async fn an_escaped_descendant_holding_the_pipe_does_not_stall_the_command() {
-        let dir = temp_dir();
-        let started = std::time::Instant::now();
-        // The perl child leaves the process group (the shell waits until it
-        // has), so the group kill misses it and it keeps the output pipe open
-        // for ten seconds.
-        let (exit, ran, output) = capture_user_command(
-            "perl -MPOSIX -e 'POSIX::setsid(); open my $f, \">\", \"escaped\"; close $f; sleep 10' & \
-             while [ ! -e escaped ]; do sleep 0.05; done; echo hi",
-            &dir,
-            USER_COMMAND_TIMEOUT,
-        )
-        .await;
-        assert!(started.elapsed() < std::time::Duration::from_secs(5));
-        assert_eq!((exit, ran), (Some(0), true));
-        assert_eq!(output, format!("hi\n\n{USER_COMMAND_STREAM_OPEN_NOTE}"));
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[tokio::test]
-    async fn a_command_that_cannot_start_says_so() {
-        let missing = std::env::temp_dir().join(format!("nexus-missing-{}", uuid::Uuid::new_v4()));
-        let (exit, ran, output) =
-            capture_user_command("true", &missing, USER_COMMAND_TIMEOUT).await;
-        assert_eq!((exit, ran), (None, false));
-        assert_eq!(user_command_outcome_label(exit, ran), "failed to start");
-        assert!(output.starts_with("could not run: "), "{output}");
-    }
-
-    #[test]
-    fn runaway_output_keeps_only_its_head_and_tail() {
-        let mut buffer = HeadTail::default();
-        buffer.push("H".repeat(USER_COMMAND_KEEP_BYTES - 1).as_bytes());
-        buffer.push(b"HMMMMMMMMMM");
-        buffer.push("T".repeat(USER_COMMAND_KEEP_BYTES).as_bytes());
-        let text = buffer.text();
-        assert!(!text.contains('M'));
-        assert!(text.contains("\n… [10 bytes omitted] …\n"));
-        assert_eq!(text.matches('H').count(), USER_COMMAND_KEEP_BYTES);
-        assert_eq!(text.matches('T').count(), USER_COMMAND_KEEP_BYTES);
-        let mut short = HeadTail::default();
-        short.push(b"short");
-        assert_eq!(short.text(), "short");
-    }
-
-    #[test]
-    fn replay_fences_output_longer_than_its_own_backticks() {
-        let row = user_command_row(
-            "cat README.md",
-            "/w",
-            Some(0),
-            true,
-            "```rust\nfn x() {}\n```\n",
-            false,
-        );
-        assert_eq!(
-            user_command_replay(&row),
-            "I ran `cat README.md` in /w (exit 0):\n````\n```rust\nfn x() {}\n```\n````"
-        );
-        for (exit, started, outcome) in [(None, true, "killed"), (None, false, "failed to start")] {
-            let row = user_command_row(
-                "sudo true",
-                "/w",
-                exit,
-                started,
-                USER_COMMAND_INTERACTIVE_NOTE,
-                true,
-            );
-            assert_eq!(
-                user_command_replay(&row),
-                format!("I ran `sudo true` in /w ({outcome}):\n{USER_COMMAND_INTERACTIVE_NOTE}")
-            );
-        }
-    }
-}
+mod tests;

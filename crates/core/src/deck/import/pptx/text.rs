@@ -1,9 +1,5 @@
-//! Text bodies to the deck's Markdown subset plus numeric typography.
-//!
-//! A deck text node has one font and a Markdown body: bold, italic, links,
-//! bullets and numbered lines. A text body therefore becomes one font (taken
-//! from its dominant run) and Markdown for the runs that differ in weight or
-//! slant; other per-run differences are counted as approximations.
+//! Text bodies to the deck's Markdown subset plus numeric typography: one font from
+//! the dominant run, and Markdown for runs that differ in weight or slant.
 
 use std::fmt::Write as _;
 

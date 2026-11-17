@@ -17,18 +17,17 @@ fn local_app(endpoint: &str) -> App {
         parallel_tool_calls: None,
         tier: None,
     });
-    app.embedding_model = "local:embeddinggemma-2:270m".to_string();
+    app.index.embedding_model = "local:embeddinggemma-2:270m".to_string();
     app
 }
 
-/// The background timer firing: chat backfill only runs when it is due.
 fn due(app: &mut App) {
-    app.next_chat_index = std::time::Instant::now();
+    app.index.next_chat_index = std::time::Instant::now();
 }
 
 async fn drain(app: &mut App) {
     for _ in 0..20 {
-        let Some(rx) = app.embed_rx.as_mut() else {
+        let Some(rx) = app.index.embed_rx.as_mut() else {
             return;
         };
         let message = tokio::time::timeout(Duration::from_secs(20), rx.recv())
@@ -58,8 +57,6 @@ fn chat_documents(mock: &MockOllama) -> usize {
 #[tokio::test]
 async fn chats_share_local_file_embedder_and_identity_without_cloud_fallback() {
     let mock = MockOllama::start(false).await;
-    // app_with_key has a cloud backend configured; local selection must win
-    // for both files and chats, not merely for the file half of the queue.
     let mut app = local_app(&mock.endpoint);
     let session = app
         .db
@@ -75,12 +72,12 @@ async fn chats_share_local_file_embedder_and_identity_without_cloud_fallback() {
     due(&mut app);
     app.rescan_files();
     drain(&mut app).await;
-    // Files go first; the chat backfill takes the next background tick.
     due(&mut app);
     app.start_embedding();
     drain(&mut app).await;
     assert_eq!(chat_documents(&mock), 1);
     let key = app
+        .index
         .embedding_backend
         .as_ref()
         .unwrap()
@@ -121,7 +118,7 @@ async fn chats_share_local_file_embedder_and_identity_without_cloud_fallback() {
         "files have priority: {documents:?}"
     );
     assert!(documents[1].starts_with("title: chat"));
-    assert_eq!(app.chat_index_status, "chats: 1 of 1 indexed");
+    assert_eq!(app.index.chat_index_status, "chats: 1 of 1 indexed");
 }
 
 #[tokio::test]
@@ -174,32 +171,31 @@ async fn chat_backfill_yields_after_one_bounded_batch_and_keyword_index_works_wi
             .add_user_message(&session, &format!("financial message {n}"))
             .unwrap();
     }
-    // Preparing the shared backend doesn't consume a chat backfill tick.
     let embedder = app.file_embedder().unwrap();
     embedder.prepare().await.unwrap();
-    app.embedding_backend = Some(embedder);
+    app.index.embedding_backend = Some(embedder);
     due(&mut app);
     app.start_embedding();
     drain(&mut app).await;
     assert_eq!(chat_documents(&mock), chats::INDEX_BATCH);
-    assert!(app.embed_rx.is_none());
-    assert_eq!(app.chat_index_status, "chats: 16 of 40 indexed");
+    assert!(app.index.embed_rx.is_none());
+    assert_eq!(app.index.chat_index_status, "chats: 16 of 40 indexed");
     due(&mut app);
     app.start_embedding();
     drain(&mut app).await;
     assert_eq!(chat_documents(&mock), chats::INDEX_BATCH * 2);
-    app.embedding_model.clear();
+    app.index.embedding_model.clear();
     app.reset_embedding_backend();
     due(&mut app);
     app.start_embedding();
-    assert!(app.embed_rx.is_none());
-    assert_eq!(app.chat_index_status, "chats: 40 of 40 indexed");
+    assert!(app.index.embed_rx.is_none());
+    assert_eq!(app.index.chat_index_status, "chats: 40 of 40 indexed");
 }
 
 #[test]
 fn incognito_text_never_reaches_the_index() {
     let mut app = app_with_key();
-    app.embedding_model.clear();
+    app.index.embedding_model.clear();
     app.run_command("incognito").unwrap();
     assert!(app.incognito);
     app.messages.push(crate::db::Message {

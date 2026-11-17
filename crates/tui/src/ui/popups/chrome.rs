@@ -1,18 +1,19 @@
 //! Shared popup chrome: rounded blocks, consistent list selection, and small
 //! title helpers for browse / edit / confirm modal states.
 
-// Casts here are on terminal-bounded values (u16/u32 dims, byte colors,
-// glyph counts) — never on unbounded user data. JSON-derived indices in
-// provider/tools go through try_from instead.
+// Casts here are on terminal-bounded values (dims, byte colors, glyph counts),
+// never on unbounded user data.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
     clippy::cast_precision_loss,
     clippy::cast_sign_loss
 )]
+use std::borrow::Cow;
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap,
@@ -20,19 +21,15 @@ use ratatui::widgets::{
 
 use crate::app_view::AppView;
 use crate::theme::Theme;
-use crate::ui::style::width;
+use crate::ui::style::{SEP, width};
 
-/// Canonical popup sizes — every popup picks one so the whole family reads
-/// as the same design: small prompts, standard lists, tall lists, wide
-/// workhorses (and the model picker's fixed dual-pane layout).
+/// Canonical popup sizes, so the whole family reads as one design.
 pub const SMALL: (u16, u16) = (56, 40);
 pub const STANDARD: (u16, u16) = (64, 60);
 pub const TALL: (u16, u16) = (64, 74);
 pub const WIDE: (u16, u16) = (78, 66);
 
-/// Where a centered popup was drawn last frame: its rect, its id in
-/// `popup_sizes`, and the default percentages it falls back to. Mouse
-/// resizing hit-tests against this.
+/// Where a centered popup was drawn last frame, for mouse resizing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PopupHit {
     pub rect: Rect,
@@ -44,18 +41,16 @@ pub struct PopupHit {
 pub const MIN_POPUP_W: u16 = 40;
 pub const MIN_POPUP_H: u16 = 10;
 
-/// The rect popup `id` occupies on `screen`: its persisted size if the user
-/// dragged one, else the `default` percentages. Pure, so mouse hit-testing
-/// can ask where a popup is without drawing it.
+/// The rect popup `id` occupies on `screen`: its persisted size, else the
+/// `default` percentages. Pure, so hit-testing can ask without drawing.
 pub fn popup_rect(app: &AppView, screen: Rect, id: &str, default: (u16, u16)) -> Rect {
-    let custom = nexus_core::app::popup_size(&app.settings.popup_sizes, id);
+    let custom = dugix_core::app::popup_size(&app.settings.popup_sizes, id);
     let (pct_w, pct_h) = custom.unwrap_or(default);
     let rect = crate::ui::centered(screen, pct_w, pct_h);
     if custom.is_none() {
         return rect;
     }
-    // A saved percentage must stay usable on a small terminal: never below
-    // the minimum, never off the screen.
+    // A saved percentage must stay usable on a small terminal.
     let w = rect.width.max(MIN_POPUP_W.min(screen.width));
     let h = rect.height.max(MIN_POPUP_H.min(screen.height));
     Rect {
@@ -66,29 +61,264 @@ pub fn popup_rect(app: &AppView, screen: Rect, id: &str, default: (u16, u16)) ->
     }
 }
 
-/// [`popup_rect`] for a popup that is about to draw: also records the rect so
-/// a border press can start a resize. Every centered popup gets its area here.
+/// [`popup_rect`] for a popup about to draw, also recording the rect so a border
+/// press can start a resize.
 pub fn popup_area(app: &AppView, screen: Rect, id: &'static str, default: (u16, u16)) -> Rect {
     let rect = popup_rect(app, screen, id, default);
     app.popup_hit.set(Some(PopupHit { rect, id, default }));
     rect
 }
 
-/// Horizontal padding inside every popup frame, in cells per side. Row-width
-/// math that starts from a popup's outer width subtracts `2 * PAD`.
+/// [`popup_area`] that grows to `rows` lines plus the border when the sized
+/// rect would clip a report, still centered and within the screen.
+pub fn popup_area_fit(
+    app: &AppView,
+    screen: Rect,
+    id: &'static str,
+    default: (u16, u16),
+    rows: usize,
+) -> Rect {
+    let rect = popup_rect(app, screen, id, default);
+    let want = u16::try_from(rows.saturating_add(2))
+        .unwrap_or(u16::MAX)
+        .min(screen.height);
+    let rect = if want > rect.height {
+        Rect {
+            y: screen.y + (screen.height - want) / 2,
+            height: want,
+            ..rect
+        }
+    } else {
+        rect
+    };
+    app.popup_hit.set(Some(PopupHit { rect, id, default }));
+    rect
+}
+
+/// Horizontal padding inside every popup frame, in cells per side.
 pub const PAD: u16 = 1;
 
-/// Frame tone: Normal (focused border brightens) or Danger (error-colored
-/// border, for destructive confirm states — matches `danger_title`).
+/// Frame tone: `Danger` colors the border for destructive confirm states.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tone {
     Normal,
     Danger,
 }
 
-/// The rounded border + title style shared by every popup. The interior uses
-/// the configured UI surface, which can be either the active theme's opaque
-/// background or the terminal's default background.
+/// Canonical spellings for popup keyboard hints.
+#[allow(dead_code)] // Shared vocabulary for the remaining popup conversions.
+pub mod keys {
+    pub const MOVE: &str = "↑↓";
+    pub const SIDE: &str = "←→";
+    pub const ENTER: &str = "Enter";
+    pub const ESC: &str = "Esc";
+    pub const TAB: &str = "Tab";
+    pub const SPACE: &str = "Space";
+}
+
+/// A keyboard shortcut and its optional one-word action.
+pub struct Hint {
+    pub key: Cow<'static, str>,
+    pub verb: Cow<'static, str>,
+}
+
+/// Build a hint; an empty verb displays just the key.
+#[must_use]
+pub fn hint(key: impl Into<Cow<'static, str>>, verb: impl Into<Cow<'static, str>>) -> Hint {
+    Hint {
+        key: key.into(),
+        verb: verb.into(),
+    }
+}
+
+/// Format a Ctrl shortcut in caret notation.
+#[must_use]
+pub fn ctrl(letter: char) -> String {
+    format!("^{}", letter.to_uppercase())
+}
+
+/// Drop whole hints until they fit, preserving the last hint even at tiny widths.
+#[must_use]
+pub fn fit_hints(hints: &[Hint], max: usize) -> Vec<&Hint> {
+    let mut fitted: Vec<_> = hints.iter().collect();
+    while fitted.len() > 1 {
+        let used = fitted
+            .iter()
+            .map(|hint| {
+                width(&hint.key)
+                    + if hint.verb.is_empty() {
+                        0
+                    } else {
+                        1 + width(&hint.verb)
+                    }
+            })
+            .sum::<usize>()
+            + (fitted.len() - 1) * width(SEP);
+        if used <= max {
+            break;
+        }
+        let drop = if fitted.len() > 3 {
+            fitted.len() - 3
+        } else {
+            fitted.len() - 2
+        };
+        fitted.remove(drop);
+    }
+    fitted
+}
+
+/// The title, status and actions around a popup's content.
+pub struct PopupFrame<'a> {
+    pub title: &'a str,
+    pub count: &'a str,
+    pub hints: &'a [Hint],
+    pub tone: Tone,
+    pub focused: bool,
+}
+
+/// Clear and draw the shared popup frame, returning its padded content area.
+pub fn render_popup(f: &mut Frame, area: Rect, frame: &PopupFrame<'_>, app: &AppView) -> Rect {
+    let theme = &app.theme;
+    let title = format!(" {} ", frame.title);
+    let color = if frame.tone == Tone::Danger {
+        theme.error
+    } else {
+        theme.accent
+    };
+    let mut block = popup_block_focused(
+        Line::from(Span::styled(
+            title.clone(),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ))
+        .left_aligned(),
+        theme,
+        frame.focused,
+        frame.tone,
+    );
+    if !frame.count.is_empty()
+        && width(&title) + width(frame.count) + 4 <= usize::from(area.width.saturating_sub(2))
+    {
+        block = block.title_top(
+            Line::from(Span::styled(
+                format!(" {} ", frame.count),
+                Style::default().fg(theme.fg_dim),
+            ))
+            .right_aligned(),
+        );
+    }
+    if !app.settings.hide_hints && !frame.hints.is_empty() {
+        let fitted = fit_hints(frame.hints, usize::from(area.width.saturating_sub(4)));
+        let dim = Style::default().fg(theme.fg_dim);
+        let mut spans = vec![Span::raw(" ")];
+        for (i, hint) in fitted.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(SEP, dim));
+            }
+            spans.push(Span::styled(
+                hint.key.clone(),
+                Style::default().fg(theme.fg),
+            ));
+            if !hint.verb.is_empty() {
+                spans.push(Span::styled(format!(" {}", hint.verb), dim));
+            }
+        }
+        spans.push(Span::raw(" "));
+        block = block.title_bottom(Line::from(spans).right_aligned());
+    }
+    f.render_widget(Clear, area);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    inner
+}
+
+/// Draw a field and divider above content when there is room for both.
+pub fn render_field(
+    f: &mut Frame,
+    area: Rect,
+    icon: &str,
+    text: &str,
+    placeholder: &str,
+    editing: bool,
+    theme: &Theme,
+) -> Rect {
+    if area.height < 4 {
+        return area;
+    }
+    let dim = Style::default().fg(theme.fg_dim);
+    let mut spans = vec![Span::styled(format!("{icon} "), dim)];
+    if editing || !text.is_empty() {
+        spans.push(Span::styled(text, Style::default().fg(theme.fg)));
+        spans.push(Span::styled("▏", Style::default().fg(theme.accent)));
+    } else {
+        spans.push(Span::styled(placeholder, dim));
+    }
+    f.render_widget(
+        Paragraph::new(Line::from(spans)),
+        Rect { height: 1, ..area },
+    );
+    f.render_widget(
+        Paragraph::new("─".repeat(usize::from(area.width)))
+            .style(Style::default().fg(theme.border_dim)),
+        Rect::new(area.x, area.y + 1, area.width, 1),
+    );
+    Rect {
+        y: area.y + 2,
+        height: area.height - 2,
+        ..area
+    }
+}
+
+/// Draw a tab strip and divider above content when there is room for both.
+#[allow(dead_code)] // Used by the tabbed popup conversions that follow Sessions.
+pub fn render_tabs(f: &mut Frame, area: Rect, tabs: &[&str], active: usize, theme: &Theme) -> Rect {
+    if area.height < 4 {
+        return area;
+    }
+    let mut spans = Vec::new();
+    for (i, name) in tabs.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("   "));
+        }
+        let style = if i == active {
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.fg_dim)
+        };
+        spans.push(Span::styled(*name, style));
+    }
+    f.render_widget(
+        Paragraph::new(Line::from(spans)),
+        Rect { height: 1, ..area },
+    );
+    f.render_widget(
+        Paragraph::new("─".repeat(usize::from(area.width)))
+            .style(Style::default().fg(theme.border_dim)),
+        Rect::new(area.x, area.y + 1, area.width, 1),
+    );
+    Rect {
+        y: area.y + 2,
+        height: area.height - 2,
+        ..area
+    }
+}
+
+/// Draw a wrapped, dim italic empty-state sentence at the top of the list area.
+pub fn render_empty(f: &mut Frame, area: Rect, message: &str, theme: &Theme) {
+    f.render_widget(
+        Paragraph::new(message)
+            .style(
+                Style::default()
+                    .fg(theme.fg_dim)
+                    .add_modifier(Modifier::ITALIC),
+            )
+            .wrap(Wrap { trim: true }),
+        area,
+    );
+}
+
+/// The rounded border + title style shared by every popup.
 pub fn popup_block_focused<'a>(
     title: impl Into<Line<'a>>,
     theme: &Theme,
@@ -109,10 +339,8 @@ pub fn popup_block_focused<'a>(
         .title(title)
 }
 
-/// The popup frame plus the standard bottom-right hint bar (dim, hidden by
-/// `hide_hints`). Every list popup renders through this, so the hint lives
-/// in the same place everywhere instead of crowding the title. Long hints
-/// are truncated with `…` to the frame's inner width.
+/// The popup frame plus the standard bottom-right hint bar, hidden by
+/// `hide_hints` and truncated with `…` to the frame's inner width.
 pub fn hinted_block<'a>(
     title: impl Into<Line<'a>>,
     hint: &str,
@@ -136,40 +364,7 @@ pub fn hinted_block<'a>(
     block
 }
 
-/// Clear a popup area and render its rounded frame, returning the inner rect.
-pub fn render_frame<'a>(
-    f: &mut Frame,
-    area: Rect,
-    title: impl Into<Line<'a>>,
-    theme: &Theme,
-    focused: bool,
-    tone: Tone,
-) -> Rect {
-    f.render_widget(Clear, area);
-    let block = popup_block_focused(title, theme, focused, tone);
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-    inner
-}
-
-/// Like [`render_frame`] but with the standard bottom hint bar.
-pub fn render_hinted<'a>(
-    f: &mut Frame,
-    area: Rect,
-    title: impl Into<Line<'a>>,
-    hint: &str,
-    app: &AppView,
-    focused: bool,
-    tone: Tone,
-) -> Rect {
-    f.render_widget(Clear, area);
-    let block = hinted_block(title, hint, app, focused, tone, area.width);
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-    inner
-}
-
-/// One keyboard-labelled action card. Its hit area exists only while enabled.
+/// One keyboard-labelled action card.
 pub struct Button<'a, A> {
     /// Opaque caller-owned action returned by hit-testing.
     pub action: A,
@@ -177,16 +372,14 @@ pub struct Button<'a, A> {
     pub label: &'a str,
     /// Optional artwork; its last line is the compact description.
     pub body: &'a [&'a str],
-    /// Whether this card holds keyboard focus.
     pub selected: bool,
-    /// Whether activation is currently permitted.
     pub enabled: bool,
     /// The document's resolved primary action.
     pub primary: bool,
 }
 
-/// Render compact pills or artwork tiles in measured regions. The returned
-/// hit areas correspond exactly to this frame, not guessed row positions.
+/// Render compact pills or artwork tiles in measured regions, returning hit
+/// areas that correspond exactly to this frame.
 pub fn render_buttons<A: Copy>(
     buffer: &mut ratatui::buffer::Buffer,
     area: Rect,
@@ -325,8 +518,7 @@ fn render_tile(
     }
 }
 
-/// Standard popup list selection: accent `▸ ` marker, bold text, and the
-/// theme's raised shade across the row.
+/// Standard popup list selection: accent `▸ ` marker, bold text, raised shade.
 pub fn standard_list<'a>(items: Vec<ListItem<'a>>, theme: &Theme) -> List<'a> {
     List::new(items)
         .highlight_symbol(Span::styled(
@@ -340,8 +532,7 @@ pub fn standard_list<'a>(items: Vec<ListItem<'a>>, theme: &Theme) -> List<'a> {
         )
 }
 
-/// Truncate `s` to `max` display columns, appending `…` when it overflows —
-/// the same ellipsis language as the hint bar, for row names across popups.
+/// Truncate `s` to `max` display columns, appending `…` when it overflows.
 pub fn truncate(s: &str, max: usize) -> String {
     let max = max.max(1);
     if width(s) <= max {
@@ -355,9 +546,8 @@ pub fn truncate(s: &str, max: usize) -> String {
     )
 }
 
-/// Truncate `s` to `max` display columns by cutting the middle — for file
-/// names, where the start tells files apart and the end carries the
-/// descriptive slug and extension (`b0db75e4-2…_reasoning_model_what.png`).
+/// Truncate `s` to `max` display columns by cutting the middle: for file names
+/// the start tells files apart and the end carries the extension.
 pub fn truncate_middle(s: &str, max: usize) -> String {
     let max = max.max(1);
     if width(s) <= max {
@@ -384,9 +574,8 @@ fn take_cols(chars: impl Iterator<Item = char>, cols: usize) -> Vec<char> {
         .collect()
 }
 
-/// Fit a styled line to `width` columns: unchanged when it fits, otherwise
-/// cut across spans with a trailing `…` in the style of the span it lands in —
-/// so narrow terminals read "0 cache wr…" instead of a silent mid-word cut.
+/// Fit a styled line to `cols` columns, cutting across spans with a trailing `…`
+/// in the style of the span it lands in.
 pub fn fit_line(line: Line<'_>, cols: usize) -> Line<'_> {
     let total: usize = line.spans.iter().map(|s| width(&s.content)).sum();
     if total <= cols {
@@ -418,8 +607,7 @@ pub fn fit_lines(lines: Vec<Line<'_>>, width: u16) -> Vec<Line<'_>> {
         .collect()
 }
 
-/// Where a popup list was drawn last frame, for mouse clicks: row `r` of
-/// `area` shows item `offset + (r - area.y) / item_lines`.
+/// Where a popup list was drawn last frame, for mouse clicks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ListHit {
     pub area: Rect,
@@ -443,13 +631,8 @@ impl ListHit {
     }
 }
 
-/// Render a popup list statefully with a right-edge scrollbar when the
-/// content overflows. `total` is the number of items, `item_lines` how many
-/// terminal rows each occupies (1 for single-line rows, 3 for two-line+
-/// blank rows) — used to compute the visible count so the thumb is honest.
-/// The list renders one column narrower than `area` so the gutter never
-/// overlaps row text; the scrollbar follows `state.offset`, which the List
-/// widget updates during its own render.
+/// Render a popup list with a right-edge scrollbar when the content overflows;
+/// `item_lines` is how many rows each item occupies, for the thumb's length.
 pub fn render_list(
     f: &mut Frame,
     list: List<'_>,
@@ -495,109 +678,11 @@ pub fn render_list(
     }
 }
 
-/// A dim italic placeholder row for empty lists, so every popup's empty
-/// state looks intentional rather than blank.
-pub fn empty_placeholder(message: &str, theme: &Theme) -> ListItem<'static> {
-    ListItem::new(Line::from(Span::styled(
-        message.to_string(),
-        Style::default()
-            .fg(theme.fg_dim)
-            .add_modifier(Modifier::ITALIC),
-    )))
-}
-
-/// `"12 items · "`-style prefix for footer hints (singular-aware).
-pub fn count_hint(n: usize, label: &str) -> String {
-    format!("{n} {label}{} · ", if n == 1 { "" } else { "s" })
-}
-
-fn titled_line(app: &AppView, text: impl Into<String>, color: Color, hint: &str) -> Line<'static> {
-    let text = text.into();
-    let mut spans = vec![Span::styled(
-        format!(" {text} "),
-        Style::default().fg(color).add_modifier(Modifier::BOLD),
-    )];
-    if !app.settings.hide_hints && !hint.trim().is_empty() {
-        spans.push(Span::styled(
-            format!("— {hint} "),
-            Style::default().fg(app.theme.fg_dim),
-        ));
-    }
-    Line::from(spans)
-}
-
-/// Browse-mode title for a filterable list popup: a per-popup glyph
-/// (accent2) + `label` alone when the filter is empty, `label: <filter>▏`
-/// (live cursor) while typing.
-pub fn filter_title(app: &AppView, label: impl Into<String>, filter: &str) -> Line<'static> {
-    if filter.is_empty() {
-        return Line::from(crate::ui::style::title(&app.theme, label));
-    }
-    Line::from(vec![
-        Span::styled(
-            format!(" {}: ", label.into()),
-            Style::default()
-                .fg(app.theme.accent)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(format!("{filter}▏ "), Style::default().fg(app.theme.fg)),
-    ])
-}
-
-/// The standard popup title: a per-popup glyph (accent2) + bold accent name.
-/// Every popup picks its own glyph so the family reads distinct at a glance
-/// while staying visually identical in frame.
-pub fn popup_title(app: &AppView, name: impl Into<String>) -> Line<'static> {
-    Line::from(crate::ui::style::title(&app.theme, name))
-}
-
-/// A title for text-entry popups: label + live value + trailing cursor.
-pub fn input_title(
-    app: &AppView,
-    label: impl Into<String>,
-    value: impl AsRef<str>,
-    hint: &str,
-) -> Line<'static> {
-    let label = label.into();
-    let mut spans = vec![Span::styled(
-        format!(" {label}: "),
-        Style::default()
-            .fg(app.theme.accent)
-            .add_modifier(Modifier::BOLD),
-    )];
-    spans.push(Span::styled(
-        format!("{}▏", value.as_ref()),
-        Style::default().fg(app.theme.fg),
-    ));
-    if !app.settings.hide_hints && !hint.trim().is_empty() {
-        spans.push(Span::styled(
-            format!("  ({hint}) "),
-            Style::default().fg(app.theme.fg_dim),
-        ));
-    }
-    Line::from(spans)
-}
-
-fn confirmish_title(
-    app: &AppView,
-    text: impl Into<String>,
-    color: Color,
-    hint: &str,
-) -> Line<'static> {
-    titled_line(app, text, color, hint)
-}
-
-/// Destructive prompt title (error color).
-pub fn danger_title(app: &AppView, text: impl Into<String>, hint: &str) -> Line<'static> {
-    confirmish_title(app, text, app.theme.error, hint)
-}
-
 /// Max rows the detail strip will grow to before truncating.
 const MAX_DETAIL_ROWS: u16 = 4;
 
-/// Split a popup's inner area into (list area, detail-strip area). The strip
-/// is sized to `desc`'s wrapped height (0 when `desc` is empty, so an
-/// item with no description doesn't waste a row).
+/// Split a popup's inner area into (list area, detail-strip area), the strip
+/// sized to `desc`'s wrapped height.
 pub fn split_with_detail(area: Rect, desc: &str) -> (Rect, Rect) {
     if desc.trim().is_empty() {
         return (area, Rect { height: 0, ..area });
@@ -609,8 +694,7 @@ pub fn split_with_detail(area: Rect, desc: &str) -> (Rect, Rect) {
     (chunks[0], chunks[1])
 }
 
-/// Render the wrapped description strip: a dim divider rule, then plain
-/// wrapped text — no markdown, no per-word styling.
+/// Render the wrapped description strip: a dim divider rule, then plain text.
 pub fn render_detail(f: &mut Frame, area: Rect, desc: &str, theme: &Theme) {
     if area.height == 0 || desc.trim().is_empty() {
         return;

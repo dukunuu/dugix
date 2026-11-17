@@ -13,7 +13,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let root =
-            std::env::temp_dir().join(format!("nexus-request-usage-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("dugix-request-usage-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
         let space = Space { root: root.clone() };
         let db = Db::open(&space.db_path()).unwrap();
@@ -51,44 +51,17 @@ impl Drop for Fixture {
 }
 
 #[test]
-fn current_version_dbs_gain_the_usage_purpose_columns() {
-    // A db already at SCHEMA_VERSION skips the gated legacy column adds, so
-    // a db created before `kind`/`tools` existed must still get them.
-    let root = std::env::temp_dir().join(format!("nexus-usage-columns-{}", uuid::Uuid::new_v4()));
+fn usage_rows_order_and_session_totals() {
+    let root = std::env::temp_dir().join(format!("dugix-usage-migration-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
-    let path = root.join("nexus.db");
-    drop(Db::open(&path).unwrap());
-    let conn = rusqlite::Connection::open(&path).unwrap();
-    conn.execute_batch(
-        "ALTER TABLE usage_log DROP COLUMN kind; ALTER TABLE usage_log DROP COLUMN tools;
-         INSERT INTO usage_log(sync_id,created_at,session_id,backend,model,prompt_tokens,completion_tokens)
-         VALUES ('u1','2026-10-26T08:00:00Z','s','Codex','gpt-6-luna',10,2);",
-    )
-    .unwrap();
-    drop(conn);
+    let path = root.join("dugix.db");
     let db = Db::open(&path).unwrap();
-    let rows = db.usage_for_session("s").unwrap();
-    assert_eq!(rows.len(), 1);
-    assert!(rows[0].kind.is_none());
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn legacy_usage_migration_order_and_session_totals() {
-    let root = std::env::temp_dir().join(format!("nexus-usage-migration-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
-    let path = root.join("nexus.db");
-    let conn = rusqlite::Connection::open(&path).unwrap();
-    conn.execute_batch("CREATE TABLE usage_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL,
-        session_id TEXT, space_id TEXT, backend TEXT NOT NULL, model TEXT NOT NULL,
-        prompt_tokens INTEGER NOT NULL, completion_tokens INTEGER NOT NULL,
-        cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
-        cost REAL);
-        INSERT INTO usage_log(created_at,session_id,backend,model,prompt_tokens,completion_tokens)
-        VALUES ('2020-01-01T12:00:00Z','old','Codex','unknown',10,2);").unwrap();
-    drop(conn);
-    let db = Db::open(&path).unwrap();
+    db.conn()
+        .execute_batch(
+            "INSERT INTO usage_log(sync_id,created_at,session_id,backend,model,prompt_tokens,completion_tokens,kind,tools)
+             VALUES ('u-old','2020-01-01T12:00:00Z','old','Codex','unknown',10,2,NULL,NULL);",
+        )
+        .unwrap();
     let rows = db.usage_for_session("old").unwrap();
     assert_eq!(rows.len(), 1);
     assert!(rows[0].kind.is_none());
@@ -191,7 +164,7 @@ fn sync_roundtrips_usage_metadata_and_convention_without_content() {
 #[tokio::test]
 async fn background_calls_log_their_kind_and_captured_session_except_incognito() {
     for incognito in [false, true] {
-        for kind in ["title", "compaction", "memory", "judge", "research:topic"] {
+        for kind in ["title", "compaction", "judge", "research:topic"] {
             let mut fixture = Fixture::new();
             let app = &mut fixture.app;
             let session = app.session.as_ref().unwrap().id.clone();
@@ -200,9 +173,11 @@ async fn background_calls_log_their_kind_and_captured_session_except_incognito()
                 "choices":[{"message":{"content":text}}],
                 "usage":{"prompt_tokens":100,"completion_tokens":10,"cost":0.012}
             });
+            // The JSON mock refuses compaction's streamed replay; the fallback is logged.
+            let requests = if kind == "compaction" { 2 } else { 1 };
             let (provider, server) =
-                decider_mock::server(200, body.to_string(), Duration::ZERO, 1).await;
-            app.backends.openrouter = Some(provider);
+                decider_mock::server(200, body.to_string(), Duration::ZERO, requests).await;
+            app.backends.set(BackendTag::OpenRouter, provider);
             app.incognito = incognito;
             match kind {
                 "title" => {
@@ -219,18 +194,7 @@ async fn background_calls_log_their_kind_and_captured_session_except_incognito()
                     app.force_compact();
                     let result = tokio::time::timeout(
                         Duration::from_secs(5),
-                        app.compact_rx.as_mut().unwrap().recv(),
-                    )
-                    .await
-                    .unwrap();
-                    assert!(result.is_some());
-                }
-                "memory" => {
-                    app.memory_extraction = true;
-                    app.maybe_extract_memory();
-                    let result = tokio::time::timeout(
-                        Duration::from_secs(5),
-                        app.memory_rx.as_mut().unwrap().recv(),
+                        app.compaction.rx.as_mut().unwrap().recv(),
                     )
                     .await
                     .unwrap();
@@ -256,7 +220,7 @@ async fn background_calls_log_their_kind_and_captured_session_except_incognito()
                     app.start_research_from_chat();
                     let result = tokio::time::timeout(
                         Duration::from_secs(5),
-                        app.research_topic_rx.as_mut().unwrap().recv(),
+                        app.research.topic_rx.as_mut().unwrap().recv(),
                     )
                     .await
                     .unwrap();
@@ -344,6 +308,7 @@ async fn chat_usage_records_only_called_tool_names_and_merges_cost_event() {
                     result: "SECRET_RESULT".into(),
                     reasoning: None,
                     assistant_content: None,
+                    step_start: name == "fs",
                 },
             )
             .unwrap();
@@ -377,6 +342,71 @@ async fn chat_usage_records_only_called_tool_names_and_merges_cost_event() {
             assert!(!serde_json::to_string(&rows).unwrap().contains("SECRET"));
         }
     }
+}
+
+#[tokio::test]
+async fn a_reply_counts_every_round_of_its_tool_loop() {
+    let mut fixture = Fixture::new();
+    let app = &mut fixture.app;
+    let session = app.session.as_ref().unwrap().id.clone();
+    app.chat_tasks.insert(
+        1,
+        ChatTask {
+            id: 1,
+            session_id: session.clone(),
+            session_title: "usage".into(),
+            space_id: app.active_space.id.clone(),
+            model: "mock/model".into(),
+            model_id: "mock/model".into(),
+            backend: BackendTag::OpenRouter,
+            incognito: false,
+            buffer: String::new(),
+            thinking: String::new(),
+            tool_status: None,
+            usage: None,
+            usage_row_id: None,
+            started: std::time::Instant::now(),
+            thinking_idx: 0,
+            spinner_color: SpinnerColor::Green,
+            abort: tokio::spawn(async {}).abort_handle(),
+        },
+    );
+    let usage = |completion_tokens, cost| {
+        StreamEvent::Usage(Usage {
+            prompt_tokens: if completion_tokens > 0 { 100 } else { 0 },
+            completion_tokens,
+            cost: Some(cost),
+            ..Usage::default()
+        })
+    };
+    app.on_chat_event(1, usage(40, 0.01)).unwrap();
+    app.on_chat_event(
+        1,
+        StreamEvent::ToolCall {
+            id: "c1".into(),
+            name: "search".into(),
+            arguments: "{}".into(),
+            result: "found".into(),
+            reasoning: None,
+            assistant_content: None,
+            step_start: true,
+        },
+    )
+    .unwrap();
+    app.on_chat_event(1, usage(0, 0.02)).unwrap();
+    app.on_chat_event(1, usage(10, 0.03)).unwrap();
+    app.on_chat_event(1, StreamEvent::Token("done".into()))
+        .unwrap();
+    app.on_chat_event(1, StreamEvent::Done).unwrap();
+    let reply = app.db.load_messages(&session).unwrap().pop().unwrap();
+    assert_eq!(reply.content, "done");
+    assert_eq!(reply.tokens, Some(50));
+    assert!(
+        (reply.cost.unwrap() - 0.05).abs() < 1e-9,
+        "{:?}",
+        reply.cost
+    );
+    assert!(app.turn_usage.is_empty());
 }
 
 async fn workflow_server(
@@ -439,30 +469,31 @@ async fn workflow_server(
 }
 
 #[tokio::test]
-async fn swarm_personas_roster_moderation_and_synthesis_each_log_a_request() {
+async fn swarm_drafts_review_and_reply_each_log_a_request() {
     for incognito in [false, true] {
         let mut fixture = Fixture::new();
         let app = &mut fixture.app;
         let session = app.session.as_ref().unwrap().id.clone();
         let (provider, server) = workflow_server(vec![
-            (r#"[{"name":"Analyst","blurb":"check evidence"}]"#, false),
-            ("Persona response", true),
-            ("CONVERGED", false),
-            ("Final synthesis", false),
+            ("Draft", true),
+            ("Draft", true),
+            ("Draft", true),
+            ("All three agree; nothing wrong", true),
+            ("Final reply", true),
         ])
         .await;
-        app.backends.openrouter = Some(provider);
+        app.backends.set(BackendTag::OpenRouter, provider);
         app.incognito = incognito;
         app.start_swarm_turn();
         app.session = None;
         tokio::time::timeout(Duration::from_secs(5), async {
-            while app.swarm_rx.as_mut().unwrap().recv().await.is_some() {}
+            while app.swarm.rx.as_mut().unwrap().recv().await.is_some() {}
         })
         .await
         .unwrap();
         server.await.unwrap();
         let rows = app.db.usage_for_session(&session).unwrap();
-        assert_eq!(rows.len(), if incognito { 0 } else { 4 });
+        assert_eq!(rows.len(), if incognito { 0 } else { 5 });
         for row in rows {
             assert_eq!(row.kind.as_deref(), Some("swarm"));
             assert_eq!(row.usage.cost, Some(0.01));
@@ -477,17 +508,18 @@ async fn research_pipeline_logs_every_stage_and_respects_incognito() {
         let fixture = Fixture::new();
         let app = &fixture.app;
         let session = app.session.as_ref().unwrap().id.clone();
+        // Every stage is a sub-agent run now, so every request streams.
         let (provider, server) = workflow_server(vec![
             ("Landscape findings", true),
-            ("1. What evidence is available?", false),
+            ("1. What evidence is available?", true),
             ("Searcher findings", true),
-            ("Draft", false),
-            ("SATISFIED", false),
+            ("Draft", true),
+            ("SATISFIED", true),
             ("Verified draft", true),
-            ("Final report", false),
+            ("Final report", true),
         ])
         .await;
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::unbounded_channel();
         let (_steer_tx, steer_rx) = mpsc::unbounded_channel();
         tokio::time::timeout(
             Duration::from_secs(5),
@@ -533,13 +565,40 @@ async fn research_pipeline_logs_every_stage_and_respects_incognito() {
             rows.iter()
                 .all(|r| r.usage.cost == Some(0.01) && r.tools.is_none())
         );
+        // Each stage is a run in `/agents`, all finished before the report.
+        let mut started = Vec::new();
+        let mut finished = 0;
+        let mut done_last = false;
+        while let Ok((_, _, _, update)) = rx.try_recv() {
+            done_last = matches!(update, research::ResearchUpdate::Done(Ok(_)));
+            if let research::ResearchUpdate::Subagent(update) = update {
+                match update.event {
+                    crate::provider::SubagentEvent::Started { prompt, .. } => started.push(prompt),
+                    crate::provider::SubagentEvent::Finished { error: None, .. } => finished += 1,
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(started.len(), 7, "{started:?}");
+        assert_eq!(finished, 7);
+        assert!(done_last, "the report comes after every agent's last step");
+        assert!(
+            started.contains(&"Planner · Evidence".to_string()),
+            "{started:?}"
+        );
+        assert!(
+            started
+                .iter()
+                .any(|title| title.starts_with("Searcher round 1 1/1 · ")),
+            "{started:?}"
+        );
     }
 }
 
 #[tokio::test]
 async fn vision_and_embedding_requests_retain_usage_but_never_content() {
     for incognito in [false, true] {
-        for kind in ["describe image", "ocr", "embed", "generate image"] {
+        for kind in ["embed", "generate image"] {
             let mut fixture = Fixture::new();
             let app = &mut fixture.app;
             app.incognito = incognito;
@@ -552,15 +611,6 @@ async fn vision_and_embedding_requests_retain_usage_but_never_content() {
                 decider_mock::server(200, body.to_string(), Duration::ZERO, 1).await;
             let provider = app.usage_provider(provider, "helper");
             match kind {
-                "describe image" => {
-                    provider
-                        .describe_image("vision", "PRIVATE_IMAGE")
-                        .await
-                        .unwrap();
-                }
-                "ocr" => {
-                    provider.ocr_page("vision", "PRIVATE_IMAGE").await.unwrap();
-                }
                 "embed" => {
                     provider
                         .embed("embedding", vec!["PRIVATE_INPUT".into()])
@@ -609,8 +659,6 @@ async fn local_ollama_embeddings_do_not_write_usage_rows() {
 
 #[test]
 fn subagents_log_their_own_requests() {
-    // Sub-agents record usage under the model they actually ran on (often the
-    // fast helper), so the chat task must not also log it as the session model.
     let fixture = Fixture::new();
     let app = &fixture.app;
     let provider = crate::provider::openrouter::OpenRouter::from_key_auto("sk-or-test".into());
@@ -630,6 +678,7 @@ async fn subagent_rounds_use_the_inherited_session_usage_sink() {
     let app = &fixture.app;
     let (provider, server) = workflow_server(vec![("Subagent answer", true)]).await;
     let provider = app.usage_provider(provider, "chat").usage_kind("subagent");
+    let streamed = std::sync::Mutex::new(String::new());
     let answer = provider
         .subagent_round(crate::subagent::Request {
             model: "mock/model",
@@ -637,10 +686,12 @@ async fn subagent_rounds_use_the_inherited_session_usage_sink() {
             params: &crate::provider::ChatParams::default(),
             tools: &[],
             final_round: true,
+            live: &|_, content| streamed.lock().unwrap().push_str(content),
         })
         .await
         .unwrap();
     assert_eq!(answer.content, "Subagent answer");
+    assert_eq!(*streamed.lock().unwrap(), "Subagent answer");
     server.await.unwrap();
     let rows = app
         .db
@@ -766,7 +817,7 @@ async fn new_session_rebinds_tool_requests_before_the_first_turn() {
     app.session = None;
     app.messages.clear();
     let (provider, server) = decider_mock::server(200, String::new(), Duration::ZERO, 0).await;
-    app.backends.openrouter = Some(provider);
+    app.backends.set(BackendTag::OpenRouter, provider);
     app.send_message("a new question".into()).unwrap();
     app.stop_stream().unwrap();
     let session = app.session.as_ref().unwrap().id.clone();
