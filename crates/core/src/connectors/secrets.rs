@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 use tokio::sync::mpsc::UnboundedSender;
 
-pub const SERVICE: &str = "nexus-chat";
+pub const SERVICE: &str = "dugix";
 
 pub const KEYCHAIN_PREFIX: &str = "keychain:";
 
@@ -340,7 +340,7 @@ mod tests {
 
     #[test]
     fn reading_previously_saved_fallback_secrets_warns_once_without_echoing_them() {
-        let dir = std::env::temp_dir().join(format!("nexus-vault-read-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-vault-read-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
         super::super::config::add_at(
@@ -372,7 +372,7 @@ mod tests {
 
     #[test]
     fn without_a_keychain_secrets_fall_back_to_config_with_one_warning() {
-        let dir = std::env::temp_dir().join(format!("nexus-vault-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-vault-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
         std::fs::write(

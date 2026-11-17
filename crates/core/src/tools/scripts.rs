@@ -309,7 +309,7 @@ impl ToolBox {
                     Some(ref name) => {
                         let (dir, file) = if temporary {
                             let tmp = std::env::temp_dir()
-                                .join(format!("nexus-script-{}", uuid::Uuid::new_v4()));
+                                .join(format!("dugix-script-{}", uuid::Uuid::new_v4()));
                             let f = tmp.join(name);
                             (tmp, f)
                         } else {

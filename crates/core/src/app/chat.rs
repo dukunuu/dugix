@@ -843,7 +843,7 @@ impl App {
         if let Some(mut outcome) = outcome {
             if result.is_err() {
                 outcome.state = ActivityState::Failed;
-                outcome.detail = "Could not save the response; see nexus for details".into();
+                outcome.detail = "Could not save the response; see dugix for details".into();
             }
             let mut link = self.deck_link.lock().expect("deck link");
             link.turns.insert(id, Some(outcome));

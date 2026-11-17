@@ -12,7 +12,7 @@ use crate::ui::style::glyph;
 
 #[allow(clippy::too_many_lines)] // row design + preview strip
 pub fn render(f: &mut Frame, app: &mut AppView) {
-    use nexus_core::app::SessionMode;
+    use dugix_core::app::SessionMode;
     let area = chrome::popup_area(app, f.area(), "session", chrome::TALL);
 
     // Preview strip: the selected session's last exchange. Re-queried only when
@@ -200,7 +200,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
         ConfirmDeleteAction, EditAction, classify_browse_key, classify_confirm_delete_key,
         classify_edit_key,
     };
-    use nexus_core::app::SessionMode;
+    use dugix_core::app::SessionMode;
     match app.session_mode {
         SessionMode::Rename => match classify_edit_key(key) {
             Some(EditAction::Cancel) => app.session_mode = SessionMode::Browse,
@@ -228,7 +228,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
             match classify_browse_key(key, false, true) {
                 Some(super::BrowseAction::Close) => {
                     if app.session_filter.is_empty() {
-                        app.popup = nexus_core::app::Popup::None;
+                        app.popup = dugix_core::app::Popup::None;
                     } else {
                         app.session_filter.clear();
                         app.session_selected = 0;

@@ -270,7 +270,7 @@ impl Mock {
             "rpc_error" => Self::rpc_error(id, -32000, &self.rpc_error_message),
             "slow" => {
                 // Only the stdio child may block its (single) thread; the HTTP door sleeps asynchronously before replying.
-                if std::env::var("NEXUS_MCP_STDIO_MOCK").is_ok() {
+                if std::env::var("DUGIX_MCP_STDIO_MOCK").is_ok() {
                     std::thread::sleep(std::time::Duration::from_secs(3));
                 }
                 Self::ok(id, json!({"content": [text("finally")]}))
@@ -451,8 +451,7 @@ fn route(mock: &Mock, method: &str, headers: &HashMap<String, String>, json: &Va
         // 2026 servers need the version in _meta on every request, and the routing headers.
         let meta_ok = json["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"]
             == "2026-07-28"
-            && json["params"]["_meta"]["io.modelcontextprotocol/clientInfo"]["name"]
-                == "nexus-chat"
+            && json["params"]["_meta"]["io.modelcontextprotocol/clientInfo"]["name"] == "dugix"
             && json["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"].is_object();
         if is_request && (!meta_ok || headers.get("mcp-method").map(String::as_str) != Some(method))
         {
@@ -505,7 +504,7 @@ fn route(mock: &Mock, method: &str, headers: &HashMap<String, String>, json: &Va
     reply
 }
 
-/// The stdio door, run by the test executable when re-launched with `NEXUS_MCP_STDIO_MOCK`.
+/// The stdio door, run by the test executable when re-launched with `DUGIX_MCP_STDIO_MOCK`.
 /// Mode words, comma separated: `modern` | `legacy` | `legacy-rpc` | `legacy-strict` | `legacy-bridge`;
 /// `crash_after=N`; `ttl=MS`; `cancel_log`.
 pub fn run_stdio(mode: &str) {
@@ -544,7 +543,7 @@ pub fn run_stdio(mode: &str) {
     if let Ok(token) = std::env::var("FOO") {
         mock.rpc_error_message = format!("backend echoed {token}");
     }
-    if let Ok(path) = std::env::var("NEXUS_MCP_STDIO_START_FILE") {
+    if let Ok(path) = std::env::var("DUGIX_MCP_STDIO_START_FILE") {
         let mut file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -557,7 +556,7 @@ pub fn run_stdio(mode: &str) {
             std::env::var("OPENROUTER_API_KEY").is_ok()
         );
     }
-    if let Ok(path) = std::env::var("NEXUS_MCP_STDIO_PID_FILE") {
+    if let Ok(path) = std::env::var("DUGIX_MCP_STDIO_PID_FILE") {
         std::fs::write(path, std::process::id().to_string()).unwrap();
     }
     eprintln!(
@@ -576,7 +575,7 @@ pub fn run_stdio(mode: &str) {
             continue;
         };
         if message["method"] == "notifications/cancelled"
-            && let Ok(path) = std::env::var("NEXUS_MCP_STDIO_LOG")
+            && let Ok(path) = std::env::var("DUGIX_MCP_STDIO_LOG")
         {
             let mut file = std::fs::OpenOptions::new()
                 .create(true)

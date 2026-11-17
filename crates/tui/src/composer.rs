@@ -13,7 +13,7 @@ use anyhow::Result;
 use ratatui::style::{Color, Style};
 use tui_textarea::{CursorMove, TextArea};
 
-use nexus_core::app::{AppCommand, Match, PendingEditor, Popup};
+use dugix_core::app::{AppCommand, Match, PendingEditor, Popup};
 
 use crate::app_view::AppView;
 
@@ -50,7 +50,7 @@ fn parse_user_command(text: &str) -> Option<UserCommand> {
         (Some(rest), _) if rest.trim().is_empty() => UserCommand::Empty,
         (Some(rest), _) => UserCommand::Interactive(rest.trim().to_string()),
         (None, None) => UserCommand::Empty,
-        (None, Some(_)) if nexus_core::usershell::terminal_program(cmd).is_some() => {
+        (None, Some(_)) if dugix_core::usershell::terminal_program(cmd).is_some() => {
             UserCommand::Interactive(cmd.to_string())
         }
         (None, Some(_)) => UserCommand::Captured(cmd.to_string()),
@@ -68,7 +68,7 @@ pub struct ShellCompletionResult {
     pub cursor: usize,
     pub cwd: std::path::PathBuf,
     pub session: Option<String>,
-    pub completion: nexus_core::usershell::Completion,
+    pub completion: dugix_core::usershell::Completion,
 }
 
 pub fn new_textarea() -> TextArea<'static> {
@@ -188,7 +188,7 @@ const AT_MATCHES_MAX: usize = 50;
 #[derive(Clone, Debug)]
 pub enum AtMatch {
     Project(String),
-    Space(nexus_core::db::FileRow),
+    Space(dugix_core::db::FileRow),
 }
 
 impl AtMatch {
@@ -218,7 +218,7 @@ fn at_score(path: &str, query: &str) -> Option<i32> {
     } else if let Some(i) = path.find(&query) {
         Some(200 - i.min(150) as i32)
     } else {
-        nexus_core::app::fuzzy_score(&path, &query).map(|s| s.min(40))
+        dugix_core::app::fuzzy_score(&path, &query).map(|s| s.min(40))
     }
 }
 
@@ -287,12 +287,12 @@ impl AppView {
     }
 
     pub fn paste(&mut self, text: &str) {
-        use nexus_core::app::{AppsMode, FilesMode, SessionMode, SkillsMode, SpaceMode};
+        use dugix_core::app::{AppsMode, FilesMode, SessionMode, SkillsMode, SpaceMode};
         if text.is_empty() {
             return;
         }
         if self.popup == Popup::Files
-            && self.files_tab == nexus_core::app::FilesTab::Files
+            && self.files_tab == dugix_core::app::FilesTab::Files
             && matches!(self.files_mode, FilesMode::Browse | FilesMode::Pick)
             && let Some(paths) = pasted_file_paths(text)
         {
@@ -303,7 +303,7 @@ impl AppView {
         match self.popup {
             Popup::None => {
                 if let Some(path) = pasted_file_path(text) {
-                    self.open_files_popup(nexus_core::app::FilesTab::Files);
+                    self.open_files_popup(dugix_core::app::FilesTab::Files);
                     self.start_files_add();
                     self.files_edit = path.to_string_lossy().to_string();
                     self.push_status(
@@ -338,8 +338,8 @@ impl AppView {
                 self.files_edit.push_str(text);
             }
             Popup::Files
-                if self.files_tab == nexus_core::app::FilesTab::Scripts
-                    && self.scripts_mode == nexus_core::app::ScriptsMode::Create =>
+                if self.files_tab == dugix_core::app::FilesTab::Scripts
+                    && self.scripts_mode == dugix_core::app::ScriptsMode::Create =>
             {
                 self.scripts_edit.push_str(text);
             }
@@ -349,7 +349,7 @@ impl AppView {
             }
             Popup::Settings => {
                 if let Some(i) = self.text_index() {
-                    use nexus_core::app::SettingsField;
+                    use dugix_core::app::SettingsField;
                     let numeric = !matches!(
                         self.settings_field(),
                         Some(
@@ -522,9 +522,9 @@ impl AppView {
         self.shell_completion_rx = Some(rx);
         tokio::spawn(async move {
             let setup = setup
-                .get_or_init(|| nexus_core::usershell::UserShell::load(&data))
+                .get_or_init(|| dugix_core::usershell::UserShell::load(&data))
                 .await;
-            let completion = nexus_core::usershell::complete(setup, &text, cursor, &cwd).await;
+            let completion = dugix_core::usershell::complete(setup, &text, cursor, &cwd).await;
             let _ = tx.send(ShellCompletionResult {
                 text,
                 cursor,
@@ -558,7 +558,7 @@ impl AppView {
             self.accept_shell_match();
             return;
         }
-        let prefix = nexus_core::usershell::common_prefix(&completion.candidates);
+        let prefix = dugix_core::usershell::common_prefix(&completion.candidates);
         let range = if prefix.is_empty() {
             completion.range
         } else {
@@ -600,9 +600,9 @@ impl AppView {
         if rest.contains(char::is_whitespace) {
             return Vec::new();
         }
-        let mut scored: Vec<(i32, Match)> = nexus_core::app::COMMANDS
+        let mut scored: Vec<(i32, Match)> = dugix_core::app::COMMANDS
             .iter()
-            .filter_map(|c| nexus_core::app::command_score(c, rest).map(|s| (s, Match::Builtin(c))))
+            .filter_map(|c| dugix_core::app::command_score(c, rest).map(|s| (s, Match::Builtin(c))))
             .collect();
         scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.name().cmp(b.1.name())));
         scored.into_iter().map(|(_, m)| m).collect()
@@ -881,7 +881,7 @@ impl AppView {
         let space = self.core.active_space.name.clone();
         match self.core.memory_edit_file(&space) {
             Ok(path) => {
-                self.pending_editor = Some(nexus_core::app::PendingEditor::Memory { space, path });
+                self.pending_editor = Some(dugix_core::app::PendingEditor::Memory { space, path });
             }
             Err(error) => self.push_status(format!("memory: {error:#}")),
         }
@@ -968,7 +968,7 @@ impl AppView {
             AppCommand::OpenJobForm => crate::ui::popups::jobs::open(self, true)?,
             AppCommand::OpenUsage => self.open_usage_popup(),
             AppCommand::Memory {
-                action: nexus_core::app::MemoryAction::Edit,
+                action: dugix_core::app::MemoryAction::Edit,
             } => self.queue_memory_editor(),
             AppCommand::OpenHelp => self.open_help(),
             AppCommand::OpenProcs => {
@@ -977,6 +977,20 @@ impl AppView {
                 self.procs_kill_confirm = None;
                 self.procs_scroll = 0;
                 self.popup = Popup::Procs;
+            }
+            AppCommand::Fleet { action } => {
+                use dugix_core::app::FleetAction;
+                let (started, stopped) = (
+                    matches!(action, FleetAction::Start { .. }),
+                    matches!(action, FleetAction::Stop { .. }),
+                );
+                self.core.execute(AppCommand::Fleet { action })?;
+                if started {
+                    // A started agent opens here, as the app it is.
+                    crate::ui::popups::fleet::attach_newest(self);
+                } else if !stopped {
+                    crate::ui::popups::fleet::open(self);
+                }
             }
             AppCommand::Harness => {
                 self.core.execute(AppCommand::Harness)?;
@@ -991,14 +1005,14 @@ impl AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_core::app::App;
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
+    use dugix_core::app::App;
+    use dugix_core::db::Db;
+    use dugix_core::space::Space;
 
     fn test_app() -> AppView {
         let db = Db::open_in_memory().unwrap();
         let space = Space {
-            root: std::env::temp_dir().join(format!("nexus-input-test-{}", uuid::Uuid::new_v4())),
+            root: std::env::temp_dir().join(format!("dugix-input-test-{}", uuid::Uuid::new_v4())),
         };
         AppView::new(App::new(db, Some("k"), space))
     }
@@ -1006,20 +1020,20 @@ mod tests {
     /// `!` shell lines are an agent-mode feature.
     fn agent_app() -> AppView {
         let mut app = test_app();
-        app.work_mode = nexus_core::app::WorkMode::Agent;
+        app.work_mode = dugix_core::app::WorkMode::Agent;
         app
     }
 
     /// An agent-mode app bound to a temp workspace holding `files`.
     fn workspace_app(files: &[&str]) -> (AppView, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("nexus-at-test-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-at-test-{}", uuid::Uuid::new_v4()));
         for file in files {
             let path = dir.join(file);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, "x").unwrap();
         }
         let mut app = agent_app();
-        let workspace = nexus_core::workspace::Workspace::open(&dir, Vec::new()).unwrap();
+        let workspace = dugix_core::workspace::Workspace::open(&dir, Vec::new()).unwrap();
         app.workspace = Some(std::sync::Arc::new(workspace));
         (app, dir)
     }
@@ -1050,7 +1064,7 @@ mod tests {
     #[test]
     fn at_skips_workspace_files_in_chat_mode() {
         let (mut a, dir) = workspace_app(&["main.rs"]);
-        a.work_mode = nexus_core::app::WorkMode::Chat;
+        a.work_mode = dugix_core::app::WorkMode::Chat;
         a.set_input("@ma");
         a.refresh_at_matches();
         assert!(a.at_state.is_none());
@@ -1151,14 +1165,14 @@ mod tests {
     fn paste_goes_into_files_add_field() {
         let mut a = test_app();
         a.popup = Popup::Files;
-        a.files_mode = nexus_core::app::FilesMode::Add;
+        a.files_mode = dugix_core::app::FilesMode::Add;
         a.paste("/tmp/report.pdf");
         assert_eq!(a.files_edit, "/tmp/report.pdf");
     }
 
     #[test]
     fn pasted_paths_accept_escapes_quotes_file_urls_and_several_files() {
-        let dir = std::env::temp_dir().join(format!("nexus-drop-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-drop-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let dir = dir.canonicalize().unwrap();
         let (spaced, plain) = (dir.join("a b.pdf"), dir.join("c.txt"));
@@ -1190,7 +1204,7 @@ mod tests {
     fn paste_in_picker_mode_feeds_the_filter() {
         let mut a = test_app();
         a.popup = Popup::Files;
-        a.files_mode = nexus_core::app::FilesMode::Pick;
+        a.files_mode = dugix_core::app::FilesMode::Pick;
         a.paste("doc");
         assert_eq!(a.picker_query, "doc");
     }
@@ -1214,7 +1228,7 @@ mod tests {
             .position(|row| {
                 matches!(
                     row,
-                    nexus_core::app::SettingsRow::Field(nexus_core::app::SettingsField::SearxngUrl)
+                    dugix_core::app::SettingsRow::Field(dugix_core::app::SettingsField::SearxngUrl)
                 )
             })
             .unwrap(); // free text
@@ -1225,12 +1239,12 @@ mod tests {
     #[test]
     fn pasting_a_file_path_offers_import() {
         let mut a = test_app();
-        let src = std::env::temp_dir().join(format!("nexus-paste-{}.txt", uuid::Uuid::new_v4()));
+        let src = std::env::temp_dir().join(format!("dugix-paste-{}.txt", uuid::Uuid::new_v4()));
         std::fs::write(&src, "x").unwrap();
 
         a.paste(&src.to_string_lossy());
         assert_eq!(a.popup, Popup::Files);
-        assert!(a.files_mode == nexus_core::app::FilesMode::Add);
+        assert!(a.files_mode == dugix_core::app::FilesMode::Add);
         assert_eq!(a.files_edit, src.to_string_lossy());
         assert!(a.input_text().is_empty()); // path did not land in the composer
 
@@ -1321,7 +1335,7 @@ mod tests {
 
         // Bare "/" lists everything; a space closes the popup.
         a.set_input("/");
-        assert_eq!(a.command_matches().len(), nexus_core::app::COMMANDS.len());
+        assert_eq!(a.command_matches().len(), dugix_core::app::COMMANDS.len());
         a.set_input("/new foo");
         assert!(a.command_matches().is_empty());
 
@@ -1348,8 +1362,8 @@ mod tests {
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         a.core.current_model = Some("local:fake".into());
         a.core.backends.set(
-            nexus_core::provider::BackendTag::Local,
-            nexus_core::provider::openrouter::OpenRouter::local(&format!(
+            dugix_core::provider::BackendTag::Local,
+            dugix_core::provider::openrouter::OpenRouter::local(&format!(
                 "http://{}/v1",
                 listener.local_addr().unwrap()
             ))
@@ -1375,7 +1389,7 @@ mod tests {
     #[test]
     fn alt_arrows_recall_sent_messages_and_restore_the_draft() {
         let mut a = test_app();
-        let user = |content: &str| nexus_core::db::Message {
+        let user = |content: &str| dugix_core::db::Message {
             role: "user".into(),
             content: content.into(),
             model: None,
@@ -1413,14 +1427,14 @@ mod tests {
         app.set_input(text);
         app.input.move_cursor(CursorMove::Jump(0, 14));
         let cursor = app.cursor_byte();
-        let setup = nexus_core::usershell::UserShell {
+        let setup = dugix_core::usershell::UserShell {
             shell: "/bin/sh".into(),
             snapshot: None,
             path: String::new(),
             names: Vec::new(),
             warning: None,
         };
-        let completion = nexus_core::usershell::complete(&setup, text, cursor, &cwd).await;
+        let completion = dugix_core::usershell::complete(&setup, text, cursor, &cwd).await;
         app.finish_shell_completion(ShellCompletionResult {
             text: text.into(),
             cursor,
@@ -1564,7 +1578,7 @@ mod tests {
     #[tokio::test]
     async fn chat_mode_bang_draft_is_an_ordinary_message_with_no_shell_affordances() {
         let mut a = test_app();
-        assert_eq!(a.work_mode, nexus_core::app::WorkMode::Chat);
+        assert_eq!(a.work_mode, dugix_core::app::WorkMode::Chat);
         a.current_model = Some("a/one".into());
         a.set_input("!ls");
         // The composer title, Tab completion and refresh_at_matches all key off
@@ -1593,8 +1607,8 @@ mod tests {
     #[test]
     fn agent_modes_keep_the_shell_affordances() {
         for mode in [
-            nexus_core::app::WorkMode::Agent,
-            nexus_core::app::WorkMode::AgentAuto,
+            dugix_core::app::WorkMode::Agent,
+            dugix_core::app::WorkMode::AgentAuto,
         ] {
             let mut a = test_app();
             a.work_mode = mode;

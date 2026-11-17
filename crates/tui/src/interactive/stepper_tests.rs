@@ -178,8 +178,8 @@ fn reserved_height_matches_drawing_even_for_narrow_steppers() {
 
 #[test]
 fn prompt_app_has_an_80_column_render_and_state_driven_progress() {
-    let source = nexus_core::interactive::INSTRUCTIONS
-        .split("```nexus-ui\n")
+    let source = dugix_core::interactive::INSTRUCTIONS
+        .split("```dugix-ui\n")
         .nth(1)
         .unwrap()
         .split("\n```")

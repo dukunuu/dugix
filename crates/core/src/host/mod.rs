@@ -1,4 +1,4 @@
-//! `nexus host` — the daemon surface: an `HTTP`/`SSE` session API, provider
+//! `dugix host` — the daemon surface: an `HTTP`/`SSE` session API, provider
 //! gateway, worker routes, and tunnel/sleep-guard process management.
 
 mod admin;

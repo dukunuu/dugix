@@ -4,8 +4,8 @@ use crate::ui::popups::chrome::{self, PopupFrame, hint, keys};
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use nexus_core::app::{AppCommand, MAX_CHAT_TASKS, Popup};
-use nexus_core::interactive::{Node, Session};
+use dugix_core::app::{AppCommand, MAX_CHAT_TASKS, Popup};
+use dugix_core::interactive::{Node, Session};
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 

@@ -1,6 +1,6 @@
 //! Sheet mode through the same JSON command boundary the grid will use.
 use super::*;
-use nexus_core::{
+use dugix_core::{
     canvas::dialogs::Scripted,
     sheet::{self, Sheet},
 };
@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 struct Temp(PathBuf);
 impl Temp {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!("nexus-studio-sheet-{}", Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("dugix-studio-sheet-{}", Uuid::new_v4()));
         fs::create_dir_all(&path).unwrap();
         Self(path.canonicalize().unwrap())
     }
@@ -21,7 +21,7 @@ impl Temp {
         self.files().join("sheets/grid.sheet.json")
     }
     fn backend(&self) -> Backend {
-        let sheet = Sheet::from_design("Grid", &nexus_core::design::Design::default());
+        let sheet = Sheet::from_design("Grid", &dugix_core::design::Design::default());
         sheet::storage::save(
             &self.files(),
             "sheets/grid.sheet.json",
@@ -32,7 +32,7 @@ impl Temp {
         Backend::start(Some(&self.path()), &self.files(), &self.0.join("data")).unwrap()
     }
     fn disk(&self) -> Sheet {
-        nexus_core::canvas::files::read_sheet(&self.path()).unwrap()
+        dugix_core::canvas::files::read_sheet(&self.path()).unwrap()
     }
 }
 impl Drop for Temp {
@@ -162,7 +162,7 @@ fn sheet_library_switches_modes_and_cross_mode_commands_are_refused() {
         json!({"command":"Apply","ops":[]}),
         json!({"command":"Save","deck":Deck::new_from_layouts("No")}),
         json!({"command":"ImportTemplate","path":"no.pptx"}),
-        json!({"command":"ApplyDesign","design":"nexus"}),
+        json!({"command":"ApplyDesign","design":"dugix"}),
     ] {
         let event = send(&mut backend, command);
         assert!(matches!(event, Event::Error { .. }), "{event:?}");

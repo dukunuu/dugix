@@ -6,7 +6,7 @@ use std::io::Read as _;
 struct Temp(PathBuf);
 impl Temp {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!("nexus-export-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("dugix-export-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&path).unwrap();
         Self(path.canonicalize().unwrap())
     }
@@ -489,7 +489,7 @@ fn export_refuses_symlink_destinations() {
 
 #[test]
 fn write_reviewer_export_samples_when_requested() {
-    let Some(out) = std::env::var_os("NEXUS_EXPORT_OUT") else {
+    let Some(out) = std::env::var_os("DUGIX_EXPORT_OUT") else {
         return;
     };
     let out = PathBuf::from(out);

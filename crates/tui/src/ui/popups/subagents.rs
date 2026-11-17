@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use nexus_core::app::{Popup, SubagentRun, SubagentStatus};
+use dugix_core::app::{Popup, SubagentRun, SubagentStatus};
 use ratatui::Frame;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -131,13 +131,13 @@ fn list_rows(runs: &[SubagentRun], theme: &Theme, width: usize) -> Vec<ListItem<
 pub fn transcript(
     run: &SubagentRun,
     view: &SubagentsPopup,
-    settings: &nexus_core::app::Settings,
+    settings: &dugix_core::app::Settings,
     files_dir: &std::path::Path,
     width: usize,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
     let dim = Style::default().fg(theme.fg_dim);
-    let settings = nexus_core::app::Settings {
+    let settings = dugix_core::app::Settings {
         show_reasoning: !view.hide_reasoning,
         ..settings.clone()
     };

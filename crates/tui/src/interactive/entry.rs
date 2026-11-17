@@ -11,7 +11,7 @@ use super::{
 use crate::theme::Theme;
 use crate::ui::style::glyph;
 use crossterm::event::KeyCode;
-use nexus_core::interactive::{Node, Session, Tone};
+use dugix_core::interactive::{Node, Session, Tone};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Modifier, Style};
@@ -123,7 +123,7 @@ impl Entry {
                             .filter(|(_, shape)| shape.action().is_some())
                             .map(|(shape, _)| Control::Shape(index, shape))
                             .collect(),
-                        Node::Tree { items } => nexus_core::interactive::tree_branches(items)
+                        Node::Tree { items } => dugix_core::interactive::tree_branches(items)
                             .iter()
                             .enumerate()
                             .filter(|(branch, (_, item))| {
@@ -420,7 +420,7 @@ impl Entry {
                 self.error = session
                     .edit_code(
                         node,
-                        &nexus_core::interactive::EditorKey::Insert(text.into()),
+                        &dugix_core::interactive::EditorKey::Insert(text.into()),
                     )
                     .err()
                     .map_or_else(String::new, |error| error.to_string());

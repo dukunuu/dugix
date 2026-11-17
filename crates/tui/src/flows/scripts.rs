@@ -6,13 +6,13 @@
 )]
 use anyhow::Result;
 
-use nexus_core::app::{PendingEditor, ScriptsMode};
+use dugix_core::app::{PendingEditor, ScriptsMode};
 
 use crate::app_view::AppView;
 
 impl AppView {
     pub fn move_scripts_selection(&mut self, delta: i32) {
-        self.scripts_selected = nexus_core::app::clamp_cursor(
+        self.scripts_selected = dugix_core::app::clamp_cursor(
             self.scripts_selected,
             self.core.caches.scripts.len(),
             delta,

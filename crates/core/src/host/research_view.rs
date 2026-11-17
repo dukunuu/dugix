@@ -372,7 +372,7 @@ mod tests {
 
     fn test_app() -> App {
         let root =
-            std::env::temp_dir().join(format!("nexus-research-view-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("dugix-research-view-{}", uuid::Uuid::new_v4()));
         App::new(
             crate::db::Db::open_in_memory().expect("db"),
             Some("sk-test"),

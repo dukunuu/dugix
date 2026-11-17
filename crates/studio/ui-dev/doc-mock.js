@@ -11,7 +11,7 @@
   let model;
   const load = async () => (model ||= await import('/doc/model.js'));
   const revision = () => `r${sequence}`;
-  const design = () => ({ slug: 'nexus', name: 'Nexus', colors: doc.theme.colors, fonts: doc.theme.fonts, update_available: Boolean(window.__mock?.designUpdate) });
+  const design = () => ({ slug: 'dugix', name: 'Dugix', colors: doc.theme.colors, fonts: doc.theme.fonts, update_available: Boolean(window.__mock?.designUpdate) });
   const current = (extra = {}) => ({
     event: 'Doc', doc, colors, revision: revision(), relative: 'docs/q3.doc.json', threads, linked: window.__mock?.linked ?? true, activities,
     changed: [], notice: null, assets: {}, design: design(), can_undo: undo.length > 0, can_redo: redo.length > 0, ...extra,
@@ -104,7 +104,7 @@
             else pending.forEach(e => { e.status = 'dismissed'; });
             return emit(current());
           }
-          if (m.command === 'DocDesigns') return emit({ event: 'Designs', available: [{ slug: 'nexus', name: 'Nexus', colors: doc.theme.colors, fonts: doc.theme.fonts, current: true }, { slug: 'warm', name: 'Warm paper', colors: { bg: '#fffaf0', fg: '#3b2f2f', accent: '#c0392b', muted: '#8c7b75' }, fonts: doc.theme.fonts, current: false }] });
+          if (m.command === 'DocDesigns') return emit({ event: 'Designs', available: [{ slug: 'dugix', name: 'Dugix', colors: doc.theme.colors, fonts: doc.theme.fonts, current: true }, { slug: 'warm', name: 'Warm paper', colors: { bg: '#fffaf0', fg: '#3b2f2f', accent: '#c0392b', muted: '#8c7b75' }, fonts: doc.theme.fonts, current: false }] });
           if (m.command === 'DocApplyDesign') { sequence++; return emit(current()); }
           if (m.command === 'History') {
             // Every undo step is a kept version: the doc before that edit.

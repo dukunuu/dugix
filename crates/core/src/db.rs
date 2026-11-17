@@ -172,7 +172,7 @@ pub fn open_attached(db_path: &std::path::Path) -> Result<Connection> {
     Ok(conn)
 }
 
-/// Open one connection with the pragmas every nexus connection needs: WAL keeps
+/// Open one connection with the pragmas every dugix connection needs: WAL keeps
 /// concurrent readers unblocked and the busy timeout makes a writer wait.
 pub fn open_conn(db_path: &std::path::Path) -> Result<Connection> {
     let conn =

@@ -6,7 +6,7 @@ async function connectResearch(page: Page, options: { selected: boolean; running
   const requests: RequestLog[] = [];
   let selected = options.selected;
   let running = options.running;
-  await page.route("**/.well-known/nexus", (route) => route.fulfill({ json: { host_id: "research", product: "nexus-chat", version: "test", api: "/v1", authentication: "bearer" } }));
+  await page.route("**/.well-known/dugix", (route) => route.fulfill({ json: { host_id: "research", product: "dugix", version: "test", api: "/v1", authentication: "bearer" } }));
   await page.route("**/v1/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());

@@ -377,7 +377,7 @@ async fn openai_and_codex_use_responses_web_search_and_cited_character_spans() {
         if codex {
             assert!(r.headers.contains("chatgpt-account-id: fixture-account"));
             assert!(r.headers.contains("accept: text/event-stream"));
-            assert!(r.headers.contains("originator: nexus-chat"));
+            assert!(r.headers.contains("originator: dugix"));
         } else {
             assert!(
                 r.headers
@@ -466,9 +466,9 @@ async fn go_and_local_skip_native_search_and_all_failures_list_sources_and_one_h
 #[tokio::test]
 async fn native_usage_records_reported_cost_and_incognito_does_not_record() {
     let server = mock(|_| (200, native_reply().to_string())).await;
-    let root = std::env::temp_dir().join(format!("nexus-keyless-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-keyless-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
-    let path = root.join("nexus.db");
+    let path = root.join("dugix.db");
     let db = crate::db::Db::open(&path).unwrap();
     let mut tb = toolbox(&server);
     tb.search_provider = "provider".into();
@@ -534,7 +534,7 @@ async fn exa_highlights_are_capped_and_optional_langsearch_credentials_stay_out_
 
 #[test]
 fn search_backend_is_the_session_model() {
-    let root = std::env::temp_dir().join(format!("nexus-search-helper-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-search-helper-{}", uuid::Uuid::new_v4()));
     let mut app = crate::app::App::new(
         crate::db::Db::open_in_memory().unwrap(),
         None,

@@ -5,8 +5,8 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 
 use anyhow::Context as _;
-use nexus_core::deck::history::{self, Document as _};
-use nexus_core::doc::{self, Doc, Kind as BlockKind, feedback as comments, layout};
+use dugix_core::deck::history::{self, Document as _};
+use dugix_core::doc::{self, Doc, Kind as BlockKind, feedback as comments, layout};
 use serde::Serialize;
 
 use super::{
@@ -75,10 +75,10 @@ pub struct PageInfo {
 }
 
 pub(super) fn is_doc_path(path: &Path) -> bool {
-    nexus_core::deck::link::Kind::of_path(path) == nexus_core::deck::link::Kind::Doc
+    dugix_core::deck::link::Kind::of_path(path) == dugix_core::deck::link::Kind::Doc
 }
 
-fn located(errors: &[nexus_core::deck::CheckError]) -> String {
+fn located(errors: &[dugix_core::deck::CheckError]) -> String {
     errors
         .iter()
         .map(|e| format!("{}: {}", e.path, e.message))
@@ -129,8 +129,8 @@ pub(super) fn docs_dir(files_dir: &Path) -> Result<PathBuf> {
 }
 
 fn blank_doc(files_dir: &Path, title: &str) -> Doc {
-    let slug = nexus_core::design::default_slug(files_dir).unwrap_or_else(|_| "nexus".into());
-    let design = nexus_core::design::load(files_dir, &slug).unwrap_or_default();
+    let slug = dugix_core::design::default_slug(files_dir).unwrap_or_else(|_| "dugix".into());
+    let design = dugix_core::design::load(files_dir, &slug).unwrap_or_default();
     let mut doc = Doc::from_design(title, &design);
     doc.design = Some(slug);
     doc
@@ -174,16 +174,16 @@ impl Backend {
 
     pub(super) fn doc_resolver(
         &self,
-    ) -> impl Fn(&str) -> Result<nexus_core::design::Design> + use<> {
+    ) -> impl Fn(&str) -> Result<dugix_core::design::Design> + use<> {
         let files = self.files_dir.clone();
-        move |slug: &str| nexus_core::design::load(&files, slug)
+        move |slug: &str| dugix_core::design::load(&files, slug)
     }
 
     fn design_state(&self, doc: &Doc) -> DesignState {
         let stored = doc
             .design
             .as_deref()
-            .and_then(|slug| nexus_core::design::load(&self.files_dir, slug).ok());
+            .and_then(|slug| dugix_core::design::load(&self.files_dir, slug).ok());
         DesignState {
             slug: doc.design.clone(),
             template: stored.as_ref().is_some_and(|d| d.source.is_some()),
@@ -248,7 +248,7 @@ impl Backend {
             let root = root.as_ref()?;
             let path = root.join(src.strip_prefix("assets/").unwrap_or(src));
             self.cached_hash(&path, || {
-                self.serve(&format!("nexus://localhost/{src}"))
+                self.serve(&format!("dugix://localhost/{src}"))
                     .ok()
                     .map(|(_, bytes)| bytes)
             })
@@ -312,7 +312,7 @@ impl Backend {
         atomic_write(&self.recent, &serde_json::to_vec(&path)?)?;
         self.path = path;
         self.follow_space();
-        self.fetcher = nexus_core::remote_image::Fetcher::new(root);
+        self.fetcher = dugix_core::remote_image::Fetcher::new(root);
         self.known_revision = doc.revision();
         self.deck_stamp = stamp(&self.path);
         self.load_notes.clear();
@@ -499,7 +499,7 @@ impl Backend {
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("image");
-        nexus_core::deck::assets::store_image_bytes(
+        dugix_core::deck::assets::store_image_bytes(
             bytes,
             &Path::new(label)
                 .file_name()
@@ -577,7 +577,7 @@ impl Backend {
             template,
             &self.files_dir.join("exports/assets"),
         )?;
-        let path = nexus_core::deck::export::write_export(&output, &self.files_dir, path)?;
+        let path = dugix_core::deck::export::write_export(&output, &self.files_dir, path)?;
         self.exports.push(path.clone());
         Ok(Event::Exported {
             path,
@@ -595,10 +595,10 @@ impl Backend {
         format: doc::export::Format,
         template: Option<&str>,
         md_images: &Path,
-    ) -> Result<nexus_core::deck::export::Export> {
+    ) -> Result<dugix_core::deck::export::Export> {
         // Check (and make) the assets folder before anything reads from it.
         asset_root(path)?;
-        nexus_core::canvas::files::doc_output(
+        dugix_core::canvas::files::doc_output(
             &self.files_dir,
             doc,
             threads,
@@ -673,8 +673,8 @@ impl Backend {
     fn doc_designs(&self) -> Result<Event> {
         let current = self.session()?.doc.design.clone();
         let mut available = Vec::new();
-        for slug in nexus_core::design::list(&self.files_dir)? {
-            if let Ok(design) = nexus_core::design::load(&self.files_dir, &slug) {
+        for slug in dugix_core::design::list(&self.files_dir)? {
+            if let Ok(design) = dugix_core::design::load(&self.files_dir, &slug) {
                 available.push(DesignInfo {
                     current: current.as_deref() == Some(slug.as_str()),
                     slug,
@@ -693,7 +693,7 @@ impl Backend {
         match message {
             LinkMessage::DocFocus {
                 deck_path, block, ..
-            } if nexus_core::deck::same_file(deck_path, &self.path) => Event::DocFocus {
+            } if dugix_core::deck::same_file(deck_path, &self.path) => Event::DocFocus {
                 block: block.clone(),
             },
             _ => self.doc_event(),

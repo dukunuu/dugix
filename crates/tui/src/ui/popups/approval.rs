@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent};
-use nexus_core::app::AppCommand;
-use nexus_core::tools::Decision;
+use dugix_core::app::AppCommand;
+use dugix_core::tools::Decision;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -220,13 +220,13 @@ fn explain(tool: &str, action: &str, text: &str) -> String {
 /// Put the plain-language explanation under the header, first for a wave.
 fn insert_intro(
     lines: &mut Vec<Line<'static>>,
-    request: &nexus_core::tools::ApprovalRequest,
+    request: &dugix_core::tools::ApprovalRequest,
     text: &str,
     width: usize,
     theme: &crate::theme::Theme,
 ) {
     let wave = request.tool == "wave";
-    let connector = request.class.as_deref() == Some(nexus_core::connectors::exec::CLASS);
+    let connector = request.class.as_deref() == Some(dugix_core::connectors::exec::CLASS);
     let at = if wave {
         0
     } else {
@@ -330,7 +330,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
 /// The footer keys that work for this request right now.
 fn key_hints(
     app: &AppView,
-    request: &nexus_core::tools::ApprovalRequest,
+    request: &dugix_core::tools::ApprovalRequest,
     wave: bool,
     connector: bool,
 ) -> Vec<chrome::Hint> {
@@ -395,7 +395,7 @@ pub fn render_in(f: &mut Frame, app: &AppView, area: Rect) {
     )
     .remove(0)
     .to_string();
-    let connector = request.class.as_deref() == Some(nexus_core::connectors::exec::CLASS);
+    let connector = request.class.as_deref() == Some(dugix_core::connectors::exec::CLASS);
     let mut count = Vec::new();
     if queued > 1 {
         count.push(format!("1 of {queued}"));
@@ -484,7 +484,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> anyhow::Result<()> {
         KeyCode::Char('A')
             if !super::is_chord(key)
                 && app.approval_request.as_ref().is_some_and(|request| {
-                    request.class.as_deref() == Some(nexus_core::connectors::exec::CLASS)
+                    request.class.as_deref() == Some(dugix_core::connectors::exec::CLASS)
                 }) =>
         {
             Decision::AllowAlways
@@ -515,16 +515,16 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_core::app::{App, Popup};
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
-    use nexus_core::tools::ApprovalRequest;
+    use dugix_core::app::{App, Popup};
+    use dugix_core::db::Db;
+    use dugix_core::space::Space;
+    use dugix_core::tools::ApprovalRequest;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use std::time::{Duration, Instant};
 
     fn wave_app(summary: String) -> (AppView, tokio::sync::oneshot::Receiver<Decision>) {
-        let root = std::env::temp_dir().join(format!("nexus-wave-popup-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-wave-popup-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let mut app = AppView::new(App::new(
             Db::open_in_memory().unwrap(),

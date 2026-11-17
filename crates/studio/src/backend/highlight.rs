@@ -43,7 +43,7 @@ pub fn highlight(blocks: &[Request]) -> Vec<Reply> {
 }
 
 fn utf16_spans(text: &str, lang: &str) -> Vec<(usize, usize, &'static str)> {
-    let spans = nexus_core::highlight::highlight(text, lang);
+    let spans = dugix_core::highlight::highlight(text, lang);
     if spans.is_empty() {
         return Vec::new();
     }

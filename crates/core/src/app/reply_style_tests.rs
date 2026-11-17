@@ -44,7 +44,7 @@ fn reply_style_defaults_to_interactive_and_round_trips_through_the_db() {
         a.db,
         Some("sk-or-test-key"),
         crate::space::Space {
-            root: std::env::temp_dir().join(format!("nexus-test-{}", uuid::Uuid::new_v4())),
+            root: std::env::temp_dir().join(format!("dugix-test-{}", uuid::Uuid::new_v4())),
         },
     );
     assert_eq!(reloaded.settings.reply_style, "rich");

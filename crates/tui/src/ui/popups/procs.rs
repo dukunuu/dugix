@@ -6,7 +6,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{ListItem, ListState, Paragraph};
 
 use crate::app_view::AppView;
-use nexus_core::app::Popup;
+use dugix_core::app::Popup;
 
 use super::chrome::{self, PopupFrame, ctrl, hint, keys};
 
@@ -85,7 +85,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
                 .find(|p| &p.id == id)
                 .map(|p| format!("“{}” will be stopped.", p.name))
         })
-        .unwrap_or_else(|| "Processes stop when nexus exits.".to_string());
+        .unwrap_or_else(|| "Processes stop when dugix exits.".to_string());
     let (list_area, detail_area) = chrome::split_with_detail(inner, &detail);
     chrome::render_detail(f, detail_area, &detail, &app.theme);
     let items = rows
@@ -156,7 +156,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
                 super::apply_page(
                     |delta| {
                         app.procs_selected =
-                            nexus_core::app::clamp_cursor(app.procs_selected, rows.len(), delta);
+                            dugix_core::app::clamp_cursor(app.procs_selected, rows.len(), delta);
                     },
                     action,
                     10,
@@ -197,18 +197,18 @@ fn output_key(app: &mut AppView, key: KeyEvent, lines: usize) {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use nexus_core::app::{App, AppCommand};
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
-    use nexus_core::tools::ToolBox;
-    use nexus_core::workspace::Workspace;
+    use dugix_core::app::{App, AppCommand};
+    use dugix_core::db::Db;
+    use dugix_core::space::Space;
+    use dugix_core::tools::ToolBox;
+    use dugix_core::workspace::Workspace;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use std::sync::Arc;
 
     #[tokio::test]
     async fn output_scroll_status_count_and_two_key_kill() {
-        let root = std::env::temp_dir().join(format!("nexus-procs-ui-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-procs-ui-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let mut app = AppView::new(App::new(
             Db::open_in_memory().unwrap(),
@@ -222,7 +222,7 @@ mod tests {
             None,
             "auto".into(),
             vec![],
-            Some(root.join("nexus.db")),
+            Some(root.join("dugix.db")),
             None,
             None,
         );

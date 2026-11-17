@@ -5,7 +5,7 @@ use crate::app_view::AppView;
 use crate::theme::Theme;
 use crate::ui::style::glyph;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use nexus_core::interactive::{Node, Session};
+use dugix_core::interactive::{Node, Session};
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Modifier, Style};
@@ -47,13 +47,13 @@ use crate::ui::popups::chrome;
 #[cfg(test)]
 use crossterm::event::{KeyEventKind, MouseButton, MouseEvent, MouseEventKind};
 #[cfg(test)]
+use dugix_core::app::{AppCommand, Popup};
+#[cfg(test)]
+use dugix_core::interactive::Document;
+#[cfg(test)]
 use layout::{button_label, card_height, node_regions, primary_button, streaming_buffer};
 #[cfg(test)]
 use lines::render_table;
-#[cfg(test)]
-use nexus_core::app::{AppCommand, Popup};
-#[cfg(test)]
-use nexus_core::interactive::Document;
 #[cfg(test)]
 use ratatui::buffer::Buffer;
 #[cfg(test)]
@@ -74,13 +74,13 @@ pub(crate) fn image_lines(
     let mut lines = crate::app_view::image_lines(url, alt, width, rows, theme);
     if matches!(
         crate::app_view::remote_image(url),
-        nexus_core::remote_image::Status::Failed
+        dugix_core::remote_image::Status::Failed
     ) && !lines.is_empty()
     {
         let failure = crate::app_view::image_placeholder(
             url,
             alt,
-            &nexus_core::remote_image::Status::Failed,
+            &dugix_core::remote_image::Status::Failed,
             theme,
             usize::from(width),
         );
@@ -149,7 +149,7 @@ enum Control {
 const SEND_BLOCKED: &str = "Finish the reply and clear your draft before reviewing a UI response.";
 fn shape_sends(session: &Session, node: usize, shape: usize) -> bool {
     matches!(session.document().node(node), Some(Node::Canvas { shapes, .. })
-        if shapes.get(shape).and_then(nexus_core::interactive::Shape::action)
+        if shapes.get(shape).and_then(dugix_core::interactive::Shape::action)
             .is_some_and(|action| session.document().sends(action)))
 }
 fn binding_name(code: KeyCode) -> Option<String> {
@@ -189,7 +189,7 @@ struct Entry {
 #[allow(clippy::struct_excessive_bools)] // Independent input, layout and OS-focus flags.
 pub struct Widgets {
     entries: HashMap<Key, Entry>,
-    previews: HashMap<(usize, usize), nexus_core::interactive::StreamParser>,
+    previews: HashMap<(usize, usize), dugix_core::interactive::StreamParser>,
     hits: Vec<Hit>,
     visible: Vec<Key>,
     focused: Option<Key>,
@@ -258,8 +258,8 @@ mod failure_band_tests {
 
     #[test]
     fn failed_band_keeps_height_and_centers_the_failure_line() {
-        let fetcher = nexus_core::remote_image::Fetcher::new(
-            std::env::temp_dir().join(format!("nexus-failure-{}", uuid::Uuid::new_v4())),
+        let fetcher = dugix_core::remote_image::Fetcher::new(
+            std::env::temp_dir().join(format!("dugix-failure-{}", uuid::Uuid::new_v4())),
         );
         crate::app_view::use_fetcher_for_tests(&fetcher);
         let url = "https://img.example.invalid/player.jpg";

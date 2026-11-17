@@ -353,7 +353,7 @@ mod tests {
 
     #[test]
     fn version_one_grid_anchors_become_pixels_on_load() {
-        let dir = std::env::temp_dir().join(format!("nexus-anchor-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-anchor-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("a.deck.json");
         std::fs::write(
@@ -371,7 +371,7 @@ mod tests {
 
     #[test]
     fn the_sidecar_round_trips_beside_the_deck_and_refuses_symlinks() {
-        let dir = std::env::temp_dir().join(format!("nexus-feedback-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-feedback-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("a.deck.json");
         assert!(load(&path).unwrap().is_empty());

@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use super::style::{self, glyph};
 use super::{diff, dim, fmt_cost, popups, to_color};
 use crate::app_view::AppView;
-use nexus_core::db::Message;
+use dugix_core::db::Message;
 
 /// Non-text regions travel together through the card renderer.
 pub(super) struct Regions<'a> {
@@ -169,7 +169,7 @@ pub(super) fn push_tool_call(
     out: &mut Vec<Line<'static>>,
     content: &str,
     expanded: bool,
-    settings: &nexus_core::app::Settings,
+    settings: &dugix_core::app::Settings,
     width: usize,
     theme: &crate::theme::Theme,
     env: CardEnv<'_>,
@@ -206,7 +206,7 @@ pub(super) fn push_recall(
     width: usize,
     theme: &crate::theme::Theme,
 ) {
-    let Some(recall) = nexus_core::memory::recall::Recall::from_row(content) else {
+    let Some(recall) = dugix_core::memory::recall::Recall::from_row(content) else {
         return;
     };
     let names = recall
@@ -244,7 +244,7 @@ pub(super) fn push_mode(
     width: usize,
     theme: &crate::theme::Theme,
 ) {
-    let Some(note) = nexus_core::app::ModeNote::from_row(content) else {
+    let Some(note) = dugix_core::app::ModeNote::from_row(content) else {
         return;
     };
     let dim = Style::default().fg(theme.fg_dim);
@@ -268,7 +268,7 @@ pub(super) fn push_user_command(
     const MAX_OUTPUT_LINES: usize = 12;
     let row: serde_json::Value = serde_json::from_str(content).unwrap_or_default();
     let cmd = row["cmd"].as_str().unwrap_or_default();
-    let outcome = nexus_core::app::user_command_outcome(&row);
+    let outcome = dugix_core::app::user_command_outcome(&row);
     let you = Style::default().fg(theme.accent);
     out.push(style::event_head(
         glyph::YOU,
@@ -416,7 +416,7 @@ pub(super) fn push_assistant_stored(
     image_at_line: &mut Vec<Option<String>>,
     content: &str,
     msg: &Message,
-    settings: &nexus_core::app::Settings,
+    settings: &dugix_core::app::Settings,
     width: usize,
     code: &mut Vec<Option<usize>>,
     blocks: &mut Vec<String>,
@@ -712,7 +712,7 @@ pub(super) fn render_markdown_images(
         let remote = file.contains("://");
         let path = if remote {
             match crate::app_view::remote_image(&file) {
-                nexus_core::remote_image::Status::Ready(path) => path,
+                dugix_core::remote_image::Status::Ready(path) => path,
                 status => {
                     let mut line =
                         crate::app_view::image_placeholder(&file, &alt, &status, theme, width);

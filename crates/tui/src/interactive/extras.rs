@@ -2,7 +2,7 @@
 
 use super::{Session, accent_color, bold, canvas::Dots, clipped, control_style, display, glyph};
 use crate::theme::Theme;
-use nexus_core::interactive::{Node, Stat, Tone, tree_branches};
+use dugix_core::interactive::{Node, Stat, Tone, tree_branches};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -167,7 +167,7 @@ pub(super) fn render(
 }
 
 fn tree(
-    (index, items): (usize, &[nexus_core::interactive::Branch]),
+    (index, items): (usize, &[dugix_core::interactive::Branch]),
     session: &Session,
     area: Rect,
     theme: &Theme,
@@ -326,7 +326,7 @@ fn heatmap(
 }
 
 fn board_lane(
-    lane: &nexus_core::interactive::Lane,
+    lane: &dugix_core::interactive::Lane,
     rows: u16,
     session: &Session,
     area: Rect,
@@ -339,7 +339,7 @@ fn board_lane(
         .and_then(|value| value.as_array().cloned())
         .unwrap_or_default()
         .iter()
-        .map(|card| super::safe(&nexus_core::interactive::scalar_text(card)))
+        .map(|card| super::safe(&dugix_core::interactive::scalar_text(card)))
         .collect();
     let color = lane.tone.map_or_else(
         || accent_color(session.document(), theme),

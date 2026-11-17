@@ -1,5 +1,5 @@
 use super::*;
-use nexus_core::remote_image::Fetcher;
+use dugix_core::remote_image::Fetcher;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -7,7 +7,7 @@ const PIC: &str = "https://img.example.invalid/pic.png";
 
 fn fetcher() -> Arc<Fetcher> {
     let fetcher =
-        Fetcher::new(std::env::temp_dir().join(format!("nexus-ui-img-{}", uuid::Uuid::new_v4())));
+        Fetcher::new(std::env::temp_dir().join(format!("dugix-ui-img-{}", uuid::Uuid::new_v4())));
     crate::app_view::use_fetcher_for_tests(&fetcher);
     fetcher
 }

@@ -11,8 +11,8 @@ use super::chrome::{self, PopupFrame, ctrl, hint, keys};
 
 #[allow(clippy::too_many_lines)] // rows + browse / edit / confirm chrome
 pub fn render(f: &mut Frame, app: &AppView) {
-    use nexus_core::app::SpaceMode;
-    use nexus_core::db::DEFAULT_SPACE;
+    use dugix_core::app::SpaceMode;
+    use dugix_core::db::DEFAULT_SPACE;
     let area = chrome::popup_area(app, f.area(), "space", chrome::STANDARD);
 
     let dim = Style::default().fg(app.theme.fg_dim);
@@ -147,8 +147,8 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
         ConfirmDeleteAction, EditAction, classify_browse_key, classify_confirm_delete_key,
         classify_edit_key,
     };
-    use nexus_core::app::SpaceMode;
-    use nexus_core::db::DEFAULT_SPACE;
+    use dugix_core::app::SpaceMode;
+    use dugix_core::db::DEFAULT_SPACE;
     match app.space_mode {
         SpaceMode::Create | SpaceMode::Rename => match classify_edit_key(key) {
             Some(EditAction::Cancel) => app.space_mode = SpaceMode::Browse,
@@ -180,7 +180,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
             match classify_browse_key(key, true, true) {
                 Some(super::BrowseAction::Close) => {
                     if app.space_filter.is_empty() {
-                        app.popup = nexus_core::app::Popup::None;
+                        app.popup = dugix_core::app::Popup::None;
                     } else {
                         app.space_filter.clear();
                         app.space_selected = 0;

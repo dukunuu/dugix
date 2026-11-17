@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn kitty_pictures_replace_the_half_blocks_and_clip_at_the_top() {
-        let dir = std::env::temp_dir().join(format!("nexus-picture-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-picture-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("p.png");
         image::RgbImage::from_pixel(40, 80, image::Rgb([20, 200, 90]))

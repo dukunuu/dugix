@@ -129,9 +129,9 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
     match key.code {
         KeyCode::Char('x') if ctrl => {
             app.stop_research();
-            app.popup = nexus_core::app::Popup::None;
+            app.popup = dugix_core::app::Popup::None;
         }
-        KeyCode::Esc => app.popup = nexus_core::app::Popup::None,
+        KeyCode::Esc => app.popup = dugix_core::app::Popup::None,
         // Each stage is a sub-agent run; Tab opens their transcripts.
         KeyCode::Tab => super::subagents::open(app),
         KeyCode::Enter => {

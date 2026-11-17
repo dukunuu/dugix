@@ -1,13 +1,13 @@
 use super::*;
 use crossterm::event::KeyModifiers;
-use nexus_core::app::App;
-use nexus_core::db::Db;
-use nexus_core::space::Space;
+use dugix_core::app::App;
+use dugix_core::db::Db;
+use dugix_core::space::Space;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
 fn fixture() -> AppView {
-    let root = std::env::temp_dir().join(format!("nexus-context-costs-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-context-costs-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("spaces")).unwrap();
     AppView::new(App::new(
         Db::open_in_memory().unwrap(),

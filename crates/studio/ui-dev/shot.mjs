@@ -3,14 +3,14 @@
 // Writes 1440x900 light and dark screenshots to crates/studio/ui-dev/shots/ and
 // drives the interactions that matter: an external (model) edit is one undo
 // step, a model comment's suggested edit previews and applies, and comments
-// are only sent to nexus while the link is up.
+// are only sent to dugix while the link is up.
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
 const here = path.dirname(fileURLToPath(import.meta.url)), root = path.resolve(here, '../../..');
-const candidates = [path.join(root, 'web/node_modules/playwright-core/index.mjs'), '/Users/dukunuu/work/nexus-chat/web/node_modules/playwright-core/index.mjs'];
+const candidates = [path.join(root, 'web/node_modules/playwright-core/index.mjs'), '/Users/dukunuu/work/dugix/web/node_modules/playwright-core/index.mjs'];
 const installed = candidates.find(p => fs.existsSync(p));
 if (!installed) throw new Error('Use the existing web/node_modules/playwright-core installation.');
 const { chromium } = await import(pathToFileURL(installed).href);
@@ -42,7 +42,7 @@ try {
       await page.evaluate(colors => window.studioAsyncEvent({ event:'Theme', colors }), colors);
       // Studio is a pure canvas: no chat pane, no host connection, and it says it is linked.
       assert.equal(await page.locator('#chat-pane, #chat-input, #host-status, #review').count(), 0);
-      assert.equal((await page.locator('#link-status').textContent()).trim(), 'Linked to nexus');
+      assert.equal((await page.locator('#link-status').textContent()).trim(), 'Linked to dugix');
       if (scenario === 'editing' || scenario === 'properties') {
         await page.locator('#canvas .block[data-id="b1"]').click();
         if (scenario === 'properties') await page.locator('#more-properties').dispatchEvent('click');
@@ -62,7 +62,7 @@ try {
         await page.close(); continue;
       } else if (scenario === 'thread' || scenario === 'preview') {
         await page.locator('#comment-mode').click(); await page.locator('#pins .pin').first().click(); await page.locator('#thread-popover .edit-card').waitFor();
-        assert.equal(await page.getByRole('button', { name:'Send to nexus' }).isEnabled(), true);
+        assert.equal(await page.getByRole('button', { name:'Send to dugix' }).isEnabled(), true);
         if (scenario === 'preview') {
           await page.getByRole('button', { name:'Preview on the slide', exact:true }).click(); await page.locator('#canvas .ghost-changed').waitFor();
           const before = await page.locator('#canvas').textContent(); await page.keyboard.press('b'); assert.notEqual(await page.locator('#canvas').textContent(), before); await page.keyboard.press('b');
@@ -79,19 +79,19 @@ try {
         await page.locator('#undo').dispatchEvent('click'); await page.waitForFunction(() => document.querySelector('#canvas').textContent.includes('Less noise. More room'));
       }
       if (scenario === 'thread') {
-        // A reply goes to nexus over the link; resolve and reopen stay local.
-        await page.locator('#thread-popover textarea').fill('Yes, keep the quiet tone.'); await page.getByRole('button', { name:'Send to nexus' }).click();
+        // A reply goes to dugix over the link; resolve and reopen stay local.
+        await page.locator('#thread-popover textarea').fill('Yes, keep the quiet tone.'); await page.getByRole('button', { name:'Send to dugix' }).click();
         await page.waitForFunction(() => window.__mock.sent.some(m => m.type === 'Reply'));
         await page.getByRole('button', { name:'Resolve thread', exact:true }).click(); await page.getByRole('button', { name:'Reopen thread', exact:true }).waitFor(); await page.getByRole('button', { name:'Reopen thread', exact:true }).click();
         assert.equal(await page.evaluate(() => window.__mock.sent.filter(m => m.type === 'Comment').length), 0);
         // Not linked: the same button is disabled and says why.
         await page.evaluate(() => window.__mock.emitCurrent({ linked:false }));
         await page.waitForFunction(() => document.querySelector('#link-status').textContent === 'Not linked');
-        assert.equal(await page.getByRole('button', { name:'Send to nexus' }).isDisabled(), true);
+        assert.equal(await page.getByRole('button', { name:'Send to dugix' }).isDisabled(), true);
         await page.locator('#thread-popover .hint', { hasText:'/studio' }).waitFor();
       }
       if (scenario === 'editing') {
-        // Selecting and switching slides tells nexus what is on screen, debounced.
+        // Selecting and switching slides tells dugix what is on screen, debounced.
         await page.locator('#strip .slide-item').nth(1).click(); await page.waitForFunction(() => window.__mock.sent.some(m => m.type === 'Focus' && m.slide === 's2'));
       }
       await page.close();

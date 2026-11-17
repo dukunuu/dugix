@@ -22,15 +22,15 @@ use crate::app_view::AppView;
 #[cfg(test)]
 mod auto_mode_tests {
     use super::*;
-    use nexus_core::app::{App, WorkMode};
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
+    use dugix_core::app::{App, WorkMode};
+    use dugix_core::db::Db;
+    use dugix_core::space::Space;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
     #[test]
     fn auto_badge_visibly_reports_unavailable_confinement() {
-        let root = std::env::temp_dir().join(format!("nexus-auto-status-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-auto-status-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let mut app = AppView::new(App::new(
             Db::open_in_memory().unwrap(),
@@ -40,7 +40,7 @@ mod auto_mode_tests {
             },
         ));
         app.workspace = Some(std::sync::Arc::new(
-            nexus_core::workspace::Workspace::open(&root, vec![]).unwrap(),
+            dugix_core::workspace::Workspace::open(&root, vec![]).unwrap(),
         ));
         app.work_mode = WorkMode::AgentAuto;
         for (available, expected) in [(true, "agent·auto ·"), (false, "agent·auto (no sandbox) ·")]
@@ -78,7 +78,7 @@ fn gradient(t: f64) -> Color {
 
 #[allow(clippy::too_many_lines)] // status badges, layout, and context meter
 pub(super) fn render_status(f: &mut Frame, app: &AppView, area: Rect) {
-    use nexus_core::db::DEFAULT_SPACE;
+    use dugix_core::db::DEFAULT_SPACE;
     let theme = &app.theme;
     let dim = Style::default().fg(theme.fg_dim);
     let sep = || super::style::sep(theme);
@@ -114,7 +114,7 @@ pub(super) fn render_status(f: &mut Frame, app: &AppView, area: Rect) {
                 root.chars().skip(len - max_root + 1).collect::<String>()
             );
         }
-        let mode = if app.work_mode == nexus_core::app::WorkMode::AgentAuto {
+        let mode = if app.work_mode == dugix_core::app::WorkMode::AgentAuto {
             if app.auto_sandbox_available {
                 "agent·auto"
             } else {
@@ -158,6 +158,19 @@ pub(super) fn render_status(f: &mut Frame, app: &AppView, area: Rect) {
     if procs > 0 {
         left.push(sep());
         left.push(Span::styled(format!("{procs} procs"), dim));
+    }
+
+    let agents = app.fleet.live();
+    if agents > 0 {
+        left.push(sep());
+        left.push(Span::styled(format!("{agents} fleet"), dim));
+        let blocked = app.fleet.blocked();
+        if blocked > 0 {
+            left.push(Span::styled(
+                format!(" {} {blocked} need you", crate::ui::style::glyph::WARN),
+                Style::default().fg(theme.warning),
+            ));
+        }
     }
 
     let mut right: Vec<Span> = Vec::new();

@@ -2,7 +2,7 @@
 
 use super::{Backend, absolute, asset_root, atomic_write, checked, hash_bytes, read_bounded};
 use anyhow::{Context as _, Result, ensure};
-use nexus_core::deck::{FontFile, text};
+use dugix_core::deck::{FontFile, text};
 use std::{fs, path::Path};
 
 impl Backend {

@@ -1,4 +1,4 @@
-// Nexus component library: real renderer exports, painted like a terminal.
+// Dugix component library: real renderer exports, painted like a terminal.
 import { metrics, paintFrame } from './terminal-paint.js';
 
 const $ = selector => document.querySelector(selector);
@@ -30,7 +30,7 @@ function canvasFor(frame) {
 
 function renderAll() {
   $('#stage').innerHTML = `<h1>All components</h1>
-    <p class="lead">${sheet.cases.length} panels covering all ${sheet.contracts.length} nexus-ui contracts, drawn by Nexus's real panel renderer at 76 columns in a Tokyo Night terminal theme. Select any panel for its focused state, a 44-column render and its source.</p>
+    <p class="lead">${sheet.cases.length} panels covering all ${sheet.contracts.length} dugix-ui contracts, drawn by Dugix's real panel renderer at 76 columns in a Tokyo Night terminal theme. Select any panel for its focused state, a 44-column render and its source.</p>
     <div class="sheet" id="sheet"></div>`;
   // Cards fit a whole 76-column panel at the chosen cell size.
   $('#sheet').style.setProperty('--card-min', `${Math.ceil(76 * metrics(state.size, FONT).width) + 30}px`);

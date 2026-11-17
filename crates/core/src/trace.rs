@@ -504,7 +504,7 @@ mod tests {
 
     impl TempDir {
         fn new() -> Self {
-            Self(std::env::temp_dir().join(format!("nexus-trace-{}", Uuid::new_v4())))
+            Self(std::env::temp_dir().join(format!("dugix-trace-{}", Uuid::new_v4())))
         }
 
         fn open(&self) -> TraceStore {

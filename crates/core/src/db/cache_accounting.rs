@@ -23,7 +23,7 @@ pub enum Verdict {
     Expired,
     /// The system prompt or tool definitions differ from the previous request.
     PrefixChanged,
-    /// Nothing explains the miss on nexus's side.
+    /// Nothing explains the miss on dugix's side.
     ProviderMiss,
 }
 

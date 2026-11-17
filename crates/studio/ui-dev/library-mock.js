@@ -6,15 +6,15 @@
   const now = Date.now();
   const ago = seconds => new Date(now - seconds * 1000).toISOString();
   const defaults = () => [
-    { kind: 'doc', relative: 'docs/q3.doc.json', title: 'Q3 strategy', modified: ago(240), count: 21, design: 'Nexus', thumb: '/library/doc-1.png', current: true },
-    { kind: 'deck', relative: 'decks/launch.deck.json', title: 'Launch review', modified: ago(3 * 3600), count: 12, design: 'Nexus', thumb: '/library/deck-1.png', current: false },
+    { kind: 'doc', relative: 'docs/q3.doc.json', title: 'Q3 strategy', modified: ago(240), count: 21, design: 'Dugix', thumb: '/library/doc-1.png', current: true },
+    { kind: 'deck', relative: 'decks/launch.deck.json', title: 'Launch review', modified: ago(3 * 3600), count: 12, design: 'Dugix', thumb: '/library/deck-1.png', current: false },
     { kind: 'deck', relative: 'decks/board.deck.json', title: 'Board update, September', modified: ago(26 * 3600), count: 18, design: 'Acme', thumb: '/library/deck-2.png', current: false },
-    { kind: 'doc', relative: 'docs/research-notes.doc.json', title: 'Research notes on retention and onboarding for the winter cohort', modified: ago(2 * 86400), count: 64, design: 'Nexus', thumb: '/library/doc-2.png', current: false },
-    { kind: 'deck', relative: 'decks/all-hands.deck.json', title: 'All hands', modified: ago(5 * 86400), count: 1, design: 'Nexus', thumb: '/library/deck-3.png', current: false },
+    { kind: 'doc', relative: 'docs/research-notes.doc.json', title: 'Research notes on retention and onboarding for the winter cohort', modified: ago(2 * 86400), count: 64, design: 'Dugix', thumb: '/library/doc-2.png', current: false },
+    { kind: 'deck', relative: 'decks/all-hands.deck.json', title: 'All hands', modified: ago(5 * 86400), count: 1, design: 'Dugix', thumb: '/library/deck-3.png', current: false },
     { kind: 'doc', relative: 'docs/onboarding.doc.json', title: 'Onboarding guide', modified: ago(9 * 86400), count: 33, design: 'Acme', thumb: '/library/doc-3.png', current: false },
     { kind: 'deck', relative: 'decks/roadmap.deck.json', title: 'Roadmap 2027', modified: ago(14 * 86400), count: 24, design: 'Acme', thumb: '/library/deck-4.png', current: false },
     { kind: 'deck', relative: 'decks/untitled.deck.json', title: 'Untitled', modified: ago(40 * 86400), count: 2, design: null, thumb: null, current: false },
-    { kind: 'doc', relative: 'docs/changelog.doc.json', title: 'Changelog', modified: ago(70 * 86400), count: 9, design: 'Nexus', thumb: '/library/doc-4.png', current: false },
+    { kind: 'doc', relative: 'docs/changelog.doc.json', title: 'Changelog', modified: ago(70 * 86400), count: 9, design: 'Dugix', thumb: '/library/doc-4.png', current: false },
   ];
   // Every listed file belongs to a space; the first two sit in another one.
   let items = structuredClone(window.__libraryItems ?? defaults().map((item, i) => ({ space: i === 1 || i === 4 ? 'career' : 'default', ...item })));

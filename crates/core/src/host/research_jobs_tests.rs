@@ -6,7 +6,7 @@ use serde_json::json;
 
 #[tokio::test]
 async fn watches_api_keeps_its_json_shape_using_only_interval_research_jobs() {
-    let root = std::env::temp_dir().join(format!("nexus-watch-api-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-watch-api-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("spaces")).unwrap();
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let mut app = App::new(

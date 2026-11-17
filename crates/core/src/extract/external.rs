@@ -68,12 +68,12 @@ impl ExtractConfig {
             .into_iter()
             .map(|(key, argv)| Hook { key, argv })
             .collect();
-        if let Ok(model) = std::env::var("NEXUS_WHISPER_MODEL")
+        if let Ok(model) = std::env::var("DUGIX_WHISPER_MODEL")
             && !model.trim().is_empty()
         {
             cfg.whisper_model = model.trim().to_string();
         }
-        cfg.whisper_cpp_model = std::env::var_os("NEXUS_WHISPER_CPP_MODEL")
+        cfg.whisper_cpp_model = std::env::var_os("DUGIX_WHISPER_CPP_MODEL")
             .map(PathBuf::from)
             .filter(|p| p.is_file());
         cfg
@@ -251,7 +251,7 @@ struct Scratch(PathBuf);
 
 impl Scratch {
     fn new() -> Result<Self, String> {
-        let dir = std::env::temp_dir().join(format!("nexus-convert-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-convert-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         Ok(Self(dir))
     }
@@ -689,7 +689,7 @@ pub(crate) mod fake_tools {
 
     impl Bin {
         pub fn new() -> Self {
-            let dir = std::env::temp_dir().join(format!("nexus-bin-{}", uuid::Uuid::new_v4()));
+            let dir = std::env::temp_dir().join(format!("dugix-bin-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&dir).unwrap();
             Self { dir }
         }
@@ -806,7 +806,7 @@ mod tests {
         let bin = Bin::new();
         bin.tool("pandoc", "echo \"args: $*\"");
         let cfg = bin.cfg();
-        let dir = std::env::temp_dir().join(format!("nexus-pandoc-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-pandoc-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let input = dir.join("odd name; rm -rf x.rst");
         std::fs::write(&input, "Title\n=====").unwrap();
@@ -827,7 +827,7 @@ mod tests {
         let bin = Bin::new();
         bin.tool("tomd", "echo \"# from hook: $1\"")
             .tool("broken", "exit 2");
-        let dir = std::env::temp_dir().join(format!("nexus-hook-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-hook-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let input = dir.join("a.rtf");
         std::fs::write(&input, "{\\rtf1 hi}").unwrap();
@@ -852,7 +852,7 @@ mod tests {
         let bin = Bin::new();
         bin.tool("antiword", "exit 1")
             .tool("catdoc", "echo legacy text");
-        let dir = std::env::temp_dir().join(format!("nexus-doc-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-doc-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let input = dir.join("old.doc");
         std::fs::write(&input, [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]).unwrap();
@@ -872,7 +872,7 @@ mod tests {
             "ffprobe",
             r#"echo '{"format":{"duration":"205.4","format_long_name":"MP3","tags":{"TITLE":"Song"}},"streams":[{"codec_type":"audio","codec_name":"mp3","sample_rate":"44100","channels":2}]}'"#,
         );
-        let dir = std::env::temp_dir().join(format!("nexus-media-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-media-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let input = dir.join("a.mp3");
         std::fs::write(&input, b"ID3").unwrap();
@@ -912,7 +912,7 @@ mod tests {
                 pdf_path.display()
             ),
         );
-        let dir = std::env::temp_dir().join(format!("nexus-soffice-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-soffice-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let input = dir.join("old.xls");
         std::fs::write(&input, [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]).unwrap();

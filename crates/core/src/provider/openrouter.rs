@@ -618,8 +618,8 @@ mod local_tests {
 /// Codex or local servers.
 pub(crate) const OPENROUTER_ATTRIBUTION: [(&str, &str); 4] = [
     ("HTTP-Referer", env!("CARGO_PKG_REPOSITORY")),
-    ("X-OpenRouter-Title", "nexus-chat"),
-    ("X-Title", "nexus-chat"),
+    ("X-OpenRouter-Title", "dugix"),
+    ("X-Title", "dugix"),
     ("X-OpenRouter-Categories", "cli-agent"),
 ];
 
@@ -2234,8 +2234,8 @@ impl OpenRouter {
             format!("Bearer {}", self.key).parse()?,
         );
         h.insert("chatgpt-account-id", account_id.parse()?);
-        h.insert("originator", "nexus-chat".parse()?);
-        h.insert(reqwest::header::USER_AGENT, "nexus-chat".parse()?);
+        h.insert("originator", "dugix".parse()?);
+        h.insert(reqwest::header::USER_AGENT, "dugix".parse()?);
         h.insert("OpenAI-Beta", "responses=experimental".parse()?);
         h.insert(reqwest::header::CONTENT_TYPE, "application/json".parse()?);
         if sse {
@@ -2530,7 +2530,7 @@ fn resize_for_api(bytes: &[u8], _files_dir: &std::path::Path) -> Vec<u8> {
 }
 
 /// The history with one leading system message: later system notes become
-/// `[nexus]` user messages, and the stable prefix keeps local prompt caching.
+/// `[dugix]` user messages, and the stable prefix keeps local prompt caching.
 fn single_leading_system(messages: &[ChatMessage]) -> Option<Vec<ChatMessage>> {
     let leading = messages.iter().take_while(|m| m.role == "system").count();
     let later = messages[leading..].iter().any(|m| m.role == "system");
@@ -2552,7 +2552,7 @@ fn single_leading_system(messages: &[ChatMessage]) -> Option<Vec<ChatMessage>> {
         if m.role == "system" {
             ChatMessage {
                 role: "user".into(),
-                content: format!("[nexus] {}", m.content),
+                content: format!("[dugix] {}", m.content),
                 ..m.clone()
             }
         } else {

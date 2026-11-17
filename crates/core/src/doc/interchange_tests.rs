@@ -10,7 +10,7 @@ fn png_pages_and_optional_visual_previews() {
     doc.theme.colors.insert("surface".into(), "#f5f5f7".into());
     doc.theme.colors.insert("border".into(), "#d2d2d7".into());
     let pages = layout::paginate(&doc, Some(&temp.0.join("assets")));
-    let preview = std::env::var_os("NEXUS_DOC_PREVIEWS").is_some();
+    let preview = std::env::var_os("DUGIX_DOC_PREVIEWS").is_some();
     let directory =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/doc-previews");
     if preview {
@@ -28,7 +28,7 @@ fn png_pages_and_optional_visual_previews() {
 }
 #[test]
 fn long_document_previews_when_requested() {
-    let Some(_) = std::env::var_os("NEXUS_DOC_PREVIEWS") else {
+    let Some(_) = std::env::var_os("DUGIX_DOC_PREVIEWS") else {
         return;
     };
     let doc = test_support::long();

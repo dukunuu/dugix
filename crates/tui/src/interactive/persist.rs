@@ -5,8 +5,8 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use crossterm::event::KeyCode;
-use nexus_core::app::Popup;
-use nexus_core::interactive::{Document, PanelSnapshot, Session, panel_key};
+use dugix_core::app::Popup;
+use dugix_core::interactive::{Document, PanelSnapshot, Session, panel_key};
 use unicode_width::UnicodeWidthStr;
 
 use super::{Entry, Key, Placement, Widgets};
@@ -246,7 +246,7 @@ fn open_url(opener: &mut Option<Opener>, url: &str) -> anyhow::Result<()> {
 
 /// The confirmation line; the whole host is always visible.
 pub(super) fn url_prompt(url: &str, width: usize) -> String {
-    let host = nexus_core::interactive::url_host(url).unwrap_or_default();
+    let host = dugix_core::interactive::url_host(url).unwrap_or_default();
     let origin = format!("https://{host}");
     let room = width.saturating_sub(6);
     let tails = [

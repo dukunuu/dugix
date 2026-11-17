@@ -13,7 +13,7 @@ impl App {
             Ok(())
         } else {
             bail!(
-                "adding a local command connector needs the terminal UI · use `nexus connectors add` on this machine"
+                "adding a local command connector needs the terminal UI · use `dugix connectors add` on this machine"
             )
         }
     }

@@ -11,7 +11,7 @@ use super::list_filter;
 
 #[allow(clippy::too_many_lines)] // rows + browse / install / confirm chrome
 pub fn render(f: &mut Frame, app: &AppView) {
-    use nexus_core::app::SkillsMode;
+    use dugix_core::app::SkillsMode;
     let area = chrome::popup_area(app, f.area(), "skills", chrome::STANDARD);
 
     let width = area.width.saturating_sub(5 + 2 * chrome::PAD) as usize;
@@ -24,7 +24,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
         .map(|s| {
             // App-managed skills are removable; an agent tool's are read-only.
             let source = if app.skill_is_app_managed(s) {
-                "nexus".to_string()
+                "dugix".to_string()
             } else {
                 skill_source(&s.dir)
             };
@@ -139,7 +139,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
         ConfirmDeleteAction, EditAction, classify_browse_key, classify_confirm_delete_key,
         classify_edit_key,
     };
-    use nexus_core::app::SkillsMode;
+    use dugix_core::app::SkillsMode;
     match app.skills_mode {
         SkillsMode::Install => match classify_edit_key(key) {
             Some(EditAction::Cancel) => app.skills_mode = SkillsMode::Browse,
@@ -162,9 +162,9 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
                 return;
             }
             if let Some(name) = app.skills.get(app.skills_selected).map(|s| s.name.clone()) {
-                app.popup = nexus_core::app::Popup::None;
+                app.popup = dugix_core::app::Popup::None;
                 if let Err(e) =
-                    app.execute(nexus_core::app::AppCommand::ArmSkill { name, rest: None })
+                    app.execute(dugix_core::app::AppCommand::ArmSkill { name, rest: None })
                 {
                     app.push_status(format!("error: {e:#}"));
                 }
@@ -174,7 +174,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) {
             Some(super::BrowseAction::Close) if !app.skills_filter.is_empty() => {
                 app.skills_filter.clear();
             }
-            Some(super::BrowseAction::Close) => app.popup = nexus_core::app::Popup::None,
+            Some(super::BrowseAction::Close) => app.popup = dugix_core::app::Popup::None,
             Some(super::BrowseAction::Filter(c)) => {
                 app.skills_filter.push(c);
                 app.skills_selected = list_filter::first(&app.skills_rows(), app.skills_selected);

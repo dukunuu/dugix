@@ -40,7 +40,7 @@ fn path(files: &Path, slug: &str) -> Result<PathBuf> {
 
 pub fn list(files: &Path) -> Result<Vec<String>> {
     let dir = confined(files, "design")?;
-    let mut names: Vec<String> = std::iter::once("nexus")
+    let mut names: Vec<String> = std::iter::once("dugix")
         .chain(super::presets::catalog().into_iter().map(|(slug, _)| slug))
         .map(Into::into)
         .collect();
@@ -66,11 +66,11 @@ pub fn list(files: &Path) -> Result<Vec<String>> {
     Ok(names)
 }
 
-/// Falls back to the built-in for `nexus` only.
+/// Falls back to the built-in for `dugix` only.
 pub fn load(files: &Path, slug: &str) -> Result<Design> {
     let path = path(files, slug)?;
     if !path.exists() {
-        if slug == "nexus" {
+        if slug == "dugix" {
             return Ok(Design::default());
         }
         if let Some(design) = super::presets::preset(slug) {
@@ -96,11 +96,11 @@ pub fn save(files: &Path, slug: &str, design: &Design) -> Result<()> {
     crate::deck::write_atomic(&path, &serde_json::to_vec_pretty(&checked)?)
 }
 
-/// `nexus` when the pointer does not exist.
+/// `dugix` when the pointer does not exist.
 pub fn default_slug(files: &Path) -> Result<String> {
     let path = confined(files, "design/default")?;
     if !path.exists() {
-        return Ok("nexus".into());
+        return Ok("dugix".into());
     }
     let slug = std::fs::read_to_string(path)?.trim().to_string();
     ensure!(valid_slug(&slug), "invalid default design slug");

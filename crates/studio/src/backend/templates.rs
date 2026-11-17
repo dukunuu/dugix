@@ -1,6 +1,6 @@
 //! Template upload is shared by doc and deck windows; applying remains one undo step.
 use super::{Backend, Command, Event, Path, Result, asset_root, doc, ensure};
-use nexus_core::design;
+use dugix_core::design;
 
 impl Backend {
     fn imported_template(imported: design::template::Imported) -> Event {
@@ -22,7 +22,7 @@ impl Backend {
 
     pub(super) fn import_template_data(&self, name: &str, data: &str) -> Result<Event> {
         ensure!(
-            data.len() as u64 <= nexus_core::deck::import::MAX_PPTX_BYTES * 2
+            data.len() as u64 <= dugix_core::deck::import::MAX_PPTX_BYTES * 2
                 && data.len().is_multiple_of(2),
             "template exceeds size limit or has invalid encoding"
         );
@@ -70,9 +70,9 @@ impl Backend {
         design::template::materialize(&self.files_dir, &design, &asset_root(&self.path)?)?;
         let resolver = |name: &str| design::load(&self.files_dir, name);
         #[cfg_attr(test, allow(unused_mut))]
-        let mut next = nexus_core::deck::ops::apply_with_resolver(
+        let mut next = dugix_core::deck::ops::apply_with_resolver(
             &self.deck,
-            &[nexus_core::deck::Op::ApplyDesign {
+            &[dugix_core::deck::Op::ApplyDesign {
                 design: Some(slug.into()),
             }],
             Some(&resolver),
@@ -80,9 +80,9 @@ impl Backend {
         // The design's Google Fonts join the deck; a family that cannot be fetched
         // draws with the fallback. Tests never reach the network.
         #[cfg(not(test))]
-        if let Ok(http) = nexus_core::deck::google_fonts::Http::new() {
-            let installed = nexus_core::deck::text::installed_families();
-            nexus_core::deck::google_fonts::provide_blocking(
+        if let Ok(http) = dugix_core::deck::google_fonts::Http::new() {
+            let installed = dugix_core::deck::text::installed_families();
+            dugix_core::deck::google_fonts::provide_blocking(
                 &http,
                 &asset_root(&self.path)?,
                 &mut next,

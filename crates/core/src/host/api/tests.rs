@@ -184,7 +184,7 @@ fn codex_routes_through_the_gateway_like_every_other_backend() {
         assert_eq!(route.account_id.as_deref(), Some("codex-account"));
     }
 
-    // An explicit `x-nexus-backend: codex` override routes too.
+    // An explicit `x-dugix-backend: codex` override routes too.
     let route =
         gateway_route(&app, "codex:gpt-5-codex", Some(BackendTag::Codex)).expect("override");
     assert_eq!(route.model, "gpt-5-codex");
@@ -206,7 +206,7 @@ fn test_model(id: &str, backend: BackendTag) -> crate::provider::Model {
 }
 
 fn test_app() -> App {
-    let root = std::env::temp_dir().join(format!("nexus-host-test-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-host-test-{}", uuid::Uuid::new_v4()));
     App::new(
         crate::db::Db::open_in_memory().expect("in-memory db"),
         Some("sk-host-test"),
@@ -269,11 +269,11 @@ async fn host_http_auth_models_command_and_snapshot_are_hermetic() {
         .unwrap();
     let addr = server.local_addr();
 
-    let discovery = raw_request(addr, request("GET", "/.well-known/nexus", None, &[])).await;
+    let discovery = raw_request(addr, request("GET", "/.well-known/dugix", None, &[])).await;
     assert!(String::from_utf8_lossy(&discovery).starts_with("HTTP/1.1 200"));
     let discovery_body: serde_json::Value =
         serde_json::from_slice(response_body(&discovery)).unwrap();
-    assert_eq!(discovery_body["product"], "nexus-chat");
+    assert_eq!(discovery_body["product"], "dugix");
     assert_eq!(discovery_body["api"], "/v1");
     assert_eq!(discovery_body["authentication"], "bearer");
     assert!(
@@ -385,7 +385,7 @@ async fn web_build_and_workspace_routes_are_hermetic() {
     let root = app.space.root.clone();
     let web = root.join("web");
     std::fs::create_dir_all(web.join("assets")).unwrap();
-    std::fs::write(web.join("index.html"), "<h1>Nexus</h1>").unwrap();
+    std::fs::write(web.join("index.html"), "<h1>Dugix</h1>").unwrap();
     std::fs::write(web.join("assets/app.js"), "export {}").unwrap();
     std::fs::write(root.join("secret.txt"), "private").unwrap();
     let first_space = app.active_space.id.clone();
@@ -395,7 +395,7 @@ async fn web_build_and_workspace_routes_are_hermetic() {
         .unwrap();
     let addr = server.local_addr();
     let index = raw_request(addr, request("GET", "/", None, &[])).await;
-    assert_eq!(response_body(&index), b"<h1>Nexus</h1>");
+    assert_eq!(response_body(&index), b"<h1>Dugix</h1>");
     let asset = raw_request(addr, request("GET", "/assets/app.js", None, &[])).await;
     assert!(String::from_utf8_lossy(&asset).contains("Content-Type: text/javascript"));
     let head = raw_request(addr, request("HEAD", "/", None, &[])).await;

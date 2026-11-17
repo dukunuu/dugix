@@ -1,5 +1,5 @@
 use super::*;
-use nexus_core::app::Settings;
+use dugix_core::app::Settings;
 use serde_json::json;
 
 /// `push_tool_call` with no studio window and no image files.
@@ -106,10 +106,10 @@ fn doc_cards_hint_at_studio_like_deck_cards() {
 
 #[test]
 fn deck_cards_name_the_change_hint_at_studio_and_show_slides_when_opened() {
-    let files = std::env::temp_dir().join(format!("nexus-deck-card-{}", uuid::Uuid::new_v4()));
-    let deck = nexus_core::deck::Deck::new_from_layouts("Card");
+    let files = std::env::temp_dir().join(format!("dugix-deck-card-{}", uuid::Uuid::new_v4()));
+    let deck = dugix_core::deck::Deck::new_from_layouts("Card");
     std::fs::create_dir_all(files.join("decks/.renders/a")).unwrap();
-    let png = nexus_core::deck::render::render_slide(&deck, "s1", 400).unwrap();
+    let png = dugix_core::deck::render::render_slide(&deck, "s1", 400).unwrap();
     std::fs::write(files.join("decks/.renders/a/s1.png"), png).unwrap();
     let result = "edited slide 1 · decks/a.deck.json · revision 0123456789ab\n- update_block b1 on slide 1: text\n![slide 1](decks/.renders/a/s1.png)";
     let content = json!({
@@ -696,8 +696,8 @@ fn opened_search_card_shows_a_thumbnail_only_beside_results_that_have_one() {
         "[1] First\n    https://a.example/p\n    Text one.\n    image: {url}\n\n[2] Second\n    https://b.example/p\n    Text two."
     );
     let args = json!({"mode":"web","query":"q"});
-    let fetcher = nexus_core::remote_image::Fetcher::new(
-        std::env::temp_dir().join(format!("nexus-card-{}", uuid::Uuid::new_v4())),
+    let fetcher = dugix_core::remote_image::Fetcher::new(
+        std::env::temp_dir().join(format!("dugix-card-{}", uuid::Uuid::new_v4())),
     );
     crate::app_view::use_fetcher_for_tests(&fetcher);
     let baseline = text(&card("search", args.clone(), plain, true, false));
@@ -726,7 +726,7 @@ fn opened_search_card_shows_a_thumbnail_only_beside_results_that_have_one() {
     let collapsed_with = text(&card("search", args.clone(), &with, false, false));
     let collapsed_plain = text(&card("search", args, plain, false, false));
     assert_eq!(collapsed_with, collapsed_plain);
-    crate::app_view::use_fetcher_for_tests(&nexus_core::remote_image::Fetcher::new(
+    crate::app_view::use_fetcher_for_tests(&dugix_core::remote_image::Fetcher::new(
         std::env::temp_dir(),
     ));
 }

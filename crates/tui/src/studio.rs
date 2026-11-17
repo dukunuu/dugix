@@ -7,9 +7,9 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context as _, Result, bail};
-use nexus_core::deck::link::{ActivityState, Kind as FileKind, Line, Message, WaitingReason};
-use nexus_core::deck::{Deck, Kind, feedback, render, same_file};
-use nexus_core::doc::{self, Doc};
+use dugix_core::deck::link::{ActivityState, Kind as FileKind, Line, Message, WaitingReason};
+use dugix_core::deck::{Deck, Kind, feedback, render, same_file};
+use dugix_core::doc::{self, Doc};
 use tokio::sync::{Notify, mpsc};
 
 use crate::app_view::AppView;
@@ -65,7 +65,7 @@ struct StudioComment {
 
 struct CommentTurn {
     comment: StudioComment,
-    task: nexus_core::app::ChatTaskId,
+    task: dugix_core::app::ChatTaskId,
     slides: Vec<(String, String)>,
     edited: BTreeSet<usize>,
     blocks: Vec<(String, String)>,
@@ -156,7 +156,7 @@ fn is_sheet(path: &Path) -> bool {
 fn cell_revisions(path: &Path) -> Vec<(String, String)> {
     std::fs::read_to_string(path)
         .ok()
-        .and_then(|s| nexus_core::sheet::Sheet::check(&s).ok())
+        .and_then(|s| dugix_core::sheet::Sheet::check(&s).ok())
         .map(|sheet| {
             sheet
                 .tabs
@@ -181,7 +181,7 @@ fn is_doc(path: &Path) -> bool {
 fn model_replies(comment: &StudioComment) -> usize {
     let model = |role: &feedback::Role| matches!(role, feedback::Role::Model);
     if is_sheet(&comment.deck) {
-        return nexus_core::sheet::feedback::load(&comment.deck)
+        return dugix_core::sheet::feedback::load(&comment.deck)
             .unwrap_or_default()
             .iter()
             .filter(|t| t.id == comment.thread)
@@ -417,7 +417,7 @@ impl AppView {
                 text,
             } => {
                 let built = (|| {
-                    let threads = nexus_core::sheet::feedback::load(&deck_path)?;
+                    let threads = dugix_core::sheet::feedback::load(&deck_path)?;
                     let thread = threads
                         .iter()
                         .find(|t| t.id == thread_id)
@@ -522,7 +522,7 @@ impl AppView {
                 reason: None,
             },
             ActivityState::Failed,
-            Some("Could not send this comment; see nexus for details".into()),
+            Some("Could not send this comment; see dugix for details".into()),
         );
     }
 
@@ -625,7 +625,7 @@ impl AppView {
         let assets = path.parent().map(|dir| dir.join("assets"));
         let anchored = block
             .and_then(|id| {
-                nexus_core::deck::brief::node_brief(
+                dugix_core::deck::brief::node_brief(
                     &deck,
                     slide,
                     id,
@@ -687,13 +687,13 @@ impl AppView {
         quote: &str,
         text: &str,
     ) -> Result<String> {
-        let sheet = nexus_core::canvas::files::read_sheet(path)?;
+        let sheet = dugix_core::canvas::files::read_sheet(path)?;
         let tab = sheet
             .tabs
             .iter()
             .find(|t| t.id == tab || t.name.eq_ignore_ascii_case(tab))
             .context("the commented tab no longer exists")?;
-        let _: nexus_core::sheet::address::Range = range.parse()?;
+        let _: dugix_core::sheet::address::Range = range.parse()?;
         let shown = path
             .strip_prefix(self.files_dir())
             .unwrap_or(path)
@@ -982,9 +982,9 @@ impl AppView {
 
 fn spawn(deck: &Path, wake: Arc<Notify>) -> Result<Canvas> {
     let name = if cfg!(windows) {
-        "nexus-studio.exe"
+        "dugix-studio.exe"
     } else {
-        "nexus-studio"
+        "dugix-studio"
     };
     let beside = std::env::current_exe()?.with_file_name(name);
     let mut child = None;
@@ -1006,7 +1006,7 @@ fn spawn(deck: &Path, wake: Arc<Notify>) -> Result<Canvas> {
         }
     }
     let child =
-        child.context("nexus-studio isn't installed — cargo install --path crates/studio")?;
+        child.context("dugix-studio isn't installed — cargo install --path crates/studio")?;
     attach(child, deck, wake)
 }
 
@@ -1026,7 +1026,7 @@ fn attach(mut child: Child, deck: &Path, wake: Arc<Notify>) -> Result<Canvas> {
                     }
                     wake.notify_one();
                 }
-                Err(error) if error.to_string().contains("update nexus") => {
+                Err(error) if error.to_string().contains("update dugix") => {
                     *seen.lock().expect("studio problem") = Some(error.to_string());
                     wake.notify_one();
                 }
@@ -1048,7 +1048,7 @@ fn attach(mut child: Child, deck: &Path, wake: Arc<Notify>) -> Result<Canvas> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_core::{app::App, db::Db, space::Space};
+    use dugix_core::{app::App, db::Db, space::Space};
 
     fn view(root: &Path) -> AppView {
         std::fs::create_dir_all(root.join("spaces")).unwrap();
@@ -1064,7 +1064,7 @@ mod tests {
     fn deck_file(app: &AppView) -> PathBuf {
         let path = app.files_dir().join("decks/test.deck.json");
         let deck = Deck::new_from_layouts("Test");
-        nexus_core::deck::write_atomic(&path, &serde_json::to_vec(&deck).unwrap()).unwrap();
+        dugix_core::deck::write_atomic(&path, &serde_json::to_vec(&deck).unwrap()).unwrap();
         path
     }
 
@@ -1087,7 +1087,7 @@ mod tests {
     }
 
     fn temp() -> Dir {
-        Dir(std::env::temp_dir().join(format!("nexus-studio-link-{}", uuid::Uuid::new_v4())))
+        Dir(std::env::temp_dir().join(format!("dugix-studio-link-{}", uuid::Uuid::new_v4())))
     }
 
     fn ready(app: &mut AppView) {
@@ -1097,7 +1097,7 @@ mod tests {
         app.incognito = true;
     }
 
-    fn start_comment_turn(app: &mut AppView) -> nexus_core::app::ChatTaskId {
+    fn start_comment_turn(app: &mut AppView) -> dugix_core::app::ChatTaskId {
         app.poll_studio();
         let task = app.active_chat_task().expect("comment started");
         task.abort.abort();
@@ -1142,7 +1142,7 @@ mod tests {
         let task = start_comment_turn(&mut app);
         let mut deck = Deck::check(&std::fs::read_to_string(&path).unwrap()).unwrap();
         deck.slides[0].notes = "Changed".into();
-        nexus_core::deck::write_atomic(&path, &serde_json::to_vec(&deck).unwrap()).unwrap();
+        dugix_core::deck::write_atomic(&path, &serde_json::to_vec(&deck).unwrap()).unwrap();
         app.deck_link
             .lock()
             .unwrap()
@@ -1154,7 +1154,7 @@ mod tests {
             Some(&(ActivityState::Progress, Some("edited slide 1")))
         );
         deck.slides[1].notes = "Also changed".into();
-        nexus_core::deck::write_atomic(&path, &serde_json::to_vec(&deck).unwrap()).unwrap();
+        dugix_core::deck::write_atomic(&path, &serde_json::to_vec(&deck).unwrap()).unwrap();
         app.deck_link
             .lock()
             .unwrap()
@@ -1162,7 +1162,7 @@ mod tests {
             .push((path, "s2".into()));
         app.poll_studio();
         app.core
-            .on_chat_event(task, nexus_core::provider::StreamEvent::Done)
+            .on_chat_event(task, dugix_core::provider::StreamEvent::Done)
             .unwrap();
         app.poll_studio();
         assert_eq!(
@@ -1196,14 +1196,14 @@ mod tests {
         let task = start_comment_turn(&mut app);
         let mut deck = Deck::check(&std::fs::read_to_string(&path).unwrap()).unwrap();
         deck.slides[0].notes = "Fixed".into();
-        nexus_core::deck::write_atomic(&path, &serde_json::to_vec(&deck).unwrap()).unwrap();
+        dugix_core::deck::write_atomic(&path, &serde_json::to_vec(&deck).unwrap()).unwrap();
         app.deck_link
             .lock()
             .unwrap()
             .changed
             .push((path.clone(), "s1".into()));
         app.core
-            .on_chat_event(task, nexus_core::provider::StreamEvent::Done)
+            .on_chat_event(task, dugix_core::provider::StreamEvent::Done)
             .unwrap();
         app.poll_studio();
         assert_eq!(
@@ -1248,7 +1248,7 @@ mod tests {
         let task = start_comment_turn(&mut app);
         let error = format!("Bearer sk-123456789012345678901234 {}", "é".repeat(300));
         app.core
-            .on_chat_event(task, nexus_core::provider::StreamEvent::Error(error))
+            .on_chat_event(task, dugix_core::provider::StreamEvent::Error(error))
             .unwrap();
         app.poll_studio();
         let (state, detail) = activities(&app, "t1").pop().unwrap();
@@ -1296,11 +1296,11 @@ mod tests {
         app.core
             .on_chat_event(
                 first,
-                nexus_core::provider::StreamEvent::Token("**Which** audience?".into()),
+                dugix_core::provider::StreamEvent::Token("**Which** audience?".into()),
             )
             .unwrap();
         app.core
-            .on_chat_event(first, nexus_core::provider::StreamEvent::Done)
+            .on_chat_event(first, dugix_core::provider::StreamEvent::Done)
             .unwrap();
         let second = start_comment_turn(&mut app);
         assert_ne!(first, second);
@@ -1309,7 +1309,7 @@ mod tests {
             Some(&(ActivityState::Done, Some("Which audience?")))
         );
         app.core
-            .on_chat_event(second, nexus_core::provider::StreamEvent::Done)
+            .on_chat_event(second, dugix_core::provider::StreamEvent::Done)
             .unwrap();
         app.poll_studio();
         assert_eq!(
@@ -1367,7 +1367,7 @@ mod tests {
             Some(&(ActivityState::Progress, Some("replied in this thread")))
         );
         app.core
-            .on_chat_event(task, nexus_core::provider::StreamEvent::Done)
+            .on_chat_event(task, dugix_core::provider::StreamEvent::Done)
             .unwrap();
         app.poll_studio();
         assert_eq!(
@@ -1471,14 +1471,14 @@ mod tests {
         let abort = tokio::spawn(async {}).abort_handle();
         app.core.chat_tasks.insert(
             1,
-            nexus_core::app::ChatTask {
+            dugix_core::app::ChatTask {
                 id: 1,
                 session_id: "s".into(),
                 session_title: "streaming".into(),
                 space_id: "space".into(),
                 model: "a/one".into(),
                 model_id: "one".into(),
-                backend: nexus_core::provider::BackendTag::OpenRouter,
+                backend: dugix_core::provider::BackendTag::OpenRouter,
                 incognito: false,
                 buffer: "partial".into(),
                 thinking: String::new(),
@@ -1487,7 +1487,7 @@ mod tests {
                 usage_row_id: None,
                 started: std::time::Instant::now(),
                 thinking_idx: 0,
-                spinner_color: nexus_core::app::SpinnerColor::Green,
+                spinner_color: dugix_core::app::SpinnerColor::Green,
                 abort,
             },
         );
@@ -1593,14 +1593,14 @@ mod tests {
 
     fn doc_file(app: &AppView) -> PathBuf {
         let path = app.files_dir().join("docs/test.doc.json");
-        let mut doc = Doc::from_design("Test", &nexus_core::design::Design::default());
+        let mut doc = Doc::from_design("Test", &dugix_core::design::Design::default());
         doc.blocks = doc::markdown::parse_document(
             "# Test\n\nShip the docs canvas this quarter.\n\n- one\n- two\n",
             true,
         )
         .blocks;
         let doc = Doc::check(&serde_json::to_string(&doc).unwrap()).unwrap();
-        nexus_core::deck::write_atomic(&path, &serde_json::to_vec(&doc).unwrap()).unwrap();
+        dugix_core::deck::write_atomic(&path, &serde_json::to_vec(&doc).unwrap()).unwrap();
         path
     }
 
@@ -1664,7 +1664,7 @@ mod tests {
             style: None,
             kind: doc::Kind::Paragraph { text: long },
         };
-        nexus_core::deck::write_atomic(&path, &serde_json::to_vec(&doc).unwrap()).unwrap();
+        dugix_core::deck::write_atomic(&path, &serde_json::to_vec(&doc).unwrap()).unwrap();
         app.studio.queued.clear();
         app.handle_studio_message(doc_comment(path.clone(), "Long"))
             .unwrap();
@@ -1834,7 +1834,7 @@ mod tests {
                 text: "Ship the docs canvas in Q3.".into(),
             },
         };
-        nexus_core::deck::write_atomic(&path, &serde_json::to_vec(&doc).unwrap()).unwrap();
+        dugix_core::deck::write_atomic(&path, &serde_json::to_vec(&doc).unwrap()).unwrap();
         app.deck_link
             .lock()
             .unwrap()
@@ -1850,7 +1850,7 @@ mod tests {
             style: None,
             kind: doc::Kind::Divider,
         };
-        nexus_core::deck::write_atomic(&path, &serde_json::to_vec(&doc).unwrap()).unwrap();
+        dugix_core::deck::write_atomic(&path, &serde_json::to_vec(&doc).unwrap()).unwrap();
         app.deck_link
             .lock()
             .unwrap()
@@ -1858,7 +1858,7 @@ mod tests {
             .push((path, "b3".into()));
         app.poll_studio();
         app.core
-            .on_chat_event(task, nexus_core::provider::StreamEvent::Done)
+            .on_chat_event(task, dugix_core::provider::StreamEvent::Done)
             .unwrap();
         app.poll_studio();
         assert_eq!(
@@ -1873,20 +1873,20 @@ mod tests {
         let dir = temp();
         let mut app = view(&dir.0);
         let mut sheet =
-            nexus_core::sheet::Sheet::from_design("Grid", &nexus_core::design::Design::default());
+            dugix_core::sheet::Sheet::from_design("Grid", &dugix_core::design::Design::default());
         sheet.tabs[0].cells.insert(
             "B4".into(),
-            nexus_core::sheet::Cell {
+            dugix_core::sheet::Cell {
                 input: "42".into(),
                 ..Default::default()
             },
         );
         let files = app.files_dir();
-        nexus_core::sheet::storage::save(
+        dugix_core::sheet::storage::save(
             &files,
             "sheets/grid.sheet.json",
             &sheet,
-            nexus_core::deck::history::Who::User,
+            dugix_core::deck::history::Who::User,
         )
         .unwrap();
         let path = files.join("sheets/grid.sheet.json");
@@ -1941,8 +1941,8 @@ mod tests {
         app.poll_studio();
         let status = app.core.last_status();
         assert!(
-            status.contains("update nexus-studio"),
-            "the status line tells the user to update nexus-studio: {status}"
+            status.contains("update dugix-studio"),
+            "the status line tells the user to update dugix-studio: {status}"
         );
         assert!(
             app.studio.last_deck.is_none(),

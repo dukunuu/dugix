@@ -354,7 +354,7 @@ async fn tool_loop_records_one_step_per_round() {
         "content": "No scripts found."
     }, "finish_reason": "stop"}]})]);
     let (provider, server) = fake_chat_server(vec![first, second]).await;
-    let dir = std::env::temp_dir().join(format!("nexus-chat-trace-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-trace-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(dir.join("scripts")).unwrap();
     let store = Arc::new(TraceStore::open(&dir.join("traces"), Scrubber::new(Vec::new())).unwrap());
     let mut toolbox = crate::tools::ToolBox::new(
@@ -577,7 +577,7 @@ fn local_requests_carry_one_leading_system_message() {
         ChatMessage::text("system", "Summary of earlier conversation"),
         ChatMessage::text("user", "hi"),
         ChatMessage::text("assistant", "hello"),
-        ChatMessage::text("system", "nexus-ui errors: []"),
+        ChatMessage::text("system", "dugix-ui errors: []"),
     ];
     let local = OpenRouter::local("http://127.0.0.1:9931/v1").unwrap();
     let body = local.chat_completions_body("m", &history, &ChatParams::default(), &[], false);
@@ -594,7 +594,7 @@ fn local_requests_carry_one_leading_system_message() {
     );
     assert_eq!(
         body["messages"][3]["content"],
-        "[nexus] nexus-ui errors: []"
+        "[dugix] dugix-ui errors: []"
     );
     // Already well-formed: untouched. Hosted backends: untouched.
     assert!(single_leading_system(&history[2..4]).is_none());

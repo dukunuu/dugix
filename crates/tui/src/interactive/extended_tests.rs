@@ -98,7 +98,7 @@ fn every_chart_kind_has_wide_and_narrow_backend_snapshots() {
         }
     }
     let snapshots = snapshots.join("\n---\n");
-    if std::env::var_os("NEXUS_UPDATE_SNAPSHOTS").is_some() {
+    if std::env::var_os("DUGIX_UPDATE_SNAPSHOTS").is_some() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/src/interactive/chart_snapshots.txt"

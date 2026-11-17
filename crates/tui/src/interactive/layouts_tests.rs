@@ -85,7 +85,7 @@ fn hero() -> String {
         "dashed",
         "warning",
         json!([
-            {"type":"hero","title":"Nexus 0.2","subtitle":"Designed replies land today","badge":"NEW"},
+            {"type":"hero","title":"Dugix 0.2","subtitle":"Designed replies land today","badge":"NEW"},
             {"type":"divider","label":"highlights"},
             {"type":"quote","text":"Simple things stay simple.","by":"Ada"}
         ]),
@@ -267,8 +267,8 @@ fn hero_badge_is_a_pill_right_after_the_title() {
     let text = rows.join("\n");
     assert_eq!(rows[0], "  Overview", "{text}");
     assert!(rows.last().unwrap().starts_with('╌'), "{text}");
-    let title = rows.iter().find(|row| row.contains("Nexus 0.2")).unwrap();
-    assert!(title.contains("Nexus 0.2    NEW"), "{title}");
+    let title = rows.iter().find(|row| row.contains("Dugix 0.2")).unwrap();
+    assert!(title.contains("Dugix 0.2    NEW"), "{title}");
     assert!(text.contains("Designed replies land today"), "{text}");
     assert!(text.contains(" highlights "), "{text}");
     assert!(text.contains("│ Simple things stay simple."), "{text}");

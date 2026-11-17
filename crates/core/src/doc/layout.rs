@@ -304,9 +304,9 @@ impl Composer<'_, '_> {
         }
         let spread = ((x + width - end) / gaps as f64).max(0.0);
         let mut shift = 0.0;
-        for index in 0..count {
-            line.items[index].x += shift;
-            if index + 1 < count && ends_in_space(&line.items[index]) {
+        for (index, item) in line.items.iter_mut().take(count).enumerate() {
+            item.x += shift;
+            if index + 1 < count && ends_in_space(item) {
                 shift += spread;
             }
         }

@@ -6,7 +6,7 @@ test("same-origin pairing, workspace navigation, files and streamed answer", asy
   let appSource = "<h1>Demo</h1>";
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.route("**/.well-known/nexus", (route) => route.fulfill({ json: { host_id: "test", product: "nexus-chat", version: "test", api: "/v1", authentication: "bearer" } }));
+  await page.route("**/.well-known/dugix", (route) => route.fulfill({ json: { host_id: "test", product: "dugix", version: "test", api: "/v1", authentication: "bearer" } }));
   await page.route("**/v1/**", async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;

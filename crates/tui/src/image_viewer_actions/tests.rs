@@ -5,9 +5,9 @@
 use std::sync::{Arc, Mutex};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use nexus_core::app::{App, Popup};
-use nexus_core::db::Db;
-use nexus_core::space::Space;
+use dugix_core::app::{App, Popup};
+use dugix_core::db::Db;
+use dugix_core::space::Space;
 
 use super::*;
 use crate::image_viewer::{Anchor, Return, ZOOM_STEPS, Zoom, anchored_pan, next_zoom_percent};
@@ -61,7 +61,7 @@ struct Rig {
 }
 
 fn temp_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("nexus-viewer-actions-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-viewer-actions-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -751,7 +751,7 @@ fn shift_s_saves_to_downloads_with_a_unique_name() {
 #[test]
 fn a_remote_image_is_saved_and_revealed_from_the_cache() {
     let mut rig = rig();
-    let fetcher = nexus_core::remote_image::Fetcher::new(temp_dir());
+    let fetcher = dugix_core::remote_image::Fetcher::new(temp_dir());
     crate::app_view::use_fetcher_for_tests(&fetcher);
     let url = "https://img.example.invalid/albums/sunset.jpg";
     let mut png = Vec::new();

@@ -94,7 +94,7 @@ export function commentsController(api) {
     root.querySelector('.card.draft textarea')?.focus();
   }
 
-  // -- activity (nexus working on a comment) -------------------------------------------------
+  // -- activity (dugix working on a comment) -------------------------------------------------
 
   function updateActivities(next) {
     if (!next) return;
@@ -228,10 +228,10 @@ export function commentsController(api) {
     area.setAttribute('aria-label', 'Comment');
     area.value = state.draft.text;
     area.addEventListener('input', () => { state.draft.text = area.value; scheduleLayout(); });
-    const submit = toNexus => {
+    const submit = toDugix => {
       if (!area.value.trim()) { area.focus(); return; }
       const { anchor } = state.draft, text = area.value;
-      api.command({ command: 'DocCommentCreate', anchor, text, send: toNexus }, e => {
+      api.command({ command: 'DocCommentCreate', anchor, text, send: toDugix }, e => {
         if (e.event === 'Error') return;
         state.draft = null;
         const created = state.threads.at(-1);
@@ -243,11 +243,11 @@ export function commentsController(api) {
       if (e.key === 'Escape') { e.preventDefault(); cancelDraft(); }
       else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(state.linked); }
     });
-    const cancel = action('x', 'Cancel comment (Esc)', () => cancelDraft()), note = el('button', 'small quiet', 'Comment'), ask = el('button', 'small primary-quiet', 'Send to nexus');
+    const cancel = action('x', 'Cancel comment (Esc)', () => cancelDraft()), note = el('button', 'small quiet', 'Comment'), ask = el('button', 'small primary-quiet', 'Send to dugix');
     note.type = ask.type = 'button';
     ask.prepend(glyph('send'));
     ask.disabled = !state.linked;
-    ask.title = state.linked ? 'Send this comment to the conversation' : 'Not linked to a conversation — open it from nexus with /studio';
+    ask.title = state.linked ? 'Send this comment to the conversation' : 'Not linked to a conversation — open it from dugix with /studio';
     note.addEventListener('click', () => submit(false));
     ask.addEventListener('click', () => submit(true));
     const actions = el('div', 'reply-actions');

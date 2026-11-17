@@ -11,7 +11,7 @@ use ratatui::style::Style;
 
 use crate::app_view::AppView;
 use crate::ui::popups::chrome::{MIN_POPUP_H, MIN_POPUP_W};
-use nexus_core::app::{
+use dugix_core::app::{
     COLUMN_WIDTH_MAX, COLUMN_WIDTH_MIN, POPUP_SIZE_MAX, POPUP_SIZE_MIN, Popup, popup_size,
     with_popup_size,
 };
@@ -253,14 +253,14 @@ pub fn paint_popup_resize(f: &mut Frame, app: &AppView) {
 mod tests {
     use super::*;
     use crossterm::event::KeyModifiers;
-    use nexus_core::app::App;
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
+    use dugix_core::app::App;
+    use dugix_core::db::Db;
+    use dugix_core::space::Space;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
     fn test_app() -> AppView {
-        let root = std::env::temp_dir().join(format!("nexus-resize-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-resize-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
         AppView::new(App::new(
             Db::open_in_memory().unwrap(),
@@ -449,7 +449,7 @@ mod tests {
     #[test]
     fn a_column_drag_rewraps_history_like_a_terminal_resize() {
         let mut app = test_app();
-        app.messages.push(nexus_core::db::Message {
+        app.messages.push(dugix_core::db::Message {
             role: "assistant".into(),
             content: "word ".repeat(80),
             model: None,

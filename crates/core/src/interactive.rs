@@ -2,6 +2,14 @@
 //! scalar state, a small expression language, controls and transactional actions.
 //! Tool access is isolated in the explicitly activated, bounded live-data host.
 
+/// The fenced-code language of an interactive panel in a reply.
+pub const UI_FENCE: &str = "dugix-ui";
+
+/// Whether a fence language opens an interactive panel.
+pub fn is_ui_fence(lang: &str) -> bool {
+    lang.eq_ignore_ascii_case(UI_FENCE)
+}
+
 mod canvas;
 mod extras;
 pub use extras::{Branch, DIAGRAM_ROWS, Lane, flatten as tree_branches};

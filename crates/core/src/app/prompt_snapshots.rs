@@ -32,13 +32,13 @@ fn assert_snapshot(name: &str, actual: &str) {
         "/tests/fixtures/prompt-snapshots/"
     ));
     let path = directory.join(name);
-    if std::env::var("NEXUS_UPDATE_SNAPSHOTS").as_deref() == Ok("1") {
+    if std::env::var("DUGIX_UPDATE_SNAPSHOTS").as_deref() == Ok("1") {
         std::fs::create_dir_all(directory).unwrap();
         std::fs::write(&path, actual).unwrap();
         return;
     }
     let message = format!(
-        "snapshot {}: rerun with NEXUS_UPDATE_SNAPSHOTS=1 cargo test -p nexus-chat-core prompt_snapshots and review the diff",
+        "snapshot {}: rerun with DUGIX_UPDATE_SNAPSHOTS=1 cargo test -p dugix-core prompt_snapshots and review the diff",
         path.display()
     );
     let expected =
@@ -54,7 +54,7 @@ fn chat_prompt_snapshot() {
 #[test]
 fn agent_prompt_snapshot() {
     let mut a = fixture_app();
-    let root = std::env::temp_dir().join(format!("nexus-agent-prompt-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-agent-prompt-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     a.run_command(&format!("agent {}", root.display())).unwrap();
     assert_eq!(a.work_mode, super::WorkMode::Agent);
@@ -137,7 +137,7 @@ fn memory_sharing_actions_cost_tokens_only_with_several_spaces() {
     );
 }
 
-const NEXUS_UI_SCHEMA_WORDS: &[&str] = &[
+const DUGIX_UI_SCHEMA_WORDS: &[&str] = &[
     "version", "title", "state", "view", "body", "actions", "number", "null", "true",
 ];
 
@@ -160,7 +160,7 @@ fn assembled_prompts_mention_only_existing_tools() {
             {
                 continue;
             }
-            if NEXUS_UI_SCHEMA_WORDS.contains(&token) {
+            if DUGIX_UI_SCHEMA_WORDS.contains(&token) {
                 continue;
             }
             assert!(

@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 
-use nexus_core::app::{AppsMode, PendingEditor, Popup};
+use dugix_core::app::{AppsMode, PendingEditor, Popup};
 
 use crate::app_view::AppView;
 
@@ -20,7 +20,7 @@ impl AppView {
         self.core.caches.apps.len() + self.pinned_apps.len()
     }
 
-    pub fn selected_pinned(&self) -> Option<&nexus_core::panels::Pinned> {
+    pub fn selected_pinned(&self) -> Option<&dugix_core::panels::Pinned> {
         self.apps_selected
             .checked_sub(self.core.caches.apps.len())
             .and_then(|index| self.pinned_apps.get(index))

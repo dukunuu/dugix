@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn usage_session_flag_text_and_json_include_all_requests_and_totals() {
-    let parsed = Cli::try_parse_from(["nexus", "usage", "--session", "s", "--json"]).unwrap();
+    let parsed = Cli::try_parse_from(["dugix", "usage", "--session", "s", "--json"]).unwrap();
     assert!(
         matches!(parsed.command, Some(Command::Usage { session: Some(id), json: true, .. }) if id == "s")
     );

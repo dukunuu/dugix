@@ -1,12 +1,12 @@
-//! `nexus sync` — changeset exchange over a shared directory or ssh.
+//! `dugix sync` — changeset exchange over a shared directory or ssh.
 
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail};
 
-use nexus_core::db;
-use nexus_core::space;
+use dugix_core::db;
+use dugix_core::space;
 
 use super::{SyncCmd, out, short_id};
 
@@ -49,7 +49,7 @@ pub(super) fn sync_cmd(cmd: Option<SyncCmd>, target: Option<&Path>) -> Result<()
                 }
             }
             None => bail!(
-                "pass a sync directory, `ssh://user@host`, or a subcommand — `nexus sync --help`"
+                "pass a sync directory, `ssh://user@host`, or a subcommand — `dugix sync --help`"
             ),
         },
     }
@@ -58,9 +58,9 @@ pub(super) fn sync_cmd(cmd: Option<SyncCmd>, target: Option<&Path>) -> Result<()
 fn sync_export(peer: Option<&str>, dir: Option<&Path>) -> Result<()> {
     let space = space::Space::open()?;
     let db = db::Db::open(&space.db_path())?;
-    let cs = nexus_core::sync::build_changeset(&db, peer, &nexus_core::sync::device_name())?;
+    let cs = dugix_core::sync::build_changeset(&db, peer, &dugix_core::sync::device_name())?;
     if let Some(dir) = dir {
-        let n = nexus_core::sync::export_blobs(&db, &space, &cs, dir)?;
+        let n = dugix_core::sync::export_blobs(&db, &space, &cs, dir)?;
         eprintln!("wrote {n} blob(s) to {}", dir.join("blobs").display());
     }
     eprintln!(
@@ -87,12 +87,12 @@ fn sync_import(path: Option<&Path>, bundle_reply: bool) -> Result<()> {
         std::io::stdin().read_to_end(&mut buf)?;
         buf
     };
-    let tmp = SyncTempDir::new("nexus-import")?;
+    let tmp = SyncTempDir::new("dugix-import")?;
     let (cs, blob_source) = if bytes.starts_with(b"PK") {
         let bundle = tmp.path().join("in.bundle");
         std::fs::write(&bundle, &bytes)?;
         let unpacked = tmp.path().join("unpacked");
-        let cs = nexus_core::sync::unpack_bundle(&bundle, &unpacked)?;
+        let cs = dugix_core::sync::unpack_bundle(&bundle, &unpacked)?;
         (cs, Some(unpacked))
     } else {
         (
@@ -101,18 +101,18 @@ fn sync_import(path: Option<&Path>, bundle_reply: bool) -> Result<()> {
         )
     };
     let (summary, cursors) =
-        nexus_core::sync::apply_changeset(&db, &space, &cs, blob_source.as_deref())?;
+        dugix_core::sync::apply_changeset(&db, &space, &cs, blob_source.as_deref())?;
     print_sync_summary(&cs, &summary);
-    let mut reply = nexus_core::sync::build_changeset(
+    let mut reply = dugix_core::sync::build_changeset(
         &db,
         Some(&cs.device_id),
-        &nexus_core::sync::device_name(),
+        &dugix_core::sync::device_name(),
     )?;
     reply.ack = Some(cursors);
     if bundle_reply {
         // Zip writers require a seekable sink, so stdout must be staged through a file.
         let reply_path = tmp.path().join("reply.bundle");
-        nexus_core::sync::write_bundle(&db, &space, &reply, std::fs::File::create(&reply_path)?)?;
+        dugix_core::sync::write_bundle(&db, &space, &reply, std::fs::File::create(&reply_path)?)?;
         std::io::copy(
             &mut std::fs::File::open(&reply_path)?,
             &mut std::io::stdout(),
@@ -124,7 +124,7 @@ fn sync_import(path: Option<&Path>, bundle_reply: bool) -> Result<()> {
 }
 
 // stdout carries the protocol reply; diagnostics must go to stderr.
-fn print_sync_summary(cs: &nexus_core::sync::Changeset, summary: &nexus_core::sync::ApplySummary) {
+fn print_sync_summary(cs: &dugix_core::sync::Changeset, summary: &dugix_core::sync::ApplySummary) {
     eprintln!(
         "imported from {} ({}) — {} rows applied, {} skipped, {} tombstones, {} acks, {} files kept, {} pulled, {} missing",
         short_id(&cs.device_id),
@@ -148,7 +148,7 @@ fn write_sync_file(path: &Path, bytes: &[u8]) -> Result<()> {
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("changeset.json");
-    let temporary = path.with_file_name(format!(".{name}.nexus-write-{}", uuid::Uuid::new_v4()));
+    let temporary = path.with_file_name(format!(".{name}.dugix-write-{}", uuid::Uuid::new_v4()));
     if let Err(error) = std::fs::write(&temporary, bytes) {
         let _ = std::fs::remove_file(&temporary);
         return Err(error).with_context(|| format!("writing {}", temporary.display()));
@@ -170,7 +170,7 @@ fn sync_dir(dir: &Path) -> Result<()> {
     let pending_ack = if own_path.is_file() {
         let bytes = std::fs::read(&own_path)
             .with_context(|| format!("reading pending {}", own_path.display()))?;
-        let pending: nexus_core::sync::Changeset = serde_json::from_slice(&bytes)
+        let pending: dugix_core::sync::Changeset = serde_json::from_slice(&bytes)
             .with_context(|| format!("parsing pending {}", own_path.display()))?;
         if pending.device_id != my_id {
             bail!(
@@ -192,12 +192,12 @@ fn sync_dir(dir: &Path) -> Result<()> {
         if !name.ends_with(".changeset.json") {
             continue;
         }
-        let cs: nexus_core::sync::Changeset = serde_json::from_slice(&std::fs::read(entry.path())?)
+        let cs: dugix_core::sync::Changeset = serde_json::from_slice(&std::fs::read(entry.path())?)
             .with_context(|| format!("parsing {}", entry.path().display()))?;
         if cs.device_id == my_id {
             continue;
         }
-        let (summary, cursors) = nexus_core::sync::apply_changeset(&db, &space, &cs, Some(dir))?;
+        let (summary, cursors) = dugix_core::sync::apply_changeset(&db, &space, &cs, Some(dir))?;
         print_sync_summary(&cs, &summary);
         reply_cursors.extend(cursors);
         if !senders.contains(&cs.device_id) {
@@ -220,11 +220,11 @@ fn sync_dir(dir: &Path) -> Result<()> {
         _ => None,
     };
     let mut cs =
-        nexus_core::sync::build_changeset(&db, peer.as_deref(), &nexus_core::sync::device_name())?;
+        dugix_core::sync::build_changeset(&db, peer.as_deref(), &dugix_core::sync::device_name())?;
     cs.ack = Some(reply_cursors);
     let path = dir.join(format!("{my_id}.changeset.json"));
     let encoded = serde_json::to_vec(&cs)?;
-    let blobs = nexus_core::sync::export_blobs(&db, &space, &cs, dir)?;
+    let blobs = dugix_core::sync::export_blobs(&db, &space, &cs, dir)?;
     write_sync_file(&path, &encoded)?;
     eprintln!(
         "exported {} rows, {} tombstones, {blobs} blob(s) → {}",
@@ -243,18 +243,18 @@ fn sync_ssh(host: &str) -> Result<()> {
         .into_iter()
         .find(|(k, _)| k == "sync_ssh_peer")
         .map(|(_, v)| v);
-    let mut cs = nexus_core::sync::build_changeset(
+    let mut cs = dugix_core::sync::build_changeset(
         &db,
         remote_peer.as_deref(),
-        &nexus_core::sync::device_name(),
+        &dugix_core::sync::device_name(),
     )?;
     // Without pull-cursor acknowledgments the peer would re-export everything each round.
     if let Some(peer) = &remote_peer {
-        cs.ack = Some(nexus_core::sync::build_ack(&db, peer)?);
+        cs.ack = Some(dugix_core::sync::build_ack(&db, peer)?);
     }
-    let tmp = SyncTempDir::new("nexus-ssh")?;
+    let tmp = SyncTempDir::new("dugix-ssh")?;
     let bundle = tmp.path().join("out.bundle");
-    let n = nexus_core::sync::write_bundle(&db, &space, &cs, std::fs::File::create(&bundle)?)?;
+    let n = dugix_core::sync::write_bundle(&db, &space, &cs, std::fs::File::create(&bundle)?)?;
     eprintln!(
         "exported {} rows, {} tombstones, {n} blob(s)",
         cs.rows.len(),
@@ -262,7 +262,7 @@ fn sync_ssh(host: &str) -> Result<()> {
     );
     let output = std::process::Command::new("ssh")
         .arg(host)
-        .args(["nexus", "sync", "import", "--bundle"])
+        .args(["dugix", "sync", "import", "--bundle"])
         .stdin(std::process::Stdio::from(std::fs::File::open(&bundle)?))
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::inherit())
@@ -270,15 +270,15 @@ fn sync_ssh(host: &str) -> Result<()> {
         .with_context(|| format!("running ssh {host}"))?;
     if !output.status.success() {
         bail!(
-            "ssh {host} failed ({}) — is `nexus` installed there?",
+            "ssh {host} failed ({}) — is `dugix` installed there?",
             output.status
         );
     }
     let reply_path = tmp.path().join("reply.bundle");
     std::fs::write(&reply_path, &output.stdout)?;
     let unpacked = tmp.path().join("unpacked");
-    let reply = nexus_core::sync::unpack_bundle(&reply_path, &unpacked)?;
-    let (summary, _) = nexus_core::sync::apply_changeset(&db, &space, &reply, Some(&unpacked))?;
+    let reply = dugix_core::sync::unpack_bundle(&reply_path, &unpacked)?;
+    let (summary, _) = dugix_core::sync::apply_changeset(&db, &space, &reply, Some(&unpacked))?;
     print_sync_summary(&reply, &summary);
     db.set_setting("sync_ssh_peer", &reply.device_id)?;
     Ok(())

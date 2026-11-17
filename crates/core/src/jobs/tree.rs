@@ -100,7 +100,7 @@ impl Tree {
                 .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
                 .take(60)
                 .collect();
-            let branch = format!("nexus/job/{slug}/{run_id}");
+            let branch = format!("dugix/job/{slug}/{run_id}");
             git(
                 root,
                 &[
@@ -172,7 +172,7 @@ impl Tree {
                     "commit",
                     "--no-verify",
                     "-m",
-                    &format!("nexus job {name}: {run_id}"),
+                    &format!("dugix job {name}: {run_id}"),
                 ],
             )?;
         }

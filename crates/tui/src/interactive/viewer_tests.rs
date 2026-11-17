@@ -1,8 +1,8 @@
 //! Images inside interactive blocks open the in-terminal viewer.
 use super::*;
-use nexus_core::app::App;
-use nexus_core::db::Db;
-use nexus_core::space::Space;
+use dugix_core::app::App;
+use dugix_core::db::Db;
+use dugix_core::space::Space;
 use ratatui::{Terminal, backend::TestBackend};
 use serde_json::{Value, json};
 
@@ -220,7 +220,7 @@ fn image_targets_line_up_with_the_drawn_images() {
 }
 
 fn app() -> AppView {
-    let root = std::env::temp_dir().join(format!("nexus-ui-viewer-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-ui-viewer-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("spaces")).unwrap();
     let mut app = AppView::new(App::new(
         Db::open_in_memory().unwrap(),

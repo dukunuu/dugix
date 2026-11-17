@@ -2,7 +2,7 @@
 //! graphics protocol, a metadata footer, keys, mouse gestures and an action menu.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use nexus_core::app::Popup;
+use dugix_core::app::Popup;
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Position, Rect};
 use ratatui::style::{Modifier, Style};

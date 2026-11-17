@@ -20,7 +20,7 @@ use crate::tools::{ApprovalRequest, Approver, Decision, ToolBox, ToolExecutor};
 /// The stdio door: with the marker variable set, the test executable becomes an MCP server on stdin/stdout.
 #[test]
 fn stdio_mock_server() {
-    if let Ok(mode) = std::env::var("NEXUS_MCP_STDIO_MOCK") {
+    if let Ok(mode) = std::env::var("DUGIX_MCP_STDIO_MOCK") {
         mock::run_stdio(&mode);
     }
 }
@@ -53,7 +53,7 @@ fn fast() -> Tuning {
 }
 
 fn rig() -> Rig {
-    let dir = std::env::temp_dir().join(format!("nexus-conn-it-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-conn-it-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     rig_in(dir, Arc::new(MemoryStore::default()))
 }
@@ -153,7 +153,7 @@ fn stdio_config(mode: &str, extra_env: &[(&str, &str)]) -> ConnectorConfig {
     ]);
     config
         .env
-        .insert("NEXUS_MCP_STDIO_MOCK".into(), mode.into());
+        .insert("DUGIX_MCP_STDIO_MOCK".into(), mode.into());
     for (key, value) in extra_env {
         config.env.insert((*key).into(), (*value).into());
     }
@@ -249,7 +249,7 @@ async fn a_2026_server_is_discovered_and_every_request_carries_meta() {
     assert_eq!(call.headers["mcp-name"], "echo");
     assert_eq!(
         call.body["params"]["_meta"]["io.modelcontextprotocol/clientInfo"]["name"],
-        "nexus-chat"
+        "dugix"
     );
 }
 
@@ -285,7 +285,7 @@ async fn a_2025_server_gets_initialize_a_session_and_the_initialized_notificatio
         );
         let init = &server.mock.find("initialize")[0];
         assert_eq!(init.body["params"]["protocolVersion"], "2025-11-25");
-        assert_eq!(init.body["params"]["clientInfo"]["name"], "nexus-chat");
+        assert_eq!(init.body["params"]["clientInfo"]["name"], "dugix");
         let list = &server.mock.find("tools/list")[0];
         assert_eq!(list.headers["mcp-session-id"], "sess-1");
         assert!(
@@ -1069,7 +1069,7 @@ async fn stdio_env_resolves_from_the_keychain_and_stderr_lands_in_a_redacted_log
     let config = stdio_config(
         "legacy",
         &[
-            ("NEXUS_MCP_STDIO_START_FILE", &start_file.to_string_lossy()),
+            ("DUGIX_MCP_STDIO_START_FILE", &start_file.to_string_lossy()),
             ("FOO", "keychain:foo"),
         ],
     );
@@ -1112,7 +1112,7 @@ async fn a_crashing_stdio_server_restarts_with_backoff_then_lands_in_an_error_st
     let starts = rig.dir.join("starts.txt");
     let config = stdio_config(
         "legacy,crash_after=2",
-        &[("NEXUS_MCP_STDIO_START_FILE", &starts.to_string_lossy())],
+        &[("DUGIX_MCP_STDIO_START_FILE", &starts.to_string_lossy())],
     );
     rig.registry.add("flaky", config).unwrap();
     eventually("the give-up state", || {
@@ -1138,7 +1138,7 @@ async fn a_crashing_stdio_server_restarts_with_backoff_then_lands_in_an_error_st
 async fn stdio_list_changed_and_cancellation_use_the_pipe() {
     let rig = rig();
     let log = rig.dir.join("cancels.txt");
-    let mut config = stdio_config("legacy", &[("NEXUS_MCP_STDIO_LOG", &log.to_string_lossy())]);
+    let mut config = stdio_config("legacy", &[("DUGIX_MCP_STDIO_LOG", &log.to_string_lossy())]);
     config.call_timeout_secs = Some(1);
     rig.registry.add("proc", config).unwrap();
     rig.registry.wait_ready(Duration::from_secs(30)).await;
@@ -1733,7 +1733,7 @@ async fn dropping_the_last_registry_owner_stops_its_stdio_child() {
             "child",
             stdio_config(
                 "modern",
-                &[("NEXUS_MCP_STDIO_PID_FILE", &pid_file.to_string_lossy())],
+                &[("DUGIX_MCP_STDIO_PID_FILE", &pid_file.to_string_lossy())],
             ),
         )
         .unwrap();

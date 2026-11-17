@@ -153,7 +153,7 @@ pub struct ListCaches {
 
 #[derive(Default)]
 pub struct LocalRuntimeState {
-    /// Servers Nexus started with `/local start`, owned so stop/exit can reclaim their memory.
+    /// Servers Dugix started with `/local start`, owned so stop/exit can reclaim their memory.
     pub servers: crate::provider::serve::ManagedServers,
     /// Last local-server survey, cached for the `/local` picker and shared by all frontends.
     pub status: Vec<crate::provider::serve::RuntimeStatus>,

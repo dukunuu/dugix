@@ -1,4 +1,4 @@
-//! Durable storage for nexus-ui panels that outlive their message: per-panel saved
+//! Durable storage for dugix-ui panels that outlive their message: per-panel saved
 //! state, and panels pinned as named mini-apps in a space.
 
 use std::collections::HashMap;
@@ -29,7 +29,7 @@ pub struct Pinned {
     /// Space-unique, `[a-z0-9-]{1,32}`.
     pub name: String,
     pub title: String,
-    /// The current nexus-ui program, patches included.
+    /// The current dugix-ui program, patches included.
     pub program: String,
     /// Encoded [`PanelSnapshot`].
     pub record: String,

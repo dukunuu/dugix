@@ -59,7 +59,7 @@ fn app(db: Db, root: std::path::PathBuf) -> App {
 }
 
 fn fixture(rounds: usize, result_chars: usize) -> App {
-    let root = std::env::temp_dir().join(format!("nexus-masking-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-masking-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let mut app = app(Db::open_in_memory().unwrap(), root);
     app.session = Some(
@@ -442,7 +442,7 @@ fn tool_images_follow_every_result_of_their_step() {
 
 #[test]
 fn mask_boundary_persists_in_cache_across_switches_and_restarts() {
-    let root = std::env::temp_dir().join(format!("nexus-mask-db-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-mask-db-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("state.db");
     let mut app = app(Db::open(&path).unwrap(), root.clone());

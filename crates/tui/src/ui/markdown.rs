@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use tui_markdown::{DefaultStyleSheet, Options, StyleSheet};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use nexus_core::markdown::{TableAlign, TableSegment};
+use dugix_core::markdown::{TableAlign, TableSegment};
 
 /// Glues a site badge to the URL after it, so wrapping keeps them together.
 pub(crate) const BADGE_GAP: char = '\u{a0}';
@@ -74,12 +74,12 @@ fn char_width(c: char) -> usize {
 /// Inline styles in theme colors: tinted code rather than a background block
 /// (the library default is white-on-black) and underlined links.
 #[derive(Clone, Copy, Debug)]
-struct NexusStyleSheet {
+struct DugixStyleSheet {
     code: Color,
     link: Color,
 }
 
-impl StyleSheet for NexusStyleSheet {
+impl StyleSheet for DugixStyleSheet {
     fn heading(&self, level: u8) -> Style {
         DefaultStyleSheet.heading(level)
     }
@@ -102,8 +102,8 @@ impl StyleSheet for NexusStyleSheet {
     }
 }
 
-fn md_options(colors: MdColors) -> Options<NexusStyleSheet> {
-    Options::new(NexusStyleSheet {
+fn md_options(colors: MdColors) -> Options<DugixStyleSheet> {
+    Options::new(DugixStyleSheet {
         code: colors.code,
         link: colors.heading,
     })
@@ -172,13 +172,14 @@ pub fn render(content: &str, width: usize, colors: MdColors) -> Rendered {
         match event {
             Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info)))
                 if info.split_whitespace().next().is_some_and(|lang| {
-                    lang.eq_ignore_ascii_case("mermaid") || lang.eq_ignore_ascii_case("nexus-ui")
+                    lang.eq_ignore_ascii_case("mermaid")
+                        || dugix_core::interactive::is_ui_fence(lang)
                 }) =>
             {
                 let ui = info
                     .split_whitespace()
                     .next()
-                    .is_some_and(|lang| lang.eq_ignore_ascii_case("nexus-ui"));
+                    .is_some_and(dugix_core::interactive::is_ui_fence);
                 diagram = Some((range, String::new(), ui));
             }
             Event::Text(text) => {
@@ -215,7 +216,7 @@ pub fn render(content: &str, width: usize, colors: MdColors) -> Rendered {
 
 fn render_normal(r: &mut Rendered, content: &str, width: usize, colors: MdColors) {
     let content = terminal_safe(content);
-    for segment in nexus_core::markdown::split_tables(&content) {
+    for segment in dugix_core::markdown::split_tables(&content) {
         match segment {
             TableSegment::Table(rows, aligns) => render_table(r, &rows, &aligns, width, colors),
             TableSegment::Text(text) => render_text(r, &text, width, colors),
@@ -243,8 +244,8 @@ fn render_ui(r: &mut Rendered, source: &str, complete: bool, width: usize, color
     r.ui_count += 1;
     // A finished block renders with its broken pieces left out; only one with
     // nothing usable falls back to its source.
-    let document = nexus_core::interactive::Document::recover(source);
-    let patch = nexus_core::interactive::edit_patch(source).is_some();
+    let document = dugix_core::interactive::Document::recover(source);
+    let patch = dugix_core::interactive::edit_patch(source).is_some();
     let fallback = width < 8 || (complete && document.is_err() && !patch);
     if fallback {
         // Show up to three errors, then the source as written, with only control

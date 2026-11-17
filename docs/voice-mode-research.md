@@ -97,7 +97,7 @@ straight to the sound card. There are three ways to build it, shown below.
   `ollama pull phonon` for English (Apache-2.0). There are separate 40M models
   for French, German, Spanish and Portuguese, plus `phonon:40m-multilingual`,
   all **CC BY-NC 4.0**. Windows and Linux are "coming soon". [L1][L2][L3]
-  Nexus already talks to Ollama at `localhost:11434/v1`
+  Dugix already talks to Ollama at `localhost:11434/v1`
   (`app/backends.rs:134`), so this needs no new transport.
 
 ### Live speech-to-speech (option C)
@@ -142,7 +142,7 @@ Current crate versions, from `cargo search` on 2026-11-08:
 Build cost to plan for:
 
 - On Linux, cpal's default ALSA backend needs the ALSA development headers
-  (`libasound2-dev`) at build time. That affects `cargo install nexus-chat`
+  (`libasound2-dev`) at build time. That affects `cargo install dugix`
   users and CI. **Put audio behind a `voice` cargo feature** on the TUI
   crate. *(Expected from cpal's ALSA backend; not re-checked for 0.18.)*
 - whisper-rs and sherpa-onnx compile or download native libraries. Make them a
@@ -161,7 +161,7 @@ Build cost to plan for:
   reports `KeyEventKind::Release` only after pushing
   `KeyboardEnhancementFlags::REPORT_EVENT_TYPES`. Plain character keys also
   need `REPORT_ALL_KEYS_AS_ESCAPE_CODES`. [K1]
-- Nexus currently pushes only `DISAMBIGUATE_ESCAPE_CODES`
+- Dugix currently pushes only `DISAMBIGUATE_ESCAPE_CODES`
   (`crates/tui/src/main.rs:77-82`), behind `supports_keyboard_enhancement()`.
   Adding `REPORT_EVENT_TYPES` doubles key events everywhere: every handler
   would need to ignore `Release`. The safe change is to filter release events
@@ -179,7 +179,7 @@ Build cost to plan for:
 
 - macOS attributes the microphone request to the **responsible app**, which
   is the terminal emulator (Terminal, iTerm2, Ghostty and so on), not
-  `nexus`. The first capture triggers a prompt for the *terminal*. If access
+  `dugix`. The first capture triggers a prompt for the *terminal*. If access
   is denied or attributed to an app without a grant, capture returns
   **digital silence with no error**. [P1]
 - *Therefore:* detect an all-zero capture buffer and show a status hint, for
@@ -204,8 +204,8 @@ The seams in `CLAUDE.md` decide where each part goes:
 
 | Piece | Lives in | Why |
 |---|---|---|
-| Mic capture, playback, level meter, VAD | `crates/tui` (`audio.rs`, behind the `voice` feature) | Devices belong to the frontend. `nexus host` is a daemon with no microphone, and core must stay free of TUI dependencies. |
-| `/transcriptions` and `/speech` HTTP clients | `crates/core/src/provider/` (next to `embedding.rs`) | Plain reqwest calls, which the CLI can use too (`nexus transcribe file.wav` and `nexus say` come for free) |
+| Mic capture, playback, level meter, VAD | `crates/tui` (`audio.rs`, behind the `voice` feature) | Devices belong to the frontend. `dugix host` is a daemon with no microphone, and core must stay free of TUI dependencies. |
+| `/transcriptions` and `/speech` HTTP clients | `crates/core/src/provider/` (next to `embedding.rs`) | Plain reqwest calls, which the CLI can use too (`dugix transcribe file.wav` and `dugix say` come for free) |
 | `input_audio` parts, `modalities`/`audio` flags, `delta.audio` parsing | `provider/openrouter.rs` and `provider/mod.rs` | Backend differences are flags in the one client. Add a `StreamEvent::Audio { pcm, transcript }` variant beside `Token` (`provider/mod.rs:494`). |
 | Sentence chunker (Token stream to TTS-sized pieces) | core | Pure function, unit-testable, used by option B |
 | `/voice` on/off/hold, `/voice lang <code>`, `/say` (replay the last reply), `/say slow` | `AppCommand` and the `COMMANDS` catalog | Every user action is a command |

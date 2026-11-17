@@ -1,5 +1,5 @@
 import { createStore } from "solid-js/store";
-import { NexusApi } from "./api";
+import { DugixApi } from "./api";
 import type {
   Gate,
   Message,
@@ -62,7 +62,7 @@ function isUsage(value: unknown): value is Usage {
   return Boolean(value && typeof value === "object" && "total_tokens" in value);
 }
 
-export function createNexusStore(api: NexusApi) {
+export function createDugixStore(api: DugixApi) {
   const [state, setState] = createStore<State>(initialState);
   let stopped = false;
   let navigationGuard: (() => boolean) | undefined;
@@ -324,4 +324,4 @@ export function createNexusStore(api: NexusApi) {
   };
 }
 
-export type NexusStore = ReturnType<typeof createNexusStore>;
+export type DugixStore = ReturnType<typeof createDugixStore>;

@@ -90,7 +90,7 @@ fn portable_pptx_round_trips_fixed_boxes_fonts_and_flattened_rotation() {
     let deck = Deck::check(&json!({"version":2,"title":"Portable","slides":[{"children":[{"id":"frame","kind":"frame","fill":"accent","position":{"x":100,"y":100},"sizing":{"w":400,"h":200},"rotation":90,"children":[{"id":"copy","kind":"text","text":"Clear decisions","font":{"family":"Inter","size":40,"weight":700,"italic":true,"line_height":1.25,"letter_spacing":0.05},"position":{"x":20,"y":20},"sizing":{"w":100,"h":40}}]},{"id":"mono","kind":"text","text":"42 / 100","font":{"family":"JetBrains Mono","size":32,"weight":400},"position":{"x":700,"y":200},"sizing":{"w":300,"h":80}}]}]}).to_string()).unwrap();
     let bytes = super::pptx::export_pptx(&deck, None).unwrap();
     validate_package(&bytes);
-    let root = std::env::temp_dir().join(format!("nexus-pptx-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-pptx-{}", uuid::Uuid::new_v4()));
     let imported = deck::import::import_pptx(&bytes, &root).unwrap();
     let back = &imported.deck;
     let rects: BTreeMap<_, _> = deck::layout(back, &back.slides[0]).into_iter().collect();
@@ -163,7 +163,7 @@ fn effects_write_native_drawingml_and_portable_text_properties() {
     assert!(!slide.contains("spAutoFit"));
     assert!(!slide.contains("spcPct"));
     assert!(!slide.contains("<p:grpSp>"));
-    let root = std::env::temp_dir().join(format!("nexus-effect-import-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-effect-import-{}", uuid::Uuid::new_v4()));
     let back = deck::import::import_pptx(&bytes, &root).unwrap().deck;
     assert!(matches!(
         back.slides[0].fill,
@@ -188,7 +188,7 @@ fn effects_write_native_drawingml_and_portable_text_properties() {
 #[test]
 fn every_layout_exports_a_complete_package_and_optional_samples() {
     let design = crate::design::Design::default();
-    let root = std::env::temp_dir().join(format!("nexus-layout-export-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-layout-export-{}", uuid::Uuid::new_v4()));
     let assets = root.join("assets");
     std::fs::create_dir_all(&assets).unwrap();
     image::RgbImage::from_fn(640, 640, |x, y| {
@@ -208,7 +208,7 @@ fn every_layout_exports_a_complete_package_and_optional_samples() {
                     "image" => "assets/sample.png",
                     "title" => "Make room for what matters.",
                     "subtitle" => "One source. A clearer story.",
-                    "kicker" => "NEXUS / A NEW PERSPECTIVE",
+                    "kicker" => "DUGIX / A NEW PERSPECTIVE",
                     "number" => "42%",
                     "quote" => "Clarity is the space between the things we choose to say.",
                     "attribution" => "The design team",
@@ -228,14 +228,14 @@ fn every_layout_exports_a_complete_package_and_optional_samples() {
         validate_package(&bytes);
         let imported = deck::import::import_pptx(&bytes, &root.join("imported")).unwrap();
         assert_eq!(imported.deck.slides.len(), 1);
-        if std::env::var_os("NEXUS_PPTX_SAMPLES").is_some() {
+        if std::env::var_os("DUGIX_PPTX_SAMPLES").is_some() {
             let output =
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/pptx-samples");
             std::fs::create_dir_all(&output).unwrap();
             std::fs::write(output.join(format!("{name}.pptx")), bytes).unwrap();
         }
     }
-    if std::env::var_os("NEXUS_PPTX_SAMPLES").is_some() {
+    if std::env::var_os("DUGIX_PPTX_SAMPLES").is_some() {
         let prompt = include_str!("../../../tests/fixtures/prompt-snapshots/chat.txt").replace(
             "- OS: <os> (<arch>)",
             &format!(
@@ -272,7 +272,7 @@ fn every_layout_exports_a_complete_package_and_optional_samples() {
 
 #[test]
 fn pictures_write_native_masks_crops_scrims_and_backgrounds() {
-    let root = std::env::temp_dir().join(format!("nexus-picture-export-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-picture-export-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     image::RgbImage::from_pixel(400, 200, image::Rgb([70, 110, 150]))
         .save(root.join("photo.png"))
@@ -386,7 +386,7 @@ fn font_map_preserves_google_families_and_known_slides_fonts() {
 
 #[test]
 fn every_image_mask_exports_as_a_preset_or_in_the_pictures_alpha() {
-    let root = std::env::temp_dir().join(format!("nexus-mask-export-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-mask-export-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     image::RgbImage::from_pixel(400, 200, image::Rgb([70, 110, 150]))
         .save(root.join("photo.png"))

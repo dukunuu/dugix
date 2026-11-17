@@ -57,7 +57,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) {
     match key.code {
-        KeyCode::Esc => app.popup = nexus_core::app::Popup::None,
+        KeyCode::Esc => app.popup = dugix_core::app::Popup::None,
         KeyCode::Enter => app.confirm_copy(),
         KeyCode::Up => app.move_copy_selection(-1),
         KeyCode::Down => app.move_copy_selection(1),

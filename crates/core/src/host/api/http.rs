@@ -1,4 +1,4 @@
-//! HTTP/1.1 request parsing and response writing for `nexus host`.
+//! HTTP/1.1 request parsing and response writing for `dugix host`.
 
 use std::collections::HashMap;
 use std::io;

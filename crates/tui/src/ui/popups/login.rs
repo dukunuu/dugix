@@ -1,7 +1,7 @@
 //! `/login`'s provider selector; a local runtime takes no key and opens `/local`.
 
 use crossterm::event::{KeyCode, KeyEvent};
-use nexus_core::provider::BackendTag;
+use dugix_core::provider::BackendTag;
 use ratatui::Frame;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -108,7 +108,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) {
     match key.code {
-        KeyCode::Esc => app.popup = nexus_core::app::Popup::None,
+        KeyCode::Esc => app.popup = dugix_core::app::Popup::None,
         KeyCode::Up => app.move_login_selection(-1),
         KeyCode::Down => app.move_login_selection(1),
         KeyCode::Char('k') if !super::is_chord(key) => app.move_login_selection(-1),

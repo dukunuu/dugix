@@ -3,7 +3,7 @@ use serde_json::json;
 pub(crate) struct Temp(pub std::path::PathBuf);
 impl Temp {
     pub fn new() -> Self {
-        let path = std::env::temp_dir().join(format!("nexus-doc-p2-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("dugix-doc-p2-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(path.join("assets")).unwrap();
         Self(path)
     }

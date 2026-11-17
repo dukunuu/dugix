@@ -1,8 +1,8 @@
 use super::persist::url_prompt;
 use super::*;
-use nexus_core::app::{App, AppCommand, AppsMode};
-use nexus_core::db::Db;
-use nexus_core::space::Space;
+use dugix_core::app::{App, AppCommand, AppsMode};
+use dugix_core::db::Db;
+use dugix_core::space::Space;
 use ratatui::{Terminal, backend::TestBackend};
 use std::sync::{Arc, Mutex};
 
@@ -10,7 +10,7 @@ const COUNTER: &str = "root = Panel(\"Weekly Counter\", [Text(\"Count: \" + $cou
 
 fn test_app() -> AppView {
     let db = Db::open_in_memory().unwrap();
-    let root = std::env::temp_dir().join(format!("nexus-persist-test-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-persist-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("spaces")).unwrap();
     let mut app = AppView::new(App::new(db, Some("k"), Space { root }));
     let session = app
@@ -154,7 +154,7 @@ fn a_changed_or_corrupt_record_never_blocks_the_panel() {
     let mut app = test_app();
     let p = placement(COUNTER, 0);
     let id = app.core.session.as_ref().unwrap().id.clone();
-    let key = nexus_core::interactive::panel_key(COUNTER, 0);
+    let key = dugix_core::interactive::panel_key(COUNTER, 0);
     for bad in [
         "not json",
         "{\"v\":9}",
@@ -183,7 +183,7 @@ fn p_pins_the_focused_panel_but_types_into_inputs() {
     assert_eq!(pinned.len(), 1);
     assert_eq!(pinned[0].name, "weekly-counter");
     assert_eq!(pinned[0].title, "Weekly Counter");
-    let record = nexus_core::interactive::PanelSnapshot::decode(&pinned[0].record).unwrap();
+    let record = dugix_core::interactive::PanelSnapshot::decode(&pinned[0].record).unwrap();
     assert_eq!(record.state["count"].as_f64(), Some(1.0));
     assert_eq!(record.state["name"], "p");
     press(&mut app, KeyCode::Char('p'));

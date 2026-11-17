@@ -2,8 +2,8 @@
 //! Suggestions are operations the reader previews, applies or dismisses.
 
 use anyhow::{Context as _, Result, ensure};
-use nexus_core::deck::link::Message as LinkMessage;
-use nexus_core::doc::{self, Block, feedback as comments};
+use dugix_core::deck::link::Message as LinkMessage;
+use dugix_core::doc::{self, Block, feedback as comments};
 use uuid::Uuid;
 
 use super::{Backend, Event};
@@ -28,7 +28,7 @@ impl Backend {
         );
         ensure!(
             !send || self.linked,
-            "Not linked to a conversation — open it from nexus with /studio"
+            "Not linked to a conversation — open it from dugix with /studio"
         );
         ensure!(
             self.session()?.threads.len() < 200,
@@ -73,7 +73,7 @@ impl Backend {
         );
         ensure!(
             !send || self.linked,
-            "Not linked to a conversation — open it from nexus with /studio"
+            "Not linked to a conversation — open it from dugix with /studio"
         );
         let thread = self
             .session_mut_threads()?
@@ -140,7 +140,7 @@ impl Backend {
         let edit = self.doc_edit(owner, id)?;
         ensure!(
             edit.status == comments::EditStatus::Pending,
-            "Outdated — ask again in nexus"
+            "Outdated — ask again in dugix"
         );
         let resolver = self.doc_resolver();
         let before = &self.session()?.doc;
@@ -170,7 +170,7 @@ impl Backend {
         let edit = self.doc_edit(owner, id)?;
         ensure!(
             edit.status == comments::EditStatus::Pending,
-            "Outdated — ask again in nexus"
+            "Outdated — ask again in dugix"
         );
         let resolver = self.doc_resolver();
         let next =

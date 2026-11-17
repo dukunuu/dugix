@@ -11,7 +11,7 @@ use crate::theme::Theme;
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use nexus_core::interactive::{Document, Node, Session};
+use dugix_core::interactive::{Document, Node, Session};
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Style;
@@ -218,9 +218,9 @@ impl Widgets {
         let mut targets = HashMap::new();
         for placement in placements.iter().filter(|p| p.complete) {
             let key = placement.key();
-            let Some((id, patch)) = nexus_core::interactive::edit_patch(&placement.source) else {
+            let Some((id, patch)) = dugix_core::interactive::edit_patch(&placement.source) else {
                 targets.insert(
-                    nexus_core::interactive::panel_id(placement.owner, placement.ordinal),
+                    dugix_core::interactive::panel_id(placement.owner, placement.ordinal),
                     key,
                 );
                 continue;

@@ -184,7 +184,7 @@ fn branch_name(session: &str, number: u64) -> String {
         .filter(char::is_ascii_alphanumeric)
         .take(8)
         .collect();
-    format!("nexus/sub/{short}/{number}")
+    format!("dugix/sub/{short}/{number}")
 }
 
 fn prepare_tree(toolbox: &ToolBox, number: &mut u64) -> Result<(Tree, Arc<Workspace>)> {
@@ -199,7 +199,7 @@ fn prepare_tree(toolbox: &ToolBox, number: &mut u64) -> Result<(Tree, Arc<Worksp
         &[
             "for-each-ref",
             "--format=%(refname:short)",
-            "refs/heads/nexus/sub/",
+            "refs/heads/dugix/sub/",
         ],
     )?;
     let refs = String::from_utf8_lossy(&refs.stdout);
@@ -212,7 +212,7 @@ fn prepare_tree(toolbox: &ToolBox, number: &mut u64) -> Result<(Tree, Arc<Worksp
     let id = uuid::Uuid::new_v4().to_string();
     let mut tree = Tree::prepare(
         root,
-        &std::env::temp_dir().join("nexus-subagents"),
+        &std::env::temp_dir().join("dugix-subagents"),
         "subagent",
         &id,
     )?;

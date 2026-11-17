@@ -1,7 +1,7 @@
 //! The TUI's visual vocabulary: one monochrome glyph and one color per concept
 //! (`accent` for you, `accent2` for the assistant, dim for metadata and chrome).
 
-use nexus_core::highlight::Role;
+use dugix_core::highlight::Role;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
@@ -103,7 +103,7 @@ pub fn display_split(text: &str) -> (&str, &str) {
 /// The one separator between inline fields.
 pub const SEP: &str = " · ";
 
-/// Theme colors for syntax roles (`nexus_core::highlight`).
+/// Theme colors for syntax roles (`dugix_core::highlight`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SyntaxColors {
     pub accent: Color,
@@ -173,7 +173,7 @@ pub fn highlighted_lines(
     colors: SyntaxColors,
     base: Style,
 ) -> Vec<Line<'static>> {
-    let spans = nexus_core::highlight::highlight(source, lang);
+    let spans = dugix_core::highlight::highlight(source, lang);
     let mut spans = spans.iter().peekable();
     let mut lines = Vec::new();
     let mut start = 0;

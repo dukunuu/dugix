@@ -3,7 +3,7 @@
 
 use super::safe;
 use crate::theme::Theme;
-use nexus_core::interactive::{Drawn, Session, Shape};
+use dugix_core::interactive::{Drawn, Session, Shape};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
@@ -418,7 +418,7 @@ art = Canvas([
     #[test]
     fn canvas_draws_shapes_labels_and_moves_with_the_clock() {
         let mut entry = super::super::Entry::new(
-            Session::new(nexus_core::interactive::Document::parse(BALL).unwrap())
+            Session::new(dugix_core::interactive::Document::parse(BALL).unwrap())
                 .map_err(|error| error.to_string()),
         );
         let start = canvas_rows(&entry, 40);

@@ -1,7 +1,7 @@
 use super::*;
 #[test]
 fn doc_cli_import_export_and_no_overwrite() {
-    let temp = std::env::temp_dir().join(format!("nexus-cli-doc-{}", uuid::Uuid::new_v4()));
+    let temp = std::env::temp_dir().join(format!("dugix-cli-doc-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp).unwrap();
     std::fs::write(
         temp.join("report.md"),
@@ -10,7 +10,7 @@ fn doc_cli_import_export_and_no_overwrite() {
     .unwrap();
     let run = |args: &[&str]| {
         let cli =
-            Cli::try_parse_from(["nexus", "doc"].into_iter().chain(args.iter().copied())).unwrap();
+            Cli::try_parse_from(["dugix", "doc"].into_iter().chain(args.iter().copied())).unwrap();
         let Some(Command::Doc { cmd }) = cli.command else {
             panic!("expected doc command")
         };
@@ -50,6 +50,6 @@ fn doc_cli_import_export_and_no_overwrite() {
     ])
     .unwrap();
     assert!(custom.is_file());
-    assert!(Cli::try_parse_from(["nexus", "doc", "export", "x", "--format", "svg"]).is_err());
+    assert!(Cli::try_parse_from(["dugix", "doc", "export", "x", "--format", "svg"]).is_err());
     std::fs::remove_dir_all(temp).unwrap();
 }

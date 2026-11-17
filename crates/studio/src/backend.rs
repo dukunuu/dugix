@@ -8,10 +8,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, bail, ensure};
-use nexus_core::canvas::dialogs::Dialogs;
-use nexus_core::deck::{self, Deck, Kind, Node, Op, same_file};
-use nexus_core::remote_image::Fetcher;
-use nexus_core::theme_colors::{self, ThemeColors};
+use dugix_core::canvas::dialogs::Dialogs;
+use dugix_core::deck::{self, Deck, Kind, Node, Op, same_file};
+use dugix_core::remote_image::Fetcher;
+use dugix_core::theme_colors::{self, ThemeColors};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -27,7 +27,7 @@ mod library;
 mod sheet;
 pub use library::Answer;
 mod templates;
-use nexus_core::deck::link::{ActivityState, Message as LinkMessage};
+use dugix_core::deck::link::{ActivityState, Message as LinkMessage};
 use std::time::SystemTime;
 
 /// All messages accepted from the presentation layer.
@@ -91,7 +91,7 @@ pub enum Command {
         blocks: Vec<String>,
     },
     CommentCreate {
-        anchor: nexus_core::deck::feedback::Anchor,
+        anchor: dugix_core::deck::feedback::Anchor,
         text: String,
         send: bool,
     },
@@ -159,7 +159,7 @@ pub enum Command {
         template: Option<String>,
     },
     DocCommentCreate {
-        anchor: nexus_core::doc::feedback::Anchor,
+        anchor: dugix_core::doc::feedback::Anchor,
         text: String,
         send: bool,
     },
@@ -211,7 +211,7 @@ pub enum Command {
         #[serde(default)]
         space: Option<String>,
     },
-    /// nexus files open; Office and Markdown files import.
+    /// dugix files open; Office and Markdown files import.
     OpenDialog {},
     ExportAs {
         format: String,
@@ -255,7 +255,7 @@ pub enum Event {
         // reproduce Rust's canonical number serialization.
         hashes: BTreeMap<String, String>,
         images: BTreeMap<String, String>,
-        threads: Vec<nexus_core::deck::feedback::Thread>,
+        threads: Vec<dugix_core::deck::feedback::Thread>,
         linked: bool,
         activities: BTreeMap<String, ThreadActivity>,
         changed: Vec<String>,
@@ -266,7 +266,7 @@ pub enum Event {
         home: bool,
     },
     Feedback {
-        threads: Vec<nexus_core::deck::feedback::Thread>,
+        threads: Vec<dugix_core::deck::feedback::Thread>,
         activities: BTreeMap<String, ThreadActivity>,
         notes: Vec<String>,
     },
@@ -274,14 +274,14 @@ pub enum Event {
         slide: String,
     },
     Sheet {
-        sheet: nexus_core::sheet::Sheet,
+        sheet: dugix_core::sheet::Sheet,
         revision: String,
         relative: String,
         /// Derived row heights for wrapped cells, per tab id; a user-set height wins.
         auto_rows: BTreeMap<String, BTreeMap<u32, f64>>,
         charts: BTreeMap<String, Vec<sheet::ChartSvg>>,
         values: Vec<sheet::CellValue>,
-        threads: Vec<nexus_core::sheet::feedback::Thread>,
+        threads: Vec<dugix_core::sheet::feedback::Thread>,
         linked: bool,
         activities: BTreeMap<String, ThreadActivity>,
         changed: Vec<String>,
@@ -297,7 +297,7 @@ pub enum Event {
         values: Vec<sheet::CellValue>,
     },
     SheetFeedback {
-        threads: Vec<nexus_core::sheet::feedback::Thread>,
+        threads: Vec<dugix_core::sheet::feedback::Thread>,
         activities: BTreeMap<String, ThreadActivity>,
         notes: Vec<String>,
     },
@@ -306,11 +306,11 @@ pub enum Event {
         range: String,
     },
     Doc {
-        doc: nexus_core::doc::Doc,
+        doc: dugix_core::doc::Doc,
         colors: ThemeColors,
         revision: String,
         relative: String,
-        threads: Vec<nexus_core::doc::feedback::Thread>,
+        threads: Vec<dugix_core::doc::feedback::Thread>,
         linked: bool,
         activities: BTreeMap<String, ThreadActivity>,
         changed: Vec<String>,
@@ -322,7 +322,7 @@ pub enum Event {
         home: bool,
     },
     DocFeedback {
-        threads: Vec<nexus_core::doc::feedback::Thread>,
+        threads: Vec<dugix_core::doc::feedback::Thread>,
         activities: BTreeMap<String, ThreadActivity>,
         notes: Vec<String>,
     },
@@ -330,7 +330,7 @@ pub enum Event {
         owner: String,
         edit: String,
         title: Option<String>,
-        changed: Vec<nexus_core::doc::Block>,
+        changed: Vec<dugix_core::doc::Block>,
         removed: Vec<String>,
     },
     DocFocus {
@@ -389,8 +389,8 @@ pub enum Event {
     HistoryPreview {
         id: String,
         deck: Option<Deck>,
-        doc: Option<nexus_core::doc::Doc>,
-        sheet: Option<nexus_core::sheet::Sheet>,
+        doc: Option<dugix_core::doc::Doc>,
+        sheet: Option<dugix_core::sheet::Sheet>,
     },
     DocSource {
         markdown: String,
@@ -436,7 +436,7 @@ pub struct Backend {
     undo: Vec<Deck>,
     redo: Vec<Deck>,
     pub fetcher: Arc<Fetcher>,
-    feedback: Vec<nexus_core::deck::feedback::Thread>,
+    feedback: Vec<dugix_core::deck::feedback::Thread>,
     activities: BTreeMap<PathBuf, BTreeMap<String, ThreadActivity>>,
     pub linked: bool,
     pub outgoing: Vec<LinkMessage>,
@@ -583,7 +583,7 @@ impl Backend {
                 .deck
                 .design
                 .as_deref()
-                .and_then(|slug| nexus_core::design::load(&self.files_dir, slug).ok())
+                .and_then(|slug| dugix_core::design::load(&self.files_dir, slug).ok())
                 .is_some_and(|d| d.source.is_some()),
             home: self.home.get(),
             deck: self.deck.clone(),
@@ -624,7 +624,7 @@ impl Backend {
             let root = root.as_ref()?;
             let path = root.join(src.strip_prefix("assets/").unwrap_or(src));
             self.cached_hash(&path, || {
-                self.serve(&format!("nexus://localhost/{src}"))
+                self.serve(&format!("dugix://localhost/{src}"))
                     .ok()
                     .map(|(_, bytes)| bytes)
             })
@@ -923,7 +923,7 @@ impl Backend {
             return self.doc_sync();
         }
         let deck_stamp = stamp(&self.path);
-        let comments_stamp = stamp(&nexus_core::deck::feedback::sidecar(&self.path));
+        let comments_stamp = stamp(&dugix_core::deck::feedback::sidecar(&self.path));
         let mut changed = Vec::new();
         let mut reloaded = false;
         if deck_stamp != self.deck_stamp {
@@ -1193,11 +1193,11 @@ impl Backend {
 fn default_dialogs() -> Arc<dyn Dialogs> {
     #[cfg(test)]
     {
-        Arc::new(nexus_core::canvas::dialogs::Scripted::new([]))
+        Arc::new(dugix_core::canvas::dialogs::Scripted::new([]))
     }
     #[cfg(not(test))]
     {
-        Arc::new(nexus_core::canvas::dialogs::Native)
+        Arc::new(dugix_core::canvas::dialogs::Native)
     }
 }
 
@@ -1366,8 +1366,8 @@ fn hash_bytes(bytes: &[u8]) -> String {
 
 pub fn protocol_path(uri: &str) -> Result<String> {
     let path = uri
-        .strip_prefix("nexus://localhost")
-        .or_else(|| uri.strip_prefix("http://nexus.localhost"))
+        .strip_prefix("dugix://localhost")
+        .or_else(|| uri.strip_prefix("http://dugix.localhost"))
         .context("unknown protocol origin")?;
     let path = if path.is_empty() { "/" } else { path };
     let path = if let Some((path, query)) = path.split_once('?') {

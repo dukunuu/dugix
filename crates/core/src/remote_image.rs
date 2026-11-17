@@ -340,7 +340,7 @@ impl Fetcher {
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .referer(false)
-            .user_agent(concat!("nexus-chat/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("dugix/", env!("CARGO_PKG_VERSION")))
             .dns_resolver(Arc::new(VettedResolver {
                 lookup: Arc::clone(&self.lookup),
                 allow_loopback: self.allow_loopback,
@@ -868,7 +868,7 @@ mod tests {
     }
 
     fn dir() -> PathBuf {
-        std::env::temp_dir().join(format!("nexus-image-test-{}", uuid::Uuid::new_v4()))
+        std::env::temp_dir().join(format!("dugix-image-test-{}", uuid::Uuid::new_v4()))
     }
 
     fn test_fetcher() -> Arc<Fetcher> {

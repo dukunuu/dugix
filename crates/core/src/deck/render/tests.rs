@@ -362,14 +362,14 @@ fn imported_deck_fonts_are_registered_under_their_family() {
     let usvg::fontdb::Source::File(source) = &face.source else {
         return;
     };
-    let root = std::env::temp_dir().join(format!("nexus-fonts-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-fonts-{}", uuid::Uuid::new_v4()));
     let fonts = root.join("assets/fonts");
     std::fs::create_dir_all(&fonts).unwrap();
     let name = format!("brand.{}", source.extension().unwrap().to_string_lossy());
     std::fs::copy(source, fonts.join(&name)).unwrap();
     let mut deck = Deck::titled("Fonts");
     deck.theme.font_files = vec![crate::deck::FontFile {
-        family: "Nexus Test Brand".into(),
+        family: "Dugix Test Brand".into(),
         file: format!("assets/fonts/{name}"),
         weight: 400,
         italic: false,
@@ -379,12 +379,12 @@ fn imported_deck_fonts_are_registered_under_their_family() {
     assert!(
         imported
             .faces()
-            .any(|f| f.families.iter().any(|(n, _)| n == "Nexus Test Brand"))
+            .any(|f| f.families.iter().any(|(n, _)| n == "Dugix Test Brand"))
     );
     assert!(
         !system_fonts()
             .faces()
-            .any(|f| f.families.iter().any(|(n, _)| n == "Nexus Test Brand")),
+            .any(|f| f.families.iter().any(|(n, _)| n == "Dugix Test Brand")),
         "the shared system database is left alone"
     );
     // And a file outside assets, or an unreadable one, is skipped.
@@ -393,13 +393,13 @@ fn imported_deck_fonts_are_registered_under_their_family() {
     assert!(
         !skipped
             .faces()
-            .any(|f| f.families.iter().any(|(n, _)| n == "Nexus Test Brand"))
+            .any(|f| f.families.iter().any(|(n, _)| n == "Dugix Test Brand"))
     );
     // Rendering with the imported family draws something.
     deck.theme.font_files[0].file = format!("assets/fonts/{name}");
     deck.theme
         .fonts
-        .insert("body".into(), "Nexus Test Brand".into());
+        .insert("body".into(), "Dugix Test Brand".into());
     let png = render_slide_at(&deck, "s1", 800, Some(&root.join("assets"))).unwrap();
     assert!(inked(
         &rgba(&png),
@@ -416,7 +416,7 @@ fn imported_deck_fonts_are_registered_under_their_family() {
 
 #[test]
 fn cache_names_by_revision_prunes_stale_old_ones_and_keeps_snapshots() {
-    let root = std::env::temp_dir().join(format!("nexus-render-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-render-{}", uuid::Uuid::new_v4()));
     let files = root.join("files");
     let path = files.join("decks/a.deck.json");
     let mut deck = Deck::classic_fixture("Cache");
@@ -457,12 +457,12 @@ fn cache_names_by_revision_prunes_stale_old_ones_and_keeps_snapshots() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-/// `NEXUS_RENDER_OUT=<dir> cargo test -p nexus-chat-core write_fixture_renders`
+/// `DUGIX_RENDER_OUT=<dir> cargo test -p dugix-core write_fixture_renders`
 /// writes the migrated classic deck and an auto-layout deck, to compare with
 /// the HTML renderer. Does nothing unless the variable is set.
 #[test]
 fn write_fixture_renders() {
-    let Some(out) = std::env::var_os("NEXUS_RENDER_OUT") else {
+    let Some(out) = std::env::var_os("DUGIX_RENDER_OUT") else {
         return;
     };
     let out = PathBuf::from(out);

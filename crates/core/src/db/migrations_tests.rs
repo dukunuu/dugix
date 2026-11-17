@@ -19,13 +19,13 @@ struct TempRoot(PathBuf);
 
 impl TempRoot {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!("nexus-migrations-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("dugix-migrations-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&path).unwrap();
         Self(path)
     }
 
     fn db_path(&self) -> PathBuf {
-        self.0.join("nexus.db")
+        self.0.join("dugix.db")
     }
 
     fn fixture(&self, sql: &str) {
@@ -153,13 +153,13 @@ fn assert_snapshot(file: &str, actual: &str) {
         "/tests/fixtures/schema-snapshots/"
     ));
     let path = directory.join(file);
-    if std::env::var("NEXUS_UPDATE_SNAPSHOTS").as_deref() == Ok("1") {
+    if std::env::var("DUGIX_UPDATE_SNAPSHOTS").as_deref() == Ok("1") {
         std::fs::create_dir_all(directory).unwrap();
         std::fs::write(path, actual).unwrap();
         return;
     }
     let message = format!(
-        "snapshot {}: rerun with NEXUS_UPDATE_SNAPSHOTS=1 cargo test -p nexus-chat-core db:: and review the diff",
+        "snapshot {}: rerun with DUGIX_UPDATE_SNAPSHOTS=1 cargo test -p dugix-core db:: and review the diff",
         path.display()
     );
     let expected =
@@ -170,14 +170,14 @@ fn assert_snapshot(file: &str, actual: &str) {
 #[test]
 fn memory_sharing_migration_defaults_existing_chapters_and_only_adds_its_column() {
     let conn = Connection::open_in_memory().unwrap();
-    run(&conn, &DURABLE[..3], &mut context("main", "nexus.db")).unwrap();
+    run(&conn, &DURABLE[..3], &mut context("main", "dugix.db")).unwrap();
     conn.execute_batch(
         "INSERT INTO memory_chapters (id, space_id, title, created_at, updated_at)
          VALUES ('existing', 'home', 'Career', 'created', 'updated')",
     )
     .unwrap();
     let before = schema(&conn, "main");
-    run(&conn, DURABLE, &mut context("main", "nexus.db")).unwrap();
+    run(&conn, DURABLE, &mut context("main", "dugix.db")).unwrap();
     let shared: String = conn
         .query_row(
             "SELECT shared_with FROM memory_chapters WHERE id = 'existing'",
@@ -233,7 +233,7 @@ fn durable_fixtures_reach_the_fresh_schema_and_preserve_rows() {
         drop(db);
         let db = Db::open(&root.db_path()).unwrap();
         assert_eq!(
-            run(db.conn(), DURABLE, &mut context("main", "nexus.db")).unwrap(),
+            run(db.conn(), DURABLE, &mut context("main", "dugix.db")).unwrap(),
             0
         );
         assert_eq!(
@@ -327,10 +327,10 @@ fn unsupported_durable_versions_have_exact_errors() {
         drop(conn);
         let error = Db::open(&root.db_path()).err().unwrap().to_string();
         let expected = if v == 99 {
-            "nexus.db was written by a newer nexus (schema 99, this build knows up to 7); update nexus".into()
+            "dugix.db was written by a newer dugix (schema 99, this build knows up to 7); update dugix".into()
         } else {
             format!(
-                "nexus.db is from a nexus older than 0.1.42 (schema {v}); install nexus-chat 0.1.42 once to upgrade it, then this version"
+                "dugix.db is from a version older than 0.1.42 (schema {v}); install nexus-chat 0.1.42 once to upgrade it, then this version"
             )
         };
         assert_eq!(error, expected);
@@ -343,7 +343,7 @@ fn newer_cache_versions_have_exact_errors() {
     let conn = Connection::open(cache_path_for(&root.db_path())).unwrap();
     conn.pragma_update(None, "user_version", 99).unwrap();
     let expected =
-        "cache.db was written by a newer nexus (schema 99, this build knows up to 3); update nexus";
+        "cache.db was written by a newer dugix (schema 99, this build knows up to 3); update dugix";
     assert_eq!(
         migrate_cache(&conn, "main").unwrap_err().to_string(),
         expected
@@ -451,7 +451,7 @@ fn durable_upgrades_preserve_sessions_and_chapters() {
         let root = TempRoot::new();
         root.fixture(fixture);
         let conn = Connection::open(root.db_path()).unwrap();
-        run(&conn, &DURABLE[..1], &mut context("main", "nexus.db")).unwrap();
+        run(&conn, &DURABLE[..1], &mut context("main", "dugix.db")).unwrap();
         assert_eq!(version(&conn, "main").unwrap(), 4);
         conn.execute_batch(
             "INSERT INTO sessions (id, title, model, space_id, created_at, updated_at)
@@ -461,7 +461,7 @@ fn durable_upgrades_preserve_sessions_and_chapters() {
         )
         .unwrap();
         assert_eq!(
-            run(&conn, DURABLE, &mut context("main", "nexus.db")).unwrap(),
+            run(&conn, DURABLE, &mut context("main", "dugix.db")).unwrap(),
             3
         );
         assert_eq!(version(&conn, "main").unwrap(), 7);

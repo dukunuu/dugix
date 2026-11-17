@@ -3,9 +3,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use dugix_core::app::Popup;
 use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView, ImageFormat};
-use nexus_core::app::Popup;
 use ratatui::layout::{Rect, Size};
 use ratatui_image::Resize;
 use ratatui_image::picker::{Picker, ProtocolType};
@@ -325,7 +325,7 @@ fn rasterize_svg(data: &[u8]) -> Result<(DynamicImage, (u32, u32)), String> {
             resolve_data: Box::new(|_, _, _| None),
             resolve_string: Box::new(|_, _| None),
         },
-        fontdb: nexus_core::deck::text::system_fonts(),
+        fontdb: dugix_core::deck::text::system_fonts(),
         ..Default::default()
     };
     let tree = resvg::usvg::Tree::from_data(data, &options).map_err(|e| format!("svg: {e}"))?;
@@ -534,10 +534,10 @@ pub enum Source {
 pub fn source_of(target: &str) -> Source {
     if is_remote(target) {
         match crate::app_view::remote_image(target) {
-            nexus_core::remote_image::Status::Ready(path) => Source::Ready(path),
-            nexus_core::remote_image::Status::Loading => Source::Loading,
-            nexus_core::remote_image::Status::Failed => Source::Failed,
-            nexus_core::remote_image::Status::Off => Source::Off,
+            dugix_core::remote_image::Status::Ready(path) => Source::Ready(path),
+            dugix_core::remote_image::Status::Loading => Source::Loading,
+            dugix_core::remote_image::Status::Failed => Source::Failed,
+            dugix_core::remote_image::Status::Off => Source::Off,
         }
     } else {
         let path = PathBuf::from(target);
@@ -1075,7 +1075,7 @@ impl AppView {
             }
         }
         for placement in self.history_cache.widgets.iter().filter(|p| p.complete) {
-            let Ok((document, _)) = nexus_core::interactive::Document::recover(&placement.source)
+            let Ok((document, _)) = dugix_core::interactive::Document::recover(&placement.source)
             else {
                 continue;
             };
@@ -1233,9 +1233,9 @@ impl AppView {
 mod tests {
     use super::*;
     use crate::interactive::Placement;
-    use nexus_core::app::App;
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
+    use dugix_core::app::App;
+    use dugix_core::db::Db;
+    use dugix_core::space::Space;
     use serde_json::json;
     use std::sync::Mutex;
 
@@ -1243,7 +1243,7 @@ mod tests {
     const PIC2: &str = "https://img.example.invalid/second.png";
 
     fn app() -> AppView {
-        let root = std::env::temp_dir().join(format!("nexus-viewer-test-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-viewer-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
         AppView::new(App::new(
             Db::open_in_memory().unwrap(),
@@ -1281,7 +1281,7 @@ mod tests {
     }
 
     fn temp_dir() -> PathBuf {
-        std::env::temp_dir().join(format!("nexus-viewer-files-{}", uuid::Uuid::new_v4()))
+        std::env::temp_dir().join(format!("dugix-viewer-files-{}", uuid::Uuid::new_v4()))
     }
 
     fn gallery_doc(images: &[&str]) -> String {
@@ -1347,7 +1347,7 @@ mod tests {
         assert_eq!(Preference::parse("terminal"), Preference::Terminal);
         assert_eq!(Preference::parse("system"), Preference::System);
         assert_eq!(Preference::parse("something else"), Preference::Auto);
-        for value in nexus_core::app::IMAGE_VIEWERS {
+        for value in dugix_core::app::IMAGE_VIEWERS {
             assert_eq!(
                 Preference::parse(value) == Preference::Auto,
                 value == "auto"
@@ -1745,7 +1745,7 @@ mod tests {
         assert!(text.contains("img.example.invalid/pic.png"), "{text}");
         app.close_image_viewer();
 
-        let fetcher = nexus_core::remote_image::Fetcher::new(temp_dir());
+        let fetcher = dugix_core::remote_image::Fetcher::new(temp_dir());
         crate::app_view::use_fetcher_for_tests(&fetcher);
         fetcher.seed(PIC, &png_bytes(48, 24)).unwrap();
         app.open_image_target(PIC, &Anchor::ByTarget, Return::Nothing);
@@ -1785,7 +1785,7 @@ mod tests {
         app.core.settings.image_viewer = "terminal".into();
         let files = app.core.space.files_dir(&app.core.active_space.name);
         png_file(&files, "from_files.png", 12, 12);
-        app.open_files_popup(nexus_core::app::FilesTab::Images);
+        app.open_files_popup(dugix_core::app::FilesTab::Images);
         assert!(app.popup == Popup::Files);
         app.open_selected_image();
         assert!(app.popup == Popup::ImageViewer);

@@ -11,7 +11,7 @@ fn git(root: &Path, args: &[&str]) -> String {
 }
 
 fn repository_app() -> (PathBuf, App) {
-    let dir = std::env::temp_dir().join(format!("nexus-improve-test-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-improve-test-{}", uuid::Uuid::new_v4()));
     let repo = dir.join("repo");
     fs::create_dir_all(&repo).unwrap();
     git(&repo, &["init", "-b", "main"]);
@@ -29,7 +29,7 @@ fn repository_app() -> (PathBuf, App) {
     );
     app.current_model = Some("local:offline".into());
     let config: toml::Value = toml::from_str(&format!(
-        "[agent]\nnexus_repo = {:?}\n",
+        "[agent]\ndugix_repo = {:?}\n",
         repo.to_str().unwrap()
     ))
     .unwrap();
@@ -68,7 +68,7 @@ fn assert_improvement(app: &mut App, head: &str) -> PathBuf {
     let root = app.workspace.as_ref().unwrap().root().to_path_buf();
     assert!(!root.starts_with(&app.space.root));
     let branch = git(&root, &["branch", "--show-current"]);
-    assert!(branch.starts_with("nexus/improve/fix-stale-edits-"));
+    assert!(branch.starts_with("dugix/improve/fix-stale-edits-"));
     assert_eq!(git(&root, &["rev-parse", "HEAD"]), head);
     assert_eq!(
         fs::read_to_string(root.join("tracked")).unwrap(),
@@ -89,7 +89,7 @@ fn assert_improvement(app: &mut App, head: &str) -> PathBuf {
     assert_eq!(
         app.messages[1].content,
         concat!(
-            "Improve nexus: Fix stale edits.\nRelevant recent tool failures:\n",
+            "Improve dugix: Fix stale edits.\nRelevant recent tool failures:\n",
             "fs.edit: stale_edit ×6\nshell.run: exit ×5\n",
             "scripts.edit: invalid_args ×4\napp.patch: stale_edit ×3\n",
             "files.read: not_found ×2\n",
@@ -124,12 +124,12 @@ fn improve_requires_a_request_and_a_configured_checkout() {
             what: "Fix stale edits".into()
         })
     );
-    assert!(app.saved.agent.nexus_repo.is_none());
+    assert!(app.saved.agent.dugix_repo.is_none());
     for repo in [None, Some("   ".into())] {
-        app.saved.agent.nexus_repo = repo;
+        app.saved.agent.dugix_repo = repo;
         app.run_command("improve Fix stale edits").unwrap();
         let status = app.last_status();
-        assert!(status.contains("[agent] nexus_repo = \"~/work/nexus-chat\""));
+        assert!(status.contains("[agent] dugix_repo = \"~/work/dugix\""));
         assert!(status.contains("config.toml"));
         assert_eq!(app.work_mode, WorkMode::Chat);
         assert!(app.workspace.is_none());
@@ -187,7 +187,7 @@ fn improve_isolates_head_and_seeds_a_fresh_or_empty_session_with_harness_rows() 
         }
         drop(app);
         assert!(root.is_dir(), "review worktrees survive app exit");
-        assert!(git(&root, &["branch", "--show-current"]).starts_with("nexus/improve/"));
+        assert!(git(&root, &["branch", "--show-current"]).starts_with("dugix/improve/"));
         git(&repo, &["worktree", "remove", root.to_str().unwrap()]);
         fs::remove_dir_all(dir).unwrap();
     }
@@ -231,7 +231,7 @@ fn improve_refuses_incognito_and_non_git_roots_before_creating_worktrees() {
     app.incognito = false;
     let non_git = dir.join("not-a-repository");
     fs::create_dir(&non_git).unwrap();
-    app.saved.agent.nexus_repo = Some(non_git.display().to_string());
+    app.saved.agent.dugix_repo = Some(non_git.display().to_string());
     assert!(app.run_command("improve Fix stale edits").is_err());
     assert_eq!(app.work_mode, WorkMode::Chat);
     assert!(app.workspace.is_none());

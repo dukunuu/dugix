@@ -157,7 +157,7 @@ fn overview() -> (Buffer, Vec<String>) {
     canvas.set_string(
         2,
         0,
-        "nexus / the terminal collection",
+        "dugix / the terminal collection",
         Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
     );
     canvas.set_string(
@@ -196,7 +196,7 @@ fn overview() -> (Buffer, Vec<String>) {
         }
     }
     canvas.set_string(2,height-1,"NATIVE MOCKUP / 4 columns · image and diagram show their real text fallbacks · static local sample data",Style::default().fg(theme.fg_dim));
-    let names = nexus_core::interactive::component_signatures()
+    let names = dugix_core::interactive::component_signatures()
         .lines()
         .map(|line| line.split('(').next().unwrap().to_string())
         .collect();
@@ -227,7 +227,7 @@ fn terminal_overview_covers_every_contract_in_one_native_frame() {
 #[ignore = "opt-in native contact-sheet export; scripts/preview-terminal-panels.sh"]
 fn export_terminal_overview() {
     let directory = std::path::PathBuf::from(
-        std::env::var_os("NEXUS_TERMINAL_PREVIEW_DIR").expect("set NEXUS_TERMINAL_PREVIEW_DIR"),
+        std::env::var_os("DUGIX_TERMINAL_PREVIEW_DIR").expect("set DUGIX_TERMINAL_PREVIEW_DIR"),
     );
     std::fs::create_dir_all(&directory).unwrap();
     let (canvas, names) = overview();

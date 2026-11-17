@@ -6,10 +6,10 @@
 )]
 use anyhow::Result;
 
-use nexus_core::app::{ModelPanel, ModelPickTarget, Popup};
-use nexus_core::config;
-use nexus_core::provider::local::{LocalConfig, LocalRuntime};
-use nexus_core::provider::{BackendTag, Model, openrouter::OpenRouter};
+use dugix_core::app::{ModelPanel, ModelPickTarget, Popup};
+use dugix_core::config;
+use dugix_core::provider::local::{LocalConfig, LocalRuntime};
+use dugix_core::provider::{BackendTag, Model, openrouter::OpenRouter};
 
 use crate::app_view::AppView;
 
@@ -77,7 +77,7 @@ impl AppView {
     }
 
     pub fn move_login_selection(&mut self, delta: i32) {
-        self.login_selected = nexus_core::app::clamp_cursor(
+        self.login_selected = dugix_core::app::clamp_cursor(
             self.login_selected,
             crate::ui::popups::login::LOGIN_ORDER.len(),
             delta,
@@ -122,7 +122,7 @@ impl AppView {
     }
 
     pub fn move_local_selection(&mut self, delta: i32) {
-        self.local_selected = nexus_core::app::clamp_cursor(
+        self.local_selected = dugix_core::app::clamp_cursor(
             self.local_selected,
             crate::ui::popups::local::ROW_COUNT,
             delta,
@@ -206,7 +206,7 @@ impl AppView {
             .filter(|m| {
                 self.core
                     .favorites
-                    .contains(&nexus_core::app::composite_id(m))
+                    .contains(&dugix_core::app::composite_id(m))
                     == want_fav
             })
             .filter(|m| {
@@ -217,8 +217,8 @@ impl AppView {
             .collect();
         out.sort_by(|a, b| {
             let (ca, cb) = (
-                nexus_core::app::composite_id(a),
-                nexus_core::app::composite_id(b),
+                dugix_core::app::composite_id(a),
+                dugix_core::app::composite_id(b),
             );
             let ra = self.core.last_used.get(&ca).cloned().unwrap_or_default();
             let rb = self.core.last_used.get(&cb).cloned().unwrap_or_default();
@@ -247,7 +247,7 @@ impl AppView {
             ModelPanel::Favorites => self.favorite_models(),
             ModelPanel::Available => self.available_models(),
         };
-        list.get(index).map(|m| nexus_core::app::composite_id(m))
+        list.get(index).map(|m| dugix_core::app::composite_id(m))
     }
 
     /// Cycles catalog effort tiers, using explicit `none` to override provider reasoning defaults.
@@ -260,13 +260,13 @@ impl AppView {
             .core
             .models
             .iter()
-            .find(|m| nexus_core::app::composite_id(m) == id)
+            .find(|m| dugix_core::app::composite_id(m) == id)
             .map(|m| m.reasoning_efforts.clone())
             .unwrap_or_default();
         let enabled: Vec<_> = efforts
             .iter()
             .copied()
-            .filter(|effort| *effort != nexus_core::provider::ReasoningEffort::None)
+            .filter(|effort| *effort != dugix_core::provider::ReasoningEffort::None)
             .collect();
         if enabled.is_empty() {
             if self.core.reasoning.contains_key(&id) {
@@ -283,17 +283,17 @@ impl AppView {
         let pos = stored.and_then(|s| enabled.iter().position(|e| e.as_str() == s));
         let next = match pos {
             Some(i) if i + 1 < enabled.len() => Some(enabled[i + 1]),
-            Some(_) if efforts.contains(&nexus_core::provider::ReasoningEffort::None) => {
-                Some(nexus_core::provider::ReasoningEffort::None)
+            Some(_) if efforts.contains(&dugix_core::provider::ReasoningEffort::None) => {
+                Some(dugix_core::provider::ReasoningEffort::None)
             }
             Some(_) => None,
             None => Some(enabled[0]),
         };
-        let next = next.map(nexus_core::provider::ReasoningEffort::as_str);
+        let next = next.map(dugix_core::provider::ReasoningEffort::as_str);
         let accepted = efforts
             .iter()
             .map(|effort| {
-                if *effort == nexus_core::provider::ReasoningEffort::None {
+                if *effort == dugix_core::provider::ReasoningEffort::None {
                     "off"
                 } else {
                     effort.as_str()
@@ -329,7 +329,7 @@ impl AppView {
             .core
             .models
             .iter()
-            .find(|m| nexus_core::app::composite_id(m) == id)?
+            .find(|m| dugix_core::app::composite_id(m) == id)?
             .reasoning_efforts
             .as_slice();
         if efforts.is_empty() {
@@ -340,7 +340,7 @@ impl AppView {
             efforts
                 .iter()
                 .map(|effort| {
-                    if *effort == nexus_core::provider::ReasoningEffort::None {
+                    if *effort == dugix_core::provider::ReasoningEffort::None {
                         "off"
                     } else {
                         effort.as_str()
@@ -420,7 +420,7 @@ impl AppView {
     pub fn pick_model(&mut self, id: &str) -> Result<()> {
         let target = self.core.model_pick_target;
         self.core.pick_model(id)?;
-        self.popup = nexus_core::app::App::popup_after_pick(target);
+        self.popup = dugix_core::app::App::popup_after_pick(target);
         Ok(())
     }
 }
@@ -428,14 +428,14 @@ impl AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_core::app::App;
-    use nexus_core::db::Db;
-    use nexus_core::provider::{BackendTag, Model};
-    use nexus_core::space::Space;
+    use dugix_core::app::App;
+    use dugix_core::db::Db;
+    use dugix_core::provider::{BackendTag, Model};
+    use dugix_core::space::Space;
 
     fn test_space() -> Space {
         Space {
-            root: std::env::temp_dir().join(format!("nexus-flow-test-{}", uuid::Uuid::new_v4())),
+            root: std::env::temp_dir().join(format!("dugix-flow-test-{}", uuid::Uuid::new_v4())),
         }
     }
 
@@ -479,7 +479,7 @@ mod tests {
             Model {
                 id: "xhigh-model".into(),
                 name: "X".into(),
-                reasoning_efforts: nexus_core::provider::ReasoningEffort::WITH_XHIGH_AND_NONE
+                reasoning_efforts: dugix_core::provider::ReasoningEffort::WITH_XHIGH_AND_NONE
                     .to_vec(),
                 context_length: None,
                 supports_images: false,
@@ -546,7 +546,7 @@ mod tests {
         a.core.models = vec![Model {
             id: "anthropic/claude-sonnet-4.5".into(),
             name: "Sonnet".into(),
-            reasoning_efforts: nexus_core::provider::ReasoningEffort::WITH_MINIMAL.to_vec(),
+            reasoning_efforts: dugix_core::provider::ReasoningEffort::WITH_MINIMAL.to_vec(),
             context_length: Some(1000),
             supports_images: false,
             supports_image_generation: false,
@@ -578,7 +578,7 @@ mod tests {
         a.core.models = vec![Model {
             id: "r/model".into(),
             name: "R".into(),
-            reasoning_efforts: nexus_core::provider::ReasoningEffort::STANDARD.to_vec(),
+            reasoning_efforts: dugix_core::provider::ReasoningEffort::STANDARD.to_vec(),
             context_length: Some(1000),
             supports_images: false,
             supports_image_generation: false,
@@ -612,7 +612,7 @@ mod tests {
         a.core.models = vec![Model {
             id: "claude".into(),
             name: "C".into(),
-            reasoning_efforts: nexus_core::provider::ReasoningEffort::WITH_MINIMAL.to_vec(),
+            reasoning_efforts: dugix_core::provider::ReasoningEffort::WITH_MINIMAL.to_vec(),
             context_length: None,
             supports_images: false,
             supports_image_generation: false,

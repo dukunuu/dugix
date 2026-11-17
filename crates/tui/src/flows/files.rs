@@ -8,8 +8,8 @@ use anyhow::Result;
 
 use std::path::PathBuf;
 
-use nexus_core::app::{FilesMode, FilesTab, Popup};
-use nexus_core::filesearch;
+use dugix_core::app::{FilesMode, FilesTab, Popup};
+use dugix_core::filesearch;
 
 use crate::app_view::AppView;
 
@@ -78,7 +78,7 @@ impl AppView {
 
     pub fn move_picker_selection(&mut self, delta: i32) {
         self.picker_selected =
-            nexus_core::app::clamp_cursor(self.picker_selected, self.picker_results.len(), delta);
+            dugix_core::app::clamp_cursor(self.picker_selected, self.picker_results.len(), delta);
     }
 
     pub fn picker_push(&mut self, c: char) {
@@ -231,14 +231,14 @@ impl AppView {
             .join(&f.name);
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         if ext == "md" {
-            self.pending_editor = Some(nexus_core::app::PendingEditor::ScriptFile(path));
+            self.pending_editor = Some(dugix_core::app::PendingEditor::ScriptFile(path));
         } else if crate::image_viewer::is_image_extension(ext) {
             self.open_image_target(
                 &path.to_string_lossy(),
                 &crate::image_viewer::Anchor::ByTarget,
                 crate::image_viewer::Return::Files,
             );
-            if self.popup == nexus_core::app::Popup::ImageViewer {
+            if self.popup == dugix_core::app::Popup::ImageViewer {
                 return;
             }
         } else {
@@ -251,13 +251,13 @@ impl AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_core::app::App;
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
+    use dugix_core::app::App;
+    use dugix_core::db::Db;
+    use dugix_core::space::Space;
 
     fn test_space() -> Space {
         Space {
-            root: std::env::temp_dir().join(format!("nexus-files-flow-{}", uuid::Uuid::new_v4())),
+            root: std::env::temp_dir().join(format!("dugix-files-flow-{}", uuid::Uuid::new_v4())),
         }
     }
 
@@ -276,14 +276,14 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("seen.txt"), "content").unwrap();
         a.run_command("files").unwrap();
-        assert_eq!(a.popup, nexus_core::app::Popup::Files);
+        assert_eq!(a.popup, dugix_core::app::Popup::Files);
         assert_eq!(a.core.caches.files.len(), 1);
-        assert!(a.files_mode == nexus_core::app::FilesMode::Browse);
+        assert!(a.files_mode == dugix_core::app::FilesMode::Browse);
     }
     /// A picker whose home is a temp folder holding `files`.
     fn picker_app(files: &[&str]) -> (AppView, PathBuf) {
         let mut a = test_app();
-        let home = std::env::temp_dir().join(format!("nexus-pick-{}", uuid::Uuid::new_v4()));
+        let home = std::env::temp_dir().join(format!("dugix-pick-{}", uuid::Uuid::new_v4()));
         for file in files {
             let path = home.join(file);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn ctrl_n_imports_what_the_open_panel_picks_or_falls_back_to_the_picker() {
-        use nexus_core::canvas::dialogs::Scripted;
+        use dugix_core::canvas::dialogs::Scripted;
         let (mut a, home) = picker_app(&["a.txt", "b.txt"]);
         let picked = a.picker_home.join("a.txt");
         a.dialogs = Box::new(Scripted::new([Some(picked)]));

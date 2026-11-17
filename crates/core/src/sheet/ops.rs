@@ -393,7 +393,7 @@ fn step(sheet: &mut Sheet, op: &Op, resolver: Option<&Resolver<'_>>) -> Result<(
             let slug = design
                 .as_deref()
                 .or(sheet.design.as_deref())
-                .unwrap_or("nexus")
+                .unwrap_or("dugix")
                 .to_string();
             let design = resolve(&slug, resolver)?;
             sheet.theme = crate::doc::Theme::from_design(&design);

@@ -107,7 +107,7 @@ mod procs_tests {
 
     #[tokio::test]
     async fn headless_ask_cleans_up_even_on_error_and_allows_another_turn() {
-        let root = std::env::temp_dir().join(format!("nexus-procs-ask-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-procs-ask-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let mut app = App::new(
             Db::open_in_memory().unwrap(),
@@ -124,7 +124,7 @@ mod procs_tests {
                 .action(
                     Context {
                         workspace: &workspace,
-                        db_path: Some(&root.join("nexus.db")),
+                        db_path: Some(&root.join("dugix.db")),
                         confinement: None,
                         session_id: "session",
                         allow_unparseable: false,
@@ -168,7 +168,7 @@ mod procs_tests {
     #[tokio::test]
     async fn processes_survive_new_switches_and_toolbox_refreshes() {
         let root =
-            std::env::temp_dir().join(format!("nexus-procs-sessions-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("dugix-procs-sessions-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let data = root.join("data");
         let workspace_root = root.join("workspace");
@@ -194,7 +194,7 @@ mod procs_tests {
                 .action(
                     Context {
                         workspace: &workspace,
-                        db_path: Some(&root.join("nexus.db")),
+                        db_path: Some(&root.join("dugix.db")),
                         confinement: None,
                         session_id: session,
                         allow_unparseable: false,

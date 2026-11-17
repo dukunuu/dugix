@@ -3,13 +3,13 @@
 Run these manually against a real backend before shipping prompt or tool changes:
 
 ```sh
-nexus eval                              # ./evals, most recently used model
-nexus eval ./evals --model MODEL
-nexus eval ./evals --filter scripts --json
-nexus eval --set experiments.mask_tool_results=true
-nexus eval --set experiments.mask_tool_results=true --set experiments.mask_keep_rounds=5 --compare
-nexus eval --model MODEL --set experiments.cache_ttl_1h=true --compare --json
-nexus eval --compare-model anthropic/claude-sonnet-4.5 typesafe/jev-router
+dugix eval                              # ./evals, most recently used model
+dugix eval ./evals --model MODEL
+dugix eval ./evals --filter scripts --json
+dugix eval --set experiments.mask_tool_results=true
+dugix eval --set experiments.mask_tool_results=true --set experiments.mask_keep_rounds=5 --compare
+dugix eval --model MODEL --set experiments.cache_ttl_1h=true --compare --json
+dugix eval --compare-model anthropic/claude-sonnet-4.5 typesafe/jev-router
 ```
 
 Keys and network access are required. **This costs real tokens and money.**
@@ -43,7 +43,7 @@ comparison table with columns and totals labeled by model; `--json` emits both
 runs as `baseline` (A) and `variant` (B), including their model ids and deltas.
 
 Router ids such as `typesafe/jev-router` and `openrouter/auto` are normal session
-model choices, not automatic per-step switches by nexus. Routers can choose a
+model choices, not automatic per-step switches by dugix. Routers can choose a
 different underlying model per request, making prompt caching less effective;
 the routing evidence is single-turn only. **Use a router for a session only if
 its cost per passed task (total cost divided by passes) beats the fixed model

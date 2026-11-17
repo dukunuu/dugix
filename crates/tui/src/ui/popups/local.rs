@@ -9,8 +9,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{ListItem, ListState};
 
-use nexus_core::provider::local::{LocalConfig, LocalRuntime};
-use nexus_core::provider::serve::{RuntimeStatus, format_kb};
+use dugix_core::provider::local::{LocalConfig, LocalRuntime};
+use dugix_core::provider::serve::{RuntimeStatus, format_kb};
 
 use crate::app_view::AppView;
 
@@ -200,8 +200,8 @@ pub fn render(f: &mut Frame, app: &AppView) {
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) {
     match key.code {
-        KeyCode::Esc if app.local_from_login => app.popup = nexus_core::app::Popup::Login,
-        KeyCode::Esc => app.popup = nexus_core::app::Popup::None,
+        KeyCode::Esc if app.local_from_login => app.popup = dugix_core::app::Popup::Login,
+        KeyCode::Esc => app.popup = dugix_core::app::Popup::None,
         KeyCode::Up => app.move_local_selection(-1),
         KeyCode::Down => app.move_local_selection(1),
         KeyCode::Char('k') if !super::is_chord(key) => app.move_local_selection(-1),

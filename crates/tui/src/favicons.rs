@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use nexus_core::remote_image::Status;
+use dugix_core::remote_image::Status;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Rect, Size};
 use ratatui::style::{Color, Modifier};
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn ready_icons_color_their_badge_without_graphics() {
-        let dir = std::env::temp_dir().join(format!("nexus-favicon-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-favicon-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("icon.png");
         image::RgbaImage::from_fn(4, 4, |x, _| {

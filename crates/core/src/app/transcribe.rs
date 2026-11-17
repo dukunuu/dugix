@@ -70,7 +70,7 @@ impl super::App {
         let (dir, filename) = if self.incognito {
             let d = self.incognito_img_dir.get_or_insert_with(|| {
                 let p =
-                    std::env::temp_dir().join(format!("nexus-incognito-{}", uuid::Uuid::new_v4()));
+                    std::env::temp_dir().join(format!("dugix-incognito-{}", uuid::Uuid::new_v4()));
                 let _ = std::fs::create_dir_all(&p);
                 p
             });
@@ -126,14 +126,14 @@ mod tests {
 
     #[test]
     fn image_references_only_send_real_images_judged_by_content() {
-        let dir = std::env::temp_dir().join(format!("nexus-imgref-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-imgref-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join("sub")).unwrap();
         let png = encode_png(1, 1, &[0, 0, 0, 255]).unwrap();
         std::fs::write(dir.join("real.png"), &png).unwrap();
         std::fs::write(dir.join("sub/renamed.dat"), &png).unwrap();
         std::fs::write(dir.join("fake.png"), b"%PDF-1.4 not an image").unwrap();
         std::fs::write(dir.join("notes.png"), b"just text").unwrap();
-        std::fs::write(dir.join("../nexus-imgref-outside.png"), &png).unwrap();
+        std::fs::write(dir.join("../dugix-imgref-outside.png"), &png).unwrap();
 
         assert!(
             image_ref_data_url(&dir, "real.png")
@@ -144,9 +144,9 @@ mod tests {
         assert!(image_ref_data_url(&dir, "fake.png").is_none());
         assert!(image_ref_data_url(&dir, "notes.png").is_none());
         assert!(image_ref_data_url(&dir, "missing.png").is_none());
-        assert!(image_ref_data_url(&dir, "../nexus-imgref-outside.png").is_none());
+        assert!(image_ref_data_url(&dir, "../dugix-imgref-outside.png").is_none());
         assert!(image_ref_data_url(&dir, "/etc/hosts").is_none());
-        let _ = std::fs::remove_file(dir.join("../nexus-imgref-outside.png"));
+        let _ = std::fs::remove_file(dir.join("../dugix-imgref-outside.png"));
 
         let result = "![a](fake.png) ![b](notes.png)";
         assert!(crate::provider::openrouter::extract_tool_images(result, &dir).is_none());

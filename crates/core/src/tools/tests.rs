@@ -65,7 +65,7 @@ async fn auto_records_reported_wave_cost_only_on_the_first_row_and_never_in_inco
         body["usage"] = json!({"cost": cost});
         let (provider, handle) = server(200, body.to_string(), Duration::ZERO, 1).await;
         let (mut toolbox, dir) = fs_toolbox();
-        let db_path = dir.join("nexus.db");
+        let db_path = dir.join("dugix.db");
         let db = crate::db::Db::open(&db_path).unwrap();
         toolbox.db_path = Some(db_path);
         toolbox.record_events = record;
@@ -153,7 +153,7 @@ async fn auto_rules_allow_writes_without_prompts_but_plain_agent_still_asks() {
 #[tokio::test]
 async fn auto_decides_a_wave_once_and_logs_scrubbed_answers() {
     let (mut toolbox, dir) = fs_toolbox();
-    let db_path = dir.join("nexus.db");
+    let db_path = dir.join("dugix.db");
     let db = crate::db::Db::open(&db_path).unwrap();
     toolbox.db_path = Some(db_path);
     toolbox.record_events = true;
@@ -267,7 +267,7 @@ async fn auto_allowlisted_shell_prompts_when_confinement_is_unavailable() {
 #[tokio::test]
 async fn auto_shell_policy_denies_downloads_and_records_prompt_denials() {
     let (mut toolbox, dir) = fs_toolbox();
-    let db_path = dir.join("nexus.db");
+    let db_path = dir.join("dugix.db");
     let db = crate::db::Db::open(&db_path).unwrap();
     toolbox.db_path = Some(db_path);
     toolbox.require_approval = true;
@@ -344,7 +344,7 @@ async fn auto_allowlisted_shell_runs_confined_but_user_approved_shell_is_unconfi
         .map(Path::new)
         .find(|path| !path.starts_with(&temp))
         .unwrap();
-    let outside_dir = outside_parent.join(format!("nexus-auto-outside-{}", uuid::Uuid::new_v4()));
+    let outside_dir = outside_parent.join(format!("dugix-auto-outside-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&outside_dir).unwrap();
     let outside = outside_dir.join("outside");
     std::fs::write(
@@ -627,7 +627,7 @@ async fn shell_approval_explains_unparseable_input_but_never_allows_escalation()
 #[tokio::test]
 async fn unparseable_shell_runs_only_with_permission_for_that_call() {
     let (mut toolbox, dir) = fs_toolbox();
-    toolbox.db_path = Some(dir.join("nexus.db"));
+    toolbox.db_path = Some(dir.join("dugix.db"));
     let path = toolbox.workspace.as_ref().unwrap().root().join("approved");
     let args = json!({
         "action": "run",
@@ -799,7 +799,7 @@ async fn workspace_shell_log_remains_readable_without_approval() {
     let runs = dir.join("runs");
     std::fs::create_dir_all(&runs).unwrap();
     std::fs::write(runs.join("0123456789ab.log"), "saved output\n").unwrap();
-    toolbox.db_path = Some(dir.join("nexus.db"));
+    toolbox.db_path = Some(dir.join("dugix.db"));
     let (result, status) = toolbox
         .run("shell", r#"{"action":"log","id":"0123456789ab"}"#)
         .await;
@@ -1686,7 +1686,7 @@ async fn fs_grep_skips_files_over_four_mib_and_reports_the_count() {
 async fn fs_walks_never_expose_symlink_escapes_or_denied_directories() {
     let (mut toolbox, dir) = fs_toolbox();
     let root = toolbox.workspace.as_ref().unwrap().root().to_path_buf();
-    let denied = root.join("nexus");
+    let denied = root.join("dugix");
     std::fs::create_dir_all(&denied).unwrap();
     std::fs::write(denied.join("secret.txt"), "needle").unwrap();
     std::fs::write(dir.join("outside.txt"), "needle").unwrap();
@@ -1711,7 +1711,7 @@ async fn fs_walks_never_expose_symlink_escapes_or_denied_directories() {
                 &json!({"action": action, "pattern": pattern}).to_string(),
             )
             .await;
-        assert!(!result.contains("nexus"), "{result}");
+        assert!(!result.contains("dugix"), "{result}");
         assert!(!result.contains("link.txt"), "{result}");
     }
     let workspace = toolbox.workspace.as_ref().unwrap();
@@ -1768,7 +1768,7 @@ fn head_tail_cap_is_unicode_safe_and_identity_when_it_fits() {
 
 #[test]
 fn compact_batch_and_app_keep_schemas_and_first_sentences() {
-    let dir = std::env::temp_dir().join(format!("nexus-compact-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-compact-{}", uuid::Uuid::new_v4()));
     let mut toolbox = ToolBox::new(
         dir.join("skills"),
         None,
@@ -1897,10 +1897,10 @@ fn classify_tool_result_kinds() {
 }
 
 fn tool_events_toolbox() -> (ToolBox, crate::db::Db) {
-    let dir = std::env::temp_dir().join(format!("nexus-tool-events-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-tool-events-{}", uuid::Uuid::new_v4()));
     let scripts = dir.join("scripts");
     std::fs::create_dir_all(&scripts).unwrap();
-    let path = dir.join("nexus.db");
+    let path = dir.join("dugix.db");
     let db = crate::db::Db::open(&path).unwrap();
     let mut tb = ToolBox::new(
         dir.join("skills"),
@@ -2020,23 +2020,23 @@ async fn run_cmd_env_never_passes_secrets() {
         &[],
         &std::env::temp_dir(),
         10,
-        &[("OPENROUTER_API_KEY", "leak"), ("NEXUS_KEEP", "1")],
+        &[("OPENROUTER_API_KEY", "leak"), ("DUGIX_KEEP", "1")],
     )
     .await
     .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("NEXUS_KEEP=1"));
+    assert!(stdout.contains("DUGIX_KEEP=1"));
     assert!(!stdout.contains("OPENROUTER_API_KEY"));
 }
 
 #[tokio::test]
 async fn search_sources_tool_only_appears_and_works_for_a_research_session_toolbox() {
-    let dir = std::env::temp_dir().join(format!("nexus-searchsrc-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-searchsrc-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     // Own directory: the attached sibling cache.db must not collide with
     // other tests' dbs, all of which live flat in the temp dir.
-    let path = dir.join("nexus.db");
+    let path = dir.join("dugix.db");
     let db = crate::db::Db::open(&path).unwrap();
     let space = db.default_space_id().unwrap();
     let s = db.create_session("t", "a/b", &space, "chat").unwrap();
@@ -2103,9 +2103,9 @@ async fn list_citations_reports_recorded_sources_and_filters_by_query() {
 
 #[tokio::test]
 async fn fetch_url_serves_from_cache_when_fresh() {
-    let dir = std::env::temp_dir().join(format!("nexus-webcache-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-webcache-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("nexus.db");
+    let path = dir.join("dugix.db");
     let db = crate::db::Db::open(&path).unwrap();
     let cached_body = "x".repeat(MAX_TOOL_RESULT_CHARS + 100);
     crate::db::cache_put(
@@ -2272,9 +2272,9 @@ fn format_discussion_hits_empty_both_yields_empty_string() {
 
 #[tokio::test]
 async fn discussion_search_serves_from_cache_when_fresh() {
-    let dir = std::env::temp_dir().join(format!("nexus-discache-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-discache-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("nexus.db");
+    let path = dir.join("dugix.db");
     let db = crate::db::Db::open(&path).unwrap();
     let cache_key = "discussion://rust performance";
     let cached_response =
@@ -2639,9 +2639,9 @@ fn parses_brave_html_result_card() {
 fn files_toolbox() -> (ToolBox, crate::db::Db, String) {
     // Own directory: the attached sibling cache.db must not collide with other
     // tests' dbs, all of which live flat in the temp dir.
-    let dir = std::env::temp_dir().join(format!("nexus-tools-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-tools-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("nexus.db");
+    let path = dir.join("dugix.db");
     let db = crate::db::Db::open(&path).unwrap();
     let space = db.default_space_id().unwrap();
     let id = db.upsert_file(&space, "report.md", "h", 1, "ok").unwrap();
@@ -2714,7 +2714,7 @@ async fn files_pdf_page_renders_missing_images_on_demand() {
             &tb.space_files_dir,
             name,
             1,
-            "nexus-definitely-not-a-binary",
+            "dugix-definitely-not-a-binary",
         )
         .await;
         assert_eq!(cached, out);
@@ -2735,18 +2735,18 @@ async fn files_pdf_page_reports_missing_tools_and_checks_known_pdfs() {
     let ctx = tb.files.as_ref().unwrap();
     let dir = ctx.db_path.parent().unwrap().join("pages");
     let result =
-        files::read_pdf_page(ctx, &dir, "scan.pdf", 1, "nexus-definitely-not-a-binary").await;
+        files::read_pdf_page(ctx, &dir, "scan.pdf", 1, "dugix-definitely-not-a-binary").await;
     assert_eq!(
         result,
         "pdftoppm is not installed — install poppler to view PDF pages"
     );
     assert!(!dir.join("scan/page-1.png").exists());
     assert_eq!(
-        files::read_pdf_page(ctx, &dir, "unknown.pdf", 1, "nexus-definitely-not-a-binary").await,
+        files::read_pdf_page(ctx, &dir, "unknown.pdf", 1, "dugix-definitely-not-a-binary").await,
         "unknown file: unknown.pdf"
     );
     assert_eq!(
-        files::read_pdf_page(ctx, &dir, "report.md", 1, "nexus-definitely-not-a-binary").await,
+        files::read_pdf_page(ctx, &dir, "report.md", 1, "dugix-definitely-not-a-binary").await,
         "not a PDF: report.md"
     );
 }
@@ -2784,7 +2784,7 @@ async fn files_read_explains_a_file_that_has_no_readable_text() {
 }
 
 fn skills_toolbox() -> (ToolBox, PathBuf) {
-    let dir = std::env::temp_dir().join(format!("nexus-skills-tb-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-skills-tb-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(dir.join("t")).unwrap();
     std::fs::write(
         dir.join("t/SKILL.md"),
@@ -3019,7 +3019,7 @@ async fn write_script_allows_new_nested_path_and_inner_symlink() {
 
 #[tokio::test]
 async fn run_python_persists_and_runs() {
-    let dir = std::env::temp_dir().join(format!("nexus-py-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-py-{}", uuid::Uuid::new_v4()));
     let scripts_dir = dir.join("scripts");
     let mut tb = ToolBox::new(
         dir.join("skills"),
@@ -3684,9 +3684,9 @@ async fn embedded_space(
     embedder: &crate::provider::embedding::Embedder,
 ) -> (FilesCtx, crate::db::Db) {
     use crate::provider::embedding::EmbedInput;
-    let dir = std::env::temp_dir().join(format!("nexus-tools-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-tools-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("nexus.db");
+    let path = dir.join("dugix.db");
     let db = crate::db::Db::open(&path).unwrap();
     let space = db.default_space_id().unwrap();
     embedder.prepare().await.unwrap();
@@ -3828,7 +3828,7 @@ async fn read_file_is_ranged_and_capped() {
 }
 
 fn apps_toolbox() -> (ToolBox, PathBuf) {
-    let dir = std::env::temp_dir().join(format!("nexus-apps-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-apps-{}", uuid::Uuid::new_v4()));
     let registry = crate::appserver::AppRegistry::load(&PathBuf::from("/tmp"));
     let tb = ToolBox::new(
         PathBuf::new(),
@@ -3867,7 +3867,7 @@ async fn files_list_names_imported_files() {
 #[tokio::test]
 async fn app_list_returns_apps_with_uuid_urls() {
     let (_, db, space) = files_toolbox();
-    let dir = std::env::temp_dir().join(format!("nexus-apps-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-apps-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(dir.join("todo")).unwrap();
     std::fs::create_dir_all(dir.join("draft")).unwrap();
     let registry = crate::appserver::AppRegistry::load(&dir);
@@ -4315,7 +4315,7 @@ async fn research_toolbox_refuses_to_run_other_tools() {
 
 #[tokio::test]
 async fn cache_only_toolbox_returns_not_cached_marker_on_miss_without_network() {
-    let dir = std::env::temp_dir().join(format!("nexus-cacheonly-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-cacheonly-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let db_path = dir.join("db.sqlite3");
     // Only cache_get/cache_put's table is needed here; the miss path must never
@@ -4785,7 +4785,7 @@ async fn wave_decisions_allow_deny_or_review_every_call_before_running() {
     ] {
         let (mut toolbox, dir) = fs_toolbox();
         toolbox.require_approval = true;
-        toolbox.db_path = Some(dir.join("nexus.db"));
+        toolbox.db_path = Some(dir.join("dugix.db"));
         let approver = WaveApprover::new(decision, Decision::Allow);
         toolbox.approver = Some(approver.clone());
         let calls = editable_wave(&toolbox).await;
@@ -4871,7 +4871,7 @@ async fn single_gated_call_uses_the_original_prompt_and_default_approvers_review
 async fn stale_edits_blocked_escalation_and_bad_args_are_not_in_the_wave_prompt() {
     let (mut toolbox, dir) = fs_toolbox();
     toolbox.require_approval = true;
-    toolbox.db_path = Some(dir.join("nexus.db"));
+    toolbox.db_path = Some(dir.join("dugix.db"));
     let approver = WaveApprover::new(WaveDecision::AllowAll, Decision::Allow);
     toolbox.approver = Some(approver.clone());
     let mut calls = editable_wave(&toolbox).await;
@@ -4935,7 +4935,7 @@ async fn approved_calls_still_check_staleness_escalation_and_confinement() {
 async fn unparseable_shell_is_reviewed_separately_even_with_an_approved_gate() {
     let (mut toolbox, dir) = fs_toolbox();
     toolbox.require_approval = true;
-    toolbox.db_path = Some(dir.join("nexus.db"));
+    toolbox.db_path = Some(dir.join("dugix.db"));
     let approver = WaveApprover::new(WaveDecision::AllowAll, Decision::Deny);
     toolbox.approver = Some(approver.clone());
     let mut calls = editable_wave(&toolbox).await;
@@ -4966,7 +4966,7 @@ async fn unparseable_shell_is_reviewed_separately_even_with_an_approved_gate() {
 async fn remembered_wave_kinds_allow_a_later_response_without_another_prompt() {
     let (mut toolbox, dir) = fs_toolbox();
     toolbox.require_approval = true;
-    toolbox.db_path = Some(dir.join("nexus.db"));
+    toolbox.db_path = Some(dir.join("dugix.db"));
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
     toolbox.approver = Some(Arc::new(crate::app::ChannelApprover::new(sender)));
     let calls = editable_wave(&toolbox).await;

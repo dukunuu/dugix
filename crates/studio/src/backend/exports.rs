@@ -26,7 +26,7 @@ impl Backend {
         format: deck::export::Format,
         template: Option<&str>,
     ) -> Result<deck::export::Export> {
-        nexus_core::design::template::export_deck(
+        dugix_core::design::template::export_deck(
             deck,
             Some(&asset_root(path)?),
             &self.files_dir,
@@ -75,7 +75,7 @@ mod tests {
 
     #[test]
     fn export_defaults_uniquifies_and_returns_warnings_without_changing_deck() {
-        let temp = std::env::temp_dir().join(format!("nexus-export-{}", uuid::Uuid::new_v4()));
+        let temp = std::env::temp_dir().join(format!("dugix-export-{}", uuid::Uuid::new_v4()));
         let mut backend = Backend::start(None, &temp.join("files"), &temp.join("data")).unwrap();
         let before = backend.deck.clone();
         let mut paths = Vec::new();

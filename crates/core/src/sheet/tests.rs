@@ -441,7 +441,7 @@ fn read_helpers_show_formulas_values_and_bounded_omissions() {
 struct Temp(std::path::PathBuf);
 impl Temp {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!("nexus-sheet-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("dugix-sheet-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&path).unwrap();
         Self(path)
     }

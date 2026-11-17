@@ -464,7 +464,7 @@ impl App {
     pub fn compact_summary_path(&self) -> Option<std::path::PathBuf> {
         let session = self.session.as_ref()?;
         let summary = session.compact_summary.as_ref()?;
-        let path = std::env::temp_dir().join(format!("nexus-chat-compact-{}.md", session.id));
+        let path = std::env::temp_dir().join(format!("dugix-compact-{}.md", session.id));
         std::fs::write(&path, summary).ok()?;
         Some(path)
     }
@@ -569,7 +569,7 @@ mod tests {
     fn test_app() -> App {
         let db = Db::open_in_memory().unwrap();
         let root =
-            std::env::temp_dir().join(format!("nexus-compact-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("dugix-compact-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
         App::new(db, Some("k"), Space { root })
     }

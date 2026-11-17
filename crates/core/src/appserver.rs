@@ -713,7 +713,7 @@ mod tests {
     use super::*;
 
     fn setup() -> PathBuf {
-        let tmp = std::env::temp_dir().join(format!("nexus-appserver-{}", uuid::Uuid::new_v4()));
+        let tmp = std::env::temp_dir().join(format!("dugix-appserver-{}", uuid::Uuid::new_v4()));
         let app = tmp.join("default").join("apps").join("deck");
         std::fs::create_dir_all(&app).unwrap();
         std::fs::write(app.join("index.html"), "<h1>slides</h1>").unwrap();

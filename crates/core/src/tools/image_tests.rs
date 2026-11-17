@@ -183,8 +183,8 @@ async fn image_search_routes_and_survives_one_provider_failing() {
     assert_eq!(requests.len(), 4);
     for request in requests.iter() {
         let lower = request.to_ascii_lowercase();
-        assert!(lower.contains("user-agent: nexus-chat/"));
-        assert!(lower.contains("https://github.com/dukunuu/nexus-chat"));
+        assert!(lower.contains("user-agent: dugix/"));
+        assert!(lower.contains("https://github.com/dukunuu/dugix"));
         assert!(!lower.contains("authorization:") && !lower.contains("cookie:"));
     }
     assert!(

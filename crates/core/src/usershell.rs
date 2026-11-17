@@ -159,19 +159,19 @@ impl UserShell {
         private_write(names, b"").map_err(|e| e.to_string())?;
         let dump = match self.shell.file_name().and_then(|s| s.to_str()) {
             Some("bash") => {
-                r#"{ declare -f; alias -p; } >| "$NEXUS_DEFS"; { compgen -A function; compgen -A alias; } >| "$NEXUS_NAMES"; printf '%s' "$PATH" >| "$NEXUS_PATH""#
+                r#"{ declare -f; alias -p; } >| "$DUGIX_DEFS"; { compgen -A function; compgen -A alias; } >| "$DUGIX_NAMES"; printf '%s' "$PATH" >| "$DUGIX_PATH""#
             }
             Some("zsh") => {
-                r#"{ typeset -f; alias -L; typeset -p chpwd_functions 2>/dev/null; [[ -o extendedglob ]] && print 'setopt extendedglob'; [[ -o nullglob ]] && print 'setopt nullglob'; } >| "$NEXUS_DEFS"; printf '%s\n' ${(k)functions} ${(k)aliases} >| "$NEXUS_NAMES"; printf '%s' "$PATH" >| "$NEXUS_PATH""#
+                r#"{ typeset -f; alias -L; typeset -p chpwd_functions 2>/dev/null; [[ -o extendedglob ]] && print 'setopt extendedglob'; [[ -o nullglob ]] && print 'setopt nullglob'; } >| "$DUGIX_DEFS"; printf '%s\n' ${(k)functions} ${(k)aliases} >| "$DUGIX_NAMES"; printf '%s' "$PATH" >| "$DUGIX_PATH""#
             }
-            _ => r#"printf '%s' "$PATH" > "$NEXUS_PATH""#,
+            _ => r#"printf '%s' "$PATH" > "$DUGIX_PATH""#,
         };
         let mut command = tokio::process::Command::new(&self.shell);
         command
             .args(["-i", "-c", dump])
-            .env("NEXUS_DEFS", definitions)
-            .env("NEXUS_PATH", path)
-            .env("NEXUS_NAMES", names)
+            .env("DUGIX_DEFS", definitions)
+            .env("DUGIX_PATH", path)
+            .env("DUGIX_NAMES", names)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -220,7 +220,7 @@ impl UserShell {
             "cd"
         };
         format!(
-            "{aliases}{source}{cd} -- {} || exit\ntrap 'pwd -P > \"$NEXUS_CWD_FILE\"' EXIT\neval {}\nexit $?",
+            "{aliases}{source}{cd} -- {} || exit\ntrap 'pwd -P > \"$DUGIX_CWD_FILE\"' EXIT\neval {}\nexit $?",
             quote(&cwd.to_string_lossy()),
             quote(cmd)
         )
@@ -560,7 +560,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     fn temp() -> PathBuf {
-        let root = std::env::temp_dir().join(format!("nexus-shell-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-shell-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("home/bin")).unwrap();
         root
     }
@@ -574,7 +574,7 @@ mod tests {
     async fn bash_snapshot_restores_definitions_path_and_exit_status() {
         let root = temp();
         let home = root.join("home");
-        std::fs::write(home.join(".bashrc"), "echo startup-noise\nalias greet='printf alias-ok'\nnexus_fn() { printf function-ok; }\nexport PATH=\"$HOME/bin:$PATH\"\n").unwrap();
+        std::fs::write(home.join(".bashrc"), "echo startup-noise\nalias greet='printf alias-ok'\ndugix_fn() { printf function-ok; }\nexport PATH=\"$HOME/bin:$PATH\"\n").unwrap();
         script(&home.join("bin/addon"), "#!/bin/sh\nprintf path-ok\n");
         let setup = UserShell::build(
             "/bin/bash".into(),
@@ -585,7 +585,7 @@ mod tests {
         .await;
         assert_eq!(setup.warning, None);
         assert!(setup.names.contains(&"greet".into()));
-        assert!(setup.names.contains(&"nexus_fn".into()));
+        assert!(setup.names.contains(&"dugix_fn".into()));
         assert!(
             setup
                 .path
@@ -602,10 +602,10 @@ mod tests {
         let output = tokio::process::Command::new(&setup.shell)
             .args([
                 "-c",
-                &setup.wrapper("greet; nexus_fn; addon; exit 23", &home),
+                &setup.wrapper("greet; dugix_fn; addon; exit 23", &home),
             ])
             .env("HOME", &home)
-            .env("NEXUS_CWD_FILE", &cwd_file)
+            .env("DUGIX_CWD_FILE", &cwd_file)
             .output()
             .await
             .unwrap();
@@ -628,7 +628,7 @@ mod tests {
         app.interactive_ui = true;
         app.work_mode = crate::app::WorkMode::Agent;
         app.user_command.shell.set(setup).unwrap();
-        app.run_user_command("greet; nexus_fn; addon".into())
+        app.run_user_command("greet; dugix_fn; addon".into())
             .unwrap();
         loop {
             if matches!(
@@ -696,7 +696,7 @@ mod tests {
             .args(["-c", &setup.wrapper("greet; cd bin", &home)])
             .env("HOME", &home)
             .env("ZDOTDIR", &home)
-            .env("NEXUS_CWD_FILE", root.join("cwd"))
+            .env("DUGIX_CWD_FILE", root.join("cwd"))
             .output()
             .await
             .unwrap();
@@ -737,12 +737,12 @@ mod tests {
             std::fs::create_dir(root.join(name)).unwrap();
         }
         std::fs::write(root.join("file"), "").unwrap();
-        script(&root.join("home/bin/nexus-exec"), "#!/bin/sh\nexit 0\n");
+        script(&root.join("home/bin/dugix-exec"), "#!/bin/sh\nexit 0\n");
         let path = root.join("home/bin").to_string_lossy().into_owned();
         let local = |text: &str| {
             complete_local(
                 &path,
-                &["nexus-alias".into(), "_nexus-private".into()],
+                &["dugix-alias".into(), "_dugix-private".into()],
                 text,
                 text.len(),
                 &root,
@@ -750,7 +750,7 @@ mod tests {
             )
             .0
         };
-        assert_eq!(local("!nexus-").candidates, ["nexus-alias", "nexus-exec"]);
+        assert_eq!(local("!dugix-").candidates, ["dugix-alias", "dugix-exec"]);
         assert_eq!(local("!echo fo").candidates, ["folder/", "foo\\ bar/"]);
         assert_eq!(local("!echo 'foo b").candidates, ["foo\\ bar/"]);
         assert_eq!(local("!echo foo\\ b").candidates, ["foo\\ bar/"]);

@@ -543,7 +543,7 @@ const ART: &str = "\nart direction (sent once per session)\n\
 
 fn author(role: &Role) -> &'static str {
     if matches!(role, Role::Model) {
-        "nexus"
+        "dugix"
     } else {
         "user"
     }
@@ -1349,7 +1349,7 @@ impl ToolBox {
         );
         if entries.is_empty() {
             out.push_str(
-                "no earlier versions are kept yet; every write by nexus or studio from now on keeps the version it replaces\n",
+                "no earlier versions are kept yet; every write by dugix or studio from now on keeps the version it replaces\n",
             );
             return Ok(out);
         }
@@ -1646,7 +1646,7 @@ mod tests {
 
     impl Fixture {
         pub(super) fn new() -> Self {
-            let root = std::env::temp_dir().join(format!("nexus-deck-{}", uuid::Uuid::new_v4()));
+            let root = std::env::temp_dir().join(format!("dugix-deck-{}", uuid::Uuid::new_v4()));
             let mut tools = ToolBox::new(
                 root.join("skills"),
                 None,
@@ -1912,7 +1912,7 @@ mod tests {
         assert_eq!(feedback::load(&f.file(PATH)).unwrap()[0].messages.len(), 2);
         let read = f.run("read", json!({"path": PATH})).await;
         assert!(
-            read.contains("1 open") && read.contains("latest (nexus): Updated."),
+            read.contains("1 open") && read.contains("latest (dugix): Updated."),
             "{read}"
         );
 

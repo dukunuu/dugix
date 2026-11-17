@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn the_log_rotates_at_one_megabyte_and_masks_secrets() {
-        let dir = std::env::temp_dir().join(format!("nexus-conn-log-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-conn-log-{}", uuid::Uuid::new_v4()));
         let path = dir.join("logs").join("demo.log");
         let mut sink = LogSink::new(path.clone());
         sink.write("token=hunter2hunter2 ok", &["hunter2hunter2".to_string()]);

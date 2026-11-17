@@ -26,7 +26,7 @@ pub fn step(rows: &[usize], selected: usize, delta: i32) -> usize {
     let Some(at) = shown(rows, selected) else {
         return first;
     };
-    rows[nexus_core::app::clamp_cursor(at, rows.len(), delta)]
+    rows[dugix_core::app::clamp_cursor(at, rows.len(), delta)]
 }
 
 /// The selection after the filter text changed: the first match, or unchanged

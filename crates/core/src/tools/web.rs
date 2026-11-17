@@ -337,7 +337,7 @@ pub(super) async fn duckduckgo_search(
 ) -> anyhow::Result<Vec<SearchHit>> {
     let html = client
         .get(endpoint)
-        .header("User-Agent", "Mozilla/5.0 (compatible; nexus-chat)")
+        .header("User-Agent", "Mozilla/5.0 (compatible; dugix)")
         .query(&[("q", query)])
         .send()
         .await?
@@ -392,7 +392,7 @@ pub(super) async fn fetch_url_text(client: &reqwest::Client, url: &str) -> anyho
     }
     let resp = client
         .get(url)
-        .header("User-Agent", "Mozilla/5.0 (compatible; nexus-chat)")
+        .header("User-Agent", "Mozilla/5.0 (compatible; dugix)")
         .timeout(std::time::Duration::from_secs(30))
         .send()
         .await?
@@ -453,7 +453,7 @@ pub(super) async fn fetch_youtube_transcript(
 ) -> anyhow::Result<String> {
     let watch_html = client
         .get(url)
-        .header("User-Agent", "Mozilla/5.0 (compatible; nexus-chat)")
+        .header("User-Agent", "Mozilla/5.0 (compatible; dugix)")
         .timeout(std::time::Duration::from_secs(30))
         .send()
         .await?
@@ -775,9 +775,9 @@ pub(super) fn format_papers(papers: &[Paper]) -> String {
 
 pub(super) const SEARCH_TIMEOUT: Duration = Duration::from_secs(30);
 pub(super) const REDDIT_USER_AGENT: &str = concat!(
-    "nexus-chat/",
+    "dugix/",
     env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/dukunuu/nexus-chat)"
+    " (+https://github.com/dukunuu/dugix)"
 );
 pub(super) const REDDIT_RATE_LIMIT: &str =
     "Reddit is rate-limiting right now · try again in a minute";
@@ -1463,7 +1463,7 @@ pub(super) async fn image_provider(
     let request = client.get(endpoint).header(
         reqwest::header::USER_AGENT,
         concat!(
-            "nexus-chat/",
+            "dugix/",
             env!("CARGO_PKG_VERSION"),
             " (+",
             env!("CARGO_PKG_REPOSITORY"),

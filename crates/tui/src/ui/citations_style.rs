@@ -1,5 +1,5 @@
 //! Re-styles `[n]` citation markers and `‹low›`/`‹med›` confidence tags across
-//! already-rendered lines; the parsing half lives in `nexus_core::citations`.
+//! already-rendered lines; the parsing half lives in `dugix_core::citations`.
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};

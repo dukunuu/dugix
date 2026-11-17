@@ -114,9 +114,9 @@ fn stage_reply(system: &str, user: &str) -> String {
 
 /// Run research end to end against `reply`; the report and every request seen.
 async fn run_scripted(reply: fn(&str, &str) -> String) -> (String, Vec<(String, String)>) {
-    let root = std::env::temp_dir().join(format!("nexus-research-run-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-research-run-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
-    let db_path = root.join("nexus.db");
+    let db_path = root.join("dugix.db");
     drop(crate::db::Db::open(&db_path).unwrap());
     {
         // A page one searcher opened: the verifier must be handed its text.

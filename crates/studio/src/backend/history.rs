@@ -2,8 +2,8 @@
 //! a read-only preview of one, and restoring one as a new write.
 
 use anyhow::{Context as _, Result};
-use nexus_core::deck::{self, Deck, history};
-use nexus_core::doc::Doc;
+use dugix_core::deck::{self, Deck, history};
+use dugix_core::doc::Doc;
 use serde::Serialize;
 
 use super::{Backend, Event};
@@ -107,7 +107,7 @@ impl Backend {
         let entries = self.history_entries()?;
         let mut versions = Vec::with_capacity(entries.len());
         if let Some(session) = &self.sheet {
-            let loaded: Vec<Option<nexus_core::sheet::Sheet>> =
+            let loaded: Vec<Option<dugix_core::sheet::Sheet>> =
                 entries.iter().map(|e| e.load_for().ok()).collect();
             for (i, entry) in entries.iter().enumerate() {
                 let next = loaded
@@ -117,7 +117,7 @@ impl Backend {
                 let summary = loaded[i].as_ref().map_or_else(
                     || "unreadable version".into(),
                     |kept| {
-                        let count = nexus_core::sheet::read::changed_cells(kept, next).len();
+                        let count = dugix_core::sheet::read::changed_cells(kept, next).len();
                         if count == 0 && kept.title != next.title {
                             "Renamed it".into()
                         } else {
@@ -213,7 +213,7 @@ impl Backend {
         self.history_entry(id)?.load()
     }
 
-    pub(super) fn history_sheet(&self, id: &str) -> Result<nexus_core::sheet::Sheet> {
+    pub(super) fn history_sheet(&self, id: &str) -> Result<dugix_core::sheet::Sheet> {
         self.history_entry(id)?.load_for()
     }
 

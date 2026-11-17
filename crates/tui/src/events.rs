@@ -11,11 +11,11 @@ use tui_textarea::CursorMove;
 
 use crate::app_view::AppView;
 use crate::ui;
-use nexus_core::app::{AppCommand, AppEvent, ModelPanel, MouseTarget, Popup, WorkMode};
+use dugix_core::app::{AppCommand, AppEvent, ModelPanel, MouseTarget, Popup, WorkMode};
 
 fn edit_file_target(app: &AppView, key: &KeyEvent) -> Option<std::path::PathBuf> {
     if !(app.popup == Popup::Space
-        && app.space_mode == nexus_core::app::SpaceMode::Browse
+        && app.space_mode == dugix_core::app::SpaceMode::Browse
         && key.modifiers.contains(KeyModifiers::CONTROL)
         && key.code == KeyCode::Char('e'))
     {
@@ -26,7 +26,7 @@ fn edit_file_target(app: &AppView, key: &KeyEvent) -> Option<std::path::PathBuf>
 
 fn memory_edit_target(app: &AppView, key: &KeyEvent) -> Option<String> {
     (app.popup == Popup::Space
-        && app.space_mode == nexus_core::app::SpaceMode::Browse
+        && app.space_mode == dugix_core::app::SpaceMode::Browse
         && key.modifiers.contains(KeyModifiers::CONTROL)
         && key.code == KeyCode::Char('k'))
     .then(|| app.selected_space_name())
@@ -58,7 +58,7 @@ fn edit_memory_file(
 
 fn skill_edit_target(app: &AppView, key: &KeyEvent) -> Option<std::path::PathBuf> {
     if !(app.popup == Popup::Skills
-        && app.skills_mode == nexus_core::app::SkillsMode::Browse
+        && app.skills_mode == dugix_core::app::SkillsMode::Browse
         && key.modifiers.contains(KeyModifiers::CONTROL)
         && key.code == KeyCode::Char('e'))
     {
@@ -74,7 +74,7 @@ fn system_prompt_edit_target(app: &AppView, key: &KeyEvent) -> Option<std::path:
     {
         return None;
     }
-    nexus_core::config::system_prompt_path().ok()
+    dugix_core::config::system_prompt_path().ok()
 }
 
 pub fn run(
@@ -150,6 +150,8 @@ async fn run_loop(
         let images = std::sync::Arc::clone(&app.remote_images);
         let studio_wake = app.studio_wake();
         let studio_retry = app.studio.has_queued();
+        // Agents draw on their own clock; the board and an open terminal follow.
+        let fleet_live = app.popup == Popup::Fleet && app.fleet.live() > 0;
         tokio::select! {
             () = images.changed() => {}
             () = studio_wake.notified() => app.poll_studio(),
@@ -163,7 +165,8 @@ async fn run_loop(
             maybe = reader.next() => match maybe {
                 Some(Ok(Event::Key(k))) if k.kind == KeyEventKind::Press
                     || (k.kind == KeyEventKind::Repeat && app.popup == Popup::InteractiveUi
-                        && app.interactive.input_focused()) => {
+                        && app.interactive.input_focused())
+                    || (k.kind == KeyEventKind::Repeat && ui::popups::fleet::captures(app)) => {
                     // An action failure must not terminate unrelated in-flight streams.
                     if let Err(e) = on_key(app, terminal, k) {
                         app.push_status(format!("error: {e:#}"));
@@ -178,7 +181,9 @@ async fn run_loop(
                     }
                 }
                 Some(Ok(Event::Paste(text))) => {
-                    app.paste(&text);
+                    if !ui::popups::fleet::paste(app, &text) {
+                        app.paste(&text);
+                    }
                 }
                 Some(Ok(_)) => {}
                 Some(Err(e)) => return Err(e.into()),
@@ -186,7 +191,7 @@ async fn run_loop(
             },
             request = next_selection_request(&mut selection_requests) => {
                 if let Some(prompt) = request {
-                    if let Err(e) = app.execute(nexus_core::app::AppCommand::Send { text: prompt }) {
+                    if let Err(e) = app.execute(dugix_core::app::AppCommand::Send { text: prompt }) {
                         app.push_status(format!("error: {e:#}"));
                     }
                 } else {
@@ -303,6 +308,13 @@ async fn run_loop(
                 }
             } => crate::interactive::live::tick(app),
             () = async {
+                if fleet_live {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {}
+            () = async {
                 if animating {
                     tokio::time::sleep(std::time::Duration::from_millis(66)).await;
                 } else {
@@ -354,27 +366,27 @@ fn on_key(app: &mut AppView, terminal: &mut DefaultTerminal, k: KeyEvent) -> Res
         // External editors must run here because this loop owns terminal suspension.
         if let Some(edit) = app.pending_editor.take() {
             match edit {
-                nexus_core::app::PendingEditor::AppFile(path) => {
+                dugix_core::app::PendingEditor::AppFile(path) => {
                     if let Err(e) = edit_in_external_editor(terminal, &path) {
                         app.push_status(format!("editor failed: {e}"));
                     }
                 }
-                nexus_core::app::PendingEditor::Persona(path) => {
+                dugix_core::app::PendingEditor::Persona(path) => {
                     match edit_in_external_editor(terminal, &path) {
                         Ok(()) => app.apply_swarm_persona_editor(&path)?,
                         Err(e) => app.push_status(format!("editor failed: {e}")),
                     }
                 }
-                nexus_core::app::PendingEditor::ScriptFile(path) => {
+                dugix_core::app::PendingEditor::ScriptFile(path) => {
                     if let Err(e) = edit_in_external_editor(terminal, &path) {
                         app.push_status(format!("editor failed: {e}"));
                     }
                     app.refresh_scripts();
                 }
-                nexus_core::app::PendingEditor::Memory { space, path } => {
+                dugix_core::app::PendingEditor::Memory { space, path } => {
                     edit_memory_file(app, terminal, &space, &path);
                 }
-                nexus_core::app::PendingEditor::UserCommand(cmd) => {
+                dugix_core::app::PendingEditor::UserCommand(cmd) => {
                     let cwd = app.user_command_cwd();
                     let shell = std::sync::Arc::clone(&app.user_command.shell);
                     let data = app.space.root.clone();
@@ -392,6 +404,10 @@ fn on_key(app: &mut AppView, terminal: &mut DefaultTerminal, k: KeyEvent) -> Res
 }
 
 fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
+    // An attached fleet agent owns the keyboard, Ctrl+C and Ctrl+V included.
+    if ui::popups::fleet::captures(app) {
+        return ui::popups::fleet::handle_key(app, key);
+    }
     if key.modifiers.contains(KeyModifiers::CONTROL)
         && !key.modifiers.contains(KeyModifiers::SHIFT)
         && key.code == KeyCode::Char('c')
@@ -439,6 +455,7 @@ fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
         Popup::Jobs => ui::popups::jobs::handle_key(app, key)?,
         Popup::Harness => ui::popups::harness::handle_key(app, key)?,
         Popup::Procs => ui::popups::procs::handle_key(app, key)?,
+        Popup::Fleet => ui::popups::fleet::handle_key(app, key)?,
         Popup::Help => ui::popups::help::handle_key(app, key),
         Popup::ImageViewer => ui::popups::image_viewer::handle_key(app, key),
         Popup::Connectors => ui::popups::connectors::handle_key(app, key),
@@ -457,7 +474,7 @@ fn ctrl_c(app: &mut AppView) -> Result<()> {
     }
     if app.popup == Popup::Approval {
         return app.execute(AppCommand::Approve {
-            decision: nexus_core::tools::Decision::Deny,
+            decision: dugix_core::tools::Decision::Deny,
         });
     }
     if app.popup != Popup::None {
@@ -516,12 +533,12 @@ fn with_terminal_suspended<T>(
     Ok(result)
 }
 
-// Interactive input, including passwords, must go directly to the child rather than through Nexus.
+// Interactive input, including passwords, must go directly to the child rather than through Dugix.
 fn run_interactive_command(
     terminal: &mut DefaultTerminal,
     cmd: &str,
     cwd: &std::path::Path,
-    setup: Option<&nexus_core::usershell::UserShell>,
+    setup: Option<&dugix_core::usershell::UserShell>,
     data: &std::path::Path,
 ) -> Result<(Option<i32>, bool, Option<std::path::PathBuf>)> {
     let cwd_file = data.join(format!("shell-cwd-{}", uuid::Uuid::new_v4()));
@@ -530,7 +547,7 @@ fn run_interactive_command(
             let mut command = std::process::Command::new(&setup.shell);
             command
                 .args(["-c", &setup.wrapper(cmd, cwd)])
-                .env("NEXUS_CWD_FILE", &cwd_file);
+                .env("DUGIX_CWD_FILE", &cwd_file);
             command
         } else {
             let mut command = std::process::Command::new("sh");
@@ -540,8 +557,8 @@ fn run_interactive_command(
         let status = command.current_dir(cwd).status();
         let started = status.is_ok();
         let exit = status.ok().and_then(|status| status.code());
-        let outcome = nexus_core::app::user_command_outcome_label(exit, started);
-        print!("\n[{outcome}] press Enter to return to nexus");
+        let outcome = dugix_core::app::user_command_outcome_label(exit, started);
+        print!("\n[{outcome}] press Enter to return to dugix");
         let _ = std::io::Write::flush(&mut std::io::stdout());
         let _ = std::io::stdin().read_line(&mut String::new());
         (exit, started)
@@ -769,7 +786,7 @@ fn handle_normal(app: &mut AppView, key: KeyEvent) -> Result<()> {
                 && !app.queued_messages().is_empty() =>
         {
             app.execute(AppCommand::Queue {
-                action: nexus_core::app::QueueAction::Edit(None),
+                action: dugix_core::app::QueueAction::Edit(None),
             })?;
         }
         KeyCode::Up if !shift && !ctrl && app.shell_history_mode() => app.recall_prev(),
@@ -1062,12 +1079,12 @@ fn handle_mouse(app: &mut AppView, m: MouseEvent, screen: Rect) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_core::app::App;
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
+    use dugix_core::app::App;
+    use dugix_core::db::Db;
+    use dugix_core::space::Space;
 
     fn test_app() -> AppView {
-        let root = std::env::temp_dir().join(format!("nexus-events-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-events-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
         AppView::new(App::new(
             Db::open_in_memory().unwrap(),
@@ -1085,7 +1102,7 @@ mod tests {
         let mut app = test_app();
         let root = app.space.root.clone();
         let workspace =
-            std::env::temp_dir().join(format!("nexus-approval-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("dugix-approval-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&workspace).unwrap();
         app.run_command(&format!("agent {}", workspace.display()))
             .unwrap();
@@ -1140,7 +1157,7 @@ mod tests {
         let root = app.space.root.clone();
         let (sender, receiver) = tokio::sync::oneshot::channel();
         app.approvals.pending = Some(sender);
-        app.approvals.pending_request = Some(nexus_core::tools::ApprovalRequest {
+        app.approvals.pending_request = Some(dugix_core::tools::ApprovalRequest {
             tool: "shell".into(),
             class: None,
             detail: None,
@@ -1162,7 +1179,7 @@ mod tests {
 
     #[test]
     fn approval_keys_resolve_once_and_other_popups_cannot_replace_the_prompt() {
-        use nexus_core::tools::{ApprovalRequest, Decision};
+        use dugix_core::tools::{ApprovalRequest, Decision};
 
         let mut app = test_app();
         let root = app.space.root.clone();
@@ -1214,7 +1231,7 @@ mod tests {
         }
         app.user_command
             .shell
-            .set(nexus_core::usershell::UserShell {
+            .set(dugix_core::usershell::UserShell {
                 shell: "/bin/sh".into(),
                 snapshot: None,
                 path: String::new(),
@@ -1264,7 +1281,7 @@ mod tests {
         // Programs that need a terminal get it, rather than a captured run.
         assert!(matches!(
             app.pending_editor,
-            Some(nexus_core::app::PendingEditor::UserCommand(ref cmd)) if cmd == "ssh nowhere"
+            Some(dugix_core::app::PendingEditor::UserCommand(ref cmd)) if cmd == "ssh nowhere"
         ));
         assert!(app.session.is_none());
         std::fs::remove_dir_all(root).unwrap();
@@ -1298,7 +1315,7 @@ mod tests {
     async fn queued_messages_show_above_the_composer_and_up_takes_the_newest_back() {
         let mut app = test_app();
         let root = app.space.root.clone();
-        app.models = vec![nexus_core::provider::Model {
+        app.models = vec![dugix_core::provider::Model {
             id: "a/one".into(),
             name: "One".into(),
             reasoning_efforts: Vec::new(),
@@ -1306,7 +1323,7 @@ mod tests {
             supports_images: false,
             supports_image_generation: false,
             supports_video_generation: false,
-            backend: nexus_core::provider::BackendTag::OpenRouter,
+            backend: dugix_core::provider::BackendTag::OpenRouter,
             pricing: None,
             aliases: Vec::new(),
         }];
@@ -1397,7 +1414,7 @@ mod tests {
     #[test]
     fn shift_tab_toggles_work_mode_reusing_the_root_without_changing_the_draft() {
         let mut app = test_app();
-        let root = std::env::temp_dir().join(format!("nexus-toggle-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-toggle-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         app.execute(AppCommand::SetWorkMode {
             mode: WorkMode::Agent,
@@ -1433,9 +1450,9 @@ mod tests {
         let mut app = test_app();
         app.set_input("keep this draft");
         let source = include_str!("../../core/tests/fixtures/interactive/counter.json");
-        app.messages.push(nexus_core::db::Message {
+        app.messages.push(dugix_core::db::Message {
             role: "assistant".into(),
-            content: format!("```nexus-ui\n{source}\n```"),
+            content: format!("```dugix-ui\n{source}\n```"),
             model: None,
             reasoning: None,
             tokens: None,
@@ -1492,9 +1509,9 @@ mod tests {
         app.clipboard = None;
         app.set_input("keep this draft");
         let source = "root = Panel('Contact', [Input($name, 'Name'), Textarea($notes, 'Notes', 3)])\n$name = 'Ada'\n$notes = ''";
-        app.messages.push(nexus_core::db::Message {
+        app.messages.push(dugix_core::db::Message {
             role: "assistant".into(),
-            content: format!("```nexus-ui\n{source}\n```"),
+            content: format!("```dugix-ui\n{source}\n```"),
             model: None,
             reasoning: None,
             tokens: None,
@@ -1619,7 +1636,7 @@ mod tests {
     fn approval_docks_in_the_composer_and_leaves_the_conversation_readable() {
         let mut app = test_app();
         for n in 0..80 {
-            app.messages.push(nexus_core::db::Message {
+            app.messages.push(dugix_core::db::Message {
                 role: "user".into(),
                 content: format!("conversation line {n}"),
                 model: None,
@@ -1634,7 +1651,7 @@ mod tests {
         }
         let (sender, _receiver) = tokio::sync::oneshot::channel();
         app.approvals.pending = Some(sender);
-        app.approvals.pending_request = Some(nexus_core::tools::ApprovalRequest {
+        app.approvals.pending_request = Some(dugix_core::tools::ApprovalRequest {
             tool: "shell".into(),
             class: Some("runs a command".into()),
             detail: None,
@@ -1694,7 +1711,7 @@ mod tests {
         app.popup = Popup::None;
         app.clipboard = None;
         for path in ["first.rs", "second.rs"] {
-            app.messages.push(nexus_core::db::Message {
+            app.messages.push(dugix_core::db::Message {
                 role: "tool_call".into(),
                 content: serde_json::json!({
                     "name":"fs",
@@ -1773,7 +1790,7 @@ mod tests {
         assert!(app.batch_open.is_empty());
         assert_eq!(app.batch_focus, None);
         app.batch_open.insert((0, 1));
-        app.apply_event(&nexus_core::app::AppEvent::ViewportReset);
+        app.apply_event(&dugix_core::app::AppEvent::ViewportReset);
         assert!(app.batch_open.is_empty());
     }
 
@@ -2097,7 +2114,7 @@ mod tests {
         let mut app = test_app();
         app.core.models = ["a/alpha", "b/bravo", "c/charlie"]
             .iter()
-            .map(|id| nexus_core::provider::Model {
+            .map(|id| dugix_core::provider::Model {
                 id: (*id).into(),
                 name: (*id).into(),
                 reasoning_efforts: Vec::new(),
@@ -2105,7 +2122,7 @@ mod tests {
                 supports_images: false,
                 supports_image_generation: false,
                 supports_video_generation: false,
-                backend: nexus_core::provider::BackendTag::OpenRouter,
+                backend: dugix_core::provider::BackendTag::OpenRouter,
                 pricing: None,
                 aliases: Vec::new(),
             })
@@ -2153,7 +2170,7 @@ mod tests {
         let mut app = test_app();
         app.core.settings.image_viewer = "terminal".into();
         let dir =
-            std::env::temp_dir().join(format!("nexus-events-viewer-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("dugix-events-viewer-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("p.png");
         image::RgbImage::from_pixel(16, 8, image::Rgb([5, 6, 7]))
@@ -2327,9 +2344,9 @@ mod tests {
     fn vim_keys_edit_panel_fields_and_code_editors() {
         let mut app = test_app();
         let source = "root = Panel('Form', [Input($name, 'Name'), Editor($code, 'Solution', 'python', 3)])\n$name = 'Ada'\n$code = 'x = 1'";
-        app.messages.push(nexus_core::db::Message {
+        app.messages.push(dugix_core::db::Message {
             role: "assistant".into(),
-            content: format!("```nexus-ui\n{source}\n```"),
+            content: format!("```dugix-ui\n{source}\n```"),
             model: None,
             reasoning: None,
             tokens: None,
@@ -2401,7 +2418,7 @@ mod tests {
         let ctrl_up = KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL);
         handle_key(&mut app, ctrl_up).unwrap();
         assert_eq!(app.popup, Popup::None);
-        app.subagent_runs.push(nexus_core::app::SubagentRun {
+        app.subagent_runs.push(dugix_core::app::SubagentRun {
             id: "run".into(),
             session_id: session.id,
             number: 1,
@@ -2409,7 +2426,7 @@ mod tests {
             model: "m".into(),
             writable: false,
             max_steps: 20,
-            status: nexus_core::app::SubagentStatus::Running,
+            status: dugix_core::app::SubagentStatus::Running,
             started_at: "2026-11-08T00:00:00Z".into(),
             finished_at: None,
             steps: 0,

@@ -236,6 +236,9 @@ pub struct ToolBox {
     /// App-owned registry of background `task` runs; `None` where a run could
     /// not outlive its turn usefully (incognito, one-shot frontends, sub-agents).
     pub background: Option<Arc<crate::subagent::Background>>,
+    /// App-owned external agent CLIs; `None` where the process ends with the
+    /// reply, and for sub-agents.
+    pub fleet: Option<Arc<crate::fleet::Fleet>>,
     subagent_workspace: Option<bool>,
     pub(crate) subagent_environment: String,
     decision_parent: Option<Arc<Self>>,
@@ -1012,6 +1015,81 @@ pub(crate) async fn run_scheduled(
         .collect()
 }
 
+/// One fleet start: the CLI, its job, and its model.
+type FleetJob = (crate::fleet::Kind, String, Option<String>);
+
+/// The agents a fleet start asks for: `jobs`, or the call's own agent and prompt.
+fn fleet_jobs(args: &serde_json::Value) -> Result<Vec<FleetJob>, String> {
+    use crate::fleet::Kind;
+    let jobs: Vec<&serde_json::Value> = match args["jobs"].as_array() {
+        Some(jobs) if !jobs.is_empty() => jobs.iter().collect(),
+        _ => vec![args],
+    };
+    if jobs.len() > crate::fleet::MAX_LIVE {
+        return Err(format!("at most {} agents at once", crate::fleet::MAX_LIVE));
+    }
+    jobs.into_iter()
+        .map(|job| {
+            let agent = job["agent"].as_str().unwrap_or_default();
+            let kind = Kind::parse(agent).ok_or_else(|| {
+                format!(
+                    "unknown agent {agent:?} · one of {}",
+                    Kind::NAMES.join(", ")
+                )
+            })?;
+            let prompt = job["prompt"].as_str().unwrap_or_default().trim();
+            if prompt.is_empty() {
+                return Err(format!("the {agent} job needs a prompt"));
+            }
+            let model = job["model"]
+                .as_str()
+                .map(str::trim)
+                .filter(|m| !m.is_empty());
+            Ok((kind, prompt.to_string(), model.map(str::to_string)))
+        })
+        .collect()
+}
+
+/// The approval for starting `starts`: the agents in the summary, every
+/// job in full in the detail.
+fn fleet_request(starts: &[FleetJob], root: &std::path::Path, place: &str) -> ApprovalRequest {
+    let jobs: Vec<String> = starts
+        .iter()
+        .map(|(kind, prompt, model)| match model {
+            Some(model) => format!("{} on {model}: {prompt}", kind.name()),
+            None => format!("{}: {prompt}", kind.name()),
+        })
+        .collect();
+    let summary = match starts {
+        [(kind, prompt, _)] => format!(
+            "external agent ({}): {}",
+            kind.name(),
+            prompt.lines().next().unwrap_or_default()
+        ),
+        _ => format!(
+            "{} external agents: {}",
+            starts.len(),
+            starts
+                .iter()
+                .map(|(kind, ..)| kind.name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
+    ApprovalRequest {
+        tool: "fleet".into(),
+        class: None,
+        detail: Some(format!(
+            "in {}, {place}\n\n{}",
+            root.display(),
+            jobs.join("\n\n")
+        )),
+        action: "start".into(),
+        summary,
+        allow_session: false,
+    }
+}
+
 impl ToolBox {
     /// Kept flat because many test call sites pass inline defaults.
     #[allow(clippy::too_many_arguments)]
@@ -1039,6 +1117,7 @@ impl ToolBox {
             subagents: None,
             offer_workspace_tools: false,
             background: None,
+            fleet: None,
             subagent_workspace: None,
             subagent_environment: String::new(),
             decision_parent: None,
@@ -1125,6 +1204,7 @@ impl ToolBox {
             subagents: self.subagents.clone(),
             offer_workspace_tools: self.offer_workspace_tools,
             background: self.background.clone(),
+            fleet: self.fleet.clone(),
             subagent_workspace: self.subagent_workspace,
             subagent_environment: self.subagent_environment.clone(),
             decision_parent: Some(parent),
@@ -1190,11 +1270,137 @@ impl ToolBox {
         ))
     }
 
+    /// The model's side of the fleet: external agent CLIs of this conversation.
+    async fn fleet_action(
+        &self,
+        name: &str,
+        args: &serde_json::Value,
+        gate: Gate,
+    ) -> (String, String) {
+        let blocked = |text: String| (text, "blocked".to_string());
+        let Some(fleet) = &self.fleet else {
+            return blocked("fleet agents are not available here".into());
+        };
+        let id = args["id"].as_u64().unwrap_or_default();
+        let done = |result: anyhow::Result<String>, label: &str| match result {
+            Ok(text) => (text, label.to_string()),
+            Err(error) => (format!("fleet: {error:#}"), "blocked".to_string()),
+        };
+        match name {
+            "fleet_list" => (
+                fleet.list_text(&self.session_id),
+                "Listing the fleet…".into(),
+            ),
+            "fleet_read" => done(fleet.read(&self.session_id, id), "Reading an agent…"),
+            "fleet_wait" => (
+                fleet
+                    .wait(
+                        &self.session_id,
+                        args["id"].as_u64(),
+                        args["wait_s"].as_u64().unwrap_or(300),
+                    )
+                    .await,
+                "Waiting for the fleet…".into(),
+            ),
+            "fleet_send" => done(
+                fleet.send_from_model(
+                    &self.session_id,
+                    id,
+                    args["text"].as_str().unwrap_or_default(),
+                ),
+                "Steering an agent…",
+            ),
+            "fleet_stop" => done(fleet.stop_from_model(&self.session_id, id), "Agent stopped"),
+            "fleet_diff" => done(
+                fleet.diff_from_model(&self.session_id, id),
+                "Reading an agent's changes…",
+            ),
+            "fleet_check" => done(
+                fleet
+                    .check_from_model(&self.session_id, id, args["wait_s"].as_u64().unwrap_or(300))
+                    .await,
+                "Checking an agent's work…",
+            ),
+            _ => self.fleet_start(fleet, args, gate).await,
+        }
+    }
+
+    /// Start one agent, or a batch of them under one approval: each acts
+    /// under its own permissions, outside this workspace's confinement, so
+    /// starting them is always the user's call.
+    async fn fleet_start(
+        &self,
+        fleet: &Arc<crate::fleet::Fleet>,
+        args: &serde_json::Value,
+        gate: Gate,
+    ) -> (String, String) {
+        let blocked = |text: String| (text, "blocked".to_string());
+        let Some(workspace) = &self.workspace else {
+            return blocked("fleet needs an agent workspace · switch with /agent <path>".into());
+        };
+        let starts = match fleet_jobs(args) {
+            Ok(starts) => starts,
+            Err(error) => return blocked(format!("fleet: {error}")),
+        };
+        let place = if crate::fleet::isolates(workspace.root()) {
+            "each on its own branch and worktree, working without asking in its CLI's safe auto mode"
+        } else {
+            "in the workspace itself (not a git repository), asking as usual"
+        };
+        if gate != Gate::Approved {
+            let Some(approver) = &self.approver else {
+                return blocked(
+                    "needs approval · an external agent cannot start unattended".into(),
+                );
+            };
+            let request = fleet_request(&starts, workspace.root(), place);
+            if !matches!(
+                approver.request(request).await,
+                Decision::Allow | Decision::AllowForSession | Decision::AllowAlways
+            ) {
+                return blocked("denied by the user · no external agent started".into());
+            }
+        }
+        let mut lines = Vec::new();
+        let mut started = 0;
+        for (kind, prompt, model) in starts {
+            let launch = crate::fleet::Launch::agent(
+                kind,
+                &prompt,
+                model.as_deref(),
+                workspace.root().to_path_buf(),
+            );
+            match fleet.spawn(&self.session_id, launch) {
+                Ok(id) => {
+                    started += 1;
+                    lines.push(format!("{} {id} started", kind.name()));
+                }
+                Err(error) => lines.push(format!("{} did not start: {error:#}", kind.name())),
+            }
+        }
+        if started == 0 {
+            return blocked(format!("fleet: {}", lines.join("\n")));
+        }
+        lines.push(format!(
+            "{place} · fleet action=wait blocks until they finish their turn (a blocked one waits for the user in /fleet); then diff and check each, send fixes and check again; the user merges in /fleet"
+        ));
+        (
+            lines.join("\n"),
+            if started == 1 {
+                "Agent started"
+            } else {
+                "Agents started"
+            }
+            .into(),
+        )
+    }
+
     pub(crate) fn for_subagent(&self, workspace: Option<Arc<Workspace>>) -> Self {
         let mut toolbox = self.copy(self.decision_parent.clone().expect("bound toolbox"));
         toolbox.subagents = None;
         toolbox.offer_workspace_tools = false;
         toolbox.background = None;
+        toolbox.fleet = None;
         toolbox.subagent_workspace = Some(workspace.is_some());
         if let Some(workspace) = workspace {
             toolbox.confine_shell_writes = Some(workspace.root().to_path_buf());
@@ -1413,6 +1619,14 @@ impl ToolBox {
             defs.push(def(&spec::TASK, &["task"]));
             if self.background.is_some() {
                 defs.push(def(&spec::AGENTS, &["wait", "list", "stop"]));
+            }
+            if self.fleet.is_some() {
+                defs.push(def(
+                    &spec::FLEET,
+                    &[
+                        "start", "list", "read", "wait", "diff", "check", "send", "stop",
+                    ],
+                ));
             }
         }
         if self.interactive_ui {
@@ -2136,6 +2350,11 @@ impl ToolBox {
                     },
                 };
             }
+            "fleet_start" | "fleet_list" | "fleet_read" | "fleet_wait" | "fleet_diff"
+            | "fleet_check" | "fleet_send" | "fleet_stop" => {
+                let value: serde_json::Value = serde_json::from_str(args).unwrap_or_default();
+                return self.fleet_action(name, &value, gate).await;
+            }
             "panel_app_list" | "panel_app_read" | "panel_app_patch" => {
                 let Some(files) = self.files.as_ref().filter(|_| self.interactive_ui) else {
                     return ("panel_app needs the terminal UI".into(), "blocked".into());
@@ -2788,3 +3007,54 @@ pub(crate) fn confined_join(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod fleet_start_tests {
+    use super::*;
+    use crate::fleet::Kind;
+
+    #[test]
+    fn a_batch_start_is_one_approval_naming_every_job() {
+        let starts = fleet_jobs(&serde_json::json!({"jobs": [
+            {"agent": "claude", "prompt": "fix the parser", "model": "haiku"},
+            {"agent": "codex", "prompt": "write the docs\nwith examples"},
+        ]}))
+        .unwrap();
+        assert_eq!(
+            starts,
+            [
+                (Kind::Claude, "fix the parser".into(), Some("haiku".into())),
+                (Kind::Codex, "write the docs\nwith examples".into(), None),
+            ]
+        );
+        let request = fleet_request(&starts, Path::new("/repo"), "each on its own branch");
+        assert_eq!(request.summary, "2 external agents: claude, codex");
+        assert_eq!(
+            request.detail.unwrap(),
+            "in /repo, each on its own branch\n\nclaude on haiku: fix the parser\n\ncodex: write the docs\nwith examples"
+        );
+        assert!(!request.allow_session, "every start is asked");
+
+        let single = fleet_jobs(&serde_json::json!({"agent": "pi", "prompt": "tidy"})).unwrap();
+        assert_eq!(
+            fleet_request(&single, Path::new("/repo"), "here").summary,
+            "external agent (pi): tidy"
+        );
+        for (bad, error) in [
+            (
+                serde_json::json!({"agent": "vim", "prompt": "x"}),
+                "unknown agent \"vim\"",
+            ),
+            (
+                serde_json::json!({"jobs": [{"agent": "claude", "prompt": " "}]}),
+                "needs a prompt",
+            ),
+            (
+                serde_json::json!({"jobs": vec![serde_json::json!({"agent": "pi", "prompt": "x"}); 9]}),
+                "at most 8",
+            ),
+        ] {
+            assert!(fleet_jobs(&bad).unwrap_err().contains(error), "{bad}");
+        }
+    }
+}

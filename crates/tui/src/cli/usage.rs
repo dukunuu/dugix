@@ -1,9 +1,9 @@
-//! `nexus usage` — usage and cost analytics.
+//! `dugix usage` — usage and cost analytics.
 
 use anyhow::Result;
 
-use nexus_core::db;
-use nexus_core::space;
+use dugix_core::db;
+use dugix_core::space;
 
 use super::{fmt_req, fmt_tokens, fmt_ts, out, truncate};
 
@@ -106,7 +106,7 @@ pub(super) fn usage(
 }
 
 pub(super) fn session_usage_output(db: &db::Db, session: &str, json: bool) -> Result<String> {
-    use nexus_core::app::usage::{SessionUsageTotals, session_usage_lines};
+    use dugix_core::app::usage::{SessionUsageTotals, session_usage_lines};
     let requests = db.usage_for_session(session)?;
     if json {
         return Ok(serde_json::to_string_pretty(&serde_json::json!({
@@ -121,7 +121,7 @@ pub(super) fn session_usage_output(db: &db::Db, session: &str, json: bool) -> Re
     ))
 }
 
-fn print_usage_totals(totals: &nexus_core::db::UsageTotals) {
+fn print_usage_totals(totals: &dugix_core::db::UsageTotals) {
     out(format!("requests: {}", fmt_req(totals.requests)));
     out(format!(
         "prompt: {}   completion: {}   cached reads: {}   cached writes: {}",
@@ -157,7 +157,7 @@ fn fmt_cache_rate(rated_cache_read: u64, rated_prompt: u64) -> String {
 }
 
 fn caching_mode(model: &str) -> &'static str {
-    if nexus_core::app::model_needs_cache_breakpoints(model) {
+    if dugix_core::app::model_needs_cache_breakpoints(model) {
         "explicit"
     } else {
         "auto"

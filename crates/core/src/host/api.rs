@@ -1,4 +1,4 @@
-//! The raw `tokio` HTTP/SSE server for `nexus host`, deliberately framework-free
+//! The raw `tokio` HTTP/SSE server for `dugix host`, deliberately framework-free
 //! so authentication and body limits are easy to audit.
 
 use std::io;
@@ -70,7 +70,7 @@ const MAX_APP_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_CONNECTIONS: usize = 128;
 /// CORS block shared by every response; `Access-Control-Allow-Methods` is
 /// required for browser preflights.
-const CORS_HEADERS: &str = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS\r\nAccess-Control-Allow-Headers: Authorization, Content-Type, X-Nexus-Backend, X-Nexus-Blob-Hash, X-Content-SHA256\r\nAccess-Control-Max-Age: 600\r\n";
+const CORS_HEADERS: &str = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS\r\nAccess-Control-Allow-Headers: Authorization, Content-Type, X-Dugix-Backend, X-Dugix-Blob-Hash, X-Content-SHA256\r\nAccess-Control-Max-Age: 600\r\n";
 
 /// Configuration for a local host listener.
 #[derive(Debug, Clone)]
@@ -327,7 +327,7 @@ async fn handle_connection(mut stream: TcpStream, state: Arc<HostState>) -> io::
         // the host bearer token never appears in the URL or logs.
         return proxy_app(&mut stream, &request, &path, &query, &state).await;
     }
-    if !is_v1 && path != "/.well-known/nexus" {
+    if !is_v1 && path != "/.well-known/dugix" {
         return serve_web(&mut stream, &request, &path, state.web_dir.as_deref()).await;
     }
     handle_api_route(&mut stream, &request, &path, &state).await
@@ -346,7 +346,7 @@ async fn serve_web(
         return respond_text(
             stream,
             404,
-            "Web client unavailable. Build web/ and set NEXUS_WEB_DIR to its dist directory.",
+            "Web client unavailable. Build web/ and set DUGIX_WEB_DIR to its dist directory.",
         )
         .await;
     };
@@ -506,7 +506,7 @@ async fn handle_api_route(
                     stream,
                     200,
                     "application/zip",
-                    "Content-Disposition: attachment; filename=nexus-sync.zip\r\n",
+                    "Content-Disposition: attachment; filename=dugix-sync.zip\r\n",
                     &bytes,
                     false,
                 )
@@ -636,10 +636,10 @@ async fn handle_api_route(
         };
     }
     match (request.method.as_str(), path) {
-        ("GET", "/.well-known/nexus") => {
+        ("GET", "/.well-known/dugix") => {
             let discovery = DiscoveryResponse {
                 host_id: host_discovery_id(&state.token),
-                product: "nexus-chat",
+                product: "dugix",
                 version: env!("CARGO_PKG_VERSION"),
                 api: "/v1",
                 authentication: "bearer",
@@ -801,7 +801,7 @@ async fn handle_api_route(
             )
             .await
         }
-        ("GET", "/") => respond_text(stream, 200, "nexus host\n").await,
+        ("GET", "/") => respond_text(stream, 200, "dugix host\n").await,
         _ => respond_text(stream, 404, "not found").await,
     }
 }
@@ -833,7 +833,7 @@ async fn handle_sync_blob(
                 return respond_text(stream, 413, "blob too large").await;
             }
             let hash = query_param(query, "hash")
-                .or_else(|| request.headers.get("x-nexus-blob-hash").cloned())
+                .or_else(|| request.headers.get("x-dugix-blob-hash").cloned())
                 .or_else(|| request.headers.get("x-content-sha256").cloned());
             let Some(hash) = hash else {
                 return respond_error(stream, 400, "sync blob is missing hash").await;
@@ -970,7 +970,10 @@ async fn proxy_app(
         .request(method, target)
         .body(request.body.clone());
     for (name, value) in &request.headers {
-        if is_hop_by_hop(name) || name == "cookie" || name == "x-nexus-token" {
+        if is_hop_by_hop(name)
+            || name == "cookie"
+            || name == "x-dugix-token"
+        {
             continue;
         }
         let Ok(header_name) = reqwest::header::HeaderName::from_bytes(name.as_bytes()) else {

@@ -1,4 +1,4 @@
-//! Secret-free JSON-lines canvas protocol, one envelope per line. Nexus and studio
+//! Secret-free JSON-lines canvas protocol, one envelope per line. Dugix and studio
 //! ship together; a peer on another version gets a clear "update" error.
 
 use std::collections::HashMap;
@@ -297,10 +297,10 @@ impl Line {
         match value.get("version").and_then(serde_json::Value::as_u64) {
             Some(v) if v == u64::from(VERSION) => {}
             Some(v) if v < u64::from(VERSION) => anyhow::bail!(
-                "studio speaks link version {v} but this nexus speaks {VERSION}: update nexus-studio"
+                "studio speaks link version {v} but this dugix speaks {VERSION}: update dugix-studio"
             ),
             Some(v) => anyhow::bail!(
-                "studio speaks link version {v} but this nexus speaks {VERSION}: update nexus"
+                "studio speaks link version {v} but this dugix speaks {VERSION}: update dugix"
             ),
             None => anyhow::bail!("link message has no version"),
         }
@@ -597,18 +597,18 @@ mod tests {
             assert!(!line.contains("SheetComment") && !line.contains("SheetFocus"));
             assert_eq!(Line::decode(&line).unwrap(), message);
         }
-        assert!(Line::decode(r#"{"version":2,"kind":"sheet","type":"Focus","path":"a.sheet.json","tab":"Sheet1","range":"B4"}"#).unwrap_err().to_string().contains("update nexus-studio"));
+        assert!(Line::decode(r#"{"version":2,"kind":"sheet","type":"Focus","path":"a.sheet.json","tab":"Sheet1","range":"B4"}"#).unwrap_err().to_string().contains("update dugix-studio"));
     }
 
     #[test]
     fn a_peer_on_another_version_is_told_to_update() {
         let old = r#"{"version":2,"type":"Hello","deck_path":"decks/a.deck.json"}"#;
         let error = Line::decode(old).unwrap_err().to_string();
-        assert!(error.contains("update nexus-studio"), "{error}");
+        assert!(error.contains("update dugix-studio"), "{error}");
         let new = r#"{"version":4,"type":"Bye"}"#;
         let error = Line::decode(new).unwrap_err().to_string();
         assert!(
-            error.contains("update nexus") && !error.contains("nexus-studio"),
+            error.contains("update dugix") && !error.contains("dugix-studio"),
             "{error}"
         );
         assert!(Line::decode(r#"{"type":"Bye"}"#).is_err());

@@ -196,7 +196,7 @@ fn open_app(root: &std::path::Path, provider: OpenRouter) -> App {
 
 impl Rig {
     async fn new() -> Self {
-        let root = std::env::temp_dir().join(format!("nexus-prefix-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-prefix-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
         let (provider, mock) = Mock::start().await;
         let app = open_app(&root, provider);
@@ -477,7 +477,7 @@ async fn the_prefix_holds_until_a_declared_rebuild() {
     rig.turn("another model", true).await;
     rig.turn("same model", false).await;
 
-    // The reuse accounting never blames nexus for a change it did not make.
+    // The reuse accounting never blames dugix for a change it did not make.
     let verdicts = rig.app.db.cache_verdict_counts(None).unwrap();
     assert!(
         !verdicts.iter().any(|(name, _)| name == "prefix_changed"),

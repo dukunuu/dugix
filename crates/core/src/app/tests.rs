@@ -606,7 +606,7 @@ fn model_profile_caps_local_tool_replay_without_changing_hosted_or_stored_result
 
 fn test_space() -> Space {
     Space {
-        root: std::env::temp_dir().join(format!("nexus-test-{}", uuid::Uuid::new_v4())),
+        root: std::env::temp_dir().join(format!("dugix-test-{}", uuid::Uuid::new_v4())),
     }
 }
 
@@ -949,7 +949,7 @@ fn local_survey_reports_liveness_and_warns_without_stopping_anything() {
 }
 
 #[test]
-fn stopping_a_server_nexus_did_not_start_is_refused() {
+fn stopping_a_server_dugix_did_not_start_is_refused() {
     use crate::provider::local::LocalRuntime;
 
     let mut app = App::new(Db::open_in_memory().unwrap(), None, test_space());
@@ -2249,7 +2249,7 @@ async fn update_check_notifies_only_for_newer_versions() {
     let mut a = app_with_key();
     a.on_update_check(Some("99.0.0".into()));
     let (_, status) = a.drain_ui_events();
-    assert!(status.contains("run `nexus update`"));
+    assert!(status.contains("run `dugix update`"));
     assert_eq!(a.notifications.len(), 1);
     a.on_update_check(Some("0.0.1".into()));
     a.on_update_check(None);
@@ -3404,7 +3404,7 @@ fn hundred_turns_preserve_messages_tool_inputs_results_and_wire_prefixes() {
 }
 
 fn install_test_skill(a: &mut App, name: &str, desc: &str, body: &str) {
-    let dir = std::env::temp_dir().join(format!("nexus-test-skill-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-test-skill-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("SKILL.md"),
@@ -4281,12 +4281,12 @@ fn every_catalog_command_parses() {
 fn interactive_ui_is_advertised_only_by_capable_clients() {
     let mut a = app_with_key();
     a.base_system_prompt = "test baseline".into();
-    assert!(!a.system_prompt().contains("nexus-ui"));
+    assert!(!a.system_prompt().contains("dugix-ui"));
     let before = a.context_breakdown().system_tokens;
     a.interactive_ui = true;
     let extra = u64::try_from(crate::interactive::INSTRUCTIONS.chars().count() / 4).unwrap();
     assert!(a.context_breakdown().system_tokens >= before + extra.saturating_sub(1));
-    assert!(a.system_prompt().contains("nexus-ui"));
+    assert!(a.system_prompt().contains("dugix-ui"));
     assert!(a.system_prompt().contains("Prefer interactive UI"));
     assert!(a.parse_command("play rps").is_err());
 }
@@ -4547,9 +4547,9 @@ fn popup_sizes_setting_validates_strictly_and_loads_leniently() {
 
 #[test]
 fn image_viewer_setting_defaults_auto_validates_and_survives_a_restart() {
-    let root = std::env::temp_dir().join(format!("nexus-viewer-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-viewer-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("spaces")).unwrap();
-    let path = root.join("nexus.db");
+    let path = root.join("dugix.db");
     let mut a = App::new(Db::open(&path).unwrap(), None, Space { root: root.clone() });
     assert_eq!(a.settings.image_viewer, "auto");
     for good in ["terminal", "system", "auto"] {
@@ -4611,9 +4611,9 @@ fn popup_size_helpers_read_replace_and_remove_entries() {
 
 #[test]
 fn popup_and_column_sizes_survive_a_restart() {
-    let root = std::env::temp_dir().join(format!("nexus-sizes-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-sizes-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("spaces")).unwrap();
-    let path = root.join("nexus.db");
+    let path = root.join("dugix.db");
     let mut a = App::new(Db::open(&path).unwrap(), None, Space { root: root.clone() });
     a.set_setting("column_width", "157").unwrap();
     a.set_setting("popup_sizes", "settings:80x75").unwrap();
@@ -5042,7 +5042,7 @@ fn terminal_programs_are_not_started_or_recorded() {
         app.run_user_command(format!("{word} ignored")).unwrap();
         assert_eq!(
             app.last_status(),
-            format!("!{word} needs a terminal · run it outside nexus")
+            format!("!{word} needs a terminal · run it outside dugix")
         );
         assert!(app.session.is_none());
         assert!(app.user_command.rx.is_none());
@@ -5660,8 +5660,8 @@ async fn approvals_whose_tool_call_went_away_are_skipped() {
 }
 
 const BROKEN_UI: &str =
-    "```nexus-ui\n{\"version\":1,\"title\":\"Choice\",\"view\":[{\"type\":\"radio\"}]}\n```";
-const FIXED_UI: &str = "```nexus-ui\n{\"version\":1,\"title\":\"Choice\",\"view\":[{\"type\":\"text\",\"text\":\"Fixed\"}]}\n```";
+    "```dugix-ui\n{\"version\":1,\"title\":\"Choice\",\"view\":[{\"type\":\"radio\"}]}\n```";
+const FIXED_UI: &str = "```dugix-ui\n{\"version\":1,\"title\":\"Choice\",\"view\":[{\"type\":\"text\",\"text\":\"Fixed\"}]}\n```";
 
 async fn ui_repair_app(
     response: &str,
@@ -5756,12 +5756,12 @@ async fn ui_repair_replaces_only_the_failing_fence_and_logs_its_usage() {
         request["messages"][0]["content"]
             .as_str()
             .unwrap()
-            .contains("nexus-ui")
+            .contains("dugix-ui")
     );
     assert_eq!(request["messages"][1]["content"], format!("{BROKEN_UI}\n"));
     let prompt = request["messages"][2]["content"].as_str().unwrap();
-    assert!(prompt.contains("Your nexus-ui block \"Choice\" failed validation:\nview[0]: unknown node type \"radio\""), "{prompt}");
-    assert!(prompt.contains("Reply with ONLY the corrected nexus-ui fenced block, nothing else."));
+    assert!(prompt.contains("Your dugix-ui block \"Choice\" failed validation:\nview[0]: unknown node type \"radio\""), "{prompt}");
+    assert!(prompt.contains("Reply with ONLY the corrected dugix-ui fenced block, nothing else."));
     let usage = app.db.usage_recent(10, None).unwrap();
     assert_eq!(usage.len(), 1);
     assert_eq!(usage[0].model, "a/one");
@@ -5785,7 +5785,7 @@ async fn ui_repair_failure_keeps_the_reply_and_never_retries() {
         (
             "no fenced block",
             200,
-            "expected 1 corrected nexus-ui block",
+            "expected 1 corrected dugix-ui block",
         ),
         ("bad request", 400, ""),
     ] {
@@ -5829,9 +5829,9 @@ async fn ui_repair_is_skipped_for_valid_disabled_open_or_unviewed_blocks() {
     for (content, enabled, viewing) in [
         (FIXED_UI, true, true),
         (BROKEN_UI, false, true),
-        ("```nexus-ui\n{", true, true),
+        ("```dugix-ui\n{", true, true),
         (BROKEN_UI, true, false),
-        ("````markdown\n```nexus-ui\n{\n```\n````", true, true),
+        ("````markdown\n```dugix-ui\n{\n```\n````", true, true),
     ] {
         let (mut app, server) = ui_repair_app(FIXED_UI, 200, false).await;
         let root = app.space.root.clone();
@@ -5905,8 +5905,8 @@ async fn a_new_user_turn_cancels_applying_the_old_ui_repair() {
 
 #[tokio::test]
 async fn several_failing_ui_blocks_are_repaired_in_one_request() {
-    let second = "~~~nexus-ui\n{\"version\":1,\"title\":\"Second\",\"view\":[{\"type\":\"text\",\"text\":42}]}\n~~~";
-    let fixed_second = "```nexus-ui\n{\"version\":1,\"title\":\"Second\",\"view\":[{\"type\":\"text\",\"text\":\"Second fix\"}]}\n```";
+    let second = "~~~dugix-ui\n{\"version\":1,\"title\":\"Second\",\"view\":[{\"type\":\"text\",\"text\":42}]}\n~~~";
+    let fixed_second = "```dugix-ui\n{\"version\":1,\"title\":\"Second\",\"view\":[{\"type\":\"text\",\"text\":\"Second fix\"}]}\n```";
     let (mut app, server) = ui_repair_app(&format!("{FIXED_UI}\n{fixed_second}"), 200, false).await;
     let root = app.space.root.clone();
     let quoted = BROKEN_UI

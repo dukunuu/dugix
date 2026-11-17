@@ -4,9 +4,9 @@
 use std::fmt::Write as _;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use nexus_core::app::{AppCommand, Popup};
-use nexus_core::connectors::import::{self, ImportPaths, Proposal};
-use nexus_core::connectors::{Access, ConnectorInfo, Policy, Status, ToolRow, config};
+use dugix_core::app::{AppCommand, Popup};
+use dugix_core::connectors::import::{self, ImportPaths, Proposal};
+use dugix_core::connectors::{Access, ConnectorInfo, Policy, Status, ToolRow, config};
 use ratatui::Frame;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -651,7 +651,7 @@ fn run(app: &mut AppView, command: AppCommand) {
 }
 
 fn move_by(value: usize, len: usize, delta: i32) -> usize {
-    nexus_core::app::clamp_cursor(value, len, delta)
+    dugix_core::app::clamp_cursor(value, len, delta)
 }
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) {
@@ -918,7 +918,7 @@ fn save_add(app: &mut AppView) {
             Ok(())
         })
     } else {
-        match nexus_core::connectors::split_argv(&target) {
+        match dugix_core::connectors::split_argv(&target) {
             Ok(command) => app.execute(AppCommand::AddConnector {
                 name: name.clone(),
                 url: None,

@@ -1,5 +1,5 @@
-//! nexus-chat-core (lib crate `nexus_core`): the engine behind the `nexus` TUI,
-//! CLI and `nexus host` API, owning all domain logic and no terminal UI.
+//! dugix-core (lib crate `dugix_core`): the engine behind the `dugix` TUI,
+//! CLI and `dugix host` API, owning all domain logic and no terminal UI.
 #![allow(
     clippy::missing_errors_doc,
     clippy::missing_panics_doc,
@@ -21,6 +21,7 @@ pub mod doc;
 pub mod eval;
 pub mod extract;
 pub mod filesearch;
+pub mod fleet;
 pub mod highlight;
 pub mod host;
 pub mod interactive;

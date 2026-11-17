@@ -19,7 +19,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let dir = std::env::temp_dir().join(format!("nexus-jobs-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-jobs-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(dir.join("data/spaces")).unwrap();
         fs::create_dir(dir.join("workspace")).unwrap();
         let app = App::new(
@@ -458,7 +458,7 @@ fn service_definition_is_hermetic_and_runs_jobs_not_host() {
     let path = service::install_service_at(
         &fixture.dir,
         &fixture.dir.join("config"),
-        Path::new("/opt/Nexus & 100%/nexus"),
+        Path::new("/opt/Dugix & 100%/dugix"),
     )
     .unwrap();
     let contents = fs::read_to_string(path).unwrap();
@@ -466,8 +466,8 @@ fn service_definition_is_hermetic_and_runs_jobs_not_host() {
     assert!(contents.contains("daemon"));
     assert!(!contents.contains(" host "));
     if cfg!(target_os = "macos") {
-        assert!(contents.contains("chat.nexus.jobs"));
-        assert!(contents.contains("Nexus &amp; 100%"));
+        assert!(contents.contains("chat.dugix.jobs"));
+        assert!(contents.contains("Dugix &amp; 100%"));
     } else {
         assert!(contents.contains("100%%"));
     }

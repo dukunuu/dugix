@@ -140,7 +140,7 @@ fn measured_reservations_match_the_drawn_card_at_actual_widths() {
     ] {
         for width in [60, 80, 120] {
             let rendered = crate::ui::markdown::render(
-                &format!("```nexus-ui\n{source}\n```"),
+                &format!("```dugix-ui\n{source}\n```"),
                 width,
                 crate::ui::markdown::MdColors::default(),
             );
@@ -317,7 +317,7 @@ fn pinned_card_keeps_state_hits_and_composer_clear_until_escape_or_session_reset
     app.scroll = app.max_scroll;
     terminal.draw(|f| crate::ui::render(f, &mut app)).unwrap();
     focus(&mut app);
-    app.apply_event(&nexus_core::app::AppEvent::ViewportReset);
+    app.apply_event(&dugix_core::app::AppEvent::ViewportReset);
     assert!(app.interactive.focused.is_none());
     assert!(!app.interactive.pinned);
 }
@@ -326,7 +326,7 @@ fn pinned_card_keeps_state_hits_and_composer_clear_until_escape_or_session_reset
 fn enlarged_card_never_covers_the_composer_and_edits_reflow_the_transcript() {
     let mut app = app();
     app.messages[0].content = format!(
-        "```nexus-ui\n{}\n```\n\nAfter the card",
+        "```dugix-ui\n{}\n```\n\nAfter the card",
         COUNTER.replace("Count: {{count}}", "Name: {{name}}")
     );
     app.set_input("keep this draft");
@@ -420,16 +420,16 @@ fn dense_button_groups_reflow_without_losing_controls() {
 }
 
 fn app() -> AppView {
-    let mut app = AppView::new(nexus_core::app::App::new(
-        nexus_core::db::Db::open_in_memory().unwrap(),
+    let mut app = AppView::new(dugix_core::app::App::new(
+        dugix_core::db::Db::open_in_memory().unwrap(),
         None,
-        nexus_core::space::Space {
-            root: std::env::temp_dir().join(format!("nexus-ui-test-{}", uuid::Uuid::new_v4())),
+        dugix_core::space::Space {
+            root: std::env::temp_dir().join(format!("dugix-ui-test-{}", uuid::Uuid::new_v4())),
         },
     ));
-    app.messages.push(nexus_core::db::Message {
+    app.messages.push(dugix_core::db::Message {
         role: "assistant".into(),
-        content: format!("```nexus-ui\n{}\n```", COUNTER.trim()),
+        content: format!("```dugix-ui\n{}\n```", COUNTER.trim()),
         model: None,
         reasoning: None,
         tokens: None,

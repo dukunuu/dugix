@@ -11,7 +11,7 @@ struct Space(PathBuf);
 
 impl Space {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!("nexus-library-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("dugix-library-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&path).unwrap();
         Self(path.canonicalize().unwrap())
     }
@@ -82,7 +82,7 @@ fn the_library_lists_decks_and_docs_newest_first() {
     assert_eq!(doc.count_label(), "2 blocks");
     assert_eq!(entries[1].kind, Kind::Deck);
     assert_eq!(entries[1].count_label(), "1 slide");
-    assert!(entries[1].design.is_none() || entries[1].design.as_deref() == Some("nexus"));
+    assert!(entries[1].design.is_none() || entries[1].design.as_deref() == Some("dugix"));
     assert!(entries.iter().all(|e| e.revision.len() == 64));
 }
 

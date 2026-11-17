@@ -7,8 +7,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{ListItem, ListState};
 
 use crate::app_view::AppView;
-use nexus_core::app::Popup;
-use nexus_core::db::HarnessSummary;
+use dugix_core::app::Popup;
+use dugix_core::db::HarnessSummary;
 
 use super::chrome::{self, PopupFrame, hint, keys};
 
@@ -125,7 +125,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
                 super::apply_page(
                     |delta| {
                         app.harness_selected =
-                            nexus_core::app::clamp_cursor(app.harness_selected, len, delta);
+                            dugix_core::app::clamp_cursor(app.harness_selected, len, delta);
                     },
                     action,
                     10,
@@ -156,9 +156,9 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_core::app::App;
-    use nexus_core::db::{Db, FailureRow};
-    use nexus_core::space::Space;
+    use dugix_core::app::App;
+    use dugix_core::db::{Db, FailureRow};
+    use dugix_core::space::Space;
 
     #[test]
     fn relative_time_uses_minutes_hours_and_days() {
@@ -183,12 +183,12 @@ mod tests {
 
     #[test]
     fn harness_popup_selects_and_opens_the_latest_transcript() {
-        let root = std::env::temp_dir().join(format!("nexus-harness-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-harness-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
         let db = Db::open_in_memory().unwrap();
         let mut app = AppView::new(App::new(db, Some("k"), Space { root: root.clone() }));
         app.core
-            .execute(nexus_core::app::AppCommand::Harness)
+            .execute(dugix_core::app::AppCommand::Harness)
             .unwrap();
         app.popup = Popup::Harness;
         assert_eq!(app.harness.as_ref().unwrap(), &HarnessSummary::default());
@@ -247,7 +247,7 @@ mod tests {
         assert_eq!(app.session.as_ref().unwrap().id, latest.id);
         let mut status = None;
         while let Some(event) = app.pop_pending_event() {
-            if let nexus_core::app::AppEvent::Status(message) = event {
+            if let dugix_core::app::AppEvent::Status(message) = event {
                 status = Some(message);
             }
         }

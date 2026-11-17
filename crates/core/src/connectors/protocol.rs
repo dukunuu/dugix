@@ -21,7 +21,7 @@ pub const METHOD_NOT_FOUND: i64 = -32601;
 
 #[must_use]
 pub fn client_info() -> Value {
-    json!({"name": "nexus-chat", "version": env!("CARGO_PKG_VERSION")})
+    json!({"name": "dugix", "version": env!("CARGO_PKG_VERSION")})
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -497,7 +497,7 @@ mod tests {
         assert_eq!(params["name"], "t");
         assert_eq!(params["_meta"]["x"], 1);
         assert_eq!(params["_meta"][META_PROTOCOL], PROTOCOL_2026);
-        assert_eq!(params["_meta"][META_CLIENT_INFO]["name"], "nexus-chat");
+        assert_eq!(params["_meta"][META_CLIENT_INFO]["name"], "dugix");
         assert!(params["_meta"][META_CAPABILITIES].is_object());
         assert_eq!(
             with_meta(Value::Null)["_meta"][META_PROTOCOL],

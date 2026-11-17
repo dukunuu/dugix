@@ -15,7 +15,7 @@ pub fn codex_response_to_chat(response: &serde_json::Value) -> serde_json::Value
     let id = response
         .get("id")
         .and_then(|value| value.as_str())
-        .unwrap_or("chatcmpl-nexus-codex");
+        .unwrap_or("chatcmpl-dugix-codex");
     let model = response
         .get("model")
         .and_then(|value| value.as_str())
@@ -111,7 +111,7 @@ impl CodexChatStreamAdapter {
     pub fn new(model: impl Into<String>) -> Self {
         Self {
             buffer: Vec::new(),
-            id: "chatcmpl-nexus-codex".to_string(),
+            id: "chatcmpl-dugix-codex".to_string(),
             model: model.into(),
             created: 0,
             started: false,

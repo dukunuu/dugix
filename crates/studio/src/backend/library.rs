@@ -5,9 +5,9 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use nexus_core::canvas::dialogs::{self, Dialogs};
-use nexus_core::canvas::{self, Entry, files, settings};
-use nexus_core::deck::link::Kind as FileKind;
+use dugix_core::canvas::dialogs::{self, Dialogs};
+use dugix_core::canvas::{self, Entry, files, settings};
+use dugix_core::deck::link::Kind as FileKind;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 
@@ -72,7 +72,7 @@ fn thumb_key(listed: &Listed) -> String {
     format!("{hex}-{}.png", &listed.entry.revision[..8])
 }
 
-fn deck_format(word: &str) -> Result<nexus_core::deck::export::Format> {
+fn deck_format(word: &str) -> Result<dugix_core::deck::export::Format> {
     word.parse()
 }
 
@@ -286,7 +286,7 @@ impl Backend {
     fn library_open(&mut self, space: Option<&str>, relative: &str) -> Result<Event> {
         let files = self.space_files(space)?;
         let (_, file) = files::resolve(&files, relative)?;
-        if nexus_core::deck::same_file(&file, &self.path) && !self.home.get() {
+        if dugix_core::deck::same_file(&file, &self.path) && !self.home.get() {
             return Ok(self.event());
         }
         let event = self.execute(Command::Open { path: file })?;
@@ -303,7 +303,7 @@ impl Backend {
     ) -> Result<Event> {
         let files = self.space_files(space)?;
         let (_, file) = files::resolve(&files, relative)?;
-        if !nexus_core::deck::same_file(&file, &self.path) {
+        if !dugix_core::deck::same_file(&file, &self.path) {
             files::rename(&files, relative, title)?;
             let space = space.map_or_else(|| self.current_space(), Into::into);
             return Ok(self.library_event(None, Some((space, relative.into()))));
@@ -327,7 +327,7 @@ impl Backend {
     fn library_delete(&mut self, space: Option<&str>, relative: &str) -> Result<Event> {
         let files = self.space_files(space)?;
         let (_, file) = files::resolve(&files, relative)?;
-        let was_open = nexus_core::deck::same_file(&file, &self.path);
+        let was_open = dugix_core::deck::same_file(&file, &self.path);
         let name = file
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -349,7 +349,7 @@ impl Backend {
         self.sheet = None;
         self.path = super::new_path(&self.files_dir)?;
         self.deck = Deck::new_from_layouts("Untitled");
-        self.fetcher = nexus_core::remote_image::Fetcher::new(super::asset_root(&self.path)?);
+        self.fetcher = dugix_core::remote_image::Fetcher::new(super::asset_root(&self.path)?);
         self.known_revision = self.deck.revision();
         self.undo.clear();
         self.redo.clear();
@@ -477,7 +477,7 @@ impl Backend {
         Ok(Event::Asset { src })
     }
 
-    /// nexus files open as they are; `PowerPoint`, Word and Markdown files import.
+    /// dugix files open as they are; `PowerPoint`, Word and Markdown files import.
     fn open_chosen(&mut self, chosen: &Path) -> Result<Event> {
         let chosen = absolute(chosen)?;
         let name = chosen
@@ -511,16 +511,16 @@ impl Backend {
             .file_stem()
             .map_or_else(|| "Imported".into(), |s| s.to_string_lossy().into_owned());
         let base = self.blank_sheet(&title)?;
-        let bytes = super::read_bounded(source, nexus_core::sheet::validate::MAX_SOURCE)?;
+        let bytes = super::read_bounded(source, dugix_core::sheet::validate::MAX_SOURCE)?;
         let mut sheet = if source
             .extension()
             .is_some_and(|s| s.eq_ignore_ascii_case("csv"))
         {
-            let slug = base.design.as_deref().unwrap_or("nexus");
-            let design = nexus_core::design::load(&self.files_dir, slug)?;
-            nexus_core::sheet::interchange::import_csv(&bytes, &source.to_string_lossy(), &design)?
+            let slug = base.design.as_deref().unwrap_or("dugix");
+            let design = dugix_core::design::load(&self.files_dir, slug)?;
+            dugix_core::sheet::interchange::import_csv(&bytes, &source.to_string_lossy(), &design)?
         } else {
-            nexus_core::sheet::interchange::import_xlsx(&bytes, &title)?
+            dugix_core::sheet::interchange::import_xlsx(&bytes, &title)?
         };
         sheet.title.clone_from(&title);
         sheet.theme = base.theme;
@@ -538,9 +538,9 @@ impl Backend {
 
     fn import_document(&mut self, source: &Path) -> Result<Event> {
         let docs = doc::docs_dir(&self.files_dir)?;
-        let imported = nexus_core::doc::import::file(source, &docs.join("assets"))?;
+        let imported = dugix_core::doc::import::file(source, &docs.join("assets"))?;
         let stem = {
-            let stem = nexus_core::canvas::files::file_stem_for(&imported.doc.title);
+            let stem = dugix_core::canvas::files::file_stem_for(&imported.doc.title);
             let slug: String = stem
                 .to_lowercase()
                 .split(|c: char| !c.is_ascii_alphanumeric())
@@ -555,7 +555,7 @@ impl Backend {
         };
         let mut target = docs.join(format!("{stem}.doc.json"));
         for index in 2.. {
-            match nexus_core::doc::import::write_new(&imported, &target) {
+            match dugix_core::doc::import::write_new(&imported, &target) {
                 Ok(()) => break,
                 Err(error)
                     if error
@@ -604,7 +604,7 @@ impl Backend {
         template: Option<String>,
     ) -> Result<(Ask, Then)> {
         let (kind, file) = source;
-        let open = nexus_core::deck::same_file(&file, &self.path);
+        let open = dugix_core::deck::same_file(&file, &self.path);
         let extension = files::export_extension(kind, word)?;
         // The open file's title is read from memory (a not-yet-saved placeholder
         // only exists there); another file's from disk.
@@ -645,7 +645,7 @@ impl Backend {
         chosen: PathBuf,
     ) -> Result<Event> {
         let (kind, file) = source;
-        let open = nexus_core::deck::same_file(file, &self.path);
+        let open = dugix_core::deck::same_file(file, &self.path);
         let chosen = files::with_extension(chosen, extension);
         let output = match kind {
             FileKind::Sheet => {
@@ -666,7 +666,7 @@ impl Backend {
             FileKind::Doc => {
                 let (doc, threads) = match self.doc.as_ref().filter(|_| open) {
                     Some(session) => (session.doc.clone(), session.threads.clone()),
-                    None => (doc::read_doc(file)?, nexus_core::doc::feedback::load(file)?),
+                    None => (doc::read_doc(file)?, dugix_core::doc::feedback::load(file)?),
                 };
                 let images = chosen
                     .parent()

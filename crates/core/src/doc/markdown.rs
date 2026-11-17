@@ -1,5 +1,5 @@
 //! GFM input via pulldown-cmark; inline Markdown is canonicalized, never HTML.
-//! Non-GFM structural blocks use a lossless `nexus-block` fenced JSON extension.
+//! Non-GFM structural blocks use a lossless `dugix-block` fenced JSON extension.
 use super::model::{Block, Doc, ImageWidth, Kind, ListItem, Tone};
 use crate::deck::Align;
 use pulldown_cmark::{
@@ -237,7 +237,7 @@ pub fn parse_document(source: &str, first_h1_is_title: bool) -> Parsed {
                     CodeBlockKind::Indented => String::new(),
                 };
                 let text = code_text(&children);
-                if lang == "nexus-block"
+                if lang == "dugix-block"
                     && let Ok(block) = serde_json::from_str::<Block>(&text)
                 {
                     parsed.blocks.push(block);
@@ -322,7 +322,7 @@ fn render_items(items: &[ListItem], ordered: bool, depth: usize, out: &mut Strin
 fn extension(block: &Block) -> String {
     let source = serde_json::to_string(block).expect("block JSON");
     let fence = "`".repeat(source.split('`').count().max(3));
-    format!("{fence}nexus-block\n{source}\n{fence}")
+    format!("{fence}dugix-block\n{source}\n{fence}")
 }
 
 /// GFM for one block; structural blocks without a Markdown equivalent use fenced

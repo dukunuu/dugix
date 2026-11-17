@@ -2,7 +2,7 @@
 
 use crate::ui::style::{SyntaxColors, syntax_style};
 use crate::vim::Vim;
-use nexus_core::highlight::Span;
+use dugix_core::highlight::Span;
 use ratatui::style::Style;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -26,7 +26,7 @@ fn spans(source: &str, lang: &str) -> Rc<Vec<Span>> {
         if cache.len() >= CACHE_LIMIT {
             cache.clear();
         }
-        let spans = Rc::new(nexus_core::highlight::highlight(source, lang));
+        let spans = Rc::new(dugix_core::highlight::highlight(source, lang));
         cache.insert(key, Rc::clone(&spans));
         spans
     })
@@ -102,7 +102,7 @@ pub fn composer_syntax(text: &str) -> (&'static str, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_core::highlight::Role;
+    use dugix_core::highlight::Role;
 
     fn highlighted(text: &str, syntax: (&str, usize)) -> Vec<(usize, String, Style)> {
         let mut ta = TextArea::new(text.split('\n').map(str::to_owned).collect());

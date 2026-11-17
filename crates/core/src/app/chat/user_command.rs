@@ -86,7 +86,7 @@ impl App {
             return Ok(());
         }
         if let Some(word) = crate::usershell::terminal_program(&cmd) {
-            self.push_status(format!("!{word} needs a terminal · run it outside nexus"));
+            self.push_status(format!("!{word} needs a terminal · run it outside dugix"));
             return Ok(());
         }
         let cwd = self.user_command_cwd();
@@ -358,7 +358,7 @@ fn spawn_captured(
     let mut command = tokio::process::Command::new(&setup.shell);
     command
         .args(["-c", &setup.wrapper(cmd, cwd)])
-        .env("NEXUS_CWD_FILE", cwd_file)
+        .env("DUGIX_CWD_FILE", cwd_file)
         .current_dir(cwd)
         .stdin(std::process::Stdio::null())
         .stdout(writer.try_clone()?)

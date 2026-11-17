@@ -1,4 +1,4 @@
-//! `nexus design`, `nexus deck` and `nexus doc` file commands, plus the
+//! `dugix design`, `dugix deck` and `dugix doc` file commands, plus the
 //! studio launcher.
 
 use std::path::{Path, PathBuf};
@@ -8,7 +8,7 @@ use anyhow::{Context as _, Result, anyhow, ensure};
 use super::{DeckCmd, DesignCmd, DocCmd, out};
 
 pub(super) fn design_files(cmd: DesignCmd, files: &Path) -> Result<()> {
-    use nexus_core::design;
+    use dugix_core::design;
     match cmd {
         DesignCmd::Import { path, name } => {
             let path = if path.exists() {
@@ -41,7 +41,7 @@ pub(super) fn design_files(cmd: DesignCmd, files: &Path) -> Result<()> {
 }
 
 fn deck_import(path: &Path, out_path: Option<&Path>, files: &Path) -> Result<()> {
-    use nexus_core::deck::import;
+    use dugix_core::deck::import;
     let source = if path.exists() {
         path.to_path_buf()
     } else {
@@ -82,7 +82,7 @@ fn deck_import(path: &Path, out_path: Option<&Path>, files: &Path) -> Result<()>
 }
 
 pub(super) fn deck_export(cmd: DeckCmd, files: &Path) -> Result<()> {
-    use nexus_core::deck::{Deck, export};
+    use dugix_core::deck::{Deck, export};
     let (path, format, destination, template) = match cmd {
         DeckCmd::Export {
             path,
@@ -109,7 +109,7 @@ pub(super) fn deck_export(cmd: DeckCmd, files: &Path) -> Result<()> {
         )
     })?;
     let assets = path.parent().context("deck folder")?.join("assets");
-    let output = nexus_core::design::template::export_deck(
+    let output = dugix_core::design::template::export_deck(
         &deck,
         Some(&assets),
         files,
@@ -130,7 +130,7 @@ pub(super) fn deck_export(cmd: DeckCmd, files: &Path) -> Result<()> {
 
 #[allow(clippy::too_many_lines)]
 pub(super) fn doc_files(cmd: DocCmd, files: &Path) -> Result<()> {
-    use nexus_core::{
+    use dugix_core::{
         deck::export::write_export,
         doc::{self, Doc},
     };
@@ -165,10 +165,10 @@ pub(super) fn doc_files(cmd: DocCmd, files: &Path) -> Result<()> {
                         let image = assets.join(src.strip_prefix("assets/").unwrap_or(src));
                         ensure!(
                             std::fs::metadata(&image)?.len()
-                                <= nexus_core::deck::assets::MAX_IMAGE_BYTES,
+                                <= dugix_core::deck::assets::MAX_IMAGE_BYTES,
                             "image exceeds 16 MB"
                         );
-                        *src = nexus_core::deck::assets::store_image_bytes(
+                        *src = dugix_core::deck::assets::store_image_bytes(
                             &std::fs::read(image)?,
                             src,
                             "image",
@@ -177,7 +177,7 @@ pub(super) fn doc_files(cmd: DocCmd, files: &Path) -> Result<()> {
                     }
                 }
             }
-            let output = nexus_core::design::template::export_doc(
+            let output = dugix_core::design::template::export_doc(
                 &exported,
                 Some(&assets),
                 &doc::feedback::load(&path)?,
@@ -259,9 +259,9 @@ pub(super) fn doc_files(cmd: DocCmd, files: &Path) -> Result<()> {
 
 pub(super) fn launch_studio(path: Option<&Path>) -> Result<()> {
     let name = if cfg!(windows) {
-        "nexus-studio.exe"
+        "dugix-studio.exe"
     } else {
-        "nexus-studio"
+        "dugix-studio"
     };
     let beside = std::env::current_exe()?.with_file_name(name);
     for executable in [beside, PathBuf::from(name)] {
@@ -294,6 +294,6 @@ pub(super) fn launch_studio(path: Option<&Path>) -> Result<()> {
             Err(error) => return Err(error.into()),
         }
     }
-    eprintln!("nexus studio isn't installed — cargo install --path crates/studio");
+    eprintln!("dugix studio isn't installed — cargo install --path crates/studio");
     Ok(())
 }

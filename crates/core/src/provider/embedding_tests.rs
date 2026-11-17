@@ -432,7 +432,7 @@ async fn discovery_requires_installed_reachable_model_and_valid_probe() {
 
 #[tokio::test]
 async fn image_preprocessing_is_bounded_and_mime_checked() {
-    let root = std::env::temp_dir().join(format!("nexus-embed-image-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-embed-image-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("photo.png");
     image::RgbImage::new(1600, 1000).save(&path).unwrap();

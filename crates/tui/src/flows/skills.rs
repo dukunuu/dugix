@@ -1,6 +1,6 @@
 //! Skill picker interactions and editor handoffs.
 
-use nexus_core::app::{Popup, SkillsMode};
+use dugix_core::app::{Popup, SkillsMode};
 
 use crate::app_view::AppView;
 

@@ -386,7 +386,7 @@ mod tests {
 
     #[test]
     fn the_prefix_outlives_the_app() {
-        let root = std::env::temp_dir().join(format!("nexus-freeze-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-freeze-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
         let open = || {
             let space = crate::space::Space { root: root.clone() };

@@ -10,7 +10,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!("nexus-train-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-train-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(root.join("evals")).unwrap();
         let store = TraceStore::open(&root.join("traces"), Scrubber::new(Vec::new())).unwrap();
         let options = ExportOptions {
@@ -126,7 +126,7 @@ fn every_offered_tool_is_current_and_its_recorded_definition_exports() {
     use std::sync::Arc;
 
     let fixture = Fixture::new();
-    let db_path = fixture.root.join("nexus.db");
+    let db_path = fixture.root.join("dugix.db");
     let db = crate::db::Db::open(&db_path).unwrap();
     let space_id = db.default_space_id().unwrap();
     db.upsert_file(&space_id, "notes.txt", "hash", 1, "ok")
@@ -164,11 +164,12 @@ fn every_offered_tool_is_current_and_its_recorded_definition_exports() {
     )
     .with_research_session("session-1".into());
     toolbox.memory = Some(crate::tools::MemoryCtx {
-        db_path: fixture.root.join("nexus.db"),
+        db_path: fixture.root.join("dugix.db"),
         space_id: db.default_space_id().unwrap(),
         sharing: false,
     });
     toolbox.background = Some(crate::subagent::Background::new().0);
+    toolbox.fleet = Some(crate::fleet::Fleet::new().0);
     toolbox.interactive_ui = true;
     toolbox.approver = Some(Arc::new(crate::app::EvalApprover {
         allow_shell: Vec::new(),

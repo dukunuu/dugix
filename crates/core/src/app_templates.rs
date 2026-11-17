@@ -48,9 +48,9 @@ export default defineConfig({\n\
     (
         "src/pages/index.astro",
         "---\n\
-// A page with a React island. Edit freely — nexus serves the built dist/.\n\
+// A page with a React island. Edit freely — dugix serves the built dist/.\n\
 import Counter from '../components/Counter.tsx';\n\
-const title = 'Nexus app';\n\
+const title = 'Dugix app';\n\
 ---\n\
 <!doctype html>\n\
 <html lang=\"en\">\n\
@@ -206,7 +206,7 @@ export default defineConfig({\n\
   <head>\n\
     <meta charset=\"utf-8\" />\n\
     <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n\
-    <title>Nexus app</title>\n\
+    <title>Dugix app</title>\n\
   </head>\n\
   <body>\n\
     <div id=\"root\"></div>\n\
@@ -259,7 +259,7 @@ export default function App() {\n\
 \n\
   return (\n\
     <main>\n\
-      <h1>Nexus app (Vite + React + TypeScript)</h1>\n\
+      <h1>Dugix app (Vite + React + TypeScript)</h1>\n\
       <p>\n\
         count: <strong>{count}</strong>{' '}\n\
         <button onClick={() => bump(1)}>+1</button>{' '}\n\

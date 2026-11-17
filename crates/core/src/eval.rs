@@ -1,4 +1,4 @@
-//! Golden-task loading and deterministic answer/tool-call checks for `nexus eval`.
+//! Golden-task loading and deterministic answer/tool-call checks for `dugix eval`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -284,7 +284,7 @@ impl EvalWorkspace {
     /// Returns filesystem errors or unsupported fixture entry types.
     pub fn copy_from(fixture: &Path) -> Result<Self> {
         let copy = Self {
-            dir: std::env::temp_dir().join(format!("nexus-eval-{}", uuid::Uuid::new_v4())),
+            dir: std::env::temp_dir().join(format!("dugix-eval-{}", uuid::Uuid::new_v4())),
         };
         copy_fixture(fixture, &copy.root())?;
         Ok(copy)
@@ -462,7 +462,7 @@ mod tests {
 
     impl TempDir {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!("nexus-eval-{}", uuid::Uuid::new_v4()));
+            let path = std::env::temp_dir().join(format!("dugix-eval-{}", uuid::Uuid::new_v4()));
             fs::create_dir_all(&path).unwrap();
             Self(path)
         }

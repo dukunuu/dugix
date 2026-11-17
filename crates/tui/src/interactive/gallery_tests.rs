@@ -1,5 +1,5 @@
 //! Visual regression net: every component family as plain text at 72 columns.
-//! Regenerate with `NEXUS_UPDATE_SNAPSHOTS=1 cargo test -p nexus-chat gallery`.
+//! Regenerate with `DUGIX_UPDATE_SNAPSHOTS=1 cargo test -p dugix gallery`.
 
 use super::*;
 
@@ -89,7 +89,7 @@ fn gallery_snapshots_cover_every_component_family() {
         .map(|(index, source)| render(index, source))
         .collect::<Vec<_>>()
         .join("\n\n");
-    if std::env::var_os("NEXUS_UPDATE_SNAPSHOTS").is_some() {
+    if std::env::var_os("DUGIX_UPDATE_SNAPSHOTS").is_some() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/src/interactive/gallery_snapshots.txt"

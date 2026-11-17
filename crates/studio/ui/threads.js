@@ -1,5 +1,5 @@
 // Comment-thread pieces shared by the doc and sheet sidebars: message text,
-// author rows, the activity line while nexus works on a thread, and the reply
+// author rows, the activity line while dugix works on a thread, and the reply
 // box. Everything is built as DOM nodes; nothing is interpreted as HTML.
 import { inlineTokens, markdownTokens } from './helpers.js';
 import { glyph } from './doc/glyphs.js';
@@ -43,7 +43,7 @@ export function action(name, label, run, className = '') {
 
 export function author(message) {
   const row = el('div', `author ${message.role}`);
-  const name = el('span', 'name', message.role === 'model' ? 'nexus' : 'You');
+  const name = el('span', 'name', message.role === 'model' ? 'dugix' : 'You');
   name.title = new Date(message.created * 1000).toLocaleString();
   row.append(el('span', 'd-avatar', message.role === 'model' ? '✦' : '❯'), name);
   return row;
@@ -66,12 +66,12 @@ export function trackActivities(ctx, next, { notify, refresh }) {
     if (['done', 'failed', 'stopped'].includes(activity.state) && prior?.state !== activity.state) {
       if (activity.state === 'done') { doneUntil[id] = Date.now() + 4000; setTimeout(refresh, 4000); }
       const thread = ctx.threadOf(id);
-      if (thread && state.activeThread !== id) notify(thread, `nexus ${activity.detail || (activity.state === 'done' ? 'finished' : activity.state)}`);
+      if (thread && state.activeThread !== id) notify(thread, `dugix ${activity.detail || (activity.state === 'done' ? 'finished' : activity.state)}`);
     }
   }
 }
 
-/** The line under a card while nexus works on its thread, or after it finished. `ctx.undo` and `ctx.undoPattern` (which finished details offer Undo) are optional. */
+/** The line under a card while dugix works on its thread, or after it finished. `ctx.undo` and `ctx.undoPattern` (which finished details offer Undo) are optional. */
 export function activityRow(thread, ctx) {
   const { state, progress, command } = ctx;
   const activity = state.activities[thread.id];
@@ -82,8 +82,8 @@ export function activityRow(thread, ctx) {
   const label = el('div', 'd-activity-label');
   if (busy(activity)) label.append(el('span', 'd-activity-dot'));
   if (activity.state === 'done') label.append(glyph('check'));
-  const waiting = { draft: 'Waiting — you have a draft in nexus', streaming: 'Waiting — nexus is answering something else', no_model: 'Waiting — no model selected' };
-  label.append(el('span', '', activity.state === 'queued' ? waiting[activity.reason] || 'Waiting for nexus' : ['working', 'progress'].includes(activity.state) ? 'nexus is working…' : activity.state === 'done' ? 'Done' : activity.state === 'stopped' ? 'Stopped' : 'Failed'));
+  const waiting = { draft: 'Waiting — you have a draft in dugix', streaming: 'Waiting — dugix is answering something else', no_model: 'Waiting — no model selected' };
+  label.append(el('span', '', activity.state === 'queued' ? waiting[activity.reason] || 'Waiting for dugix' : ['working', 'progress'].includes(activity.state) ? 'dugix is working…' : activity.state === 'done' ? 'Done' : activity.state === 'stopped' ? 'Stopped' : 'Failed'));
   row.append(label);
   if (['working', 'progress'].includes(activity.state)) for (const line of progress[thread.id] || []) row.append(el('div', 'activity-line', line));
   if (!busy(activity) && activity.detail) row.append(paragraphs(activity.detail));
@@ -115,18 +115,18 @@ export function replyBox(thread, ctx) {
   area.setAttribute('aria-label', 'Reply to thread');
   area.value = state.drafts[thread.id] || '';
   area.addEventListener('input', () => { state.drafts[thread.id] = area.value; area.style.height = 'auto'; area.style.height = `${area.scrollHeight}px`; ctx.grow?.(); });
-  const send = toNexus => {
+  const send = toDugix => {
     if (!area.value.trim()) { area.focus(); return; }
     const text = area.value;
     delete state.drafts[thread.id];
-    command({ command: 'CommentReply', thread: thread.id, text, send: toNexus }, e => { if (e.event === 'Error') state.drafts[thread.id] = text; });
+    command({ command: 'CommentReply', thread: thread.id, text, send: toDugix }, e => { if (e.event === 'Error') state.drafts[thread.id] = text; });
   };
   area.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(state.linked); } });
-  const note = el('button', 'small quiet', 'Reply'), ask = el('button', 'small primary-quiet', 'Send to nexus');
+  const note = el('button', 'small quiet', 'Reply'), ask = el('button', 'small primary-quiet', 'Send to dugix');
   note.type = ask.type = 'button';
   ask.prepend(glyph('send'));
   ask.disabled = !state.linked;
-  ask.title = state.linked ? 'Send this reply to the conversation' : 'Not linked to a conversation — open it from nexus with /studio';
+  ask.title = state.linked ? 'Send this reply to the conversation' : 'Not linked to a conversation — open it from dugix with /studio';
   note.addEventListener('click', () => send(false));
   ask.addEventListener('click', () => send(true));
   const actions = el('div', 'reply-actions');

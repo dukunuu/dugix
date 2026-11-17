@@ -1,6 +1,6 @@
 //! The shared popup pattern, as Settings, Login, Local models, Copy, Connectors and Swarm follow it.
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use nexus_core::app::Popup;
+use dugix_core::app::Popup;
 
 use super::tests::{render_to_string, test_app};
 
@@ -33,7 +33,7 @@ fn settings_uses_the_shared_frame_and_never_nerd_config() {
     app.core.verbosity = "normal".into();
     app.open_settings();
     let screen = render_to_string(110, 30, |f| super::settings::render(f, &app));
-    let count = format!("{} settings", nexus_core::app::SettingsField::ALL.len());
+    let count = format!("{} settings", dugix_core::app::SettingsField::ALL.len());
     assert_frame(&screen, "Settings", &count, "Esc close");
     assert!(!screen.contains("nerd config"), "{screen}");
     assert!(screen.contains("● on"), "{screen}");
@@ -62,8 +62,8 @@ fn login_uses_the_shared_frame_and_j_k_move_the_selection() {
 
 #[test]
 fn local_models_uses_the_shared_frame_and_names_runtime_statuses() {
-    use nexus_core::provider::local::LocalRuntime;
-    use nexus_core::provider::serve::RuntimeStatus;
+    use dugix_core::provider::local::LocalRuntime;
+    use dugix_core::provider::serve::RuntimeStatus;
     let mut app = test_app();
     app.popup = Popup::Local;
     app.local.status = vec![RuntimeStatus {
@@ -100,7 +100,7 @@ fn local_models_uses_the_shared_frame_and_names_runtime_statuses() {
 #[test]
 fn copy_uses_the_shared_frame_and_the_new_empty_sentence() {
     let mut app = test_app();
-    app.copy_options = vec![nexus_core::app::CopyOption {
+    app.copy_options = vec![dugix_core::app::CopyOption {
         label: "Copy message".into(),
         text: "message".into(),
     }];
@@ -117,7 +117,7 @@ fn copy_uses_the_shared_frame_and_the_new_empty_sentence() {
 #[test]
 fn connectors_uses_the_shared_frame_and_requires_ctrl_d_twice() {
     use super::connectors::Mode;
-    use nexus_core::connectors::{ConnectorConfig, Status};
+    use dugix_core::connectors::{ConnectorConfig, Status};
     let mut app = test_app();
     app.connectors
         .add("notes", ConnectorConfig::local(vec!["notes".into()]))
@@ -154,10 +154,10 @@ fn connectors_uses_the_shared_frame_and_requires_ctrl_d_twice() {
 
 #[test]
 fn swarm_uses_the_shared_frame_and_plain_n_starts_a_persona() {
-    use nexus_core::app::{PendingEditor, SwarmPopupMode};
+    use dugix_core::app::{PendingEditor, SwarmPopupMode};
     let mut app = test_app();
     app.popup = Popup::Swarm;
-    app.swarm.cache.push(nexus_core::db::Persona {
+    app.swarm.cache.push(dugix_core::db::Persona {
         name: "Reviewer".into(),
         model: "test-model".into(),
         blurb: "Reviews work".into(),
@@ -208,7 +208,7 @@ fn swarm_uses_the_shared_frame_and_plain_n_starts_a_persona() {
 
 #[test]
 fn settings_numeric_drafts_have_a_field_and_save_or_cancel_without_closing() {
-    use nexus_core::app::{SettingsField, SettingsRow};
+    use dugix_core::app::{SettingsField, SettingsRow};
     let mut app = test_app();
     app.open_settings();
     app.settings_selected = app
@@ -283,7 +283,7 @@ fn connector_log_and_import_use_the_shared_frame_and_navigation() {
     app.connectors
         .add(
             "notes",
-            nexus_core::connectors::ConnectorConfig::local(vec!["notes".into()]),
+            dugix_core::connectors::ConnectorConfig::local(vec!["notes".into()]),
         )
         .unwrap();
     app.connectors_popup.mode = Mode::Log;

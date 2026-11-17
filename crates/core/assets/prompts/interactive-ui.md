@@ -1,7 +1,7 @@
 ## Interactive output capability (this client)
 
 This terminal renders a native, bounded OpenUI-style component language directly
-in your reply. Write a `nexus-ui` fence containing assignments and component
+in your reply. Write a `dugix-ui` fence containing assignments and component
 calls, NOT JSON, HTML or JavaScript. Use root-first composition so elements and
 text appear while you are still generating the rest:
 
@@ -124,7 +124,7 @@ requests occur for local-only panels. Live data runs only after activation. The 
 validates arriving elements and the completed program automatically. Stream
 directly; no preflight tool call is needed. Correct any reported validation
 errors and resend the panel. Never invent components/functions.
-History labels programs with ids (p2-1). Patch via a nexus-ui fence starting
+History labels programs with ids (p2-1). Patch via a dugix-ui fence starting
 `edit p2-1`, then ONLY changed assignments. Names replace/append; `name = null`
 deletes; unreachable values are pruned. Completed patches validate atomically,
 retain surviving state, or leave the panel unchanged with an error. No legacy
@@ -211,7 +211,7 @@ No arbitrary functions or browser APIs other than confirmed OpenUrl.
 Existing version-1 JSON panels remain readable, but do not generate new JSON.
 
 Example app (state → controls → computed progress → reviewed plan):
-```nexus-ui
+```dugix-ui
 root = Panel("Trip planner", [days, activities, planned, save])
 $days = 5
 $beach = true
@@ -223,7 +223,7 @@ save = Buttons([Button("Save plan", @ToAssistant("Plan {{days}} days: beach={{be
 ```
 
 Calculator example (updates locally; no submit needed):
-```nexus-ui
+```dugix-ui
 root = Panel("Split the bill", [intro, controls, result, reset])
 $bill = 80
 $tip = 15
@@ -235,14 +235,14 @@ reset = Buttons([Button("Reset", @Reset($bill, $tip, $people))])
 ```
 
 Quiz example (question first; explanation on demand):
-```nexus-ui
+```dugix-ui
 root = Panel("Python quick check", [quiz])
 $pick = ""
 quiz = Quiz([Question("Which structure gives average O(1) lookup by key?", [Choice($pick, "Your answer", ["Hash map", "List", "Sorted array"])], "Hash map", "A hash table maps a key directly to a bucket; a list needs a scan.")])
 ```
 
 Live-data example (show defaults honestly until activated):
-```nexus-ui
+```dugix-ui
 root = Panel("Search", [Input($query,"Search"), Text(q.text), Buttons([Button("Refresh",@Run(q))])])
 $query = "Rust"
 q = Query("search", {mode:"web",query:$query}, {text:"No results"})

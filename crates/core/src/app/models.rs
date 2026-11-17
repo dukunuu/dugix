@@ -512,7 +512,7 @@ impl App {
                 self.push_status(format!("model: {id}"));
                 if !self.router_note_shown && ROUTER_MODEL_IDS.contains(&id) {
                     self.router_note_shown = true;
-                    self.push_status("router models pick a model per request · prompt caching is less effective · compare with nexus eval --compare-model first");
+                    self.push_status("router models pick a model per request · prompt caching is less effective · compare with dugix eval --compare-model first");
                 }
             }
             ModelPickTarget::SwarmPersona(row) => {
@@ -622,7 +622,7 @@ mod router_tests {
             assert_eq!(notes.len(), 1);
             assert_eq!(
                 notes[0],
-                "router models pick a model per request · prompt caching is less effective · compare with nexus eval --compare-model first"
+                "router models pick a model per request · prompt caching is less effective · compare with dugix eval --compare-model first"
             );
             let root = app.space.root.clone();
             drop(app);

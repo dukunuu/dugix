@@ -138,7 +138,7 @@ pub(super) fn unified_diff(app: &str, path: &str, current: &str, candidate: &str
     if current == candidate {
         return "no changes".to_string();
     }
-    let dir = std::env::temp_dir().join(format!("nexus-diff-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-diff-{}", uuid::Uuid::new_v4()));
     let before = dir.join("before");
     let after = dir.join("after");
     let result = (|| {

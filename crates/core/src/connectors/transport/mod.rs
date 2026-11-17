@@ -36,7 +36,7 @@ pub enum McpError {
     TooLarge,
     /// The server said something that is not MCP, or a version we lack.
     Protocol(String),
-    /// The server asked for something nexus does not do yet.
+    /// The server asked for something dugix does not do yet.
     Unsupported(String),
 }
 

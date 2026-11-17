@@ -81,7 +81,7 @@ mod tests {
     #[test]
     fn rename_is_scoped_and_validated() {
         let root =
-            std::env::temp_dir().join(format!("nexus-session-view-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("dugix-session-view-{}", uuid::Uuid::new_v4()));
         let mut app = App::new(
             crate::db::Db::open_in_memory().expect("db"),
             None,

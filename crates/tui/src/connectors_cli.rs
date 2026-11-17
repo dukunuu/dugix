@@ -6,9 +6,9 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
-use nexus_core::connectors::config::{AuthKind, ConnectorConfig};
-use nexus_core::connectors::import::{self, ImportPaths, Source};
-use nexus_core::connectors::{Registry, Status};
+use dugix_core::connectors::config::{AuthKind, ConnectorConfig};
+use dugix_core::connectors::import::{self, ImportPaths, Source};
+use dugix_core::connectors::{Registry, Status};
 
 #[derive(Subcommand)]
 pub enum ConnectorsCmd {
@@ -65,7 +65,7 @@ pub enum ConnectorsCmd {
 }
 
 fn registry(autostart: bool) -> Result<Registry> {
-    let space = nexus_core::space::Space::open()?;
+    let space = dugix_core::space::Space::open()?;
     let registry = Registry::system(&space.root, None, autostart);
     let problems = registry.load()?;
     for problem in problems {
@@ -118,7 +118,7 @@ fn list(json: bool) -> Result<()> {
     }
     if infos.is_empty() {
         println!(
-            "no connectors yet · nexus connectors add NAME --url URL, or `nexus connectors import`"
+            "no connectors yet · dugix connectors add NAME --url URL, or `dugix connectors import`"
         );
         return Ok(());
     }
@@ -138,7 +138,7 @@ fn list(json: bool) -> Result<()> {
         );
     }
     println!(
-        "\nlive status and tool policies: /connectors in the TUI, or `nexus connectors tools NAME`"
+        "\nlive status and tool policies: /connectors in the TUI, or `dugix connectors tools NAME`"
     );
     Ok(())
 }
@@ -253,7 +253,7 @@ async fn tools(name: &str, json: bool) -> Result<()> {
                     "model_name": row.exposed,
                     "title": row.title,
                     "annotations": row.words,
-                    "policy": row.policy.map(nexus_core::connectors::Policy::as_str),
+                    "policy": row.policy.map(dugix_core::connectors::Policy::as_str),
                     "read_only": row.read_only,
                 })
             })
@@ -274,7 +274,7 @@ async fn tools(name: &str, json: bool) -> Result<()> {
             "{:<width$}  {:<5}  {}",
             row.name,
             row.policy
-                .map_or("auto", nexus_core::connectors::Policy::as_str),
+                .map_or("auto", dugix_core::connectors::Policy::as_str),
             row.words
         );
     }
@@ -372,7 +372,7 @@ mod tests {
     use clap::Parser as _;
 
     fn parse(args: &[&str]) -> Result<ConnectorsCmd, clap::Error> {
-        let mut argv = vec!["nexus", "connectors"];
+        let mut argv = vec!["dugix", "connectors"];
         argv.extend_from_slice(args);
         Cli::try_parse_from(argv).map(|cli| match cli.command {
             Some(Command::Connectors { cmd }) => cmd,

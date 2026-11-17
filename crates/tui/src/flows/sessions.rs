@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use nexus_core::app::{Popup, SessionMode};
+use dugix_core::app::{Popup, SessionMode};
 
 use crate::app_view::AppView;
 
@@ -18,24 +18,24 @@ impl AppView {
         Ok(())
     }
 
-    pub fn filtered_sessions(&self) -> Vec<&nexus_core::db::Session> {
+    pub fn filtered_sessions(&self) -> Vec<&dugix_core::db::Session> {
         let needle = self.session_filter.trim();
         if needle.is_empty() {
             return self.core.caches.sessions.iter().collect();
         }
-        nexus_core::app::fuzzy_filter_sorted(&self.core.caches.sessions, |s| {
-            nexus_core::app::session_score(s, needle)
+        dugix_core::app::fuzzy_filter_sorted(&self.core.caches.sessions, |s| {
+            dugix_core::app::session_score(s, needle)
         })
     }
 
-    pub fn selected_session(&self) -> Option<nexus_core::db::Session> {
+    pub fn selected_session(&self) -> Option<dugix_core::db::Session> {
         self.filtered_sessions()
             .get(self.session_selected)
             .map(|s| (*s).clone())
     }
 
     pub fn move_session_selection(&mut self, delta: i32) {
-        self.session_selected = nexus_core::app::clamp_cursor(
+        self.session_selected = dugix_core::app::clamp_cursor(
             self.session_selected,
             self.filtered_sessions().len(),
             delta,
@@ -111,13 +111,13 @@ impl AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_core::app::App;
-    use nexus_core::db::{Db, Message};
-    use nexus_core::space::Space;
+    use dugix_core::app::App;
+    use dugix_core::db::{Db, Message};
+    use dugix_core::space::Space;
 
     fn test_space() -> Space {
         Space {
-            root: std::env::temp_dir().join(format!("nexus-flow-test-{}", uuid::Uuid::new_v4())),
+            root: std::env::temp_dir().join(format!("dugix-flow-test-{}", uuid::Uuid::new_v4())),
         }
     }
 
@@ -146,14 +146,14 @@ mod tests {
         let abort = tokio::task::spawn(async {}).abort_handle();
         a.core.chat_tasks.insert(
             1,
-            nexus_core::app::ChatTask {
+            dugix_core::app::ChatTask {
                 id: 1,
                 session_id: s.id.clone(),
                 session_title: "streaming".into(),
                 space_id: space.clone(),
                 model: "a/one".into(),
                 model_id: "one".into(),
-                backend: nexus_core::provider::BackendTag::OpenRouter,
+                backend: dugix_core::provider::BackendTag::OpenRouter,
                 incognito: false,
                 buffer: "partial".into(),
                 thinking: String::new(),
@@ -162,7 +162,7 @@ mod tests {
                 usage_row_id: None,
                 started: std::time::Instant::now(),
                 thinking_idx: 0,
-                spinner_color: nexus_core::app::SpinnerColor::Green,
+                spinner_color: dugix_core::app::SpinnerColor::Green,
                 abort,
             },
         );

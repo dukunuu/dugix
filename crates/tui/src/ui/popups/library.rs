@@ -1,15 +1,15 @@
 //! `/library`: every deck and doc of the space, newest first. The listing, file
-//! operations and dialogs are `nexus_core::canvas`'s; this module only draws.
+//! operations and dialogs are `dugix_core::canvas`'s; this module only draws.
 
 use std::path::PathBuf;
 
 use anyhow::Result;
 use chrono::Utc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use nexus_core::app::{Popup, clamp_cursor};
-use nexus_core::canvas::dialogs::{self, Dialogs};
-use nexus_core::canvas::{self, Entry, files, settings};
-use nexus_core::deck::link::Kind;
+use dugix_core::app::{Popup, clamp_cursor};
+use dugix_core::canvas::dialogs::{self, Dialogs};
+use dugix_core::canvas::{self, Entry, files, settings};
+use dugix_core::deck::link::Kind;
 use ratatui::Frame;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -358,7 +358,7 @@ fn export_selected(app: &mut AppView, word: &str) {
                 let _ = settings::remember_export(&app.space.root, &files, &written);
                 written
             }
-            None => nexus_core::deck::export::write_export(&output, &files, None)?,
+            None => dugix_core::deck::export::write_export(&output, &files, None)?,
         };
         Ok(Some((written, dialog)))
     })();

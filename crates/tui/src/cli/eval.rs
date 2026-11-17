@@ -1,13 +1,13 @@
-//! `nexus eval` — golden tasks against a real backend.
+//! `dugix eval` — golden tasks against a real backend.
 
 use std::fmt::Write as _;
 use std::path::Path;
 
 use anyhow::{Result, bail};
 
-use nexus_core::app;
-use nexus_core::config;
-use nexus_core::eval;
+use dugix_core::app;
+use dugix_core::config;
+use dugix_core::eval;
 
 use super::EvalSetting;
 use super::ask::build_app;
@@ -122,7 +122,7 @@ async fn run_eval_task(
                 .iter()
                 .filter(|call| {
                     matches!(
-                        nexus_core::tools::classify_tool_result(&call.result, ""),
+                        dugix_core::tools::classify_tool_result(&call.result, ""),
                         Some("invalid_args" | "unknown_tool")
                     )
                 })

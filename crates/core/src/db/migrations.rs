@@ -98,11 +98,11 @@ fn version(conn: &Connection, schema: &str) -> Result<i64> {
 fn validate_version(conn: &Connection, ctx: &Ctx<'_>, v: i64, latest: i64) -> Result<()> {
     if v > latest {
         bail!(
-            "{} was written by a newer nexus (schema {v}, this build knows up to {latest}); update nexus",
+            "{} was written by a newer dugix (schema {v}, this build knows up to {latest}); update dugix",
             ctx.file
         );
     }
-    if ctx.file == "nexus.db"
+    if ctx.file == "dugix.db"
         && (v == 1
             || v == 2
             || (v == 0
@@ -113,7 +113,7 @@ fn validate_version(conn: &Connection, ctx: &Ctx<'_>, v: i64, latest: i64) -> Re
                 )?))
     {
         bail!(
-            "nexus.db is from a nexus older than 0.1.42 (schema {v}); install nexus-chat 0.1.42 once to upgrade it, then this version"
+            "dugix.db is from a version older than 0.1.42 (schema {v}); install nexus-chat 0.1.42 once to upgrade it, then this version"
         );
     }
     Ok(())
@@ -150,7 +150,7 @@ pub(crate) fn migrate_durable(conn: &Connection) -> Result<Vec<String>> {
         .and_then(|path| Path::new(path).parent());
     let mut ctx = Ctx {
         schema: "main",
-        file: "nexus.db",
+        file: "dugix.db",
         root,
         notes: Vec::new(),
     };

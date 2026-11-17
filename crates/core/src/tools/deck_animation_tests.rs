@@ -16,7 +16,7 @@ fn read_summarizes_transition_and_all_build_slots_in_order() {
     )
     .unwrap();
     let path =
-        std::env::temp_dir().join(format!("nexus-motion-{}.deck.json", uuid::Uuid::new_v4()));
+        std::env::temp_dir().join(format!("dugix-motion-{}.deck.json", uuid::Uuid::new_v4()));
     let read = read::read_text("decks/motion.deck.json", &path, &deck, None).unwrap();
     assert!(
         read.contains("transition: push left 400ms ease_out"),

@@ -9,16 +9,16 @@ use ratatui::widgets::{Block, Borders, ListItem, ListState, Paragraph};
 use crate::app_view::AppView;
 use crate::ui::popups::chrome::{self, PopupFrame, ctrl, hint, keys};
 use crate::ui::style::glyph;
-use nexus_core::app::{ModelPanel, Popup};
-use nexus_core::provider::Model;
+use dugix_core::app::{ModelPanel, Popup};
+use dugix_core::provider::Model;
 
 #[allow(clippy::too_many_lines)] // shared frame + two model columns
 pub fn render(f: &mut Frame, app: &mut AppView) {
     let area = chrome::popup_area(app, f.area(), "model", MODEL_SIZE);
     let (fav_outer, avail_outer) = model_popup_areas(app, f.area());
     let picking = match app.model_pick_target {
-        nexus_core::app::ModelPickTarget::Session => "chat model",
-        nexus_core::app::ModelPickTarget::SwarmPersona(_) => "drafter model",
+        dugix_core::app::ModelPickTarget::Session => "chat model",
+        dugix_core::app::ModelPickTarget::SwarmPersona(_) => "drafter model",
     };
     let mut count = format!("{} · {picking}", app.model_backend_filter_label());
     if let Some(efforts) = app.focused_reasoning_hint() {
@@ -71,7 +71,7 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
                 .is_none_or(|backend| model.backend == backend)
                 && !app
                     .favorites
-                    .contains(&nexus_core::app::composite_id(model))
+                    .contains(&dugix_core::app::composite_id(model))
         })
         .count();
     for (area, panel, label) in [
@@ -172,7 +172,7 @@ fn model_items(
     models
         .iter()
         .map(|m| {
-            let key = nexus_core::app::composite_id(m);
+            let key = dugix_core::app::composite_id(m);
             let mut id = if short {
                 crate::ui::short_model_label(&key)
             } else {
@@ -257,8 +257,8 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
         KeyCode::Esc => {
             if app.model_filter.is_empty() {
                 app.popup = match app.model_pick_target {
-                    nexus_core::app::ModelPickTarget::SwarmPersona(_) => Popup::Swarm,
-                    nexus_core::app::ModelPickTarget::Session => Popup::None,
+                    dugix_core::app::ModelPickTarget::SwarmPersona(_) => Popup::Swarm,
+                    dugix_core::app::ModelPickTarget::Session => Popup::None,
                 };
             } else {
                 app.model_filter.clear();

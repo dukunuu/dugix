@@ -17,8 +17,8 @@ fn ui_failures_are_replay_only_and_stable_across_turns() {
         }
     }
     let bad =
-        "```nexus-ui\n{\"version\":1,\"title\":\"Quiz\",\"view\":[{\"type\":\"radio\"}]}\n```";
-    let good = "```nexus-ui\n{\"version\":1,\"title\":\"Quiz\",\"view\":[{\"type\":\"text\",\"text\":\"Hi\"}]}\n```";
+        "```dugix-ui\n{\"version\":1,\"title\":\"Quiz\",\"view\":[{\"type\":\"radio\"}]}\n```";
+    let good = "```dugix-ui\n{\"version\":1,\"title\":\"Quiz\",\"view\":[{\"type\":\"text\",\"text\":\"Hi\"}]}\n```";
     let mut app = super::super::tests::app_with_key();
     app.messages = vec![
         message("assistant", bad),
@@ -32,7 +32,7 @@ fn ui_failures_are_replay_only_and_stable_across_turns() {
         .filter(|message| message.role == "assistant")
         .collect();
     let noted = format!(
-        "{bad}\n[nexus: the nexus-ui block \"Quiz\" failed to render — view[0]: unknown node type \"radio\" — valid: {}. Correct the reported errors and resend it if the user still needs it.]",
+        "{bad}\n[dugix: the dugix-ui block \"Quiz\" failed to render — view[0]: unknown node type \"radio\" — valid: {}. Correct the reported errors and resend it if the user still needs it.]",
         crate::interactive::NODE_TYPES
     );
     assert_eq!(assistants[0].content, noted);
@@ -48,7 +48,7 @@ fn ui_failures_are_replay_only_and_stable_across_turns() {
     assert!(
         history
             .iter()
-            .all(|message| !message.content.contains("[nexus: the nexus-ui block"))
+            .all(|message| !message.content.contains("[dugix: the dugix-ui block"))
     );
     app.messages.push(message("assistant", "No UI needed."));
     assert!(
@@ -61,14 +61,14 @@ fn ui_failures_are_replay_only_and_stable_across_turns() {
 #[test]
 fn ui_replay_notes_ignore_open_and_literal_fences_and_number_untitled_blocks() {
     for source in [
-        "```nexus-ui\n{",
-        "~~~nexus-ui\n{",
-        "````markdown\n```nexus-ui\n{\n```\n````",
-        "    ```nexus-ui\n    {\n    ```",
+        "```dugix-ui\n{",
+        "~~~dugix-ui\n{",
+        "````markdown\n```dugix-ui\n{\n```\n````",
+        "    ```dugix-ui\n    {\n    ```",
     ] {
         assert!(ui_failure_notes(source).is_empty(), "{source}");
     }
-    let source = "~~~NeXuS-Ui extra\n{\"version\":1,\"title\":\"Fine\",\"view\":[{\"type\":\"text\",\"text\":\"OK\"}]}\n~~~\n```nexus-ui\n{\n```";
+    let source = "~~~DuGiX-Ui extra\n{\"version\":1,\"title\":\"Fine\",\"view\":[{\"type\":\"text\",\"text\":\"OK\"}]}\n~~~\n```dugix-ui\n{\n```";
     let note = ui_failure_notes(source);
     assert!(
         note.contains("block \"#2\" failed to render — $:"),
@@ -76,17 +76,17 @@ fn ui_replay_notes_ignore_open_and_literal_fences_and_number_untitled_blocks() {
     );
     assert_eq!(note.lines().count(), 2);
     let note = ui_failure_notes(
-        "> ```nexus-ui\n> {\"version\":1,\"title\":\"Quoted\",\"view\":[{\"type\":\"radio\"}]}\n> ```",
+        "> ```dugix-ui\n> {\"version\":1,\"title\":\"Quoted\",\"view\":[{\"type\":\"radio\"}]}\n> ```",
     );
     assert!(note.contains("block \"Quoted\""), "{note}");
-    assert!(ui_failure_notes("> > ```nexus-ui\n> > {\"version\":1,\"title\":\"Fine\",\"view\":[{\"type\":\"text\",\"text\":\"OK\"}]}\n> > ```").is_empty());
-    assert!(!ui_failure_notes("```nexus-ui\n> {\"version\":1,\"title\":\"Fine\",\"view\":[{\"type\":\"text\",\"text\":\"OK\"}]}\n```" ).is_empty());
+    assert!(ui_failure_notes("> > ```dugix-ui\n> > {\"version\":1,\"title\":\"Fine\",\"view\":[{\"type\":\"text\",\"text\":\"OK\"}]}\n> > ```").is_empty());
+    assert!(!ui_failure_notes("```dugix-ui\n> {\"version\":1,\"title\":\"Fine\",\"view\":[{\"type\":\"text\",\"text\":\"OK\"}]}\n```" ).is_empty());
 }
 
 #[test]
 fn a_panel_shown_without_its_broken_piece_is_replayed_as_partly_rendered() {
     let note = ui_failure_notes(
-        "```nexus-ui\nroot = Panel(\"Trip\", [Text(\"Kept\"), PieChart([1])])\n```",
+        "```dugix-ui\nroot = Panel(\"Trip\", [Text(\"Kept\"), PieChart([1])])\n```",
     );
     assert!(
         note.contains("block \"Trip\" rendered with parts left out — "),
@@ -110,7 +110,7 @@ fn chat_params_pass_the_cache_lifetime_settings() {
 }
 
 fn temp_dir() -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("nexus-usercmd-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-usercmd-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -161,7 +161,7 @@ async fn an_escaped_descendant_holding_the_pipe_does_not_stall_the_command() {
 
 #[tokio::test]
 async fn a_command_that_cannot_start_says_so() {
-    let missing = std::env::temp_dir().join(format!("nexus-missing-{}", uuid::Uuid::new_v4()));
+    let missing = std::env::temp_dir().join(format!("dugix-missing-{}", uuid::Uuid::new_v4()));
     let (exit, ran, output) = capture_user_command("true", &missing, USER_COMMAND_TIMEOUT).await;
     assert_eq!((exit, ran), (None, false));
     assert_eq!(user_command_outcome_label(exit, ran), "failed to start");

@@ -1,10 +1,10 @@
 //! Update check against the latest crates.io release, so the app can say a newer
-//! one is out. Installing is always the user's choice (`nexus update`).
+//! one is out. Installing is always the user's choice (`dugix update`).
 
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 
 /// One small NDJSON line per published version, newest last, no auth, no API quota.
-const SPARSE_INDEX: &str = "https://index.crates.io/ne/xu/nexus-chat";
+const SPARSE_INDEX: &str = "https://index.crates.io/du/gi/dugix";
 
 /// The newest non-yanked published version, or `None` on any failure (offline,
 /// timeout, malformed index); runs in a background task.
@@ -96,17 +96,15 @@ fn compare_pre(a: &str, b: &str) -> std::cmp::Ordering {
 
 /// `--locked` installs with the dependency versions the release was tested with,
 /// instead of a fresh resolve that may pick a newly broken dependency.
-const INSTALL_ARGS: [&str; 4] = ["install", "--locked", "--force", "nexus-chat"];
+const INSTALL_ARGS: [&str; 4] = ["install", "--locked", "--force", "dugix"];
 
-/// Run `cargo install --locked --force nexus-chat` in the foreground, streaming its
+/// Run `cargo install --locked --force dugix` in the foreground, streaming its
 /// output to the terminal; returns the exit status.
 pub fn install_now() -> anyhow::Result<std::process::ExitStatus> {
     let status = std::process::Command::new("cargo")
         .args(INSTALL_ARGS)
         .status()
-        .map_err(|e| {
-            anyhow::anyhow!("running `cargo install nexus-chat`: {e} (is cargo on PATH?)")
-        })?;
+        .map_err(|e| anyhow::anyhow!("running `cargo install dugix`: {e} (is cargo on PATH?)"))?;
     Ok(status)
 }
 
@@ -142,9 +140,9 @@ mod tests {
 
     #[test]
     fn index_parse_takes_last_nonyanked() {
-        let body = "{\"name\":\"nexus-chat\",\"vers\":\"0.1.0\",\"yanked\":false}\n\
-            {\"name\":\"nexus-chat\",\"vers\":\"0.1.1\",\"yanked\":true}\n\
-            {\"name\":\"nexus-chat\",\"vers\":\"0.1.2\",\"yanked\":false}\n";
+        let body = "{\"name\":\"dugix\",\"vers\":\"0.1.0\",\"yanked\":false}\n\
+            {\"name\":\"dugix\",\"vers\":\"0.1.1\",\"yanked\":true}\n\
+            {\"name\":\"dugix\",\"vers\":\"0.1.2\",\"yanked\":false}\n";
         let lines = body
             .lines()
             .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())

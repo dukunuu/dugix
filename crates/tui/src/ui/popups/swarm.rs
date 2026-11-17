@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{ListItem, ListState};
 
 use crate::app_view::AppView;
-use nexus_core::app::SwarmPopupMode;
+use dugix_core::app::SwarmPopupMode;
 
 use super::chrome::{self, PopupFrame, ctrl, hint, keys};
 
@@ -147,7 +147,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
                 return Ok(());
             }
             match key.code {
-                KeyCode::Esc => app.popup = nexus_core::app::Popup::None,
+                KeyCode::Esc => app.popup = dugix_core::app::Popup::None,
                 KeyCode::Up => app.move_swarm_selection(-1),
                 KeyCode::Down => app.move_swarm_selection(1),
                 KeyCode::Char('k') if !super::is_chord(key) => app.move_swarm_selection(-1),
@@ -168,7 +168,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
                 }
                 KeyCode::Char('x') if !super::is_chord(key) && app.swarm.rx.is_some() => {
                     app.stop_swarm();
-                    app.popup = nexus_core::app::Popup::None;
+                    app.popup = dugix_core::app::Popup::None;
                 }
                 KeyCode::Char('d') if ctrl && !app.swarm.cache.is_empty() => {
                     app.swarm_popup_mode = SwarmPopupMode::ConfirmDelete;

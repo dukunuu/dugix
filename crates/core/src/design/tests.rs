@@ -3,7 +3,7 @@ use crate::deck::{self, Deck, Op};
 use serde_json::json;
 
 fn temp() -> std::path::PathBuf {
-    let path = std::env::temp_dir().join(format!("nexus-design-{}", uuid::Uuid::new_v4()));
+    let path = std::env::temp_dir().join(format!("dugix-design-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&path).unwrap();
     path
 }
@@ -88,13 +88,13 @@ fn validation_repairs_layout_ids_and_locates_limits() {
 #[test]
 fn storage_revisions_defaults_and_confinement() {
     let files = temp();
-    assert_eq!(default_slug(&files).unwrap(), "nexus");
+    assert_eq!(default_slug(&files).unwrap(), "dugix");
     let mut design = Design::default();
     design.name = "Brand".into();
     save(&files, "brand", &design).unwrap();
     assert_eq!(load(&files, "brand").unwrap(), design);
     let listed = list(&files).unwrap();
-    assert!(listed.contains(&"brand".to_string()) && listed.contains(&"nexus".to_string()));
+    assert!(listed.contains(&"brand".to_string()) && listed.contains(&"dugix".to_string()));
     assert_eq!(listed.len(), 2 + presets::catalog().len());
     assert!(listed.is_sorted());
     set_default(&files, "brand").unwrap();
@@ -298,7 +298,7 @@ fn every_builtin_layout_checks_and_renders_to_png() {
         let values = layouts::slots(layout).into_iter().map(|slot| {
             let value = match slot.as_str() {
                 "image" => "assets/sample.png", "title" => "Make room for what matters.",
-                "kicker" => "NEXUS / A NEW PERSPECTIVE", "subtitle" => "One source. A clearer story.",
+                "kicker" => "DUGIX / A NEW PERSPECTIVE", "subtitle" => "One source. A clearer story.",
                 "number" => "42%", "quote" => "Clarity is the space between the things we choose to say.",
                 "attribution" => "The design team", "left_title" => "Today", "right_title" => "Tomorrow",
                 "items" => "1. Start with the question\n2. Follow the evidence\n3. Make the decision",
@@ -329,7 +329,7 @@ fn every_builtin_layout_checks_and_renders_to_png() {
             image.pixels().filter(|p| *p != background).count() > 1000,
             "empty render: {name}"
         );
-        if std::env::var_os("NEXUS_LAYOUT_PREVIEWS").is_some() {
+        if std::env::var_os("DUGIX_LAYOUT_PREVIEWS").is_some() {
             let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../target/layout-previews");
             std::fs::create_dir_all(&out).unwrap();

@@ -89,7 +89,7 @@ pub struct LocalConfig {
     /// Optional discovery command; stdout must contain one model ID per line.
     pub list_command: Option<Vec<String>>,
     /// Warn once a local server's process tree passes this many mebibytes.
-    /// Unset means a fraction of physical memory. Advisory only: Nexus warns,
+    /// Unset means a fraction of physical memory. Advisory only: Dugix warns,
     /// it never stops a server on its own.
     pub memory_budget_mb: Option<u64>,
     /// Context window in tokens; Ollama defaults to 32,768 when unset, and
@@ -458,7 +458,7 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        // What llama-server 0.7.0 prints when stdout is a pipe, as under nexus.
+        // What llama-server 0.7.0 prints when stdout is a pipe, as under dugix.
         assert_eq!(
             parse_llama_cpp(
                 "number of models in cache: 1\n   1. deucebucket/Qwen3.6-35B-A3B-Cerebellum-GGUF:Q3_K_M\n"
@@ -636,7 +636,7 @@ mod tests {
     #[tokio::test]
     async fn missing_runtime_is_actionable() {
         let error = run_command(&[format!(
-            "/nonexistent/nexus-runtime-{}",
+            "/nonexistent/dugix-runtime-{}",
             uuid::Uuid::new_v4()
         )])
         .await

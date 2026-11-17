@@ -7,7 +7,7 @@ use ratatui::widgets::{ListItem, ListState};
 
 use crate::app_view::AppView;
 use crossterm::event::KeyModifiers;
-use nexus_core::app::AppsMode;
+use dugix_core::app::AppsMode;
 
 use super::chrome::{self, PopupFrame, ctrl, hint, keys};
 use super::list_filter;
@@ -240,7 +240,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
             }
             match classify_browse_key(key, false, false) {
                 Some(BrowseAction::Close) if !app.apps_filter.is_empty() => app.apps_filter.clear(),
-                Some(BrowseAction::Close) => app.popup = nexus_core::app::Popup::None,
+                Some(BrowseAction::Close) => app.popup = dugix_core::app::Popup::None,
                 Some(BrowseAction::Filter(c)) => {
                     app.apps_filter.push(c);
                     app.apps_selected = list_filter::first(&app.apps_rows(), app.apps_selected);

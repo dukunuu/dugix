@@ -66,7 +66,7 @@ impl App {
             .context("listing spaces")?
             .into_iter()
             .find(|s| s.name == name)
-            .ok_or_else(|| anyhow!("no space named {name:?} — `nexus spaces` lists them"))?;
+            .ok_or_else(|| anyhow!("no space named {name:?} — `dugix spaces` lists them"))?;
         if row.id != self.active_space.id {
             self.set_active_space(row);
         }
@@ -336,7 +336,7 @@ mod tests {
     use crate::space::Space;
 
     fn test_app() -> App {
-        let root = std::env::temp_dir().join(format!("nexus-cli-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-cli-{}", uuid::Uuid::new_v4()));
         App::new(Db::open_in_memory().unwrap(), Some("k"), Space { root })
     }
 

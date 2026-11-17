@@ -287,10 +287,10 @@ fn step(doc: &mut Doc, op: &Op, resolver: Option<&Resolver<'_>>) -> Result<()> {
             let slug = design
                 .as_deref()
                 .or(doc.design.as_deref())
-                .unwrap_or("nexus")
+                .unwrap_or("dugix")
                 .to_string();
             let design = resolve(&slug, resolver)
-                .map_err(|e| anyhow!("design: {e}; fix: choose a stored design or nexus"))?;
+                .map_err(|e| anyhow!("design: {e}; fix: choose a stored design or dugix"))?;
             doc.theme = super::Theme::from_design(&design);
             doc.page = design.doc.page.clone();
             doc.design = Some(slug);

@@ -379,7 +379,7 @@ pub(super) static PANEL_APP: ToolSpec = ToolSpec {
         Param {
             name: "patch",
             kind: Kind::Str,
-            doc: "changed nexus-ui assignments; `name = null` deletes",
+            doc: "changed dugix-ui assignments; `name = null` deletes",
         },
     ],
     actions: &[
@@ -824,7 +824,7 @@ pub(super) static SHELL: ToolSpec = ToolSpec {
 
 pub(super) static PROC: ToolSpec = ToolSpec {
     name: "proc",
-    purpose: "Start and manage session-owned background commands in the agent workspace. Commands stop when Nexus exits.",
+    purpose: "Start and manage session-owned background commands in the agent workspace. Commands stop when Dugix exits.",
     selector: Some("action"),
     params: &[
         Param {
@@ -1492,6 +1492,115 @@ pub(super) static AGENTS: ToolSpec = ToolSpec {
     ],
 };
 
+pub(super) static FLEET: ToolSpec = ToolSpec {
+    name: "fleet",
+    purpose: "External coding-agent CLIs (claude, codex, pi, opencode), each in its own terminal, working under its own permissions; in a git workspace each gets its own branch and worktree. Use them only when the user asks for other agents; start needs their approval. To run a task through them: split it into self-contained jobs that touch separate files, start one agent per job in a single start with jobs, wait, then review each with diff and check, send fixes back and check again. Report which agents are ready; the user merges them in /fleet. A blocked agent waits on a permission only the user can give there.",
+    selector: Some("action"),
+    params: &[
+        Param {
+            name: "agent",
+            kind: Kind::Enum(crate::fleet::Kind::NAMES),
+            doc: "which CLI to start",
+        },
+        Param {
+            name: "prompt",
+            kind: Kind::Str,
+            doc: "self-contained job for the agent",
+        },
+        Param {
+            name: "model",
+            kind: Kind::Str,
+            doc: "model for the agent, in that CLI's own naming (default: its default)",
+        },
+        Param {
+            name: "jobs",
+            kind: Kind::Objects,
+            doc: "several agents to start under one approval, each {agent, prompt, model?}",
+        },
+        Param {
+            name: "id",
+            kind: Kind::Int,
+            doc: "agent number from start or list",
+        },
+        Param {
+            name: "text",
+            kind: Kind::Str,
+            doc: "follow-up message typed into the agent",
+        },
+        Param {
+            name: "wait_s",
+            kind: Kind::Int,
+            doc: "longest wait in seconds for wait or check (default 300, maximum 600)",
+        },
+    ],
+    actions: &[
+        ActionSpec {
+            name: "start",
+            summary: "Start an agent on a job (agent, prompt, model), or several at once with jobs, under one approval; returns at once with their numbers",
+            required: &[],
+            optional: &["agent", "prompt", "model", "jobs"],
+            read_only: false,
+            internal: "fleet_start",
+        },
+        ActionSpec {
+            name: "list",
+            summary: "This conversation's agents and their states: working, blocked, idle, exited",
+            required: &[],
+            optional: &[],
+            read_only: true,
+            internal: "fleet_list",
+        },
+        ActionSpec {
+            name: "read",
+            summary: "An agent's state and current screen",
+            required: &["id"],
+            optional: &[],
+            read_only: true,
+            internal: "fleet_read",
+        },
+        ActionSpec {
+            name: "wait",
+            summary: "Block until the agent (default: all of them) finishes its turn, then return the screens; a blocked agent keeps it waiting while the user answers in /fleet; use instead of polling read",
+            required: &[],
+            optional: &["id", "wait_s"],
+            read_only: true,
+            internal: "fleet_wait",
+        },
+        ActionSpec {
+            name: "diff",
+            summary: "What the agent changed on its branch, as a patch with a file summary",
+            required: &["id"],
+            optional: &[],
+            read_only: true,
+            internal: "fleet_diff",
+        },
+        ActionSpec {
+            name: "check",
+            summary: "Run the project's tests in the agent's worktree and wait for pass or fail with the end of the output; calling it again waits for the same run",
+            required: &["id"],
+            optional: &["wait_s"],
+            read_only: false,
+            internal: "fleet_check",
+        },
+        ActionSpec {
+            name: "send",
+            summary: "Steer an idle or working agent with a follow-up",
+            required: &["id", "text"],
+            optional: &[],
+            read_only: false,
+            internal: "fleet_send",
+        },
+        ActionSpec {
+            name: "stop",
+            summary: "Stop an agent and close its terminal",
+            required: &["id"],
+            optional: &[],
+            read_only: false,
+            internal: "fleet_stop",
+        },
+    ],
+};
+
 pub(super) static CANVAS: ToolSpec = ToolSpec {
     name: "canvas",
     purpose: "Docs: writing (Markdown); decks: slides; sheets: tables; kind from path or create.kind (default deck). Decks: pick a look first (design op=list, create.design); add_slide{layout,slots,after?}; color roles, named styles; fix taste:/design: lines; /studio 1920x1080 px auto-layout; view after layout edits. Edit when asked, comment when reviewing/unsure. One file per request, no variants/probes. Never invent data/sources/images (src: https or space file). Docs: read outline/blocks, view pages, export docx/pdf/md/html. Sheets: inputs only (=formula); read range before editing; edits list error cells. Atomic ops; ids/hashes automatic; field refs in results. Comments: block anchor; one issue, two sentences with why; attach fix ops; max 8, worst first; respect intent/facts; answer threads.",
@@ -1693,6 +1802,7 @@ const TOOLS: &[&ToolSpec] = &[
     &CANVAS,
     &TASK,
     &AGENTS,
+    &FLEET,
     &SKILLS,
     &SCRIPTS,
     &SEARCH,
@@ -1829,13 +1939,29 @@ mod tests {
         ),
         (
             "canvas",
-            r#"{"action":"design","op":"set_default","design":"nexus"}"#,
+            r#"{"action":"design","op":"set_default","design":"dugix"}"#,
             "canvas_design",
         ),
         ("task", r#"{"prompt":"x"}"#, "task"),
         ("agents", r#"{"action":"wait"}"#, "agents_wait"),
         ("agents", r#"{"action":"list"}"#, "agents_list"),
         ("agents", r#"{"action":"stop","id":3}"#, "agents_stop"),
+        (
+            "fleet",
+            r#"{"action":"start","agent":"claude","prompt":"x"}"#,
+            "fleet_start",
+        ),
+        ("fleet", r#"{"action":"list"}"#, "fleet_list"),
+        ("fleet", r#"{"action":"read","id":1}"#, "fleet_read"),
+        ("fleet", r#"{"action":"wait"}"#, "fleet_wait"),
+        ("fleet", r#"{"action":"stop","id":1}"#, "fleet_stop"),
+        ("fleet", r#"{"action":"diff","id":1}"#, "fleet_diff"),
+        ("fleet", r#"{"action":"check","id":1}"#, "fleet_check"),
+        (
+            "fleet",
+            r#"{"action":"send","id":1,"text":"x"}"#,
+            "fleet_send",
+        ),
         ("skills", r#"{"action":"load","name":"x"}"#, "skill"),
         (
             "skills",
@@ -2096,6 +2222,10 @@ mod tests {
             "task",
             "agents_wait",
             "agents_list",
+            "fleet_list",
+            "fleet_read",
+            "fleet_wait",
+            "fleet_diff",
             "skill",
             "web_search",
             "academic_search",

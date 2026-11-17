@@ -82,7 +82,7 @@ pub(super) fn render_queue(f: &mut Frame, app: &AppView, area: Rect) {
         let row = format!(
             "    {}. {}",
             index + 1,
-            nexus_core::app::one_line(text, 400)
+            dugix_core::app::one_line(text, 400)
         );
         lines.push(Line::from(Span::styled(
             popups::chrome::truncate(&row, width),
@@ -155,7 +155,7 @@ pub(super) fn render_input(f: &mut Frame, app: &mut AppView, area: Rect) {
         title.push(Span::styled(
             format!(
                 "{} ",
-                nexus_core::usershell::display_dir(&app.user_command_cwd())
+                dugix_core::usershell::display_dir(&app.user_command_cwd())
             ),
             Style::default().fg(app.theme.fg_dim),
         ));
@@ -206,7 +206,7 @@ pub(super) fn render_input(f: &mut Frame, app: &mut AppView, area: Rect) {
     f.render_widget(&app.input, inner);
     // Terminal IMEs draw preedit text at the real cursor, which otherwise
     // trails the last changed cell; park it on the caret the textarea drew.
-    if app.popup == nexus_core::app::Popup::None
+    if app.popup == dugix_core::app::Popup::None
         && let Some(caret) = take_caret(f, inner)
     {
         f.set_cursor_position(caret);
@@ -348,7 +348,7 @@ pub(super) fn render_at_popup(f: &mut Frame, app: &AppView, input_area: Rect) {
                     file.name.as_str(),
                     format!(
                         "  {}  {}",
-                        nexus_core::app::human_size(file.size.unsigned_abs()),
+                        dugix_core::app::human_size(file.size.unsigned_abs()),
                         file.status
                     ),
                 ),

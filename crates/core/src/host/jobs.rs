@@ -30,7 +30,7 @@ async fn run_with_timeout(job: super::media::ScriptJob, timeout: Duration) -> Re
     let mut cmd = tokio::process::Command::new(&job.program);
     cmd.args(&job.args)
         .current_dir(&job.cwd)
-        .env("NEXUS_SPACE_ID", &job.space_id)
+        .env("DUGIX_SPACE_ID", &job.space_id)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

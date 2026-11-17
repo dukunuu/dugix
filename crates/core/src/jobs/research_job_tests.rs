@@ -12,7 +12,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let root =
-            std::env::temp_dir().join(format!("nexus-research-job-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("dugix-research-job-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let mut app = App::new(Db::open_in_memory().unwrap(), None, Space { root });

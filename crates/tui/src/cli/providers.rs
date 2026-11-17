@@ -1,12 +1,12 @@
-//! `nexus models`, `nexus login` and `nexus skills`.
+//! `dugix models`, `dugix login` and `dugix skills`.
 
 use anyhow::{Result, bail};
 
-use nexus_core::app;
-use nexus_core::config;
-use nexus_core::provider::Model;
-use nexus_core::provider::openrouter::OpenRouter;
-use nexus_core::space;
+use dugix_core::app;
+use dugix_core::config;
+use dugix_core::provider::Model;
+use dugix_core::provider::openrouter::OpenRouter;
+use dugix_core::space;
 
 use super::ask::build_app;
 use super::{SkillsCmd, out, truncate};
@@ -14,7 +14,7 @@ use super::{SkillsCmd, out, truncate};
 pub(super) async fn models(backend: Option<&str>) -> Result<()> {
     let mut app = build_app(None, None).await?;
     if !app.backends.any() {
-        bail!("no API keys configured — `nexus login <provider> <key>` or set the env vars");
+        bail!("no API keys configured — `dugix login <provider> <key>` or set the env vars");
     }
     app.init();
     let deadline = tokio::time::sleep(std::time::Duration::from_mins(1));
@@ -50,7 +50,7 @@ pub(super) async fn models(backend: Option<&str>) -> Result<()> {
         bail!("{status}");
     }
     if models.is_empty() {
-        bail!("no models from backend {backend:?} — `nexus models` lists them");
+        bail!("no models from backend {backend:?} — `dugix models` lists them");
     }
     models.sort_by(|a, b| a.backend.name().cmp(b.backend.name()).then(a.id.cmp(&b.id)));
     for m in models {
@@ -108,13 +108,13 @@ pub(super) async fn skills(cmd: SkillsCmd) -> Result<()> {
 
 fn skills_list() -> Result<()> {
     let space = space::Space::open()?;
-    let local = nexus_core::skills::skills_dir(&space.root);
-    nexus_core::skills::install_builtin(&local);
-    let skills = nexus_core::skills::load_skills_from_dirs(&nexus_core::skills::app_skill_roots(
+    let local = dugix_core::skills::skills_dir(&space.root);
+    dugix_core::skills::install_builtin(&local);
+    let skills = dugix_core::skills::load_skills_from_dirs(&dugix_core::skills::app_skill_roots(
         &space.root,
     ));
     if skills.is_empty() {
-        out("no skills installed — `nexus skills install <owner/repo[/path]>`");
+        out("no skills installed — `dugix skills install <owner/repo[/path]>`");
         return Ok(());
     }
     for s in skills {
@@ -128,12 +128,12 @@ fn skills_list() -> Result<()> {
 }
 
 async fn skills_install(spec: &str) -> Result<()> {
-    let Some((owner, repo, path)) = nexus_core::skills::parse_gh_shorthand(spec) else {
+    let Some((owner, repo, path)) = dugix_core::skills::parse_gh_shorthand(spec) else {
         bail!("expected owner/repo[/path] shorthand, got {spec:?}");
     };
     let space = space::Space::open()?;
-    let dest = nexus_core::skills::skills_dir(&space.root);
-    let name = nexus_core::skills::install_from_github(
+    let dest = dugix_core::skills::skills_dir(&space.root);
+    let name = dugix_core::skills::install_from_github(
         &reqwest::Client::new(),
         &owner,
         &repo,

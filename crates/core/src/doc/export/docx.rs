@@ -517,7 +517,7 @@ pub fn export(
             .join("\n");
         let _ = write!(
             comments,
-            "<w:comment w:id=\"{id}\" w:author=\"nexus\" w:date=\"2000-01-01T00:00:00Z\"><w:p>{}</w:p></w:comment>",
+            "<w:comment w:id=\"{id}\" w:author=\"dugix\" w:date=\"2000-01-01T00:00:00Z\"><w:p>{}</w:p></w:comment>",
             run(&text, "")
         );
     }
@@ -799,8 +799,8 @@ pub fn export(
             );
         }
     }
-    package.xml("docProps/core.xml","application/vnd.openxmlformats-package.core-properties+xml",format!("<?xml version=\"1.0\"?><cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>{}</dc:title><dc:creator>nexus</dc:creator></cp:coreProperties>",escape(&doc.title)));
-    package.xml("docProps/app.xml","application/vnd.openxmlformats-officedocument.extended-properties+xml","<?xml version=\"1.0\"?><Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\"><Application>nexus</Application></Properties>".into());
+    package.xml("docProps/core.xml","application/vnd.openxmlformats-package.core-properties+xml",format!("<?xml version=\"1.0\"?><cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>{}</dc:title><dc:creator>dugix</dc:creator></cp:coreProperties>",escape(&doc.title)));
+    package.xml("docProps/app.xml","application/vnd.openxmlformats-officedocument.extended-properties+xml","<?xml version=\"1.0\"?><Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\"><Application>dugix</Application></Properties>".into());
     package.parts.insert("_rels/.rels".into(),format!("<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"{R}/officeDocument\" Target=\"word/document.xml\"/><Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\" Target=\"docProps/core.xml\"/><Relationship Id=\"rId3\" Type=\"{R}/extended-properties\" Target=\"docProps/app.xml\"/></Relationships>").into_bytes());
     let mut types = String::from(
         "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"png\" ContentType=\"image/png\"/><Default Extension=\"jpeg\" ContentType=\"image/jpeg\"/>",

@@ -32,6 +32,7 @@ mod compaction;
 mod embeddings;
 pub mod export;
 mod files;
+mod fleet;
 pub mod headless;
 mod images;
 #[cfg(test)]
@@ -87,6 +88,7 @@ pub use commands::{
     AppCommand, COMMANDS, Command, Match, MemoryAction, command_score, fuzzy_score,
 };
 pub use files::ConvertUpdate;
+pub use fleet::FleetAction;
 pub use mode_note::ModeNote;
 pub use queue::{MAX_QUEUED_MESSAGES, QueueAction, one_line};
 pub use research::{PlanQuestion, ResearchUpdate};
@@ -317,6 +319,7 @@ pub enum Popup {
     Usage,
     Harness,
     Procs,
+    Fleet,
     Jobs,
     Login,
     Local,
@@ -984,7 +987,10 @@ pub struct App {
     background_rx: mpsc::UnboundedReceiver<crate::subagent::BackgroundMsg>,
     /// Ids of the background runs still working: a turn ending leaves them be.
     pub(crate) background_agents: std::collections::HashSet<String>,
-    /// Off where the process ends with the reply (`nexus ask`), so a detached
+    /// External agent CLIs in their own terminals, across every conversation.
+    pub fleet: Arc<crate::fleet::Fleet>,
+    fleet_rx: mpsc::UnboundedReceiver<crate::fleet::FleetMsg>,
+    /// Off where the process ends with the reply (`dugix ask`), so a detached
     /// run would be cut off; then `task` only runs in the foreground.
     pub detached_agents: bool,
     pub app_server: Option<crate::appserver::AppServer>,
@@ -1078,6 +1084,7 @@ impl App {
             .with_skill_dirs(skill_dirs),
         );
         let (background, background_rx) = crate::subagent::Background::new();
+        let (fleet, fleet_rx) = crate::fleet::Fleet::new();
         let mut app = Self {
             db,
             space,
@@ -1111,6 +1118,8 @@ impl App {
             background,
             background_rx,
             background_agents: std::collections::HashSet::new(),
+            fleet,
+            fleet_rx,
             detached_agents: true,
             app_server: None,
             skills_rx: None,
@@ -1293,7 +1302,7 @@ impl App {
         let data = self.space.root.canonicalize()?;
         if data.starts_with(&root) || root.starts_with(&data) {
             anyhow::bail!(
-                "workspace {} is or contains nexus's data root, or is inside it · choose another directory",
+                "workspace {} is or contains dugix's data root, or is inside it · choose another directory",
                 root.display()
             );
         }
@@ -1324,18 +1333,18 @@ impl App {
         Ok(())
     }
 
-    fn improve_nexus(&mut self, what: &str) -> Result<()> {
+    fn improve_dugix(&mut self, what: &str) -> Result<()> {
         use crate::jobs::service::{Tree, git};
 
         let Some(repo) = self
             .saved
             .agent
-            .nexus_repo
+            .dugix_repo
             .as_deref()
             .filter(|path| !path.trim().is_empty())
         else {
             self.push_status(
-                "/improve needs the nexus checkout · set [agent] nexus_repo = \"~/work/nexus-chat\" in config.toml",
+                "/improve needs the dugix checkout · set [agent] dugix_repo = \"~/work/dugix\" in config.toml",
             );
             return Ok(());
         };
@@ -1373,14 +1382,14 @@ impl App {
             .collect::<Vec<_>>()
             .join("\n");
         let text = format!(
-            "Improve nexus: {what}.\nRelevant recent tool failures:\n{failures}\nAcceptance: scripts/check.sh must pass. Work only in this worktree; finish with a summary of the change."
+            "Improve dugix: {what}.\nRelevant recent tool failures:\n{failures}\nAcceptance: scripts/check.sh must pass. Work only in this worktree; finish with a summary of the change."
         );
         let id = uuid::Uuid::new_v4().to_string();
         let slug: String = sessions::slugify(what).chars().take(60).collect();
-        let branch = format!("nexus/improve/{slug}-{}", &id[..8]);
+        let branch = format!("dugix/improve/{slug}-{}", &id[..8]);
         let tree = Tree::prepare(
             repo.root(),
-            &std::env::temp_dir().join("nexus-improve"),
+            &std::env::temp_dir().join("dugix-improve"),
             &slug,
             &id,
         )?;
@@ -1768,6 +1777,7 @@ impl App {
         toolbox.procs = Arc::clone(&self.procs);
         toolbox.background =
             (self.detached_agents && !self.incognito).then(|| Arc::clone(&self.background));
+        toolbox.fleet = self.detached_agents.then(|| Arc::clone(&self.fleet));
         toolbox.session_id = self
             .session
             .as_ref()
@@ -1844,13 +1854,13 @@ impl App {
             return;
         }
         self.push_status(format!(
-            "nexus v{latest} is out (you have {}) — run `nexus update`",
+            "dugix v{latest} is out (you have {}) — run `dugix update`",
             crate::update::CURRENT
         ));
         self.notifications.push_back(ChatNotification {
             session_id: String::new(),
             title: "update available".to_string(),
-            text: format!("v{latest} is out — run `nexus update`"),
+            text: format!("v{latest} is out — run `dugix update`"),
             success: true,
         });
     }
@@ -2035,6 +2045,12 @@ impl App {
             message = self.background_rx.recv() => {
                 if let Some(message) = message {
                     self.on_background(message);
+                }
+                return None;
+            },
+            message = self.fleet_rx.recv() => {
+                if let Some(message) = message {
+                    self.on_fleet(&message);
                 }
                 return None;
             },
@@ -2313,7 +2329,7 @@ pub fn send_system_notification(title: &str, body: &str) {
     {
         let _ = std::process::Command::new("notify-send")
             .args([
-                "--app-name=nexus-chat",
+                "--app-name=dugix",
                 "--urgency=normal",
                 "--expire-time=5000",
                 "--hint=int:transient:1",
@@ -2511,7 +2527,7 @@ mod model_decider_tests {
 
     #[tokio::test]
     async fn auto_uses_jev_in_incognito_without_logging_and_passes_recent_calls() {
-        let dir = std::env::temp_dir().join(format!("nexus-decider-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-decider-{}", uuid::Uuid::new_v4()));
         let root = dir.join("workspace");
         let data = dir.join("data");
         std::fs::create_dir_all(&root).unwrap();
@@ -2685,7 +2701,7 @@ mod eval_tests {
 
     #[tokio::test]
     async fn eval_workspace_is_incognito_and_has_no_binding_or_durable_checkpoints() {
-        let dir = std::env::temp_dir().join(format!("nexus-eval-app-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-eval-app-{}", uuid::Uuid::new_v4()));
         let data = dir.join("data");
         let root = dir.join("copy/workspace");
         std::fs::create_dir_all(&data).unwrap();

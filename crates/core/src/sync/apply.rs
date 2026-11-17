@@ -68,7 +68,7 @@ pub fn apply_changeset(
     let ours = durable_schema_version();
     if cs.schema != ours {
         bail!(
-            "{} runs a different nexus version (schema {}, this device {ours}) — update nexus on both devices, then sync again",
+            "{} runs a different dugix version (schema {}, this device {ours}) — update dugix on both devices, then sync again",
             cs.device_name,
             cs.schema
         );

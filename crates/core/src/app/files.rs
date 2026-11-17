@@ -774,7 +774,7 @@ mod tests {
 
     fn test_app() -> App {
         let db = Db::open_in_memory().unwrap();
-        let root = std::env::temp_dir().join(format!("nexus-files-test-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-files-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
         let space = Space { root };
         App::new(db, Some("k"), space)
@@ -828,7 +828,7 @@ mod tests {
     #[test]
     fn import_copies_extracts_and_indexes() {
         let mut a = test_app();
-        let src = std::env::temp_dir().join(format!("nexus-src-{}.md", uuid::Uuid::new_v4()));
+        let src = std::env::temp_dir().join(format!("dugix-src-{}.md", uuid::Uuid::new_v4()));
         std::fs::write(&src, "# quarterly report\nrevenue up").unwrap();
 
         let name = a.import_file(&src).unwrap();
@@ -876,13 +876,13 @@ mod tests {
 
     #[test]
     fn cold_cache_after_restore_reindexes_from_disk() {
-        let root = std::env::temp_dir().join(format!("nexus-cold-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-cold-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
         let space = Space { root };
         let db = Db::open(&space.db_path()).unwrap();
         let mut a = App::new(db, Some("k"), space);
 
-        let src = std::env::temp_dir().join(format!("nexus-cold-src-{}.md", uuid::Uuid::new_v4()));
+        let src = std::env::temp_dir().join(format!("dugix-cold-src-{}.md", uuid::Uuid::new_v4()));
         std::fs::write(&src, "# report\nresilience is a property").unwrap();
         let name = a.import_file(&src).unwrap();
         let id = a.caches.files[0].id.clone();
@@ -900,7 +900,7 @@ mod tests {
         std::fs::remove_file(&cache_path).unwrap();
 
         let mut a = App::new(
-            Db::open(&root.join("nexus.db")).unwrap(),
+            Db::open(&root.join("dugix.db")).unwrap(),
             Some("k"),
             Space { root },
         );
@@ -1026,7 +1026,7 @@ mod tests {
     #[test]
     fn import_file_copies_and_indexes_typed_path() {
         let mut a = test_app();
-        let src = std::env::temp_dir().join(format!("nexus-add-{}.txt", uuid::Uuid::new_v4()));
+        let src = std::env::temp_dir().join(format!("dugix-add-{}.txt", uuid::Uuid::new_v4()));
         std::fs::write(&src, "typed in").unwrap();
         let name = a.import_file(&src).unwrap();
         assert_eq!(a.caches.files.len(), 1);
@@ -1043,7 +1043,7 @@ mod tests {
     fn importing_an_image_indexes_metadata_without_queueing() {
         let mut a = test_app();
         a.index.embedding_model.clear();
-        let src = std::env::temp_dir().join(format!("nexus-image-{}.png", uuid::Uuid::new_v4()));
+        let src = std::env::temp_dir().join(format!("dugix-image-{}.png", uuid::Uuid::new_v4()));
         image::RgbImage::new(2, 2).save(&src).unwrap();
         let name = a.import_file(&src).unwrap();
         assert_eq!(a.caches.files[0].status, "ok · image");
@@ -1113,7 +1113,7 @@ mod tests {
     fn a_pdf_without_a_pdf_extension_is_still_read_as_a_pdf() {
         let mut a = test_app();
         let dir = files_dir_of(&a);
-        let pdf = crate::extract::pdf_with_pages(&["QUARTERLY NEXUS REPORT"]);
+        let pdf = crate::extract::pdf_with_pages(&["QUARTERLY DUGIX REPORT"]);
         std::fs::write(dir.join("download"), &pdf).unwrap();
         std::fs::write(dir.join("report.txt"), &pdf).unwrap();
         a.rescan_files();
@@ -1122,7 +1122,7 @@ mod tests {
             let text = crate::db::file_text(a.db.conn_for_test(), &a.active_space.id, name)
                 .unwrap()
                 .unwrap();
-            assert!(text.contains("QUARTERLY NEXUS REPORT"), "{name}: {text:?}");
+            assert!(text.contains("QUARTERLY DUGIX REPORT"), "{name}: {text:?}");
             assert!(!text.contains("%PDF"), "{name}: raw bytes leaked");
         }
     }

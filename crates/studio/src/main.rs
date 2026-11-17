@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use backend::Backend;
-use nexus_core::deck::link::{Line, Message as LinkMessage};
-use nexus_core::{db, remote_image, space};
+use dugix_core::deck::link::{Line, Message as LinkMessage};
+use dugix_core::{db, remote_image, space};
 use std::io::{BufRead as _, Write as _};
 use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
@@ -19,16 +19,16 @@ use wry::http::Response;
 use wry::{NewWindowResponse, WebViewBuilder};
 
 #[cfg(target_os = "windows")]
-const HOME: &str = "http://nexus.localhost/index.html";
+const HOME: &str = "http://dugix.localhost/index.html";
 #[cfg(not(target_os = "windows"))]
-const HOME: &str = "nexus://localhost/index.html";
+const HOME: &str = "dugix://localhost/index.html";
 
 enum Message {
     Command(String),
     /// A native dialog was answered on its helper thread.
     Dialog(backend::Answer),
     Link(LinkMessage),
-    /// A line from nexus that speaks another link version.
+    /// A line from dugix that speaks another link version.
     LinkError(String),
     Poll,
 }
@@ -62,7 +62,7 @@ fn main() -> Result<()> {
     let event_loop = EventLoopBuilder::<Message>::with_user_event().build();
     let window = WindowBuilder::new()
         .with_title(format!(
-            "nexus studio — {}",
+            "dugix studio — {}",
             backend.lock().expect("backend lock").title()
         ))
         .with_inner_size(LogicalSize::new(1280.0, 800.0))
@@ -75,7 +75,7 @@ fn main() -> Result<()> {
     let handle = runtime.handle().clone();
     let builder = WebViewBuilder::new()
         .with_devtools(false)
-        .with_asynchronous_custom_protocol("nexus".into(), move |_, request, responder| {
+        .with_asynchronous_custom_protocol("dugix".into(), move |_, request, responder| {
             let uri = request.uri().to_string();
             let backend = Arc::clone(&protocol_backend);
             handle.spawn(async move { responder.respond(respond(&backend, &uri).await) });
@@ -126,7 +126,7 @@ fn main() -> Result<()> {
     });
 }
 
-/// The link's reader (nexus → studio on stdin, only when attached) and the
+/// The link's reader (dugix → studio on stdin, only when attached) and the
 /// 500 ms poll for changes the model makes to the deck file.
 fn start_threads(proxy: &EventLoopProxy<Message>, attached: bool) {
     if attached {
@@ -142,7 +142,7 @@ fn start_threads(proxy: &EventLoopProxy<Message>, attached: bool) {
                             return;
                         }
                     }
-                    Err(error) if error.to_string().contains("update nexus") => {
+                    Err(error) if error.to_string().contains("update dugix") => {
                         let _ = link_proxy.send_event(Message::LinkError(error.to_string()));
                     }
                     Err(_) => {}
@@ -229,7 +229,7 @@ fn handle_message(
                 std::thread::spawn(move || {
                     let _ = proxy.send_event(Message::Dialog(job.ask()));
                 });
-                return (format!("nexus studio — {}", backend.title()), String::new());
+                return (format!("dugix studio — {}", backend.title()), String::new());
             }
             Some(Err(error)) => Ok(Some(backend::Event::Error {
                 message: error.to_string(),
@@ -257,21 +257,21 @@ fn handle_message(
             script
         }
     });
-    (format!("nexus studio — {}", backend.title()), script)
+    (format!("dugix studio — {}", backend.title()), script)
 }
 
 /// A library thumbnail, drawn off the backend's lock and one at a time so a full
 /// library does not start dozens of renders.
 async fn thumbnail_bytes(
     files: PathBuf,
-    entry: nexus_core::canvas::Entry,
+    entry: dugix_core::canvas::Entry,
 ) -> Result<(&'static str, Vec<u8>)> {
     static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
     tokio::task::spawn_blocking(move || {
         let _turn = ONE_AT_A_TIME
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let path = nexus_core::canvas::ensure_thumbnail(&files, &entry)?;
+        let path = dugix_core::canvas::ensure_thumbnail(&files, &entry)?;
         Ok(("image/png", std::fs::read(path)?))
     })
     .await?
@@ -288,7 +288,7 @@ async fn remote_bytes(
         match fetcher.request(src) {
             remote_image::Status::Ready(path) => {
                 let uri = format!(
-                    "nexus://localhost/assets/images/{}",
+                    "dugix://localhost/assets/images/{}",
                     path.file_name()
                         .context("image filename")?
                         .to_string_lossy()
@@ -310,11 +310,11 @@ async fn remote_bytes(
 fn csp() -> &'static str {
     #[cfg(target_os = "windows")]
     {
-        "default-src 'self' http://nexus.localhost; img-src 'self' http://nexus.localhost data:; style-src 'self' 'unsafe-inline'; script-src 'self' http://nexus.localhost; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+        "default-src 'self' http://dugix.localhost; img-src 'self' http://dugix.localhost data:; style-src 'self' 'unsafe-inline'; script-src 'self' http://dugix.localhost; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
     }
     #[cfg(not(target_os = "windows"))]
     {
-        "default-src 'self' nexus:; img-src 'self' nexus: data:; style-src 'self' 'unsafe-inline'; script-src 'self' nexus:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+        "default-src 'self' dugix:; img-src 'self' dugix: data:; style-src 'self' 'unsafe-inline'; script-src 'self' dugix:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
     }
 }
 
@@ -327,7 +327,7 @@ mod tests {
     fn the_content_security_policy_is_unchanged() {
         assert_eq!(
             super::csp(),
-            "default-src 'self' nexus:; img-src 'self' nexus: data:; style-src 'self' 'unsafe-inline'; script-src 'self' nexus:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+            "default-src 'self' dugix:; img-src 'self' dugix: data:; style-src 'self' 'unsafe-inline'; script-src 'self' dugix:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
         );
     }
 }

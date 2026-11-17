@@ -1,12 +1,12 @@
-//! `nexus status`, `doctor`, `update`, `open` and `train`.
+//! `dugix status`, `doctor`, `update`, `open` and `train`.
 
 use anyhow::{Context as _, Result, bail};
 
-use nexus_core::config;
-use nexus_core::db;
-use nexus_core::provider::BackendTag;
-use nexus_core::space;
-use nexus_core::train;
+use dugix_core::config;
+use dugix_core::db;
+use dugix_core::provider::BackendTag;
+use dugix_core::space;
+use dugix_core::train;
 
 use super::providers::client_for;
 use super::{TrainCmd, out, resolve_session};
@@ -21,7 +21,7 @@ pub(super) fn status() -> Result<()> {
         .iter()
         .map(|s| db.count_sessions(&s.id).unwrap_or(0))
         .sum();
-    out(format!("nexus {}", env!("CARGO_PKG_VERSION")));
+    out(format!("dugix {}", env!("CARGO_PKG_VERSION")));
     out(format!("data dir:  {}", dirs.data_dir().display()));
     out(format!("config:    {}", config::config_path()?.display()));
     out(format!("db:        {}", space.db_path().display()));
@@ -51,7 +51,7 @@ pub(super) async fn doctor(network: bool) -> Result<()> {
     };
 
     let data_dir = dirs.data_dir();
-    let db_path = data_dir.join("nexus.db");
+    let db_path = data_dir.join("dugix.db");
     check(
         "data dir",
         data_dir.is_dir(),
@@ -152,19 +152,19 @@ pub(super) async fn doctor(network: bool) -> Result<()> {
 }
 
 pub(super) async fn update() -> Result<()> {
-    match nexus_core::update::latest_version().await {
-        Some(latest) if nexus_core::update::version_gt(&latest, nexus_core::update::CURRENT) => {
+    match dugix_core::update::latest_version().await {
+        Some(latest) if dugix_core::update::version_gt(&latest, dugix_core::update::CURRENT) => {
             out(format!(
-                "updating v{} → v{latest} — `cargo install nexus-chat` (this can take a few minutes)",
-                nexus_core::update::CURRENT
+                "updating v{} → v{latest} — `cargo install dugix` (this can take a few minutes)",
+                dugix_core::update::CURRENT
             ));
-            let status = nexus_core::update::install_now()?;
+            let status = dugix_core::update::install_now()?;
             if !status.success() {
                 bail!("cargo install failed ({status}) — see the output above");
             }
-            out(format!("updated to v{latest} — relaunch nexus"));
+            out(format!("updated to v{latest} — relaunch dugix"));
         }
-        _ => out(format!("up to date — v{}", nexus_core::update::CURRENT)),
+        _ => out(format!("up to date — v{}", dugix_core::update::CURRENT)),
     }
     Ok(())
 }
@@ -201,7 +201,7 @@ pub(super) fn train_export(cmd: TrainCmd) -> Result<()> {
                 .into_iter()
                 .find(|space| space.name == name)
                 .map(|space| space.id)
-                .with_context(|| format!("no space named {name:?} — `nexus spaces` lists them"))
+                .with_context(|| format!("no space named {name:?} — `dugix spaces` lists them"))
         })
         .transpose()?;
     let saved = config::load_creds_offline();
@@ -219,10 +219,10 @@ pub(super) fn train_export(cmd: TrainCmd) -> Result<()> {
             .iter()
             .filter_map(|key| std::env::var(key).ok()),
     );
-    let scrubber = nexus_core::trace::Scrubber::new(secrets);
-    let store = nexus_core::trace::TraceStore::open(
+    let scrubber = dugix_core::trace::Scrubber::new(secrets);
+    let store = dugix_core::trace::TraceStore::open(
         &space.traces_dir(),
-        nexus_core::trace::Scrubber::new(Vec::new()),
+        dugix_core::trace::Scrubber::new(Vec::new()),
     )?;
     let options = train::ExportOptions {
         format: match format.as_str() {

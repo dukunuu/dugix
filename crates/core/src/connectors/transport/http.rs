@@ -59,7 +59,7 @@ impl HttpTransport {
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(connect_timeout)
-            .user_agent(concat!("nexus-chat/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("dugix/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|error| McpError::Transport(error.without_url().to_string()))?;
         Ok(Self {

@@ -5,8 +5,8 @@ use super::*;
 const TITLES: [&str; 3] = ["Trip planner", "Split the bill", "Python quick check"];
 
 fn source(title: &str) -> &'static str {
-    nexus_core::interactive::INSTRUCTIONS
-        .split("```nexus-ui\n")
+    dugix_core::interactive::INSTRUCTIONS
+        .split("```dugix-ui\n")
         .skip(1)
         .map(|example| example.split("\n```").next().unwrap())
         .find(|example| example.contains(&format!("Panel(\"{title}\"")))
@@ -44,7 +44,7 @@ fn reference_tools_have_narrow_and_wide_visual_snapshots() {
         })
         .collect::<Vec<_>>()
         .join("\n\n");
-    if std::env::var_os("NEXUS_UPDATE_SNAPSHOTS").is_some() {
+    if std::env::var_os("DUGIX_UPDATE_SNAPSHOTS").is_some() {
         std::fs::write(
             concat!(
                 env!("CARGO_MANIFEST_DIR"),

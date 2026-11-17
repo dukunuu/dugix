@@ -62,7 +62,7 @@ pub const COLUMN_WIDTH_MAX: u16 = 400;
 pub const POPUP_SIZE_MIN: u16 = 20;
 pub const POPUP_SIZE_MAX: u16 = 100;
 
-pub const POPUP_IDS: [&str; 19] = [
+pub const POPUP_IDS: [&str; 21] = [
     "model",
     "session",
     "copy",
@@ -78,6 +78,8 @@ pub const POPUP_IDS: [&str; 19] = [
     "jobs",
     "harness",
     "procs",
+    "fleet",
+    "fleet-term",
     "login",
     "local",
     "help",

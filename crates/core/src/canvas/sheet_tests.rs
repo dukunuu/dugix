@@ -6,7 +6,7 @@ use crate::{
 
 #[test]
 fn canvas_sheets_list_thumbnail_rename_duplicate_delete_and_copy() {
-    let root = std::env::temp_dir().join(format!("nexus-sheet-library-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-sheet-library-{}", uuid::Uuid::new_v4()));
     let result = (|| -> Result<()> {
         let mut sheet = Sheet::from_design("Budget", &crate::design::Design::default());
         sheet.tabs[0].cells.insert(

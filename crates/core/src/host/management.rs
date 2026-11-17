@@ -509,7 +509,7 @@ mod tests {
     use super::*;
 
     fn test_app() -> App {
-        let root = std::env::temp_dir().join(format!("nexus-management-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-management-{}", uuid::Uuid::new_v4()));
         App::new(
             crate::db::Db::open_in_memory().expect("db"),
             None,

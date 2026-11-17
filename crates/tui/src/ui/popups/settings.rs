@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{ListItem, ListState};
 
 use crate::app_view::AppView;
-use nexus_core::app::SettingsRow;
+use dugix_core::app::SettingsRow;
 
 use super::chrome::{self, PopupFrame, hint, keys};
 use crate::ui::style::glyph;
@@ -22,7 +22,7 @@ fn split_label(label: &'static str) -> (String, String) {
 // Long by design (settings renderer).
 #[allow(clippy::too_many_lines)]
 pub fn render(f: &mut Frame, app: &AppView) {
-    use nexus_core::app::{SETTINGS_GROUPS, SettingsField};
+    use dugix_core::app::{SETTINGS_GROUPS, SettingsField};
     let area = chrome::popup_area(app, f.area(), "settings", chrome::STANDARD);
 
     let dim = Style::default().fg(app.theme.fg_dim);
@@ -162,7 +162,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
 }
 
 fn saved_input(app: &AppView) -> Option<String> {
-    use nexus_core::app::SettingsField;
+    use dugix_core::app::SettingsField;
     Some(match app.settings_field()? {
         SettingsField::Temperature => app
             .settings
@@ -197,7 +197,7 @@ fn editing(app: &AppView) -> bool {
 }
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
-    use nexus_core::app::{
+    use dugix_core::app::{
         IMAGE_VIEWERS, REPLY_STYLES, SEARCH_PROVIDERS, SettingsField, VERBOSITY_LEVELS,
     };
     // The column width has no text to type: the arrows and Enter cycle it.
@@ -241,7 +241,7 @@ pub fn handle_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
         KeyCode::Esc => app.save_settings()?,
         KeyCode::Enter => {
             app.save_settings()?;
-            app.popup = nexus_core::app::Popup::Settings;
+            app.popup = dugix_core::app::Popup::Settings;
             if let Some((i, saved)) = app.text_index().zip(saved_input(app)) {
                 app.settings_inputs[i] = saved;
             }

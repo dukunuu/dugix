@@ -97,7 +97,7 @@ fn failed_actions_are_transactional_and_do_not_emit_partial_messages() {
 fn prompt_example_is_valid_and_generic() {
     let prompt = include_str!("../../assets/prompts/interactive-ui.md");
     let source = prompt
-        .split("```nexus-ui\n")
+        .split("```dugix-ui\n")
         .nth(1)
         .unwrap()
         .split("\n```")

@@ -159,7 +159,7 @@ export function mount(shared) {
   };
   api.grid = gridController(api);
   // Zoom is a view setting kept between sessions; it never touches the file.
-  const ZOOM = { min: .5, max: 2, key: 'nexus-sheet-zoom' };
+  const ZOOM = { min: .5, max: 2, key: 'dugix-sheet-zoom' };
   const clampZoom = value => Math.max(ZOOM.min, Math.min(ZOOM.max, value));
   function setZoom(value, { step = .05, point = null, quiet = false } = {}) {
     // Whole percents: 1.2, not 1.2000000000000002.
@@ -395,7 +395,7 @@ export function mount(shared) {
     }
     api.menus.show(items, at, { label: kind === 'cell' ? 'Cell' : kind === 'col' ? 'Column' : 'Row' });
   }
-  const quickExport = () => { try { return localStorage.getItem('nexus-quick-export') === '1'; } catch { return false; } };
+  const quickExport = () => { try { return localStorage.getItem('dugix-quick-export') === '1'; } catch { return false; } };
   exportButton.addEventListener('click', () => {
     const run = format => () => command(quickExport()
       ? { command: 'SheetExport', format, path: null, tab: format === 'csv' ? api.tabName() : null }
@@ -404,17 +404,17 @@ export function mount(shared) {
       { label: 'Excel workbook', hint: '.xlsx', run: run('xlsx') },
       { label: 'CSV (this sheet)', hint: '.csv', run: run('csv') },
       { rule: true },
-      { label: 'Save to exports/ without asking', checked: quickExport(), run: () => { try { localStorage.setItem('nexus-quick-export', quickExport() ? '0' : '1'); } catch { /* storage may be unavailable */ } } },
+      { label: 'Save to exports/ without asking', checked: quickExport(), run: () => { try { localStorage.setItem('dugix-quick-export', quickExport() ? '0' : '1'); } catch { /* storage may be unavailable */ } } },
     ], exportButton.getBoundingClientRect(), { label: 'Export' });
   });
 
   // -- the sidebar and the chrome ---------------------------------------------------------------------------------------------
 
   let sidebarOpen = false, sideChosen = false;
-  try { const stored = localStorage.getItem('nexus-sheet-sidebar'); sideChosen = stored !== null; sidebarOpen = stored === 'open'; } catch { /* storage may be unavailable */ }
+  try { const stored = localStorage.getItem('dugix-sheet-sidebar'); sideChosen = stored !== null; sidebarOpen = stored === 'open'; } catch { /* storage may be unavailable */ }
   function setSidebar(open, chosen = true) {
     sidebarOpen = open; sideChosen = sideChosen || chosen;
-    if (chosen) { try { localStorage.setItem('nexus-sheet-sidebar', open ? 'open' : 'closed'); } catch { /* ignore */ } }
+    if (chosen) { try { localStorage.setItem('dugix-sheet-sidebar', open ? 'open' : 'closed'); } catch { /* ignore */ } }
     if (open) api.charts.close();
     sidebar.hidden = !open;
     commentsButton.setAttribute('aria-pressed', String(open));
@@ -436,10 +436,10 @@ export function mount(shared) {
   function renderLink() {
     const activities = Object.values(state.activities);
     const working = activities.some(a => ['working', 'progress'].includes(a.state)), waiting = activities.filter(a => a.state === 'queued').length;
-    linkLabel.textContent = !state.linked ? 'Not linked' : working ? 'nexus is working' : waiting ? `Linked · ${waiting} waiting` : 'Linked to nexus';
+    linkLabel.textContent = !state.linked ? 'Not linked' : working ? 'dugix is working' : waiting ? `Linked · ${waiting} waiting` : 'Linked to dugix';
     linkLabel.classList.toggle('connected', state.linked);
     linkLabel.classList.toggle('working', state.linked && working);
-    linkLabel.title = state.linked ? 'Comments go to your nexus conversation' : 'Not linked to a conversation — open it from nexus with /studio';
+    linkLabel.title = state.linked ? 'Comments go to your dugix conversation' : 'Not linked to a conversation — open it from dugix with /studio';
     renderSave();
   }
   /** Every part of the page, from the state. */
@@ -451,7 +451,7 @@ export function mount(shared) {
     api.tabs.render(); api.toolbar.sync(); api.editor.sync();
     if (document.activeElement !== titleInput) titleInput.value = state.sheet.title;
     titleInput.style.width = `${Math.min(48, Math.max(8, titleInput.value.length + 1))}ch`;
-    document.title = `${state.sheet.title || 'Untitled'} — nexus studio`;
+    document.title = `${state.sheet.title || 'Untitled'} — dugix studio`;
     renderLink();
   }
   function applySheetTheme() {
@@ -554,7 +554,7 @@ export function mount(shared) {
     clearTimeout(flashTimer);
     flashTimer = setTimeout(() => { api.grid.setFlash(new Set()); api.grid.render(true); }, 1800);
   }
-  /** nexus looked at a range: show it, and outline it for a few seconds. */
+  /** dugix looked at a range: show it, and outline it for a few seconds. */
   function onRemoteFocus(event) {
     const tab = state.sheet?.tabs.find(t => t.name.toLowerCase() === event.tab.toLowerCase() || t.id === event.tab), r = M.parseRange(event.range);
     if (!tab || !r) return;

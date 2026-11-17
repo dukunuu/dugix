@@ -23,7 +23,7 @@ fn has_table(conn: &Connection, schema: &str, table: &str) -> bool {
 #[test]
 fn step_six_moves_legacy_watches_once_without_resurrecting_existing_jobs() {
     let conn = Connection::open_in_memory().unwrap();
-    let mut ctx = context("main", "nexus.db");
+    let mut ctx = context("main", "dugix.db");
     run(&conn, &DURABLE[..2], &mut ctx).unwrap();
     assert_eq!(version(&conn, "main").unwrap(), 5);
     conn.execute_batch(

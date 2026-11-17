@@ -6,7 +6,7 @@
 )]
 use anyhow::{Context as _, Result};
 
-use nexus_core::app::{
+use dugix_core::app::{
     Popup, SEARCH_PROVIDERS, SETTINGS_GROUPS, SettingsField, SettingsRow, VERBOSITY_LEVELS,
 };
 
@@ -108,7 +108,7 @@ impl AppView {
                     self.core.settings.hide_hints = !self.core.settings.hide_hints;
                 }
                 SettingsField::ReplyStyle => {
-                    let styles = nexus_core::app::REPLY_STYLES;
+                    let styles = dugix_core::app::REPLY_STYLES;
                     let i = styles
                         .iter()
                         .position(|&s| s == self.core.settings.reply_style)
@@ -118,7 +118,7 @@ impl AppView {
                         .set_setting("reply_style", styles[(i + 1) % styles.len()]);
                 }
                 SettingsField::ImageViewer => {
-                    let modes = nexus_core::app::IMAGE_VIEWERS;
+                    let modes = dugix_core::app::IMAGE_VIEWERS;
                     let i = modes
                         .iter()
                         .position(|&m| m == self.core.settings.image_viewer)
@@ -291,13 +291,13 @@ impl AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_core::app::App;
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
+    use dugix_core::app::App;
+    use dugix_core::db::Db;
+    use dugix_core::space::Space;
 
     fn test_space() -> Space {
         Space {
-            root: std::env::temp_dir().join(format!("nexus-flow-test-{}", uuid::Uuid::new_v4())),
+            root: std::env::temp_dir().join(format!("dugix-flow-test-{}", uuid::Uuid::new_v4())),
         }
     }
 

@@ -31,7 +31,7 @@ pub(in crate::ui) fn push_tool_call_with_rows(
     out: &mut Vec<Line<'static>>,
     content: &str,
     expanded: bool,
-    settings: &nexus_core::app::Settings,
+    settings: &dugix_core::app::Settings,
     width: usize,
     theme: &crate::theme::Theme,
     mut env: CardEnv<'_>,
@@ -53,7 +53,7 @@ pub(in crate::ui) fn push_tool_call_with_rows(
         width,
         theme,
     );
-    let view = nexus_core::app::tool_call_view(&name, &args, &result);
+    let view = dugix_core::app::tool_call_view(&name, &args, &result);
     let header = out.len();
     push_workspace_call(out, &view, expanded, settings, width, theme);
     if let Some(panel) = v.get("panel").and_then(serde_json::Value::as_str)
@@ -86,7 +86,7 @@ pub(in crate::ui) fn push_tool_call_with_rows(
         cap_tool_body(&mut body, body_width, theme);
         let rail = Span::styled(
             format!("{} ", glyph::RAIL),
-            Style::default().fg(if view.outcome == nexus_core::app::ToolOutcome::Ok {
+            Style::default().fg(if view.outcome == dugix_core::app::ToolOutcome::Ok {
                 theme.accent2
             } else {
                 theme.error
@@ -109,7 +109,7 @@ pub(in crate::ui) fn push_tool_call_with_rows(
 /// Collapsed batches have a grouped digest and, if needed, one error line.
 fn push_batch_digest(
     out: &mut Vec<Line<'static>>,
-    view: &nexus_core::app::ToolView,
+    view: &dugix_core::app::ToolView,
     width: usize,
     theme: &crate::theme::Theme,
 ) {
@@ -156,7 +156,7 @@ fn push_batch_digest(
         .filter(|(_, entry)| {
             entry
                 .status
-                .is_some_and(|status| status != nexus_core::app::ToolOutcome::Ok)
+                .is_some_and(|status| status != dugix_core::app::ToolOutcome::Ok)
         })
         .map(|(index, entry)| format!("{} {}: {}", index + 1, entry.tool, entry.outcome))
         .collect::<Vec<_>>()
@@ -183,14 +183,14 @@ fn batch_line(text: &str, width: usize, role: Style, theme: &crate::theme::Theme
 }
 
 fn batch_row_header(
-    entry: &nexus_core::app::BatchEntry,
+    entry: &dugix_core::app::BatchEntry,
     index: usize,
     width: usize,
     theme: &crate::theme::Theme,
     open: bool,
     focused: bool,
 ) -> Line<'static> {
-    use nexus_core::app::ToolOutcome;
+    use dugix_core::app::ToolOutcome;
     let dim = Style::default().fg(theme.fg_dim);
     let failed = entry.status.is_some_and(|status| status != ToolOutcome::Ok);
     let role = Style::default().fg(if failed { theme.error } else { theme.accent2 });
@@ -267,13 +267,13 @@ fn batch_row_header(
 /// Each sub-call reuses its standalone body, capped independently of its peers.
 fn push_batch_body(
     out: &mut Vec<Line<'static>>,
-    view: &nexus_core::app::ToolView,
+    view: &dugix_core::app::ToolView,
     width: usize,
     theme: &crate::theme::Theme,
     env: &mut CardEnv<'_>,
     mut rows: Option<BatchRows<'_>>,
 ) {
-    use nexus_core::app::ToolOutcome;
+    use dugix_core::app::ToolOutcome;
     let dim = Style::default().fg(theme.fg_dim);
     let body_width = width.saturating_sub(4).max(1);
     if let Some(error) = &view.output {
@@ -361,8 +361,8 @@ fn push_batch_body(
 }
 
 /// Whether the call created or edited a deck or doc that studio can open.
-fn is_deck_change(view: &nexus_core::app::ToolView) -> bool {
-    view.outcome == nexus_core::app::ToolOutcome::Ok
+fn is_deck_change(view: &dugix_core::app::ToolView) -> bool {
+    view.outcome == dugix_core::app::ToolOutcome::Ok
         && (view.verb.starts_with("created deck")
             || view.verb.starts_with("created doc")
             || view.verb.starts_with("edited "))
@@ -371,7 +371,7 @@ fn is_deck_change(view: &nexus_core::app::ToolView) -> bool {
 /// The slides a `canvas` call rendered, drawn inline in the opened card.
 fn push_slide_thumbnails(
     out: &mut Vec<Line<'static>>,
-    view: &nexus_core::app::ToolView,
+    view: &dugix_core::app::ToolView,
     width: usize,
     theme: &crate::theme::Theme,
     rail: &Span<'static>,
@@ -405,7 +405,7 @@ pub(in crate::ui) fn push_round_preamble(
     out: &mut Vec<Line<'static>>,
     reasoning: &[String],
     said: &str,
-    settings: &nexus_core::app::Settings,
+    settings: &dugix_core::app::Settings,
     width: usize,
     theme: &crate::theme::Theme,
 ) {
@@ -460,13 +460,13 @@ pub(in crate::ui) fn push_round_preamble(
 #[allow(clippy::too_many_lines)] // shared header roles and per-tool collapsed previews
 fn push_workspace_call(
     out: &mut Vec<Line<'static>>,
-    view: &nexus_core::app::ToolView,
+    view: &dugix_core::app::ToolView,
     expanded: bool,
-    settings: &nexus_core::app::Settings,
+    settings: &dugix_core::app::Settings,
     width: usize,
     theme: &crate::theme::Theme,
 ) {
-    use nexus_core::app::ToolOutcome;
+    use dugix_core::app::ToolOutcome;
     let failed = view.outcome != ToolOutcome::Ok;
     let dim = Style::default().fg(theme.fg_dim);
     let mut head = vec![Span::styled(
@@ -572,7 +572,7 @@ fn push_workspace_call(
     }
 }
 
-fn call_glyph(view: &nexus_core::app::ToolView, failed: bool) -> &'static str {
+fn call_glyph(view: &dugix_core::app::ToolView, failed: bool) -> &'static str {
     if failed {
         glyph::FAIL
     } else if view.connector {
@@ -584,7 +584,7 @@ fn call_glyph(view: &nexus_core::app::ToolView, failed: bool) -> &'static str {
     }
 }
 
-fn is_web(view: &nexus_core::app::ToolView) -> bool {
+fn is_web(view: &dugix_core::app::ToolView) -> bool {
     matches!(
         view.verb.as_str(),
         "search" | "news" | "papers" | "discussions" | "images" | "fetch"
@@ -593,7 +593,7 @@ fn is_web(view: &nexus_core::app::ToolView) -> bool {
 
 /// Collapsed search card: the distinct source domains, in result order.
 fn source_domains(
-    view: &nexus_core::app::ToolView,
+    view: &dugix_core::app::ToolView,
     width: usize,
     theme: &crate::theme::Theme,
 ) -> Vec<Line<'static>> {
@@ -622,7 +622,7 @@ fn source_domains(
 
 /// Opened search card: each hit's title, domain and the start of its text.
 fn sources_body(
-    view: &nexus_core::app::ToolView,
+    view: &dugix_core::app::ToolView,
     width: usize,
     theme: &crate::theme::Theme,
 ) -> Vec<Line<'static>> {
@@ -720,7 +720,7 @@ fn tool_rule(label: &str, width: usize, theme: &crate::theme::Theme) -> Vec<Line
 fn expanded_tool_body(
     name: &str,
     args: &serde_json::Value,
-    view: &nexus_core::app::ToolView,
+    view: &dugix_core::app::ToolView,
     result: &str,
     width: usize,
     theme: &crate::theme::Theme,
@@ -810,7 +810,7 @@ fn expanded_tool_body(
 
 fn command_body(
     args: &serde_json::Value,
-    view: &nexus_core::app::ToolView,
+    view: &dugix_core::app::ToolView,
     result: &str,
     width: usize,
     theme: &crate::theme::Theme,

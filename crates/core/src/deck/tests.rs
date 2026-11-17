@@ -818,7 +818,7 @@ fn deck_constructors_are_valid_and_laid_out() {
 #[test]
 fn renders_draw_photos_not_an_empty_spot() {
     // A photo the model placed must show in the render it sees.
-    let dir = std::env::temp_dir().join(format!("nexus-raster-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("dugix-raster-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let photo = image::RgbImage::from_pixel(8, 8, image::Rgb([220, 20, 30]));
     photo.save(dir.join("photo.jpg")).unwrap();

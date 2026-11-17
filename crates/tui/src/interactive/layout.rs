@@ -4,7 +4,7 @@ use super::{Entry, bold, components, image_lines};
 use crate::theme::Theme;
 use crate::ui::popups::chrome;
 use crate::ui::style::glyph;
-use nexus_core::interactive::{
+use dugix_core::interactive::{
     Accent, Button, Card, Document, Frame as DocumentFrame, Node, Session, Tone,
 };
 use ratatui::buffer::Buffer;
@@ -607,7 +607,7 @@ pub(super) fn scrolled(canvas: &Buffer, scroll: u16) -> Buffer {
     buffer
 }
 /// One line on why part of a panel is missing, without the list of alternatives.
-pub(super) fn left_out_note(error: &nexus_core::interactive::CheckError) -> String {
+pub(super) fn left_out_note(error: &dugix_core::interactive::CheckError) -> String {
     let line = error.message.lines().next().unwrap_or_default();
     let line = line.split(';').next().unwrap_or(line).trim_end_matches(':');
     safe(line.trim())

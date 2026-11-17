@@ -4,9 +4,9 @@ use crate::tools::{ToolBox, is_read_only_tool};
 use serde_json::json;
 
 fn fixture() -> (Db, FilesCtx, String) {
-    let root = std::env::temp_dir().join(format!("nexus-chat-tool-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-tool-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
-    let path = root.join("nexus.db");
+    let path = root.join("dugix.db");
     let db = Db::open(&path).unwrap();
     let space = db.list_spaces().unwrap()[0].id.clone();
     let session = db

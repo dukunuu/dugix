@@ -331,7 +331,7 @@ pub fn share_labels(
     Ok(labels)
 }
 
-/// The user-facing list shared by `/memory share` and `nexus memory shares`.
+/// The user-facing list shared by `/memory share` and `dugix memory shares`.
 pub fn sharing_list(conn: &Connection, space: &str) -> Result<String> {
     let chapters = visible_chapters(conn, space)?;
     let labels = share_labels(conn, space, &chapters)?;

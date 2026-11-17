@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use nexus_core::app::{AppCommand, Popup, clamp_cursor};
-use nexus_core::jobs::{Job, JobRun, JobSpec};
+use dugix_core::app::{AppCommand, Popup, clamp_cursor};
+use dugix_core::jobs::{Job, JobRun, JobSpec};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -503,11 +503,11 @@ mod tests {
 
     #[test]
     fn job_new_defaults_to_agent_workspace_and_keeps_invalid_form_open() {
-        use nexus_core::app::{App, WorkMode};
-        use nexus_core::db::Db;
-        use nexus_core::space::Space;
+        use dugix_core::app::{App, WorkMode};
+        use dugix_core::db::Db;
+        use dugix_core::space::Space;
 
-        let dir = std::env::temp_dir().join(format!("nexus-job-form-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-job-form-{}", uuid::Uuid::new_v4()));
         let root = dir.join("workspace");
         let data = dir.join("data");
         std::fs::create_dir_all(&root).unwrap();

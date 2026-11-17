@@ -188,7 +188,7 @@ pub fn resolve_layout_request(
     let mut raw = value.clone();
     raw.as_object_mut().expect("operation").remove("op");
     let request: Request = serde_json::from_value(raw)?;
-    let design = crate::design::resolve(deck.design.as_deref().unwrap_or("nexus"), resolver)?;
+    let design = crate::design::resolve(deck.design.as_deref().unwrap_or("dugix"), resolver)?;
     let mut slide = crate::design::layouts::instantiate(&design, &request.layout, &request.slots)?;
     inline_missing_styles(&mut slide.children, deck, &design);
     slide.id = request.id.unwrap_or_default();
@@ -446,7 +446,7 @@ fn step(
             let slug = design
                 .as_deref()
                 .or(next.design.as_deref())
-                .unwrap_or("nexus")
+                .unwrap_or("dugix")
                 .to_string();
             let design = crate::design::resolve(&slug, resolver)?;
             next.theme = design.slide_theme();

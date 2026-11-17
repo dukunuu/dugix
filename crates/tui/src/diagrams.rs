@@ -25,7 +25,7 @@ const MAX_PIXEL_WIDTH: u32 = 4096;
 const MAX_PIXEL_HEIGHT: u32 = 1024;
 static FONTS: OnceLock<Arc<resvg::usvg::fontdb::Database>> = OnceLock::new();
 fn render_safely<T>(render: impl FnOnce() -> Result<T>) -> Result<T, String> {
-    nexus_core::panic_guard::catch(render).map_or_else(
+    dugix_core::panic_guard::catch(render).map_or_else(
         |_| Err("diagram renderer failed; source is available below".into()),
         |result| result.map_err(|error| format!("{error:#}")),
     )
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn prompt_advertised_mermaid_examples_render() {
         let picker = Picker::halfblocks();
-        for source in nexus_core::app::MERMAID_PREVIEW_EXAMPLES {
+        for source in dugix_core::app::MERMAID_PREVIEW_EXAMPLES {
             let image = rasterize(source, 60, true, &picker).expect(source);
             assert_eq!(image.width(), 600);
             assert_eq!(image.height(), 240);
@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn renderer_panics_are_marked_for_the_terminal_hook_and_become_errors() {
-        use nexus_core::panic_guard::catching;
+        use dugix_core::panic_guard::catching;
         assert!(!catching());
         let result: Result<(), String> = render_safely(|| {
             assert!(catching());

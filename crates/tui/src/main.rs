@@ -22,7 +22,7 @@ mod ui;
 mod vim;
 
 use anyhow::Result;
-use nexus_core::config;
+use dugix_core::config;
 
 use app_view::AppView;
 
@@ -43,11 +43,11 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     if send_only {
-        anyhow::bail!("no running Nexus TUI instance");
+        anyhow::bail!("no running Dugix TUI instance");
     }
 
     let saved = config::load_all_providers()?;
-    let app = nexus_core::boot(saved).await?;
+    let app = dugix_core::boot(saved).await?;
     let mut app = AppView::new(app);
     let (selection_server, selection_requests) = cli::start_selection_server()?;
 
@@ -104,7 +104,7 @@ async fn main() -> Result<()> {
 fn install_terminal_panic_hook() {
     let restore = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        if nexus_core::panic_guard::catching() {
+        if dugix_core::panic_guard::catching() {
             return;
         }
         let _ = crossterm::execute!(
@@ -125,7 +125,7 @@ fn open_start_session(
     selection_chat: bool,
 ) -> Result<()> {
     if let Some(prompt) = selection_prompt {
-        app.execute(nexus_core::app::AppCommand::Send { text: prompt })?;
+        app.execute(dugix_core::app::AppCommand::Send { text: prompt })?;
         cli::clear_primary_selection();
     } else if continue_session || selection_chat {
         // Explicit launch flags take precedence over a stale session handoff.
@@ -136,7 +136,7 @@ fn open_start_session(
             {
                 app.set_active_space(row);
             }
-            let _ = app.execute(nexus_core::app::AppCommand::ResolveSession { id: session.id });
+            let _ = app.execute(dugix_core::app::AppCommand::ResolveSession { id: session.id });
         } else {
             app.push_status("no previous session — send a message to start one".to_string());
         }
@@ -151,7 +151,7 @@ fn open_start_session(
                 && let Some(row) = rows.into_iter().find(|s| s.id == space_id)
             {
                 app.set_active_space(row);
-                let _ = app.execute(nexus_core::app::AppCommand::ResolveSession { id: session.id });
+                let _ = app.execute(dugix_core::app::AppCommand::ResolveSession { id: session.id });
             }
         }
     }

@@ -1,7 +1,7 @@
 use super::*;
-use nexus_core::app::App;
-use nexus_core::db::Db;
-use nexus_core::space::Space;
+use dugix_core::app::App;
+use dugix_core::db::Db;
+use dugix_core::space::Space;
 
 const PAD: &str = r#"root = Panel("Pad", [Text("x = " + $x), Input($name, "Name")])
 $x = 5
@@ -88,7 +88,7 @@ fn clicking_a_clickable_shape_runs_its_action() {
 
 #[test]
 fn the_loop_saves_panel_state_at_most_once_a_second() {
-    let root = std::env::temp_dir().join(format!("nexus-play-test-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-play-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("spaces")).unwrap();
     let mut app = AppView::new(App::new(
         Db::open_in_memory().unwrap(),

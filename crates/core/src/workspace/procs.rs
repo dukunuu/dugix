@@ -508,7 +508,7 @@ mod unix {
         impl Fixture {
             fn new() -> Self {
                 let dir =
-                    std::env::temp_dir().join(format!("nexus-procs-{}", uuid::Uuid::new_v4()));
+                    std::env::temp_dir().join(format!("dugix-procs-{}", uuid::Uuid::new_v4()));
                 fs::create_dir_all(&dir).unwrap();
                 Self {
                     procs: Arc::default(),
@@ -522,7 +522,7 @@ mod unix {
                     .action(
                         Context {
                             workspace: &self.workspace,
-                            db_path: Some(&self.dir.join("nexus.db")),
+                            db_path: Some(&self.dir.join("dugix.db")),
                             confinement: None,
                             session_id: "session-a",
                             allow_unparseable: false,
@@ -540,7 +540,7 @@ mod unix {
                     None,
                     "auto".into(),
                     vec![],
-                    Some(self.dir.join("nexus.db")),
+                    Some(self.dir.join("dugix.db")),
                     None,
                     None,
                 );
@@ -720,7 +720,7 @@ mod unix {
                 .action(
                     Context {
                         workspace: &fixture.workspace,
-                        db_path: Some(&fixture.dir.join("nexus.db")),
+                        db_path: Some(&fixture.dir.join("dugix.db")),
                         confinement: None,
                         session_id: "session-b",
                         allow_unparseable: false,

@@ -377,7 +377,7 @@ fn file_sha256(path: &Path) -> std::io::Result<Option<String>> {
 fn restore(pre_image: &Path, path: &Path) -> Result<(), PathError> {
     let parent = path.parent().expect("workspace file parent");
     std::fs::create_dir_all(parent)?;
-    let temp = parent.join(format!(".nexus-{}.tmp", uuid::Uuid::new_v4()));
+    let temp = parent.join(format!(".dugix-{}.tmp", uuid::Uuid::new_v4()));
     let result = std::fs::copy(pre_image, &temp).and_then(|_| std::fs::rename(&temp, path));
     if result.is_err() {
         let _ = std::fs::remove_file(&temp);
@@ -397,7 +397,7 @@ mod tests {
     impl Dirs {
         fn new() -> Self {
             let base =
-                std::env::temp_dir().join(format!("nexus-checkpoint-{}", uuid::Uuid::new_v4()));
+                std::env::temp_dir().join(format!("dugix-checkpoint-{}", uuid::Uuid::new_v4()));
             let root = base.join("workspace");
             std::fs::create_dir_all(&root).unwrap();
             let root = root.canonicalize().unwrap();

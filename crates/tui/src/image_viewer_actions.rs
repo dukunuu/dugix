@@ -509,7 +509,7 @@ impl AppView {
             markdown
         });
         self.close_image_viewer();
-        self.popup = nexus_core::app::Popup::None;
+        self.popup = dugix_core::app::Popup::None;
         self.push_status(format!("attached {reference}"));
     }
 

@@ -1,7 +1,7 @@
 import { For, Show, createSignal, onMount } from "solid-js";
-import { NexusApi } from "./api";
+import { DugixApi } from "./api";
 import { forgetDevice, knownDevices, type KnownDevice } from "./devices";
-import type { NexusStore } from "./state";
+import type { DugixStore } from "./state";
 
 interface SyncState { device_id: string; device_name: string; peers: { peer_id: string; table: string; last_synced_at: string | null }[] }
 interface FileChange { space_id: string; name: string; hash: string; size: number }
@@ -13,7 +13,7 @@ function saveBlob(blob: Blob, name: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function SyncPage(props: { store: NexusStore }) {
+export function SyncPage(props: { store: DugixStore }) {
   const [state, setState] = createSignal<SyncState>();
   const [devices, setDevices] = createSignal(knownDevices());
   const [url, setUrl] = createSignal("");
@@ -28,7 +28,7 @@ export function SyncPage(props: { store: NexusStore }) {
   }
   onMount(() => void refresh());
   function choose(device: KnownDevice) { setUrl(device.url); setToken(device.token ?? ""); }
-  async function transfer(from: NexusApi, to: NexusApi, files: FileChange[]) {
+  async function transfer(from: DugixApi, to: DugixApi, files: FileChange[]) {
     for (const [index, file] of files.entries()) {
       setStatus(`Transferring ${index + 1}/${files.length}: ${file.name}`);
       const query = new URLSearchParams({ space_id: file.space_id, name: file.name, hash: file.hash });
@@ -43,7 +43,7 @@ export function SyncPage(props: { store: NexusStore }) {
     if (!url().trim() || !token().trim()) return;
     setBusy(true); setError(""); setWarnings([]); setStatus("Connecting to peer…");
     try {
-      const peer = new NexusApi(url().trim(), token().trim());
+      const peer = new DugixApi(url().trim(), token().trim());
       const [local, remote] = await Promise.all([props.store.api.request<SyncState>("/v1/sync/state"), peer.request<SyncState>("/v1/sync/state")]);
       if (local.device_id === remote.device_id) throw new Error("Choose a different host to sync with.");
       const outgoing = await props.store.api.request<Changeset>(`/v1/sync?peer_id=${encodeURIComponent(remote.device_id)}`);
@@ -66,7 +66,7 @@ export function SyncPage(props: { store: NexusStore }) {
   }
   async function exportBundle() {
     setBusy(true); setError("");
-    try { saveBlob(await props.store.api.binary("/v1/sync/bundle"), "nexus-sync.zip"); setStatus("Sync bundle downloaded."); }
+    try { saveBlob(await props.store.api.binary("/v1/sync/bundle"), "dugix-sync.zip"); setStatus("Sync bundle downloaded."); }
     catch (error) { setError(String(error)); }
     finally { setBusy(false); }
   }
@@ -76,7 +76,7 @@ export function SyncPage(props: { store: NexusStore }) {
     try {
       if (file.size > 64 * 1024 * 1024) throw new Error("Bundles must be 64 MiB or smaller.");
       const reply = await props.store.api.binary("/v1/sync/bundle", { method: "POST", body: file, headers: { "Content-Type": "application/zip" } });
-      saveBlob(reply, "nexus-sync-reply.zip");
+      saveBlob(reply, "dugix-sync-reply.zip");
       setStatus("Bundle merged. Import the downloaded reply on the sending host to complete the exchange.");
       await refresh(); await props.store.refresh();
     } catch (error) { setError(String(error)); }

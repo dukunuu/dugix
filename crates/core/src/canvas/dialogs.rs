@@ -190,7 +190,7 @@ pub fn gui_session() -> bool {
     set("DISPLAY") || set("WAYLAND_DISPLAY") || set("DBUS_SESSION_BUS_ADDRESS")
 }
 
-/// The Open filter shared by studio and the library: nexus files and the imports.
+/// The Open filter shared by studio and the library: dugix files and the imports.
 pub const OPEN: &[Filter] = &[
     Filter {
         name: "Decks, docs and imports",

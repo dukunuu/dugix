@@ -6,7 +6,7 @@
 import { Buffer, Vim } from './vim.js';
 
 const APPLY_MS = 700, COLOR_MS = 120;
-const VIM_KEY = 'nexus.studio.sourceVim';
+const VIM_KEY = 'dugix.studio.sourceVim';
 
 function el(tag, className, text) {
   const node = document.createElement(tag);

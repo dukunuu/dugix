@@ -8,19 +8,19 @@ use anyhow::{Result, bail};
 use ratatui::layout::Rect;
 use tui_textarea::TextArea;
 
-use nexus_core::app::{
+use dugix_core::app::{
     App, AppEvent, AppsMode, CopyOption, FilesMode, FilesTab, ImagesMode, ModelPanel, MouseTarget,
     PendingEditor, Popup, ScriptsMode, SessionMode, SettingsField, SkillsMode, SpaceMode,
     SwarmPopupMode,
 };
-use nexus_core::db::Space as SpaceRow;
-use nexus_core::provider::BackendTag;
+use dugix_core::db::Space as SpaceRow;
+use dugix_core::provider::BackendTag;
 
 use crate::filter_input::FilterInput;
 use crate::history_cache::HistoryCache;
 use crate::selection::HistorySel;
 use crate::theme::{BackgroundMode, Theme};
-use nexus_core::remote_image::{Fetcher, Status as ImageStatus};
+use dugix_core::remote_image::{Fetcher, Status as ImageStatus};
 use std::sync::{Arc, Weak};
 
 thread_local! {
@@ -211,7 +211,7 @@ pub struct AppView {
     pub shell_recall: Option<(Vec<String>, usize, String)>,
 
     pub popup: Popup,
-    pub approval_request: Option<nexus_core::tools::ApprovalRequest>,
+    pub approval_request: Option<dugix_core::tools::ApprovalRequest>,
     /// Request generation distinguishes identical queued approvals when resetting guards.
     pub approval_displayed: u64,
     pub approval_scroll: std::cell::Cell<usize>,
@@ -240,9 +240,9 @@ pub struct AppView {
     pub files_edit: String,
     pub picker_home: PathBuf,
     pub picker_query: String,
-    pub picker_results: Vec<nexus_core::filesearch::Found>,
+    pub picker_results: Vec<dugix_core::filesearch::Found>,
     pub picker_selected: usize,
-    pub picker_rx: Option<tokio::sync::oneshot::Receiver<Vec<nexus_core::filesearch::Found>>>,
+    pub picker_rx: Option<tokio::sync::oneshot::Receiver<Vec<dugix_core::filesearch::Found>>>,
     pub picker_spotlight: bool,
     pub images_selected: usize,
     pub images_mode: ImagesMode,
@@ -253,21 +253,22 @@ pub struct AppView {
     pub apps_filter: String,
     pub apps_mode: AppsMode,
     pub apps_edit: String,
-    pub pinned_apps: Vec<nexus_core::panels::Pinned>,
+    pub pinned_apps: Vec<dugix_core::panels::Pinned>,
     pub swarm_selected: usize,
     pub swarm_popup_mode: SwarmPopupMode,
     pub skills_mode: SkillsMode,
     pub skills_selected: usize,
     pub skills_filter: String,
     pub skills_edit: String,
-    pub usage_data: Option<nexus_core::app::usage::UsageData>,
+    pub usage_data: Option<dugix_core::app::usage::UsageData>,
     pub usage_scroll: usize,
     pub harness_selected: usize,
     pub jobs_popup: crate::ui::popups::jobs::JobsPopup,
     pub library: crate::ui::popups::library::LibraryPopup,
     pub subagents: crate::ui::popups::subagents::SubagentsPopup,
-    pub dialogs: Box<dyn nexus_core::canvas::dialogs::Dialogs>,
+    pub dialogs: Box<dyn dugix_core::canvas::dialogs::Dialogs>,
     pub connectors_popup: crate::ui::popups::connectors::ConnectorsPopup,
+    pub fleet_view: crate::ui::popups::fleet::FleetPopup,
     pub procs_selected: usize,
     pub procs_output: Option<String>,
     pub procs_scroll: u16,
@@ -499,6 +500,7 @@ impl AppView {
             subagents: crate::ui::popups::subagents::SubagentsPopup::default(),
             dialogs: crate::ui::popups::library::default_dialogs(),
             connectors_popup: crate::ui::popups::connectors::ConnectorsPopup::default(),
+            fleet_view: crate::ui::popups::fleet::FleetPopup::default(),
             procs_selected: 0,
             procs_output: None,
             procs_scroll: 0,
@@ -551,9 +553,9 @@ impl AppView {
             tool_click_anchor: None,
             notification_areas: Vec::new(),
             welcome_targets: Vec::new(),
-            banner: nexus_core::config::load_banner()
+            banner: dugix_core::config::load_banner()
                 .unwrap_or_else(|| BANNER.trim_matches('\n').to_string()),
-            greeting: nexus_core::app::pick_greeting(),
+            greeting: dugix_core::app::pick_greeting(),
             theme,
             background_mode,
             vim_enabled,
@@ -719,7 +721,7 @@ impl AppView {
     /// Copies original message text, using `messages.len()` for the streaming reply.
     pub fn copy_message(&mut self, idx: usize) {
         let text = match self.core.messages.get(idx) {
-            Some(m) if m.role == "assistant" => Some(nexus_core::markdown::to_plain(&m.content)),
+            Some(m) if m.role == "assistant" => Some(dugix_core::markdown::to_plain(&m.content)),
             Some(m) => Some(m.content.clone()),
             None if idx == self.core.messages.len() => {
                 self.core.active_streaming_text().map(str::to_string)

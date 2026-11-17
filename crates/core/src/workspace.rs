@@ -205,7 +205,7 @@ impl Workspace {
         {
             Some("git internals — use shell git commands")
         } else if self.deny.iter().any(|deny| path.starts_with(deny)) {
-            Some("nexus data or config directory")
+            Some("dugix data or config directory")
         } else if access == Access::Write
             && path
                 .file_name()
@@ -282,7 +282,7 @@ mod tests {
     impl TempWorkspace {
         fn new() -> Self {
             let path =
-                std::env::temp_dir().join(format!("nexus-workspace-{}", uuid::Uuid::new_v4()));
+                std::env::temp_dir().join(format!("dugix-workspace-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&path).unwrap();
             Self(path.canonicalize().unwrap())
         }
@@ -352,11 +352,11 @@ mod tests {
     #[test]
     fn hard_denies_and_write_only_secret_denies() {
         let dir = TempWorkspace::new();
-        let denied = dir.0.join("nexus");
+        let denied = dir.0.join("dugix");
         std::fs::create_dir_all(&denied).unwrap();
         let workspace = Workspace::open(&dir.0, vec![denied]).unwrap();
         for access in [Access::Read, Access::Write] {
-            for path in [".git/config", "nexus/new/file"] {
+            for path in [".git/config", "dugix/new/file"] {
                 assert!(matches!(
                     workspace.resolve(path, access),
                     Err(PathError::Denied(_, _))

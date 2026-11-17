@@ -146,7 +146,7 @@ fn parse_entry(
 ) -> Result<Proposal, String> {
     let kind = entry.get("type").and_then(Value::as_str);
     if kind == Some("sse") {
-        return Err("uses the legacy SSE transport, which nexus does not support".into());
+        return Err("uses the legacy SSE transport, which dugix does not support".into());
     }
     let mut notes = Vec::new();
     let mut secrets: Vec<(String, String)> = Vec::new();
@@ -322,7 +322,7 @@ mod tests {
     use std::sync::Arc;
 
     fn fixtures() -> (PathBuf, ImportPaths) {
-        let dir = std::env::temp_dir().join(format!("nexus-conn-import-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-conn-import-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join("proj")).unwrap();
         let write = |name: &str, body: &str| {
             let path = dir.join(name);
@@ -434,7 +434,7 @@ mod tests {
 
     #[test]
     fn missing_or_corrupt_files_are_skipped_not_fatal() {
-        let dir = std::env::temp_dir().join(format!("nexus-conn-import-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-conn-import-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let bad = dir.join("bad.json");
         std::fs::write(&bad, "{ not json").unwrap();

@@ -126,13 +126,18 @@ pub fn to_plain(content: &str) -> String {
         .join("\n")
 }
 
-/// Replace each valid `nexus-ui` block with its readable text, so copying a
+/// Replace each valid `dugix-ui` block with its readable text, so copying a
 /// designed reply gives words rather than JSON; invalid or unclosed blocks are kept.
 fn ui_fences_to_plain(content: &str) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut lines = content.lines();
     while let Some(line) = lines.next() {
-        if line.trim_start().strip_prefix("```").map(str::trim) != Some("nexus-ui") {
+        if !line
+            .trim_start()
+            .strip_prefix("```")
+            .map(str::trim)
+            .is_some_and(crate::interactive::is_ui_fence)
+        {
             out.push(line.to_string());
             continue;
         }
@@ -308,15 +313,15 @@ fn emphasis_run(chars: &[char], i: usize) -> Option<usize> {
 mod to_plain_tests {
     #[test]
     fn copying_a_designed_reply_gives_its_text_not_its_json() {
-        let reply = "```nexus-ui\n{\"version\":1,\"title\":\"Rust vs Go\",\"view\":[{\"type\":\"callout\",\"tone\":\"tip\",\"text\":\"Go ships faster.\"}]}\n```\nBoth are **fine**.";
+        let reply = "```dugix-ui\n{\"version\":1,\"title\":\"Rust vs Go\",\"view\":[{\"type\":\"callout\",\"tone\":\"tip\",\"text\":\"Go ships faster.\"}]}\n```\nBoth are **fine**.";
         let plain = to_plain(reply);
         assert!(plain.contains("Rust vs Go"), "{plain}");
         assert!(plain.contains("Go ships faster."), "{plain}");
         assert!(plain.contains("Both are fine."), "{plain}");
         assert!(!plain.contains("\"version\""), "{plain}");
-        let broken = "```nexus-ui\n{not json}\n```";
+        let broken = "```dugix-ui\n{not json}\n```";
         assert!(to_plain(broken).contains("{not json}"));
-        assert!(to_plain("```nexus-ui\n{\"version\":1").contains("\"version\":1"));
+        assert!(to_plain("```dugix-ui\n{\"version\":1").contains("\"version\":1"));
     }
 
     use super::*;

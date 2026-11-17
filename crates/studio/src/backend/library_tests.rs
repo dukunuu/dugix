@@ -1,8 +1,8 @@
 //! The library commands and every native dialog, with the dialogs scripted.
 
-use nexus_core::canvas::dialogs::Scripted;
-use nexus_core::deck::history::Who;
-use nexus_core::doc::{self, Doc};
+use dugix_core::canvas::dialogs::Scripted;
+use dugix_core::deck::history::Who;
+use dugix_core::doc::{self, Doc};
 use serde_json::json;
 
 use super::*;
@@ -15,7 +15,7 @@ const POTX: &[u8] = include_bytes!(concat!(
 struct Temp(PathBuf);
 impl Temp {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!("nexus-studio-library-{}", Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("dugix-studio-library-{}", Uuid::new_v4()));
         fs::create_dir_all(&path).unwrap();
         Self(path.canonicalize().unwrap())
     }
@@ -36,7 +36,7 @@ impl Temp {
         path
     }
     fn doc(&self, relative: &str, title: &str, markdown: &str) {
-        let mut doc = Doc::from_design(title, &nexus_core::design::Design::default());
+        let mut doc = Doc::from_design(title, &dugix_core::design::Design::default());
         doc.blocks = doc::markdown::parse_document(markdown, true).blocks;
         let doc = Doc::check(&serde_json::to_string(&doc).unwrap()).unwrap();
         doc::storage::save(&self.files(), relative, &doc, Who::Model).unwrap();
@@ -204,28 +204,28 @@ fn thumbnails_are_served_from_the_last_listing_and_nothing_else() {
     let (items, ..) = library(send(&mut backend, json!({"command":"Library"})));
     for item in &items {
         let thumb = item.thumb.clone().unwrap();
-        let (mime, bytes) = backend.serve(&format!("nexus://localhost{thumb}")).unwrap();
+        let (mime, bytes) = backend.serve(&format!("dugix://localhost{thumb}")).unwrap();
         assert_eq!(mime, "image/png");
         assert_eq!(&bytes[..4], b"\x89PNG", "{thumb}");
         let (files, entry) = backend
-            .thumbnail_job(&format!("nexus://localhost{thumb}"))
+            .thumbnail_job(&format!("dugix://localhost{thumb}"))
             .unwrap();
         assert_eq!(files, backend.files_dir);
         assert_eq!(entry.relative, item.relative);
     }
     assert!(
         backend
-            .serve("nexus://localhost/library/000000000000-00000000.png")
+            .serve("dugix://localhost/library/000000000000-00000000.png")
             .is_err()
     );
     assert!(
         backend
-            .serve("nexus://localhost/library/..%2Fx.png")
+            .serve("dugix://localhost/library/..%2Fx.png")
             .is_err()
     );
     assert!(
         backend
-            .thumbnail_job("nexus://localhost/assets/x.png")
+            .thumbnail_job("dugix://localhost/assets/x.png")
             .is_err()
     );
     let stale = items[0].thumb.clone().unwrap();
@@ -237,7 +237,7 @@ fn thumbnails_are_served_from_the_last_listing_and_nothing_else() {
     let (fresh, ..) = library(send(&mut backend, json!({"command":"Library"})));
     let moved = fresh.iter().find(|i| i.relative == relative).unwrap();
     assert_ne!(moved.thumb.as_ref(), Some(&stale));
-    assert!(backend.serve(&format!("nexus://localhost{stale}")).is_err());
+    assert!(backend.serve(&format!("dugix://localhost{stale}")).is_err());
 }
 
 #[test]
@@ -467,7 +467,7 @@ fn export_asks_where_pre_filled_with_the_title_and_writes_there() {
         Some(temp.0.join("Desktop").as_path())
     );
     assert_eq!(
-        nexus_core::canvas::settings::export_dir(&temp.data(), &backend.files_dir),
+        dugix_core::canvas::settings::export_dir(&temp.data(), &backend.files_dir),
         Some(temp.0.join("Desktop"))
     );
     assert!(backend.undo.is_empty(), "exporting never edits");
@@ -492,7 +492,7 @@ fn cancelling_a_dialog_does_nothing() {
     assert_eq!(backend.deck, before);
     assert!(backend.exports.is_empty());
     assert!(!temp.files().join("exports").exists());
-    assert!(nexus_core::canvas::settings::export_dir(&temp.data(), &backend.files_dir).is_none());
+    assert!(dugix_core::canvas::settings::export_dir(&temp.data(), &backend.files_dir).is_none());
     assert_eq!(backend.path, talk);
 }
 
@@ -634,7 +634,7 @@ fn save_a_copy_is_pre_filled_and_never_the_open_file() {
 }
 
 #[test]
-fn open_dialog_opens_nexus_files_and_imports_office_and_markdown_files() {
+fn open_dialog_opens_dugix_files_and_imports_office_and_markdown_files() {
     let temp = Temp::new();
     let outside = temp.0.join("Downloads");
     fs::create_dir_all(&outside).unwrap();

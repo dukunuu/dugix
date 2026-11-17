@@ -2,8 +2,8 @@
 
 use anyhow::Result;
 
-use nexus_core::app::{PendingEditor, Popup, SwarmPopupMode};
-use nexus_core::db::Persona;
+use dugix_core::app::{PendingEditor, Popup, SwarmPopupMode};
+use dugix_core::db::Persona;
 
 use crate::app_view::AppView;
 
@@ -25,7 +25,7 @@ impl AppView {
 
     pub fn move_swarm_selection(&mut self, delta: i32) {
         self.swarm_selected =
-            nexus_core::app::clamp_cursor(self.swarm_selected, self.core.swarm.cache.len(), delta);
+            dugix_core::app::clamp_cursor(self.swarm_selected, self.core.swarm.cache.len(), delta);
     }
 
     pub fn queue_swarm_persona_editor(&mut self, new: bool) -> Result<()> {
@@ -40,8 +40,7 @@ impl AppView {
         let Some(persona) = self.core.swarm.cache.get(self.swarm_selected) else {
             return Ok(());
         };
-        let path =
-            std::env::temp_dir().join(format!("nexus-chat-persona-{}.md", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("dugix-persona-{}.md", uuid::Uuid::new_v4()));
         std::fs::write(
             &path,
             format!(
@@ -58,7 +57,7 @@ impl AppView {
     pub fn apply_swarm_persona_editor(&mut self, path: &std::path::Path) -> Result<()> {
         let text = std::fs::read_to_string(path)?;
         let _ = std::fs::remove_file(path);
-        match nexus_core::app::parse_persona_editor(&text) {
+        match dugix_core::app::parse_persona_editor(&text) {
             Ok(persona) => {
                 if let Some(row) = self.core.swarm.cache.get_mut(self.swarm_selected) {
                     *row = persona;
@@ -105,14 +104,14 @@ impl AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_core::app::App;
-    use nexus_core::app::{AppCommand, ModelPickTarget};
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
+    use dugix_core::app::App;
+    use dugix_core::app::{AppCommand, ModelPickTarget};
+    use dugix_core::db::Db;
+    use dugix_core::space::Space;
 
     fn test_space() -> Space {
         Space {
-            root: std::env::temp_dir().join(format!("nexus-flow-test-{}", uuid::Uuid::new_v4())),
+            root: std::env::temp_dir().join(format!("dugix-flow-test-{}", uuid::Uuid::new_v4())),
         }
     }
 
@@ -176,7 +175,7 @@ mod tests {
             a.db.create_session("swarm", "a/one", &space, "chat")
                 .unwrap();
         a.core.session = Some(session);
-        a.core.swarm.cache = vec![nexus_core::db::Persona {
+        a.core.swarm.cache = vec![dugix_core::db::Persona {
             name: "Skeptic".into(),
             model: "a/one".into(),
             blurb: "pokes holes".into(),
@@ -207,7 +206,7 @@ mod tests {
         let mut a = test_app();
         a.models.clear();
         a.popup = Popup::Swarm;
-        a.core.swarm.cache.push(nexus_core::db::Persona {
+        a.core.swarm.cache.push(dugix_core::db::Persona {
             name: "Skeptic".into(),
             model: "a/one".into(),
             blurb: "pokes holes".into(),

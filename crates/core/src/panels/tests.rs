@@ -5,9 +5,9 @@ use serde_json::json;
 const BUDGET: &str = "root = Panel(\"Budget\", [Text(\"Spent: \" + $spent), Input($note, \"Note\"), Buttons([Button(\"Spend\", @Set($spent, $spent + 5))])])\n$spent = 10\n$note = \"\"";
 
 fn temp_db_path() -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("nexus-panels-{}", Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-panels-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
-    dir.join("nexus.db")
+    dir.join("dugix.db")
 }
 
 fn edited() -> Session {
@@ -268,7 +268,7 @@ fn both_tables_sync_and_pinned_deletes_propagate() {
     for table in ["panel_states", "pinned_panels"] {
         assert!(TABLES.iter().any(|spec| spec.name == table), "{table}");
     }
-    let root = std::env::temp_dir().join(format!("nexus-panels-sync-{}", Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-panels-sync-{}", Uuid::new_v4()));
     let space = Space { root: root.clone() };
     let (a, b) = (Db::open_in_memory().unwrap(), Db::open_in_memory().unwrap());
     let session = edited();

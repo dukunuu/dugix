@@ -3,7 +3,7 @@ use super::widgets::safe;
 use super::{bold, image_lines};
 use crate::theme::Theme;
 use crate::ui::style::glyph;
-use nexus_core::interactive::{
+use dugix_core::interactive::{
     CalloutTone, Card, Column, Mark, Node, Session, Stat, StepState, Tone,
 };
 use ratatui::buffer::Buffer;
@@ -371,7 +371,7 @@ fn step_marker(state: StepState, accent: Color, theme: &Theme) -> (&'static str,
     }
 }
 fn step_columns(
-    items: &[nexus_core::interactive::DisplayStep],
+    items: &[dugix_core::interactive::DisplayStep],
     session: &Session,
     width: u16,
     theme: &Theme,
@@ -426,7 +426,7 @@ fn step_columns(
     Some(lines)
 }
 fn steps_lines(
-    items: &[nexus_core::interactive::DisplayStep],
+    items: &[dugix_core::interactive::DisplayStep],
     session: &Session,
     width: u16,
     theme: &Theme,
@@ -1175,7 +1175,7 @@ pub(super) fn ratio_text(value: f64, max: f64) -> String {
     }
 }
 fn render_bars(
-    (node, items): (usize, &[nexus_core::interactive::BarItem]),
+    (node, items): (usize, &[dugix_core::interactive::BarItem]),
     session: &Session,
     area: Rect,
     theme: &Theme,

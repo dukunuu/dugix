@@ -1,11 +1,11 @@
 use super::*;
-use nexus_core::app::App;
-use nexus_core::db::Db;
-use nexus_core::space::Space;
+use dugix_core::app::App;
+use dugix_core::db::Db;
+use dugix_core::space::Space;
 
 #[test]
 fn watch_without_a_topic_opens_jobs_and_w_toggles_daily_repeats() {
-    let root = std::env::temp_dir().join(format!("nexus-research-popup-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-research-popup-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("spaces")).unwrap();
     let mut app = AppView::new(App::new(
         Db::open_in_memory().unwrap(),

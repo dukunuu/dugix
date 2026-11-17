@@ -2,13 +2,13 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
 use crate::app_view::AppView;
-use nexus_core::app::{App, ChatNotification, CopyOption, SettingsField, SettingsRow};
-use nexus_core::db::Db;
-use nexus_core::space::Space;
+use dugix_core::app::{App, ChatNotification, CopyOption, SettingsField, SettingsRow};
+use dugix_core::db::Db;
+use dugix_core::space::Space;
 
 pub(super) fn test_app() -> AppView {
     let db = Db::open_in_memory().unwrap();
-    let root = std::env::temp_dir().join(format!("nexus-popup-test-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-popup-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("spaces")).unwrap();
     AppView::new(App::new(db, Some("k"), Space { root }))
 }
@@ -35,7 +35,7 @@ pub(super) fn render_to_string(
 
 #[test]
 fn jobs_popup_two_jobs_and_parked_run_snapshot() {
-    use nexus_core::jobs::{Job, JobRun, JobSpec};
+    use dugix_core::jobs::{Job, JobRun, JobSpec};
 
     let mut app = test_app();
     let device = app.db.device_id().unwrap();
@@ -66,7 +66,7 @@ fn jobs_popup_two_jobs_and_parked_run_snapshot() {
         status: "parked".into(),
         iters: 1,
         cost_usd: 0.01,
-        branch: Some("nexus/job/fix/run".into()),
+        branch: Some("dugix/job/fix/run".into()),
         summary: "parked: needs approval for fs write fixed".into(),
         updated_at: "2026-01-01T00:01:00Z".into(),
     });
@@ -87,7 +87,7 @@ fn jobs_popup_two_jobs_and_parked_run_snapshot() {
             "morning · agent · interval · enabled · never run",
             "▸ fix tests · agent · until_done · enabled · parked",
             "──────────────────────────────────────────────────────────────────────────────────────────",
-            "nexus/job/fix/run",
+            "dugix/job/fix/run",
             "parked: needs approval for fs write fixed",
         ]
     );
@@ -99,8 +99,8 @@ fn jobs_popup_two_jobs_and_parked_run_snapshot() {
 #[cfg(unix)]
 #[tokio::test]
 async fn procs_popup_two_processes_snapshot() {
-    use nexus_core::tools::ToolBox;
-    use nexus_core::workspace::Workspace;
+    use dugix_core::tools::ToolBox;
+    use dugix_core::workspace::Workspace;
 
     let app = test_app();
     let root = app.space.root.clone();
@@ -110,7 +110,7 @@ async fn procs_popup_two_processes_snapshot() {
         None,
         "auto".into(),
         vec![],
-        Some(root.join("nexus.db")),
+        Some(root.join("dugix.db")),
         None,
         None,
     );
@@ -150,7 +150,7 @@ async fn procs_popup_two_processes_snapshot() {
             "▸ server · running <uptime> · listening",
             "watcher · running <uptime> · watching",
             "──────────────────────────────────────────────────────────────────────────────────────────",
-            "Processes stop when nexus exits.",
+            "Processes stop when dugix exits.",
         ]
     );
     app.procs.shutdown().await;
@@ -163,13 +163,13 @@ fn approval_app(
     summary: String,
 ) -> (
     AppView,
-    tokio::sync::oneshot::Receiver<nexus_core::tools::Decision>,
+    tokio::sync::oneshot::Receiver<dugix_core::tools::Decision>,
 ) {
     let mut app = test_app();
     app.settings.hide_hints = false;
     let (sender, receiver) = tokio::sync::oneshot::channel();
     app.approvals.pending = Some(sender);
-    app.approvals.pending_request = Some(nexus_core::tools::ApprovalRequest {
+    app.approvals.pending_request = Some(dugix_core::tools::ApprovalRequest {
         tool: tool.into(),
         class: None,
         detail: None,
@@ -183,7 +183,7 @@ fn approval_app(
 
 #[test]
 fn harness_popup_three_rows_snapshot() {
-    use nexus_core::db::{FailureRow, HarnessSummary};
+    use dugix_core::db::{FailureRow, HarnessSummary};
 
     let mut app = test_app();
     let root = app.space.root.clone();
@@ -251,7 +251,7 @@ fn harness_popup_three_rows_snapshot() {
 
 #[test]
 fn harness_popup_empty_state_snapshots() {
-    use nexus_core::db::HarnessSummary;
+    use dugix_core::db::HarnessSummary;
 
     let mut app = test_app();
     let root = app.space.root.clone();
@@ -377,7 +377,7 @@ fn approval_overflow_is_counted_scrollable_and_reset_for_each_request() {
     super::approval::handle_key(&mut app, crossterm::event::KeyCode::Char('a').into()).unwrap();
     assert_eq!(
         receiver.try_recv().unwrap(),
-        nexus_core::tools::Decision::AllowForSession
+        dugix_core::tools::Decision::AllowForSession
     );
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
@@ -386,7 +386,7 @@ fn approval_overflow_is_counted_scrollable_and_reset_for_each_request() {
 #[test]
 fn queued_approvals_show_their_position_and_reset_the_guards_at_the_head() {
     use crossterm::event::KeyCode;
-    use nexus_core::tools::Decision;
+    use dugix_core::tools::Decision;
     use std::time::{Duration, Instant};
 
     let command = format!("$ echo {}\necho LAST_COMMAND", "payload ".repeat(500));
@@ -421,7 +421,7 @@ fn queued_approvals_show_their_position_and_reset_the_guards_at_the_head() {
     assert_eq!(first.try_recv().unwrap(), Decision::Allow);
     app.sync_approval_popup();
     let assert_fresh = |app: &AppView| {
-        assert_eq!(app.popup, nexus_core::app::Popup::Approval);
+        assert_eq!(app.popup, dugix_core::app::Popup::Approval);
         assert_eq!(app.approval_request.as_ref(), Some(&request));
         assert_eq!(app.approval_scroll.get(), 0);
         assert!(!app.approval_seen_end.get());
@@ -452,7 +452,7 @@ fn queued_approvals_show_their_position_and_reset_the_guards_at_the_head() {
     super::approval::handle_key(&mut app, KeyCode::Char('y').into()).unwrap();
     assert_eq!(third.try_recv().unwrap(), Decision::Allow);
     app.sync_approval_popup();
-    assert_eq!(app.popup, nexus_core::app::Popup::None);
+    assert_eq!(app.popup, dugix_core::app::Popup::None);
     drop(app);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -460,7 +460,7 @@ fn queued_approvals_show_their_position_and_reset_the_guards_at_the_head() {
 #[test]
 fn approval_requires_the_end_of_a_wrapped_shell_command_before_allowing() {
     use crossterm::event::KeyCode;
-    use nexus_core::tools::Decision;
+    use dugix_core::tools::Decision;
 
     for (key, decision) in [('y', Decision::Allow), ('a', Decision::AllowForSession)] {
         let (mut app, mut receiver) = approval_app(
@@ -497,7 +497,7 @@ fn approval_requires_the_end_of_a_wrapped_shell_command_before_allowing() {
 #[test]
 fn approval_ignores_allow_keys_during_the_open_delay_but_never_delays_denial() {
     use crossterm::event::KeyCode;
-    use nexus_core::tools::Decision;
+    use dugix_core::tools::Decision;
     use std::time::{Duration, Instant};
 
     let (mut app, mut receiver) = approval_app("shell", "$ true".into());
@@ -706,7 +706,7 @@ fn approval_popup_shell_and_diff_snapshots() {
     let mut app = test_app();
     let root = app.space.root.clone();
     app.settings.hide_hints = false;
-    app.popup = nexus_core::app::Popup::Approval;
+    app.popup = dugix_core::app::Popup::Approval;
     for (tool, action, summary, expected) in [
         (
             "shell",
@@ -731,7 +731,7 @@ fn approval_popup_shell_and_diff_snapshots() {
             ],
         ),
     ] {
-        app.approval_request = Some(nexus_core::tools::ApprovalRequest {
+        app.approval_request = Some(dugix_core::tools::ApprovalRequest {
             class: None,
             detail: None,
             tool: tool.into(),
@@ -764,7 +764,7 @@ fn approval_popup_shell_and_diff_snapshots() {
 fn agent_status_tag_is_mode_specific_and_left_truncates_long_roots() {
     let mut app = test_app();
     let root = std::env::temp_dir()
-        .join(format!("nexus-status-{}", uuid::Uuid::new_v4()))
+        .join(format!("dugix-status-{}", uuid::Uuid::new_v4()))
         .join("a-long-parent-directory/deep-project");
     std::fs::create_dir_all(&root).unwrap();
     let chat = render_to_string(96, 1, |f| {
@@ -794,9 +794,9 @@ fn agent_status_abbreviates_the_home_directory() {
     };
     let mut app = test_app();
     app.workspace = Some(std::sync::Arc::new(
-        nexus_core::workspace::Workspace::open(std::path::Path::new(&home), Vec::new()).unwrap(),
+        dugix_core::workspace::Workspace::open(std::path::Path::new(&home), Vec::new()).unwrap(),
     ));
-    app.work_mode = nexus_core::app::WorkMode::Agent;
+    app.work_mode = dugix_core::app::WorkMode::Agent;
     let status = render_to_string(96, 1, |f| {
         crate::ui::status::render_status(f, &app, f.area());
     });
@@ -809,9 +809,9 @@ fn model_authored_ui_is_inline_and_focusable_without_game_commands() {
     app.incognito = true;
     app.set_input("keep my draft");
     let source = include_str!("../../../../core/tests/fixtures/interactive/counter.json").trim();
-    app.messages.push(nexus_core::db::Message {
+    app.messages.push(dugix_core::db::Message {
         role: "assistant".into(),
-        content: format!("Before\n\n```nexus-ui\n{source}\n```\n\nAfter"),
+        content: format!("Before\n\n```dugix-ui\n{source}\n```\n\nAfter"),
         model: None,
         reasoning: None,
         tokens: None,
@@ -840,20 +840,20 @@ fn model_authored_ui_is_inline_and_focusable_without_game_commands() {
     let block = app.history_cache.code[app.history_cache.widgets[0].row].unwrap();
     assert_eq!(app.history_cache.blocks[block], source);
     crate::interactive::focus(&mut app);
-    assert_eq!(app.popup, nexus_core::app::Popup::InteractiveUi);
+    assert_eq!(app.popup, dugix_core::app::Popup::InteractiveUi);
     crate::interactive::key(&mut app, crossterm::event::KeyCode::Enter.into());
     let screen = render_to_string(100, 40, |f| crate::ui::render(f, &mut app));
     assert!(screen.contains("Count: 1"), "{screen}");
     assert_eq!(app.input_text(), "keep my draft");
     assert_eq!(app.messages.len(), 1);
     crate::interactive::key(&mut app, crossterm::event::KeyCode::Esc.into());
-    assert_eq!(app.popup, nexus_core::app::Popup::None);
+    assert_eq!(app.popup, dugix_core::app::Popup::None);
     let screen = render_to_string(100, 40, |f| crate::ui::render(f, &mut app));
     assert!(
         screen.contains("Count: 1"),
         "focus should share inline state: {screen}"
     );
-    app.apply_event(&nexus_core::app::AppEvent::ViewportReset);
+    app.apply_event(&dugix_core::app::AppEvent::ViewportReset);
     let screen = render_to_string(100, 40, |f| crate::ui::render(f, &mut app));
     assert!(screen.contains("Count: 0"), "{screen}");
 }
@@ -861,8 +861,8 @@ fn model_authored_ui_is_inline_and_focusable_without_game_commands() {
 #[test]
 fn local_popup_lists_runtimes_with_discovery_and_endpoint() {
     let mut app = test_app();
-    app.core.saved.local = Some(nexus_core::provider::local::LocalConfig {
-        provider: nexus_core::provider::local::LocalRuntime::Mlx,
+    app.core.saved.local = Some(dugix_core::provider::local::LocalConfig {
+        provider: dugix_core::provider::local::LocalRuntime::Mlx,
         endpoint: None,
         list_command: None,
         memory_budget_mb: None,
@@ -880,8 +880,8 @@ fn local_popup_lists_runtimes_with_discovery_and_endpoint() {
     assert!(screen.contains("✓ active"), "{screen}");
     assert_eq!(app.local_selected, 1);
 
-    app.core.local.status = vec![nexus_core::provider::serve::RuntimeStatus {
-        runtime: nexus_core::provider::local::LocalRuntime::Edge0,
+    app.core.local.status = vec![dugix_core::provider::serve::RuntimeStatus {
+        runtime: dugix_core::provider::local::LocalRuntime::Edge0,
         endpoint: "http://localhost:8000/v1".into(),
         port: Some(8000),
         running: true,
@@ -918,15 +918,15 @@ fn local_popup_lists_runtimes_with_discovery_and_endpoint() {
 
     let esc = crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Esc);
     super::local::handle_key(&mut app, esc);
-    assert_eq!(app.popup, nexus_core::app::Popup::None);
+    assert_eq!(app.popup, dugix_core::app::Popup::None);
     app.open_login_popup();
     for _ in 0..5 {
         app.move_login_selection(1);
     }
     app.confirm_login_selection();
-    assert_eq!(app.popup, nexus_core::app::Popup::Local);
+    assert_eq!(app.popup, dugix_core::app::Popup::Local);
     super::local::handle_key(&mut app, esc);
-    assert_eq!(app.popup, nexus_core::app::Popup::Login);
+    assert_eq!(app.popup, dugix_core::app::Popup::Login);
 }
 
 #[test]
@@ -1203,14 +1203,14 @@ fn new_session_welcome_screen_drops_the_previous_sessions_click_layout() {
 mod usage_render_tests {
     use super::super::usage::render;
     use crate::app_view::AppView;
-    use nexus_core::app::{App, usage::UsageData};
-    use nexus_core::db::{Db, UsageByBackend, UsageByModel, UsageRow, UsageTotals};
-    use nexus_core::space::Space;
+    use dugix_core::app::{App, usage::UsageData};
+    use dugix_core::db::{Db, UsageByBackend, UsageByModel, UsageRow, UsageTotals};
+    use dugix_core::space::Space;
 
     fn populated_app() -> AppView {
         let db = Db::open_in_memory().unwrap();
         let space = Space {
-            root: std::env::temp_dir().join(format!("nexus-usage-{}", uuid::Uuid::new_v4())),
+            root: std::env::temp_dir().join(format!("dugix-usage-{}", uuid::Uuid::new_v4())),
         };
         let mut app = AppView::new(App::new(db, Some("k"), space));
         app.usage_data = Some(UsageData {
@@ -1461,13 +1461,13 @@ mod usage_render_tests {
 mod stop_closes_popup_tests {
     use crate::app_view::AppView;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use nexus_core::app::{App, Popup};
-    use nexus_core::db::Db;
-    use nexus_core::space::Space;
+    use dugix_core::app::{App, Popup};
+    use dugix_core::db::Db;
+    use dugix_core::space::Space;
 
     fn test_space() -> Space {
         Space {
-            root: std::env::temp_dir().join(format!("nexus-stop-test-{}", uuid::Uuid::new_v4())),
+            root: std::env::temp_dir().join(format!("dugix-stop-test-{}", uuid::Uuid::new_v4())),
         }
     }
 
@@ -1507,7 +1507,7 @@ fn picker_app(ids: &[&str]) -> AppView {
     let mut app = test_app();
     app.core.models = ids
         .iter()
-        .map(|id| nexus_core::provider::Model {
+        .map(|id| dugix_core::provider::Model {
             id: (*id).into(),
             name: (*id).into(),
             reasoning_efforts: Vec::new(),
@@ -1515,7 +1515,7 @@ fn picker_app(ids: &[&str]) -> AppView {
             supports_images: false,
             supports_image_generation: false,
             supports_video_generation: false,
-            backend: nexus_core::provider::BackendTag::OpenRouter,
+            backend: dugix_core::provider::BackendTag::OpenRouter,
             pricing: None,
             aliases: Vec::new(),
         })
@@ -1563,12 +1563,12 @@ fn model_picker_click_row_maps_to_the_row_drawn_there() {
 #[test]
 fn help_popup_lists_keys_and_every_command() {
     let mut app = test_app();
-    app.execute(nexus_core::app::AppCommand::OpenHelp).unwrap();
-    assert!(app.popup == nexus_core::app::Popup::Help);
+    app.execute(dugix_core::app::AppCommand::OpenHelp).unwrap();
+    assert!(app.popup == dugix_core::app::Popup::Help);
     let screen = render_to_string(140, 150, |f| super::help::render(f, &mut app));
     assert!(screen.contains("composer"), "{screen}");
     assert!(screen.contains("Shift/Ctrl+Enter"), "{screen}");
-    for c in nexus_core::app::COMMANDS {
+    for c in dugix_core::app::COMMANDS {
         assert!(
             screen.contains(&format!("/{}", c.name)),
             "/{} missing:\n{screen}",
@@ -1583,7 +1583,7 @@ fn help_popup_scroll_clamps_to_content() {
     app.open_help();
     app.help_scroll = u16::MAX;
     let screen = render_to_string(100, 30, |f| super::help::render(f, &mut app));
-    let last = nexus_core::app::COMMANDS.last().unwrap().name;
+    let last = dugix_core::app::COMMANDS.last().unwrap().name;
     assert!(screen.contains(&format!("/{last}")), "{screen}");
     assert!(app.help_scroll < u16::MAX);
 }
@@ -1602,7 +1602,7 @@ fn settings_popup_masks_the_langsearch_key() {
 #[test]
 fn status_bar_names_the_model_and_keeps_the_space_tag_beside_the_gauge() {
     let mut app = test_app();
-    app.core.models = vec![nexus_core::provider::Model {
+    app.core.models = vec![dugix_core::provider::Model {
         id: "org/Big-Model-7B".into(),
         name: "Big Model".into(),
         reasoning_efforts: Vec::new(),
@@ -1610,7 +1610,7 @@ fn status_bar_names_the_model_and_keeps_the_space_tag_beside_the_gauge() {
         supports_images: false,
         supports_image_generation: false,
         supports_video_generation: false,
-        backend: nexus_core::provider::BackendTag::Local,
+        backend: dugix_core::provider::BackendTag::Local,
         pricing: None,
         aliases: Vec::new(),
     }];
@@ -1644,7 +1644,7 @@ fn status_bar_names_the_model_and_keeps_the_space_tag_beside_the_gauge() {
 #[test]
 fn status_bar_reports_reuse_not_raw_cache_share() {
     let mut app = test_app();
-    app.core.models = vec![nexus_core::provider::Model {
+    app.core.models = vec![dugix_core::provider::Model {
         id: "org/Big-Model-7B".into(),
         name: "Big Model".into(),
         reasoning_efforts: Vec::new(),
@@ -1652,7 +1652,7 @@ fn status_bar_reports_reuse_not_raw_cache_share() {
         supports_images: false,
         supports_image_generation: false,
         supports_video_generation: false,
-        backend: nexus_core::provider::BackendTag::Local,
+        backend: dugix_core::provider::BackendTag::Local,
         pricing: None,
         aliases: Vec::new(),
     }];
@@ -1708,14 +1708,14 @@ fn short_model_label_keeps_openrouter_suffixes() {
 #[test]
 fn status_line_expires_after_its_ttl() {
     let mut app = test_app();
-    app.apply_event(&nexus_core::app::AppEvent::Status("saved".into()));
+    app.apply_event(&dugix_core::app::AppEvent::Status("saved".into()));
     app.expire_status();
     assert_eq!(app.status, "saved", "fresh status stays");
     app.status_at = Some(std::time::Instant::now() - crate::app_view::STATUS_TTL);
     app.expire_status();
     assert!(app.status.is_empty());
 
-    app.apply_event(&nexus_core::app::AppEvent::Status("error: boom".into()));
+    app.apply_event(&dugix_core::app::AppEvent::Status("error: boom".into()));
     app.status_at = Some(std::time::Instant::now() - crate::app_view::STATUS_TTL);
     app.expire_status();
     assert_eq!(app.status, "error: boom");
@@ -1761,10 +1761,10 @@ fn fit_line_ellipsizes_across_spans() {
 
 #[test]
 fn find_picker_rows_show_the_name_then_its_folder_from_home() {
-    use nexus_core::filesearch::Found;
+    use dugix_core::filesearch::Found;
     let mut app = test_app();
-    app.popup = nexus_core::app::Popup::Files;
-    app.files_mode = nexus_core::app::FilesMode::Pick;
+    app.popup = dugix_core::app::Popup::Files;
+    app.files_mode = dugix_core::app::FilesMode::Pick;
     app.picker_home = std::path::PathBuf::from("/Users/me");
     app.picker_query = "rep".into();
     app.picker_results = vec![
@@ -2110,7 +2110,7 @@ fn sessions_empty_states_explain_what_to_do_and_only_hint_escape() {
     let mut app = test_app();
     let root = app.space.root.clone();
     app.settings.hide_hints = false;
-    app.popup = nexus_core::app::Popup::Session;
+    app.popup = dugix_core::app::Popup::Session;
     for (filter, message, hint) in [
         ("", "No chats yet.", "Esc close"),
         (
@@ -2135,7 +2135,7 @@ fn sessions_empty_states_explain_what_to_do_and_only_hint_escape() {
 #[test]
 fn sessions_escape_clears_the_filter_before_closing() {
     use crossterm::event::{KeyCode, KeyEvent};
-    use nexus_core::app::Popup;
+    use dugix_core::app::Popup;
 
     let mut app = test_app();
     let root = app.space.root.clone();
@@ -2196,30 +2196,30 @@ fn session_picker_leads_with_the_title_and_marks_the_open_session() {
 #[test]
 fn enter_in_skills_arms_the_highlighted_skill() {
     let mut app = test_app();
-    app.core.skills = vec![nexus_core::skills::Skill {
+    app.core.skills = vec![dugix_core::skills::Skill {
         name: "grill-me".into(),
         description: "stress-test a plan".into(),
         dir: std::path::PathBuf::from("/home/u/.claude/skills/grill-me"),
     }];
-    app.popup = nexus_core::app::Popup::Skills;
+    app.popup = dugix_core::app::Popup::Skills;
     let screen = render_to_string(100, 30, |f| super::skills::render(f, &app));
     assert!(screen.contains(".claude"), "source tag:\n{screen}");
     super::skills::handle_key(
         &mut app,
         crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Enter),
     );
-    assert!(app.popup == nexus_core::app::Popup::None);
+    assert!(app.popup == dugix_core::app::Popup::None);
     assert_eq!(app.core.forced_skill.as_deref(), Some("grill-me"));
 }
 
 #[test]
 fn files_popup_title_shows_every_tab() {
     let mut app = test_app();
-    app.popup = nexus_core::app::Popup::Files;
+    app.popup = dugix_core::app::Popup::Files;
     for tab in [
-        nexus_core::app::FilesTab::Files,
-        nexus_core::app::FilesTab::Images,
-        nexus_core::app::FilesTab::Scripts,
+        dugix_core::app::FilesTab::Files,
+        dugix_core::app::FilesTab::Images,
+        dugix_core::app::FilesTab::Scripts,
     ] {
         app.files_tab = tab;
         let screen = render_to_string(100, 30, |f| super::files::render(f, &app));
@@ -2250,7 +2250,7 @@ fn status_badge_keeps_the_backend_tag_when_shortened() {
 #[test]
 fn context_popup_fits_its_content_and_ctrl_g_closes_it() {
     let mut app = test_app();
-    app.popup = nexus_core::app::Popup::Context;
+    app.popup = dugix_core::app::Popup::Context;
     let screen = render_to_string(100, 40, |f| super::context::render(f, &app));
     assert!(screen.contains("unknown window"), "{screen}");
     assert!(screen.contains('█'), "per-bucket bars:\n{screen}");
@@ -2265,13 +2265,13 @@ fn context_popup_fits_its_content_and_ctrl_g_closes_it() {
         crossterm::event::KeyModifiers::CONTROL,
     );
     super::context::handle_key(&mut app, ctrl_g);
-    assert!(app.popup == nexus_core::app::Popup::None);
+    assert!(app.popup == dugix_core::app::Popup::None);
 }
 
 #[test]
 fn research_steer_input_ignores_ctrl_chords() {
     let mut app = test_app();
-    app.popup = nexus_core::app::Popup::ResearchLive;
+    app.popup = dugix_core::app::Popup::ResearchLive;
     let key = |c, m| crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char(c), m);
     super::research_live::handle_key(&mut app, key('a', crossterm::event::KeyModifiers::CONTROL));
     super::research_live::handle_key(&mut app, key('b', crossterm::event::KeyModifiers::NONE));
@@ -2282,12 +2282,12 @@ fn research_steer_input_ignores_ctrl_chords() {
 #[tokio::test]
 async fn plain_m_opens_the_swarm_persona_model_picker() {
     let mut app = test_app();
-    app.core.swarm.cache = vec![nexus_core::db::Persona {
+    app.core.swarm.cache = vec![dugix_core::db::Persona {
         name: "Critic".into(),
         model: "a/one".into(),
         blurb: "pokes holes".into(),
     }];
-    app.popup = nexus_core::app::Popup::Swarm;
+    app.popup = dugix_core::app::Popup::Swarm;
     super::swarm::handle_key(
         &mut app,
         crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('m')),
@@ -2295,7 +2295,7 @@ async fn plain_m_opens_the_swarm_persona_model_picker() {
     .unwrap();
     assert!(matches!(
         app.core.model_pick_target,
-        nexus_core::app::ModelPickTarget::SwarmPersona(0)
+        dugix_core::app::ModelPickTarget::SwarmPersona(0)
     ));
 }
 
@@ -2444,7 +2444,7 @@ fn settings_column_width_row_cycles_and_persists() {
         "the cycle wraps"
     );
     assert!(
-        app.popup == nexus_core::app::Popup::Settings,
+        app.popup == dugix_core::app::Popup::Settings,
         "Enter cycles, it does not close"
     );
     press(&mut app, KeyCode::Left);
@@ -2457,7 +2457,7 @@ fn settings_column_width_row_cycles_and_persists() {
     );
 
     press(&mut app, KeyCode::Esc);
-    assert!(app.popup == nexus_core::app::Popup::None);
+    assert!(app.popup == dugix_core::app::Popup::None);
     assert_eq!(app.settings.column_width, "220");
 }
 
@@ -2509,7 +2509,7 @@ fn the_model_popup_hit_test_follows_its_resized_rect() {
 
 #[test]
 fn every_popup_renders_at_the_minimum_resize_size_without_panicking() {
-    use nexus_core::app::Popup;
+    use dugix_core::app::Popup;
     // 40x10 is the floor a drag can reach (a smaller terminal gets the same).
     for (w, h) in [(40, 10), (30, 8), (60, 14)] {
         for popup in [
@@ -2529,6 +2529,7 @@ fn every_popup_renders_at_the_minimum_resize_size_without_panicking() {
             Popup::Jobs,
             Popup::Harness,
             Popup::Procs,
+            Popup::Fleet,
             Popup::Login,
             Popup::Local,
             Popup::Help,
@@ -2541,7 +2542,7 @@ fn every_popup_renders_at_the_minimum_resize_size_without_panicking() {
                     "model:20x20,session:20x20,copy:20x20,key:20x20,settings:20x20,space:20x20,\
                      skills:20x20,files:20x20,apps:20x20,\
                      research:20x20,swarm:20x20,usage:20x20,jobs:20x20,harness:20x20,\
-                     procs:20x20,login:20x20,local:20x20,help:20x20,connectors:20x20",
+                     procs:20x20,fleet:20x20,login:20x20,local:20x20,help:20x20,connectors:20x20",
                 )
                 .unwrap();
             app.popup = popup;
@@ -2554,7 +2555,7 @@ fn every_popup_renders_at_the_minimum_resize_size_without_panicking() {
 #[test]
 fn help_popup_tells_you_the_borders_and_column_edge_can_be_dragged() {
     let mut app = test_app();
-    app.execute(nexus_core::app::AppCommand::OpenHelp).unwrap();
+    app.execute(dugix_core::app::AppCommand::OpenHelp).unwrap();
     let screen = render_to_string(140, 120, |f| super::help::render(f, &mut app));
     assert!(
         screen.contains(
@@ -2581,9 +2582,9 @@ fn body_lines(screen: &str) -> Vec<String> {
 fn tool_info(
     name: &str,
     description: &str,
-    annotations: nexus_core::connectors::protocol::Annotations,
-) -> nexus_core::connectors::protocol::ToolInfo {
-    nexus_core::connectors::protocol::ToolInfo {
+    annotations: dugix_core::connectors::protocol::Annotations,
+) -> dugix_core::connectors::protocol::ToolInfo {
+    dugix_core::connectors::protocol::ToolInfo {
         name: name.into(),
         title: None,
         description: description.into(),
@@ -2593,8 +2594,8 @@ fn tool_info(
 }
 
 fn connectors_app() -> AppView {
-    use nexus_core::connectors::protocol::Annotations;
-    use nexus_core::connectors::{ConnectorConfig, Status};
+    use dugix_core::connectors::protocol::Annotations;
+    use dugix_core::connectors::{ConnectorConfig, Status};
     let mut app = test_app();
     app.settings.hide_hints = false;
     let registry = app.connectors.clone();
@@ -2690,9 +2691,9 @@ fn type_text(app: &mut AppView, text: &str) {
 #[test]
 fn connectors_list_shows_status_dots_tool_counts_and_the_selected_detail() {
     let mut app = connectors_app();
-    app.execute(nexus_core::app::AppCommand::OpenConnectors)
+    app.execute(dugix_core::app::AppCommand::OpenConnectors)
         .unwrap();
-    assert_eq!(app.popup, nexus_core::app::Popup::Connectors);
+    assert_eq!(app.popup, dugix_core::app::Popup::Connectors);
     let screen = render_to_string(120, 30, |f| super::connectors::render(f, &app));
     assert!(screen.contains(" Connectors "), "{screen}");
     assert_eq!(
@@ -2717,7 +2718,7 @@ fn connectors_list_shows_status_dots_tool_counts_and_the_selected_detail() {
     );
     assert!(screen.contains("sign in"), "{screen}");
     conn_press(&mut app, crossterm::event::KeyCode::Esc);
-    assert_eq!(app.popup, nexus_core::app::Popup::None);
+    assert_eq!(app.popup, dugix_core::app::Popup::None);
 }
 
 #[test]
@@ -2776,7 +2777,7 @@ fn connectors_enter_opens_tools_with_badges_and_keys_set_the_policy() {
             .config_of("linear")
             .unwrap()
             .policy("create_issue"),
-        Some(nexus_core::connectors::Policy::Allow)
+        Some(dugix_core::connectors::Policy::Allow)
     );
     conn_press(&mut app, KeyCode::Down);
     conn_press(&mut app, KeyCode::Char('d'));
@@ -2807,7 +2808,7 @@ fn connectors_enter_opens_tools_with_badges_and_keys_set_the_policy() {
             .config_of("linear")
             .unwrap()
             .policy("get_issue"),
-        Some(nexus_core::connectors::Policy::Ask)
+        Some(dugix_core::connectors::Policy::Ask)
     );
     conn_press(&mut app, KeyCode::Esc);
     assert_eq!(app.connectors_popup.mode, super::connectors::Mode::List);
@@ -2864,7 +2865,7 @@ fn connectors_add_flow_masks_the_token_and_stores_it_in_the_keychain() {
     conn_press(&mut app, KeyCode::Enter);
     assert_eq!(app.connectors_popup.mode, super::connectors::Mode::List);
     let config = app.connectors.config_of("acme-tools").unwrap();
-    assert_eq!(config.auth, nexus_core::connectors::AuthKind::Bearer);
+    assert_eq!(config.auth, dugix_core::connectors::AuthKind::Bearer);
     assert_eq!(
         app.connectors
             .vault()
@@ -2985,14 +2986,14 @@ fn connectors_import_lists_found_servers_with_checkboxes() {
     app.connectors
         .add(
             "lin",
-            nexus_core::connectors::ConnectorConfig::remote("https://mcp.linear.app/mcp"),
+            dugix_core::connectors::ConnectorConfig::remote("https://mcp.linear.app/mcp"),
         )
         .unwrap();
-    let paths = nexus_core::connectors::import::ImportPaths {
+    let paths = dugix_core::connectors::import::ImportPaths {
         claude_desktop: Some(desktop),
         ..Default::default()
     };
-    app.popup = nexus_core::app::Popup::Connectors;
+    app.popup = dugix_core::app::Popup::Connectors;
     super::connectors::open_import(&mut app, &paths);
     let screen = render_to_string(120, 24, |f| super::connectors::render(f, &app));
     assert_eq!(
@@ -3026,7 +3027,7 @@ fn connectors_import_applies_the_displayed_fixture_selection() {
     let root = app.space.root.clone();
     let fixture = root.join("mcp-import.json");
     std::fs::write(&fixture, r#"{"mcpServers":{"fixture-only":{"command":"fixture-server","env":{"API_KEY":"fake-import-secret"}}}}"#).unwrap();
-    let paths = nexus_core::connectors::import::ImportPaths {
+    let paths = dugix_core::connectors::import::ImportPaths {
         cursor: Some(fixture),
         ..Default::default()
     };
@@ -3050,7 +3051,7 @@ fn connectors_import_applies_the_displayed_fixture_selection() {
 
 #[test]
 fn connectors_render_at_80_columns_and_tiny_sizes_without_panicking() {
-    use nexus_core::app::Popup;
+    use dugix_core::app::Popup;
     for mode in [
         super::connectors::Mode::List,
         super::connectors::Mode::Tools,
@@ -3072,7 +3073,7 @@ fn connectors_render_at_80_columns_and_tiny_sizes_without_panicking() {
 #[test]
 fn connector_approvals_offer_session_and_always_and_warn_about_changed_definitions() {
     use crossterm::event::{KeyCode, KeyEvent};
-    use nexus_core::tools::Decision;
+    use dugix_core::tools::Decision;
     let summary = "writes · may delete\n\n{\n  \"title\": \"Fix it\"\n}".to_string();
     let (mut app, mut receiver) = approval_app("linear", summary);
     let root = app.space.root.clone();
@@ -3159,7 +3160,7 @@ fn only_connector_approvals_offer_always() {
 }
 
 fn viewer_png(name: &str, width: u32, height: u32) -> String {
-    let dir = std::env::temp_dir().join(format!("nexus-viewer-snap-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-viewer-snap-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(name);
     image::RgbImage::from_fn(width, height, |x, y| {
@@ -3177,7 +3178,7 @@ fn image_viewer_chrome_shows_title_footer_and_hints_for_a_generated_png() {
     let mut app = test_app();
     app.core.settings.image_viewer = "terminal".into();
     app.open_image_target(&pic, &Anchor::ByTarget, Return::Nothing);
-    assert!(app.popup == nexus_core::app::Popup::ImageViewer);
+    assert!(app.popup == dugix_core::app::Popup::ImageViewer);
     let screen = render_to_string(100, 24, |f| super::image_viewer::render(f, &mut app));
     let lines: Vec<_> = screen.lines().collect();
     assert!(
@@ -3289,7 +3290,7 @@ fn open_viewer_on(app: &mut AppView, names: &[&str]) -> Vec<String> {
     app.core.settings.image_viewer = "terminal".into();
     app.history_cache.image_at_line = pics.iter().flat_map(|p| [Some(p.clone()), None]).collect();
     app.open_image_target(&pics[0], &Anchor::Line(0), Return::Nothing);
-    assert!(app.popup == nexus_core::app::Popup::ImageViewer);
+    assert!(app.popup == dugix_core::app::Popup::ImageViewer);
     pics
 }
 

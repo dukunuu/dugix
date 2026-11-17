@@ -28,7 +28,7 @@ async function connect(page: Page) {
   await page.goto("/");
   await page.getByLabel("Host token").fill("host-token");
   await page.getByRole("button", { name: "Connect", exact: false }).click();
-  await expect(page.getByRole("heading", { name: "Nexus Chat" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Dugix Chat" })).toBeVisible();
 }
 
 async function openWorkspacePage(page: Page, name: string, isMobile: boolean) {
@@ -51,7 +51,7 @@ function snapshot() {
 test("settings save only sends changed values and login keeps provider keys write-only", async ({ page, isMobile }) => {
   const puts: { key: string; value: string; space_id?: string }[] = [];
   let login = { pending: false, user_code: null, verification_url: "", message: "", configured: ["openrouter"] };
-  await page.route("**/.well-known/nexus", (route) => route.fulfill({ json: { host_id: "settings", product: "nexus-chat", version: "test", api: "/v1", authentication: "bearer" } }));
+  await page.route("**/.well-known/dugix", (route) => route.fulfill({ json: { host_id: "settings", product: "dugix", version: "test", api: "/v1", authentication: "bearer" } }));
   await page.route("**/v1/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -96,7 +96,7 @@ test("sync performs the peer handshake, transfers files, and refreshes state", a
   const transferred: string[] = [];
   const localFiles = new Map([["notes.txt", "local"]]);
   const peerFiles = new Map([["peer.txt", "peer"]]);
-  await page.route("**/.well-known/nexus", (route) => route.fulfill({ json: { host_id: "local", product: "nexus-chat", version: "test", api: "/v1", authentication: "bearer" } }));
+  await page.route("**/.well-known/dugix", (route) => route.fulfill({ json: { host_id: "local", product: "dugix", version: "test", api: "/v1", authentication: "bearer" } }));
   await page.route("**/v1/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());

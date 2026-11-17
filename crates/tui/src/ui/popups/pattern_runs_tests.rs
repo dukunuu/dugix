@@ -1,8 +1,8 @@
 //! The shared popup pattern, as Jobs, Processes, Sub-agents and Tool health follow it.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use nexus_core::app::{Popup, SubagentRun, SubagentStatus};
-use nexus_core::jobs::{Job, JobRun, JobSpec};
+use dugix_core::app::{Popup, SubagentRun, SubagentStatus};
+use dugix_core::jobs::{Job, JobRun, JobSpec};
 
 use super::tests::{render_to_string, test_app};
 use super::{harness, jobs, procs, subagents};
@@ -63,7 +63,7 @@ fn add_run(app: &AppView, job: &Job) {
             status: "parked".into(),
             iters: 1,
             cost_usd: 0.01,
-            branch: Some("nexus/job/tests".into()),
+            branch: Some("dugix/job/tests".into()),
             summary: "Needs approval.".into(),
             updated_at: job.updated_at.clone(),
         })
@@ -120,7 +120,7 @@ fn processes_frame_keeps_counts_above_and_keys_below() {
     assert_frame(&screen, "Processes", "0 running");
     assert!(screen.contains("No background processes."), "{screen}");
     assert!(
-        screen.contains("Processes stop when nexus exits."),
+        screen.contains("Processes stop when dugix exits."),
         "{screen}"
     );
     cleanup(app);
@@ -141,7 +141,7 @@ fn subagents_frame_keeps_counts_above_and_keys_below() {
 fn tool_health_frame_keeps_counts_above_and_keys_below() {
     let mut app = test_app();
     app.settings.hide_hints = false;
-    app.harness = Some(nexus_core::db::HarnessSummary {
+    app.harness = Some(dugix_core::db::HarnessSummary {
         calls: 12,
         failures: 3,
         rows: Vec::new(),
@@ -250,8 +250,8 @@ fn jobs_owned_by_another_device_keep_the_read_only_note_and_no_mutating_hints() 
 #[cfg(unix)]
 #[tokio::test]
 async fn processes_k_moves_up_and_control_d_confirms_or_cancels_a_kill() {
-    use nexus_core::tools::ToolBox;
-    use nexus_core::workspace::Workspace;
+    use dugix_core::tools::ToolBox;
+    use dugix_core::workspace::Workspace;
     use std::sync::Arc;
 
     let mut app = test_app();
@@ -262,7 +262,7 @@ async fn processes_k_moves_up_and_control_d_confirms_or_cancels_a_kill() {
         None,
         "auto".into(),
         vec![],
-        Some(app.space.root.join("nexus.db")),
+        Some(app.space.root.join("dugix.db")),
         None,
         None,
     );

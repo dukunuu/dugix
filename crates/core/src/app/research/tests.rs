@@ -5,7 +5,7 @@ use crate::space::Space;
 
 fn test_app() -> App {
     let db = Db::open_in_memory().unwrap();
-    let root = std::env::temp_dir().join(format!("nexus-research-test-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-research-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("spaces")).unwrap();
     let space = Space { root };
     let mut a = App::new(db, Some("k"), space);
@@ -507,7 +507,7 @@ async fn closed_reply_channel_fails_plan_approval_closed() {
     let mut questions = vec![PlanQuestion::bare("q1".to_string())];
     let provider = OpenRouter::openrouter_flavor("test-key".to_string());
     let usage = ResearchUsage {
-        db_path: std::env::temp_dir().join("nexus-research-test.db"),
+        db_path: std::env::temp_dir().join("dugix-research-test.db"),
         session_id: ids.0.clone(),
         prompt_cache_key: "s:0".to_string(),
         cache_ttl_1h: false,

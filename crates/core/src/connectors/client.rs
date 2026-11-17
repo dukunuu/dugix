@@ -178,7 +178,7 @@ impl Session {
             .unwrap_or_default();
         if !ACCEPT_LEGACY.contains(&chosen) {
             return Err(McpError::Protocol(format!(
-                "the server speaks protocol {chosen:?}, which nexus does not"
+                "the server speaks protocol {chosen:?}, which dugix does not"
             )));
         }
         inner.transport.configure(chosen, false);
@@ -324,11 +324,11 @@ impl Session {
         match parsed.result_type {
             ResultType::Complete => Ok(parsed),
             ResultType::InputRequired => Err(McpError::Unsupported(
-                "the server asked for more input (input_required), which nexus cannot answer yet"
+                "the server asked for more input (input_required), which dugix cannot answer yet"
                     .into(),
             )),
             ResultType::Other => Err(McpError::Unsupported(
-                "the server returned a result type nexus does not understand".into(),
+                "the server returned a result type dugix does not understand".into(),
             )),
         }
     }

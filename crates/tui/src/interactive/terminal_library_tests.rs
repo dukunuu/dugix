@@ -81,7 +81,7 @@ fn component_sheet_covers_every_contract_with_valid_programs() {
         .collect();
     assert_eq!(
         signatures.join("\n"),
-        nexus_core::interactive::component_signatures()
+        dugix_core::interactive::component_signatures()
     );
     for contract in sheet["contracts"].as_array().unwrap() {
         let name = contract["name"].as_str().unwrap();
@@ -108,7 +108,7 @@ fn component_sheet_covers_every_contract_with_valid_programs() {
 #[ignore = "opt-in component sheet export; scripts/preview-terminal-panels.sh"]
 fn export_component_sheet() {
     let directory = std::path::PathBuf::from(
-        std::env::var_os("NEXUS_TERMINAL_PREVIEW_DIR").expect("set NEXUS_TERMINAL_PREVIEW_DIR"),
+        std::env::var_os("DUGIX_TERMINAL_PREVIEW_DIR").expect("set DUGIX_TERMINAL_PREVIEW_DIR"),
     );
     std::fs::create_dir_all(&directory).unwrap();
     let mut sheet = sheet();

@@ -15,7 +15,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{ListItem, ListState};
 
 use crate::app_view::AppView;
-use nexus_core::app::{FilesMode, FilesTab, ImagesMode, ScriptsMode};
+use dugix_core::app::{FilesMode, FilesTab, ImagesMode, ScriptsMode};
 
 use super::chrome::{self, PopupFrame, ctrl, hint, keys};
 use super::list_filter;
@@ -30,7 +30,7 @@ pub fn render(f: &mut Frame, app: &AppView) {
 
 #[allow(clippy::too_many_lines)] // tabs + picker + browse rows
 fn render_files(f: &mut Frame, app: &AppView) {
-    use nexus_core::app::FilesMode;
+    use dugix_core::app::FilesMode;
     let area = chrome::popup_area(app, f.area(), "files", chrome::STANDARD);
 
     if app.files_mode == FilesMode::Pick {
@@ -47,7 +47,7 @@ fn render_files(f: &mut Frame, app: &AppView) {
         .iter()
         .map(|&index| &app.caches.files[index])
         .map(|file| {
-            let ok = nexus_core::extract::status_is_ok(&file.status);
+            let ok = dugix_core::extract::status_is_ok(&file.status);
             let status_style = if ok {
                 dim
             } else {
@@ -57,7 +57,7 @@ fn render_files(f: &mut Frame, app: &AppView) {
             let meta = chrome::truncate(
                 &format!(
                     "  {}  {}",
-                    nexus_core::app::human_size(file.size.unsigned_abs()),
+                    dugix_core::app::human_size(file.size.unsigned_abs()),
                     file.status
                 ),
                 36,
@@ -210,7 +210,7 @@ fn render_picker(f: &mut Frame, app: &AppView, area: Rect) {
             let folder = found
                 .path
                 .parent()
-                .map(|dir| nexus_core::filesearch::tilde(dir, home))
+                .map(|dir| dugix_core::filesearch::tilde(dir, home))
                 .unwrap_or_default();
             let folder = chrome::truncate_middle(
                 &format!("  {folder}"),
@@ -284,7 +284,7 @@ fn render_images(f: &mut Frame, app: &AppView) {
         .iter()
         .map(|img| {
             let created = crate::ui::fmt_created(&img.modified);
-            let meta = format!("  {}  {created}", nexus_core::app::human_size(img.size));
+            let meta = format!("  {}  {created}", dugix_core::app::human_size(img.size));
             let name = chrome::truncate_middle(
                 &img.name,
                 (area.width.saturating_sub(5 + 2 * chrome::PAD) as usize)
@@ -375,7 +375,7 @@ fn render_scripts(f: &mut Frame, app: &AppView) {
         .iter()
         .map(|s| {
             let created = crate::ui::fmt_created(&s.modified);
-            let meta = format!("  {}  {created}", nexus_core::app::human_size(s.size));
+            let meta = format!("  {}  {created}", dugix_core::app::human_size(s.size));
             let name = chrome::truncate_middle(
                 &s.name,
                 (area.width.saturating_sub(5 + 2 * chrome::PAD) as usize)
@@ -558,7 +558,7 @@ fn handle_files_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
                 Some(BrowseAction::Close) if !app.files_filter.is_empty() => {
                     app.files_filter.clear();
                 }
-                Some(BrowseAction::Close) => app.popup = nexus_core::app::Popup::None,
+                Some(BrowseAction::Close) => app.popup = dugix_core::app::Popup::None,
                 Some(BrowseAction::Filter(c)) => {
                     app.files_filter.push(c);
                     app.files_selected = list_filter::first(&app.files_rows(), app.files_selected);
@@ -620,7 +620,7 @@ fn handle_images_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
                 return Ok(());
             }
             match classify_browse_key(key, false, false) {
-                Some(BrowseAction::Close) => app.popup = nexus_core::app::Popup::None,
+                Some(BrowseAction::Close) => app.popup = dugix_core::app::Popup::None,
                 Some(BrowseAction::MoveUp) => app.move_images_selection(-1),
                 Some(BrowseAction::MoveDown) => app.move_images_selection(1),
                 Some(
@@ -675,7 +675,7 @@ fn handle_scripts_key(app: &mut AppView, key: KeyEvent) -> Result<()> {
                 return Ok(());
             }
             match classify_browse_key(key, true, true) {
-                Some(BrowseAction::Close) => app.popup = nexus_core::app::Popup::None,
+                Some(BrowseAction::Close) => app.popup = dugix_core::app::Popup::None,
                 Some(BrowseAction::MoveUp) => app.move_scripts_selection(-1),
                 Some(BrowseAction::MoveDown) => app.move_scripts_selection(1),
                 Some(

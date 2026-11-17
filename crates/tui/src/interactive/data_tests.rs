@@ -1,7 +1,7 @@
 use super::*;
-use nexus_core::interactive::live as data;
-use nexus_core::provider::ToolDef;
-use nexus_core::tools::ToolExecutor;
+use dugix_core::interactive::live as data;
+use dugix_core::provider::ToolDef;
+use dugix_core::tools::ToolExecutor;
 use ratatui::{Terminal, backend::TestBackend};
 use serde_json::json;
 use std::future::Future;
@@ -106,7 +106,7 @@ async fn loading_and_loaded_query_panel_snapshots() {
         "p1-1",
         Arc::new(Fake::default()),
         None,
-        &nexus_core::trace::Scrubber::new(Vec::new()),
+        &dugix_core::trace::Scrubber::new(Vec::new()),
     )
     .await;
     entry
@@ -120,11 +120,11 @@ async fn loading_and_loaded_query_panel_snapshots() {
 
 #[tokio::test]
 async fn view_scheduler_keeps_streams_and_restored_panels_inert_pauses_and_logs_cards() {
-    let root = std::env::temp_dir().join(format!("nexus-live-data-{}", uuid::Uuid::new_v4()));
-    let core = nexus_core::app::App::new(
-        nexus_core::db::Db::open_in_memory().unwrap(),
+    let root = std::env::temp_dir().join(format!("dugix-live-data-{}", uuid::Uuid::new_v4()));
+    let core = dugix_core::app::App::new(
+        dugix_core::db::Db::open_in_memory().unwrap(),
         None,
-        nexus_core::space::Space { root: root.clone() },
+        dugix_core::space::Space { root: root.clone() },
     );
     let mut app = AppView::new(core);
     let row = app

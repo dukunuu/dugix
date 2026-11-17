@@ -220,7 +220,7 @@ fn ui_blocks(content: &str) -> Vec<UiBlock> {
                 let ui = trimmed[length..]
                     .split_whitespace()
                     .next()
-                    .is_some_and(|lang| lang.eq_ignore_ascii_case("nexus-ui"));
+                    .is_some_and(crate::interactive::is_ui_fence);
                 let quotes = line[..line.len() - trimmed.len()]
                     .chars()
                     .filter(|ch| *ch == '>')
@@ -467,7 +467,7 @@ pub(super) fn ui_program_history(
                 }
                 replacements.push((
                     block.range,
-                    format!("Patch for nexus-ui panel {target}\n```nexus-ui\n{patch}```"),
+                    format!("Patch for dugix-ui panel {target}\n```dugix-ui\n{patch}```"),
                 ));
                 result.map(|_| ()).map_err(|error| {
                     vec![crate::interactive::CheckError {
@@ -481,7 +481,7 @@ pub(super) fn ui_program_history(
                     panels.insert(id.clone(), block.source.clone());
                     replacements.push((
                         block.range,
-                        format!("nexus-ui panel {id}\n```nexus-ui\n{}```", block.source),
+                        format!("dugix-ui panel {id}\n```dugix-ui\n{}```", block.source),
                     ));
                 }
                 result.map(|_| ())
@@ -491,7 +491,7 @@ pub(super) fn ui_program_history(
                     errors.push(serde_json::json!({
                         "source":"parser", "code": if error.path == "source" { "parse-failed" } else { "type-mismatch" },
                         "statementId":id, "path":error.path, "message":format!("failed to render: {}", error.message.chars().take(220).collect::<String>()),
-                        "hint":"Use the terminal signatures and bounded nexus-ui syntax."
+                        "hint":"Use the terminal signatures and bounded dugix-ui syntax."
                     }));
                 }
             }
@@ -505,7 +505,7 @@ pub(super) fn ui_program_history(
         for (ordinal, block) in ui_blocks(content).into_iter().enumerate().rev() {
             let id = panel_id(first_owner + owner, ordinal);
             if let Some(program) = panels.get(&id) {
-                content.replace_range(block.range, &format!("```nexus-ui\n{program}\n```"));
+                content.replace_range(block.range, &format!("```dugix-ui\n{program}\n```"));
             }
         }
     }
@@ -540,7 +540,7 @@ pub(super) fn ui_failure_notes(content: &str) -> String {
         };
         let _ = write!(
             notes,
-            "\n[nexus: the nexus-ui block {title:?} {outcome} — {path}: {message}. Correct the reported errors and resend it if the user still needs it.]"
+            "\n[dugix: the dugix-ui block {title:?} {outcome} — {path}: {message}. Correct the reported errors and resend it if the user still needs it.]"
         );
     }
     notes
@@ -552,7 +552,7 @@ fn ui_repair_history(
     let mut source = String::new();
     let mut request = String::new();
     for (block, errors) in blocks {
-        let _ = writeln!(source, "```nexus-ui\n{}```", block.source);
+        let _ = writeln!(source, "```dugix-ui\n{}```", block.source);
         let diagnostics = errors
             .iter()
             .take(10)
@@ -567,7 +567,7 @@ fn ui_repair_history(
             .join("\n");
         let _ = writeln!(
             request,
-            "Your nexus-ui block {:?} failed validation:\n{diagnostics}\nReply with ONLY the corrected nexus-ui fenced block, nothing else.",
+            "Your dugix-ui block {:?} failed validation:\n{diagnostics}\nReply with ONLY the corrected dugix-ui fenced block, nothing else.",
             block.title,
         );
     }
@@ -592,7 +592,7 @@ fn repaired_ui_reply(
     let corrected = ui_blocks(response);
     if corrected.len() != failures.len() {
         return Err(format!(
-            "expected {} corrected nexus-ui block(s), got {}",
+            "expected {} corrected dugix-ui block(s), got {}",
             failures.len(),
             corrected.len()
         ));
@@ -603,7 +603,7 @@ fn repaired_ui_reply(
     }
     let mut content = original.to_string();
     for ((block, _), corrected) in failures.iter().zip(&corrected).rev() {
-        let fence = format!("```nexus-ui\n{}\n```", corrected.source.trim_end());
+        let fence = format!("```dugix-ui\n{}\n```", corrected.source.trim_end());
         let replacement = fence
             .lines()
             .map(|line| format!("{}{line}", block.prefix))

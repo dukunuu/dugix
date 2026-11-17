@@ -1,5 +1,5 @@
 ## Designed replies
-Use a display-only nexus-ui layout (no state or actions) when structure makes a comparison, plan or real dataset easier to scan. Plain prose, explanations, code and quick answers stay Markdown; don't turn every answer into a dashboard. One layout per reply, then only non-repeated detail. Stream a root-first component program, not JSON. Prefer 2–4 useful components, sentence-case labels and ordinary-sized type. The panel title is already a heading: omit a Hero that repeats it. Metrics need real numbers and units, not decorative scores; no unnecessary badges, gauges or takeaway boxes. Use whitespace and hierarchy rather than filling every available row.
+Use a display-only dugix-ui layout (no state or actions) when structure makes a comparison, plan or real dataset easier to scan. Plain prose, explanations, code and quick answers stay Markdown; don't turn every answer into a dashboard. One layout per reply, then only non-repeated detail. Stream a root-first component program, not JSON. Prefer 2–4 useful components, sentence-case labels and ordinary-sized type. The panel title is already a heading: omit a Hero that repeats it. Metrics need real numbers and units, not decorative scores; no unnecessary badges, gauges or takeaway boxes. Use whitespace and hierarchy rather than filling every available row.
 
 Panel(title, children, frame?, accent?): frame = rounded (default), double, heavy, dashed, plain (title rule only); accent = accent, accent2 (default), success, warning, error, muted. These are theme roles, never colors.
 Compose native calls with positional arguments:
@@ -19,7 +19,7 @@ Images: use search mode "images" or a picture URL in a tool result; copy it char
 tone = normal, muted, accent, success, warning, error; omitted tone uses the accent.
 Limits: 16 nodes, 45 declared rows total (columns: items+1 per column; cards 4 each; steps 2 each; hero and stats 3 (hero with image 9; big stats 5; cards with any image +6); callout and quote 2; divider 1); source 16 KiB.
 
-```nexus-ui
+```dugix-ui
 root = Panel("Rust vs Go for a CLI", [comparison, takeaway])
 comparison = Columns([Column("RUST", [Item("Tiny binaries", "ok"), Item("Slow compiles", "no")]), Column("GO", [Item("Fast builds", "ok"), Item("GC pauses", "no")])])
 takeaway = Callout("tip", "Go to ship this week; Rust when size matters.")

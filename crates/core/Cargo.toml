@@ -1,8 +1,5 @@
 [package]
-# `nexus-core` on crates.io belongs to another project (SparkAIUR/nexus),
-# so the published package is `nexus-chat-core`. The lib target keeps the
-# `nexus_core` name, so every `use nexus_core::…` in both crates is stable.
-name = "nexus-chat-core"
+name = "dugix-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,7 +10,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [lib]
-name = "nexus_core"
+name = "dugix_core"
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.186"
@@ -40,6 +37,7 @@ krilla-svg = { workspace = true }
 open = { workspace = true }
 pdf-extract = { workspace = true }
 png = { workspace = true }
+portable-pty = { workspace = true }  # pseudo-terminals for external agent CLIs (fleet.rs)
 pulldown-cmark = { workspace = true }
 rand = { workspace = true }
 resvg = { workspace = true }
@@ -72,6 +70,7 @@ tree-sitter-toml-ng = { workspace = true }
 tree-sitter-typescript = { workspace = true }
 tree-sitter-yaml = { workspace = true }
 uuid = { workspace = true }
+vt100 = { workspace = true }  # screen model of each fleet agent (fleet.rs)
 zip = { workspace = true }
 
 [dev-dependencies]

@@ -1,11 +1,11 @@
 //! Spreadsheet mode: calculated windows, atomic edits, file history and cell threads.
 use anyhow::{Context as _, Result, bail, ensure};
-use nexus_core::canvas::files;
-use nexus_core::deck::{
+use dugix_core::canvas::files;
+use dugix_core::deck::{
     history::{self, Who},
     link::Message as LinkMessage,
 };
-use nexus_core::sheet::{self, Sheet, ValueKind, Workbook, address::Range, feedback as comments};
+use dugix_core::sheet::{self, Sheet, ValueKind, Workbook, address::Range, feedback as comments};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -61,7 +61,7 @@ pub struct SheetSession {
 }
 
 pub(super) fn is_sheet_path(path: &Path) -> bool {
-    nexus_core::deck::link::Kind::of_path(path) == nexus_core::deck::link::Kind::Sheet
+    dugix_core::deck::link::Kind::of_path(path) == dugix_core::deck::link::Kind::Sheet
 }
 
 fn tab_name<'a>(sheet: &'a Sheet, tab: &str) -> Result<&'a str> {
@@ -206,7 +206,7 @@ impl Backend {
             undo_threads: vec![],
             redo_threads: vec![],
         });
-        self.fetcher = nexus_core::remote_image::Fetcher::new(root);
+        self.fetcher = dugix_core::remote_image::Fetcher::new(root);
         self.deck_stamp = stamp(&self.path);
         self.comments_stamp = stamp(&comments::sidecar(&self.path));
         self.load_notes.clear();
@@ -216,8 +216,8 @@ impl Backend {
     }
 
     pub(super) fn blank_sheet(&self, title: &str) -> Result<Sheet> {
-        let slug = nexus_core::design::default_slug(&self.files_dir)?;
-        let design = nexus_core::design::load(&self.files_dir, &slug)?;
+        let slug = dugix_core::design::default_slug(&self.files_dir)?;
+        let design = dugix_core::design::load(&self.files_dir, &slug)?;
         let mut sheet = Sheet::from_design(title, &design);
         sheet.design = Some(slug);
         Sheet::check(&serde_json::to_string(&sheet)?).map_err(|e| anyhow::anyhow!("{e:?}"))
@@ -387,7 +387,7 @@ impl Backend {
                 let edit = self.sheet_edit(&owner, &edit)?;
                 ensure!(
                     edit.status == comments::EditStatus::Pending,
-                    "Outdated — ask again in nexus"
+                    "Outdated — ask again in dugix"
                 );
                 let resolver = self.doc_resolver();
                 let next = sheet::apply_with_resolver(
@@ -418,7 +418,7 @@ impl Backend {
                 let proposal = self.sheet_edit(&owner, &edit)?.clone();
                 ensure!(
                     proposal.status == comments::EditStatus::Pending,
-                    "Outdated — ask again in nexus"
+                    "Outdated — ask again in dugix"
                 );
                 let resolver = self.doc_resolver();
                 let next = sheet::apply_with_resolver(
@@ -448,7 +448,7 @@ impl Backend {
                 {
                     output.warnings.push(notice);
                 }
-                let path = nexus_core::deck::export::write_export(
+                let path = dugix_core::deck::export::write_export(
                     &output,
                     &self.files_dir,
                     path.as_deref(),
@@ -507,7 +507,7 @@ impl Backend {
         );
         ensure!(
             !send || self.linked,
-            "Not linked to a conversation — open it from nexus with /studio"
+            "Not linked to a conversation — open it from dugix with /studio"
         );
         Ok(())
     }

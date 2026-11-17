@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 root="$PWD"
 output="$root/web/prototypes/interactive"
 node "$output/component-sheet.mjs" --export
-NEXUS_TERMINAL_PREVIEW_DIR="$output" cargo test -p nexus-chat \
+DUGIX_TERMINAL_PREVIEW_DIR="$output" cargo test -p dugix \
   interactive::terminal_ -- --ignored --nocapture
 
 case "${1:-}" in

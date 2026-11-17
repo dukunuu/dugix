@@ -8,7 +8,7 @@ struct Folder(PathBuf);
 
 impl Folder {
     fn new() -> Self {
-        let dir = std::env::temp_dir().join(format!("nexus-history-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-history-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         Self(dir)
     }

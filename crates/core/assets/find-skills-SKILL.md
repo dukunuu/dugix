@@ -6,7 +6,7 @@ description: Find and install Agent Skills when a task needs a specialized capab
 
 Skills follow the Agent Skills convention: each skill is a directory containing
 `SKILL.md` with YAML frontmatter (`name`, `description`) and an instruction
-body. Nexus discovers app, project, and user/global skill roots and loads only
+body. Dugix discovers app, project, and user/global skill roots and loads only
 metadata at startup. Do not assume a skill is usable until its `SKILL.md` has
 been loaded successfully.
 

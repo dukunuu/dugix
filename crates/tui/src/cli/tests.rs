@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn memory_sharing_cli_parses_targets_and_space_on_either_side() {
     let cli = Cli::try_parse_from([
-        "nexus",
+        "dugix",
         "memory",
         "share",
         "Career profile",
@@ -35,7 +35,7 @@ fn memory_sharing_cli_parses_targets_and_space_on_either_side() {
     assert!(!none);
     for flag in ["--all", "--none"] {
         let cli = Cli::try_parse_from([
-            "nexus", "memory", "--space", "home", "share", "Career", flag,
+            "dugix", "memory", "--space", "home", "share", "Career", flag,
         ])
         .unwrap();
         let Some(Command::Memory {
@@ -50,19 +50,19 @@ fn memory_sharing_cli_parses_targets_and_space_on_either_side() {
         assert_eq!(all, flag == "--all");
         assert_eq!(none, flag == "--none");
     }
-    let cli = Cli::try_parse_from(["nexus", "memory", "shares", "--space", "home"]).unwrap();
+    let cli = Cli::try_parse_from(["dugix", "memory", "shares", "--space", "home"]).unwrap();
     assert!(
         matches!(cli.command, Some(Command::Memory { command: Some(MemoryCommand::Shares), space: Some(space), .. }) if space == "home")
     );
     for args in [
-        vec!["nexus", "memory", "share", "Career"],
-        vec!["nexus", "memory", "share", "Career", "--with"],
-        vec!["nexus", "memory", "share", "Career", "--all", "--none"],
+        vec!["dugix", "memory", "share", "Career"],
+        vec!["dugix", "memory", "share", "Career", "--with"],
+        vec!["dugix", "memory", "share", "Career", "--all", "--none"],
         vec![
-            "nexus", "memory", "share", "Career", "--with", "home", "--all",
+            "dugix", "memory", "share", "Career", "--with", "home", "--all",
         ],
         vec![
-            "nexus", "memory", "share", "Career", "--with", "home", "--none",
+            "dugix", "memory", "share", "Career", "--with", "home", "--none",
         ],
     ] {
         assert!(Cli::try_parse_from(args).is_err());
@@ -71,7 +71,7 @@ fn memory_sharing_cli_parses_targets_and_space_on_either_side() {
 
 #[test]
 fn eval_overrides_validate_at_parse_time_and_compare_requires_them() {
-    assert!(Cli::try_parse_from(["nexus", "eval", "--compare"]).is_err());
+    assert!(Cli::try_parse_from(["dugix", "eval", "--compare"]).is_err());
     for setting in [
         "local.x=1",
         "experiments.unknown=true",
@@ -80,12 +80,12 @@ fn eval_overrides_validate_at_parse_time_and_compare_requires_them() {
         "experiments.compaction_itemized",
     ] {
         assert!(
-            Cli::try_parse_from(["nexus", "eval", "--set", setting]).is_err(),
+            Cli::try_parse_from(["dugix", "eval", "--set", setting]).is_err(),
             "{setting}"
         );
     }
     let cli = Cli::try_parse_from([
-        "nexus",
+        "dugix",
         "eval",
         "--compare",
         "--set",
@@ -161,10 +161,10 @@ fn compare_formatter_and_deltas_show_both_sides_and_totals() {
 #[test]
 fn compare_model_requires_two_models_and_excludes_experiment_comparison() {
     for args in [
-        vec!["nexus", "eval", "--compare-model"],
-        vec!["nexus", "eval", "--compare-model", "a/one"],
+        vec!["dugix", "eval", "--compare-model"],
+        vec!["dugix", "eval", "--compare-model", "a/one"],
         vec![
-            "nexus",
+            "dugix",
             "eval",
             "--compare-model",
             "a/one",
@@ -174,7 +174,7 @@ fn compare_model_requires_two_models_and_excludes_experiment_comparison() {
             "d/four",
         ],
         vec![
-            "nexus",
+            "dugix",
             "eval",
             "--compare-model",
             "a/one",
@@ -187,7 +187,7 @@ fn compare_model_requires_two_models_and_excludes_experiment_comparison() {
         assert!(Cli::try_parse_from(args).is_err());
     }
     let cli = Cli::try_parse_from([
-        "nexus",
+        "dugix",
         "eval",
         "--compare-model",
         "a/one",
@@ -211,7 +211,7 @@ fn compare_model_requires_two_models_and_excludes_experiment_comparison() {
     assert!(!compare);
     assert!(json);
     assert_eq!(set.len(), 1);
-    assert!(Cli::try_parse_from(["nexus", "eval", "--compare-model", "a/one", "b/two"]).is_ok());
+    assert!(Cli::try_parse_from(["dugix", "eval", "--compare-model", "a/one", "b/two"]).is_ok());
 }
 
 #[test]
@@ -241,22 +241,22 @@ fn model_comparison_labels_columns_and_json_runs_by_model() {
 
 #[test]
 fn launch_flags_parse_without_a_subcommand() {
-    let cli = Cli::try_parse_from(["nexus", "--continue"]).unwrap();
+    let cli = Cli::try_parse_from(["dugix", "--continue"]).unwrap();
     assert!(cli.continue_session);
     assert!(!cli.selection_chat);
     assert!(!cli.selection_chat_send_only);
     assert!(cli.command.is_none());
 
-    let cli = Cli::try_parse_from(["nexus", "--selection-chat"]).unwrap();
+    let cli = Cli::try_parse_from(["dugix", "--selection-chat"]).unwrap();
     assert!(cli.selection_chat);
     assert!(!cli.selection_chat_send_only);
     assert!(cli.command.is_none());
 
-    let cli = Cli::try_parse_from(["nexus", "--selection-chat-send-only"]).unwrap();
+    let cli = Cli::try_parse_from(["dugix", "--selection-chat-send-only"]).unwrap();
     assert!(cli.selection_chat_send_only);
     assert!(cli.command.is_none());
 
-    let cli = Cli::try_parse_from(["nexus", "status"]).unwrap();
+    let cli = Cli::try_parse_from(["dugix", "status"]).unwrap();
     assert!(!cli.continue_session);
     assert!(!cli.selection_chat);
     assert!(!cli.selection_chat_send_only);
@@ -265,7 +265,7 @@ fn launch_flags_parse_without_a_subcommand() {
 
 #[test]
 fn clip_command_parses_instruction_and_options() {
-    let cli = Cli::try_parse_from(["nexus", "clip", "explain this", "--copy", "--json"]).unwrap();
+    let cli = Cli::try_parse_from(["dugix", "clip", "explain this", "--copy", "--json"]).unwrap();
     assert!(matches!(
         cli.command,
         Some(Command::Clip {
@@ -276,7 +276,7 @@ fn clip_command_parses_instruction_and_options() {
         })
     ));
 
-    let cli = Cli::try_parse_from(["nexus", "clip", "--instruction", "translate it"]).unwrap();
+    let cli = Cli::try_parse_from(["dugix", "clip", "--instruction", "translate it"]).unwrap();
     assert!(matches!(
         cli.command,
         Some(Command::Clip {
@@ -285,7 +285,7 @@ fn clip_command_parses_instruction_and_options() {
         })
     ));
 
-    let cli = Cli::try_parse_from(["nexus", "clipboard"]).unwrap();
+    let cli = Cli::try_parse_from(["dugix", "clipboard"]).unwrap();
     assert!(matches!(cli.command, Some(Command::Clip { .. })));
 }
 
@@ -434,7 +434,7 @@ fn prune_never_touches_when_nothing_matches() {
 #[test]
 fn transcript_includes_all_roles() {
     let messages = vec![
-        nexus_core::db::Message {
+        dugix_core::db::Message {
             role: "user".to_string(),
             content: "hello".to_string(),
             model: None,
@@ -446,7 +446,7 @@ fn transcript_includes_all_roles() {
             persona: None,
             created_at: None,
         },
-        nexus_core::db::Message {
+        dugix_core::db::Message {
             role: "assistant".to_string(),
             content: "hi there".to_string(),
             model: None,
@@ -458,7 +458,7 @@ fn transcript_includes_all_roles() {
             persona: None,
             created_at: None,
         },
-        nexus_core::db::Message {
+        dugix_core::db::Message {
             role: "tool_call".to_string(),
             content: r#"{"name":"search"}"#.to_string(),
             model: None,
@@ -480,22 +480,22 @@ fn transcript_includes_all_roles() {
 
 #[test]
 fn zip_round_trip_preserves_tree() {
-    let root = std::env::temp_dir().join(format!("nexus-zip-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-zip-{}", uuid::Uuid::new_v4()));
     let nested = root.join("spaces").join("default");
     std::fs::create_dir_all(&nested).unwrap();
     std::fs::write(nested.join("memory.md"), "hello").unwrap();
-    std::fs::write(root.join("nexus.db"), b"\x00\x01").unwrap();
+    std::fs::write(root.join("dugix.db"), b"\x00\x01").unwrap();
     // The device-local cache db must never ride along in a backup.
     std::fs::write(root.join("cache.db"), b"\x02\x03").unwrap();
 
     let zip_path = root.with_extension("zip");
     zip_dir(&root, &zip_path).unwrap();
 
-    let dest = std::env::temp_dir().join(format!("nexus-unzip-{}", uuid::Uuid::new_v4()));
+    let dest = std::env::temp_dir().join(format!("dugix-unzip-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dest).unwrap();
     unzip_into(&zip_path, &dest).unwrap();
     assert_eq!(
-        std::fs::read(dest.join("nexus.db")).unwrap(),
+        std::fs::read(dest.join("dugix.db")).unwrap(),
         b"\x00\x01".to_vec()
     );
     assert!(
@@ -515,7 +515,7 @@ fn zip_round_trip_preserves_tree() {
 #[test]
 fn train_export_cli_parses_defaults_and_selection_flags() {
     let cli = Cli::try_parse_from([
-        "nexus",
+        "dugix",
         "train",
         "export",
         "--format",
@@ -557,7 +557,7 @@ fn train_export_cli_parses_defaults_and_selection_flags() {
     assert!(split);
     assert!(
         Cli::try_parse_from([
-            "nexus", "train", "export", "--format", "unknown", "--out", "data",
+            "dugix", "train", "export", "--format", "unknown", "--out", "data",
         ])
         .is_err()
     );
@@ -565,7 +565,7 @@ fn train_export_cli_parses_defaults_and_selection_flags() {
 
 #[test]
 fn unzip_rejects_escaping_paths() {
-    let root = std::env::temp_dir().join(format!("nexus-zipbad-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-zipbad-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     // Hand-build an archive with a traversal entry via the zip API.
     let zip_path = root.join("bad.zip");
@@ -576,7 +576,7 @@ fn unzip_rejects_escaping_paths() {
     zip.write_all(b"nope").unwrap();
     zip.finish().unwrap();
 
-    let dest = std::env::temp_dir().join(format!("nexus-unzipbad-{}", uuid::Uuid::new_v4()));
+    let dest = std::env::temp_dir().join(format!("dugix-unzipbad-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dest).unwrap();
     assert!(unzip_into(&zip_path, &dest).is_err());
 

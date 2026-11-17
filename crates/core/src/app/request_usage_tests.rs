@@ -13,7 +13,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let root =
-            std::env::temp_dir().join(format!("nexus-request-usage-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("dugix-request-usage-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
         let space = Space { root: root.clone() };
         let db = Db::open(&space.db_path()).unwrap();
@@ -52,9 +52,9 @@ impl Drop for Fixture {
 
 #[test]
 fn usage_rows_order_and_session_totals() {
-    let root = std::env::temp_dir().join(format!("nexus-usage-migration-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-usage-migration-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
-    let path = root.join("nexus.db");
+    let path = root.join("dugix.db");
     let db = Db::open(&path).unwrap();
     db.conn()
         .execute_batch(

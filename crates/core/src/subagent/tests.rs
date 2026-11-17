@@ -14,7 +14,7 @@ struct Temp(PathBuf);
 impl Temp {
     fn new() -> Self {
         let path =
-            std::env::temp_dir().join(format!("nexus-subagent-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("dugix-subagent-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(path.join("repo")).unwrap();
         Self(path)
     }
@@ -430,7 +430,7 @@ async fn workspace_task_asks_once_and_commits_only_its_worktree_with_a_review_di
         .split_once(':')
         .unwrap()
         .0;
-    assert!(branch.starts_with("nexus/sub/12345678/"));
+    assert!(branch.starts_with("dugix/sub/12345678/"));
     assert!(review.ends_with("new.txt (+1 −0)"));
     assert!(report.contains("+child change"));
     assert_eq!(

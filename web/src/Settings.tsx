@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
-import type { NexusStore } from "./state";
+import type { DugixStore } from "./state";
 
 type Field = { key: string; label: string; options?: string[]; type?: string; hint?: string };
 const groups: { name: string; fields: Field[] }[] = [
@@ -28,7 +28,7 @@ const groups: { name: string; fields: Field[] }[] = [
   ] },
 ];
 
-export function SettingsPage(props: { store: NexusStore }) {
+export function SettingsPage(props: { store: DugixStore }) {
   const [values, setValues] = createSignal<Record<string, string>>({});
   const [baseline, setBaseline] = createSignal<Record<string, string>>({});
   const [loaded, setLoaded] = createSignal(false);
@@ -109,7 +109,7 @@ export function SettingsPage(props: { store: NexusStore }) {
 }
 
 interface LoginState { pending: boolean; user_code: string | null; verification_url: string; message: string; configured: string[] }
-export function LoginPanel(props: { store: NexusStore }) {
+export function LoginPanel(props: { store: DugixStore }) {
   const [backend, setBackend] = createSignal("openrouter");
   const [key, setKey] = createSignal("");
   const [login, setLogin] = createSignal<LoginState>();

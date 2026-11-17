@@ -1,11 +1,11 @@
 //! Semantic terminal colors and background modes.
 
-use nexus_core::theme_colors::{Palette, ThemeColors};
+use dugix_core::theme_colors::{Palette, ThemeColors};
 use ratatui::style::{Color, Style};
 
-pub use nexus_core::theme_colors::source_stamp;
+pub use dugix_core::theme_colors::source_stamp;
 #[cfg(test)]
-use nexus_core::theme_colors::{Alacritty, ghostty_pairs};
+use dugix_core::theme_colors::{Alacritty, ghostty_pairs};
 
 /// Uses the terminal's default background for transparency because cells cannot alpha-blend.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -221,7 +221,7 @@ fn luminance(color: Color) -> f64 {
 }
 
 fn color_hex(color: Color) -> String {
-    use nexus_core::theme_colors::indexed_hex;
+    use dugix_core::theme_colors::indexed_hex;
     match color {
         Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
         Color::Indexed(index) => indexed_hex(index),
@@ -245,10 +245,10 @@ fn color_hex(color: Color) -> String {
 }
 
 pub fn load() -> Theme {
-    let mut theme = Theme::from_palette(&nexus_core::theme_colors::load());
+    let mut theme = Theme::from_palette(&dugix_core::theme_colors::load());
     let var = |name| std::env::var(name).ok();
     theme.round_caps = round_caps(
-        var("NEXUS_ROUND_CAPS").as_deref(),
+        var("DUGIX_ROUND_CAPS").as_deref(),
         var("TERM_PROGRAM").as_deref(),
         var("TERM").as_deref(),
         std::env::home_dir().is_some_and(|home| home.join(".config/omarchy").is_dir()),

@@ -1,4 +1,4 @@
-//! `nexus sessions`, `spaces`, `export`, `memory`, `instructions`, `files`,
+//! `dugix sessions`, `spaces`, `export`, `memory`, `instructions`, `files`,
 //! `backup` and `restore`.
 
 use std::io::{IsTerminal as _, Write as _};
@@ -6,9 +6,9 @@ use std::path::Path;
 
 use anyhow::{Context as _, Result, anyhow, bail};
 
-use nexus_core::app;
-use nexus_core::db;
-use nexus_core::space;
+use dugix_core::app;
+use dugix_core::db;
+use dugix_core::space;
 
 use super::{
     SessionsCmd, fmt_ts, human_size, out, resolve_session, resolve_space_name, short_id, truncate,
@@ -39,12 +39,12 @@ fn sessions_list(space_name: Option<&str>, json: bool) -> Result<()> {
             .into_iter()
             .find(|s| s.name == name)
             .map(|s| s.id)
-            .ok_or_else(|| anyhow!("no space named {name:?} — `nexus spaces` lists them"))?,
+            .ok_or_else(|| anyhow!("no space named {name:?} — `dugix spaces` lists them"))?,
         None => db.default_space_id()?,
     };
     let sessions = db.list_sessions(&space_id)?;
     if sessions.is_empty() {
-        out("no sessions yet — ask something in the TUI or with `nexus ask`");
+        out("no sessions yet — ask something in the TUI or with `dugix ask`");
         return Ok(());
     }
     if json {
@@ -190,7 +190,7 @@ pub(super) fn export(reference: &str, transcript: bool, output: Option<&Path>) -
         // Citations are space-wide; exporting all of them would leak other sessions' sources.
         let citations = db.search_citations(&space_id, None)?;
         let urls_in_report: std::collections::HashSet<String> =
-            nexus_core::citations::parse_citations(&report)
+            dugix_core::citations::parse_citations(&report)
                 .into_iter()
                 .map(|(_, url)| url)
                 .collect();
@@ -254,7 +254,7 @@ pub(super) fn memory(
     edit: bool,
     command: Option<super::MemoryCommand>,
 ) -> Result<()> {
-    use nexus_core::memory::{self, book};
+    use dugix_core::memory::{self, book};
     let space = space::Space::open()?;
     let db = db::Db::open(&space.db_path())?;
     let name = resolve_space_name(&db, space_name)?;
@@ -402,7 +402,7 @@ pub(super) fn files(space_name: Option<&str>) -> Result<()> {
 pub(super) fn backup(output: Option<&Path>) -> Result<()> {
     let space = space::Space::open()?;
     let default = space.root.parent().unwrap_or(&space.root).join(format!(
-        "nexus-backup-{}.zip",
+        "dugix-backup-{}.zip",
         chrono::Utc::now().format("%Y-%m-%d")
     ));
     let path = output.unwrap_or(&default);
@@ -432,8 +432,8 @@ pub(super) fn restore(file: &Path, yes: bool) -> Result<()> {
     let _ = std::fs::remove_file(&cache_path);
     // Remove only pre-restore WAL sidecars to prevent replay over the restored database.
     for suffix in [
-        "nexus.db-wal",
-        "nexus.db-shm",
+        "dugix.db-wal",
+        "dugix.db-shm",
         "cache.db-wal",
         "cache.db-shm",
     ] {
@@ -447,7 +447,7 @@ pub(super) fn restore(file: &Path, yes: bool) -> Result<()> {
 
 // If checkpointing fails, the archived WAL sidecar still preserves recent commits.
 fn checkpoint_wal(db_path: &Path) {
-    if let Ok(conn) = nexus_core::db::open_conn(db_path) {
+    if let Ok(conn) = dugix_core::db::open_conn(db_path) {
         let _ = conn.pragma_update(None, "wal_checkpoint", "TRUNCATE");
     }
 }

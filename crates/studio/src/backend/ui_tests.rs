@@ -117,7 +117,7 @@ fn the_doc_ui_builds_the_page_without_markup_injection() {
 
 #[test]
 fn doc_css_uses_the_core_layout_numbers() {
-    use nexus_core::doc::LAYOUT;
+    use dugix_core::doc::LAYOUT;
     let css = std::fs::read_to_string(ui_dir().join("doc/doc.css")).unwrap();
     let n = |value: f64| format!("{value}");
     for (name, value) in [
@@ -178,7 +178,7 @@ fn what_the_editor_writes_reads_back_the_same_through_the_core_parser() {
             pair["plain"].as_str().unwrap(),
         );
         assert_eq!(
-            nexus_core::doc::markdown::plain(md),
+            dugix_core::doc::markdown::plain(md),
             plain,
             "the editor's serialization {md:?} reads differently in the core"
         );
@@ -253,7 +253,7 @@ fn every_sheet_module_is_embedded_and_every_import_resolves() {
 fn the_grid_draws_cell_text_with_the_metrics_the_core_sizes_rows_with() {
     // Wrapped rows are as tall as core's layout says; if the grid's line height,
     // padding or font size drift from it, wrapped text is cut off or cramped.
-    use nexus_core::sheet::layout::{FONT_SIZE, LINE_HEIGHT, PAD_X, PAD_Y};
+    use dugix_core::sheet::layout::{FONT_SIZE, LINE_HEIGHT, PAD_X, PAD_Y};
     let (_, css) = embedded("/sheet/sheet.css").unwrap();
     let text = css
         .lines()

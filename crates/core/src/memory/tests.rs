@@ -96,13 +96,13 @@ fn toc_lists_pinned_in_full_and_others_by_title() {
     add(
         &conn,
         SPACE,
-        "nexus",
+        "dugix",
         "deploys from master",
         Some("release plan"),
         None,
     )
     .unwrap();
-    add(&conn, SPACE, "nexus", "tags before publishing", None, None).unwrap();
+    add(&conn, SPACE, "dugix", "tags before publishing", None, None).unwrap();
     let docs = vec![DocEntry {
         relative: "docs/eu.doc.json".into(),
         title: "EU AI Act".into(),
@@ -115,7 +115,7 @@ fn toc_lists_pinned_in_full_and_others_by_title() {
     );
     assert!(toc.contains("### About you\n- ["));
     assert!(toc.contains("] uses Neovim"));
-    assert!(toc.contains("- nexus (2) — release plan"));
+    assert!(toc.contains("- dugix (2) — release plan"));
     assert!(!toc.contains("deploys from master"));
     assert!(toc.contains("- docs/eu.doc.json — EU AI Act: Summary · Sources"));
     assert!(book::toc(&[], &[], &[]).is_empty());
@@ -125,8 +125,8 @@ fn toc_lists_pinned_in_full_and_others_by_title() {
 fn editor_round_trip_applies_a_diff() {
     let conn = conn();
     add(&conn, SPACE, ABOUT_YOU, "uses Neovim", None, Some(true)).unwrap();
-    add(&conn, SPACE, "nexus", "deploys from dev", None, None).unwrap();
-    let kept = add(&conn, SPACE, "nexus", "tags before publishing", None, None)
+    add(&conn, SPACE, "dugix", "deploys from dev", None, None).unwrap();
+    let kept = add(&conn, SPACE, "dugix", "tags before publishing", None, None)
         .unwrap()
         .fact;
     let rendered = book::render_edit(
@@ -205,7 +205,7 @@ fn editor_save_keeps_facts_added_while_it_was_open() {
         &chapters(&conn, SPACE).unwrap(),
         &facts(&conn, SPACE).unwrap(),
     );
-    let late = add(&conn, SPACE, "nexus", "deploys from master", None, None)
+    let late = add(&conn, SPACE, "dugix", "deploys from master", None, None)
         .unwrap()
         .fact;
     let summary = book::apply_edit(
@@ -222,7 +222,7 @@ fn editor_save_keeps_facts_added_while_it_was_open() {
 #[test]
 fn editor_save_still_deletes_a_line_removed_from_the_text() {
     let conn = conn();
-    let gone = add(&conn, SPACE, "nexus", "deploys from dev", None, None)
+    let gone = add(&conn, SPACE, "dugix", "deploys from dev", None, None)
         .unwrap()
         .fact;
     let rendered = book::render_edit(
@@ -244,10 +244,10 @@ fn editor_save_still_deletes_a_line_removed_from_the_text() {
 #[test]
 fn editor_text_without_an_opened_line_still_deletes() {
     let conn = conn();
-    let gone = add(&conn, SPACE, "nexus", "deploys from dev", None, None)
+    let gone = add(&conn, SPACE, "dugix", "deploys from dev", None, None)
         .unwrap()
         .fact;
-    let text = "## nexus\n";
+    let text = "## dugix\n";
     let summary =
         book::apply_edit(&conn, SPACE, &book::parse_edit(text), book::opened_at(text)).unwrap();
     assert_eq!(summary.removed, 1);
@@ -270,7 +270,7 @@ fn parse_edit_skips_comments_and_files_loose_lines() {
 #[test]
 fn legacy_memory_file_is_imported_once() {
     let conn = conn();
-    let dir = std::env::temp_dir().join(format!("nexus-memory-{}", Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-memory-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("memory.md");
     std::fs::write(
@@ -290,7 +290,7 @@ fn legacy_memory_file_is_imported_once() {
 #[test]
 fn legacy_import_keeps_long_lines_whole() {
     let conn = conn();
-    let dir = std::env::temp_dir().join(format!("nexus-memory-{}", Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-memory-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("memory.md");
     let text = "x".repeat(1_000);
@@ -385,7 +385,7 @@ fn chapters_and_facts_sync_with_their_deletes() {
     for table in ["memory_chapters", "memories"] {
         assert!(TABLES.iter().any(|spec| spec.name == table), "{table}");
     }
-    let root = std::env::temp_dir().join(format!("nexus-memory-sync-{}", Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-memory-sync-{}", Uuid::new_v4()));
     let space = Space { root: root.clone() };
     let (a, b) = (Db::open_in_memory().unwrap(), Db::open_in_memory().unwrap());
     let kept = add(a.conn(), SPACE, "Tools", "uses vim", Some("editor"), None)
@@ -632,9 +632,9 @@ fn guest_editor_and_chapter_metadata_stay_private_but_recall_sees_shared_facts()
 async fn memory_tool_guest_reads_writes_and_prefers_own_titles() {
     use crate::db::Db;
     use crate::tools::{MemoryCtx, ToolBox};
-    let root = std::env::temp_dir().join(format!("nexus-memory-shared-tool-{}", Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-memory-shared-tool-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
-    let path = root.join("nexus.db");
+    let path = root.join("dugix.db");
     let db = Db::open(&path).unwrap();
     sharing_spaces(db.conn());
     let added = add(
@@ -842,9 +842,9 @@ fn widen_keeps_sharing_canonical() {
 async fn memory_tool_shares_and_merges_by_name() {
     use crate::db::Db;
     use crate::tools::{MemoryCtx, ToolBox};
-    let root = std::env::temp_dir().join(format!("nexus-memory-share-tool-{}", Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-memory-share-tool-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
-    let path = root.join("nexus.db");
+    let path = root.join("dugix.db");
     let db = Db::open(&path).unwrap();
     sharing_spaces(db.conn());
     add(

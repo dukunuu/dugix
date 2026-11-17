@@ -6,8 +6,8 @@ use super::{
     tone_color,
 };
 use crate::theme::Theme;
-use nexus_core::interactive::{ChartKind, ChartSeries};
-use nexus_core::interactive::{Node, Session, Tone};
+use dugix_core::interactive::{ChartKind, ChartSeries};
+use dugix_core::interactive::{Node, Session, Tone};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -19,7 +19,7 @@ pub(super) fn control_count(node: &Node, session: &Session) -> usize {
     match node {
         Node::Tree { items } => {
             let index = session.document().node_index(node);
-            nexus_core::interactive::tree_branches(items)
+            dugix_core::interactive::tree_branches(items)
                 .iter()
                 .enumerate()
                 .filter(|(branch, (_, item))| {
@@ -487,12 +487,13 @@ pub(super) fn render(
                     .max(3)
                     + 1,
             );
-            let highlight_lang =
-                if lang.eq_ignore_ascii_case("nexus-ui") || lang.eq_ignore_ascii_case("mermaid") {
-                    "plain"
-                } else {
-                    lang
-                };
+            let highlight_lang = if dugix_core::interactive::is_ui_fence(lang)
+                || lang.eq_ignore_ascii_case("mermaid")
+            {
+                "plain"
+            } else {
+                lang
+            };
             let rendered = crate::ui::markdown::render(
                 &format!("{fence}{highlight_lang}\n{source}\n{fence}"),
                 source

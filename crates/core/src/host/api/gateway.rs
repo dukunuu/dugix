@@ -116,7 +116,7 @@ pub(super) struct ModelsResponse {
     pub(super) data: Vec<OpenAiModel>,
 }
 
-/// `OpenAI` `/v1/models` fields, with Nexus routing metadata retained as
+/// `OpenAI` `/v1/models` fields, with Dugix routing metadata retained as
 /// additive fields for clients that want backend-aware pickers.
 #[derive(Debug, Serialize)]
 pub(super) struct OpenAiModel {
@@ -200,7 +200,7 @@ pub(super) async fn handle_gateway(
     }
     let override_tag = request
         .headers
-        .get("x-nexus-backend")
+        .get("x-dugix-backend")
         .map(|value| parse_backend_tag(value))
         .transpose();
     let override_tag = match override_tag {
@@ -274,7 +274,7 @@ pub(super) async fn handle_gateway(
         )
         .body(payload);
     for (name, value) in &request.headers {
-        if is_hop_by_hop(name) || name.starts_with("x-nexus-") {
+        if is_hop_by_hop(name) || name.starts_with("x-dugix-") {
             continue;
         }
         let Ok(header_name) = reqwest::header::HeaderName::from_bytes(name.as_bytes()) else {
@@ -290,7 +290,7 @@ pub(super) async fn handle_gateway(
             builder = builder.header("chatgpt-account-id", account_id);
         }
         builder = builder
-            .header("originator", "nexus-host")
+            .header("originator", "dugix-host")
             .header("OpenAI-Beta", "responses=experimental")
             .header(reqwest::header::CONTENT_TYPE, "application/json");
         if streaming_requested {
@@ -540,5 +540,5 @@ pub(super) fn gateway_route(
 }
 
 pub(super) fn parse_backend_tag(value: &str) -> Result<BackendTag, String> {
-    BackendTag::from_alias(value).ok_or_else(|| format!("unknown x-nexus-backend {value:?}"))
+    BackendTag::from_alias(value).ok_or_else(|| format!("unknown x-dugix-backend {value:?}"))
 }

@@ -2,7 +2,7 @@
 #![allow(unused_imports)]
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use nexus_core::app::Popup;
+use dugix_core::app::Popup;
 
 use super::tests::{render_to_string, test_app};
 
@@ -196,9 +196,9 @@ fn image_viewer_and_actions_keep_q_open_and_use_escape_to_go_back() {
 fn expanded_interactive_panel_uses_the_shared_name_and_footer() {
     let mut app = test_app();
     let root = app.space.root.clone();
-    app.messages.push(nexus_core::db::Message {
+    app.messages.push(dugix_core::db::Message {
         role: "assistant".into(),
-        content: r#"```nexus-ui
+        content: r#"```dugix-ui
 {"version":1,"title":"Counter","state":{"count":0},"view":[{"type":"text","text":"Count: {{count}}"},{"type":"buttons","items":[{"label":"Add one","action":"add"}]}],"actions":{"add":[{"op":"set","key":"count","value":1}]}}
 ```"#.into(),
         model: None,

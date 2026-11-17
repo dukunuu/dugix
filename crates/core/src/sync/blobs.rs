@@ -58,7 +58,7 @@ pub fn put_blob(
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating {}", parent.display()))?;
     }
-    let temporary = target.with_extension(format!("nexus-upload-{}", uuid::Uuid::new_v4()));
+    let temporary = target.with_extension(format!("dugix-upload-{}", uuid::Uuid::new_v4()));
     std::fs::write(&temporary, bytes)
         .with_context(|| format!("writing blob {}", temporary.display()))?;
     if let Err(error) = std::fs::rename(&temporary, &target) {
@@ -124,7 +124,7 @@ fn copy_atomic(source: &Path, target: &Path) -> Result<()> {
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("blob");
-    let temporary = target.with_file_name(format!(".{name}.nexus-copy-{}", uuid::Uuid::new_v4()));
+    let temporary = target.with_file_name(format!(".{name}.dugix-copy-{}", uuid::Uuid::new_v4()));
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating {}", parent.display()))?;

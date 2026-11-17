@@ -181,7 +181,7 @@ impl Package {
             );
         }
         let title = escape(&deck.title);
-        package.parts.insert("docProps/core.xml".into(), ("application/vnd.openxmlformats-package.core-properties+xml".into(), format!("<cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:dcterms=\"http://purl.org/dc/terms/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><dc:title>{title}</dc:title><dc:creator>nexus studio</dc:creator><dcterms:created xsi:type=\"dcterms:W3CDTF\">1970-01-01T00:00:00Z</dcterms:created><dcterms:modified xsi:type=\"dcterms:W3CDTF\">1970-01-01T00:00:00Z</dcterms:modified></cp:coreProperties>").into_bytes()));
+        package.parts.insert("docProps/core.xml".into(), ("application/vnd.openxmlformats-package.core-properties+xml".into(), format!("<cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:dcterms=\"http://purl.org/dc/terms/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"><dc:title>{title}</dc:title><dc:creator>dugix studio</dc:creator><dcterms:created xsi:type=\"dcterms:W3CDTF\">1970-01-01T00:00:00Z</dcterms:created><dcterms:modified xsi:type=\"dcterms:W3CDTF\">1970-01-01T00:00:00Z</dcterms:modified></cp:coreProperties>").into_bytes()));
         let titles = deck.slides.iter().fold(String::new(), |mut out, s| {
             let _ = write!(
                 out,
@@ -195,7 +195,7 @@ impl Package {
             );
             out
         });
-        package.parts.insert("docProps/app.xml".into(), ("application/vnd.openxmlformats-officedocument.extended-properties+xml".into(), format!("<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\" xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\"><Application>nexus studio</Application><PresentationFormat>Custom</PresentationFormat><Slides>{}</Slides><Notes>{}</Notes><TitlesOfParts><vt:vector size=\"{}\" baseType=\"lpstr\">{titles}</vt:vector></TitlesOfParts></Properties>", deck.slides.len(), deck.slides.len(), deck.slides.len()).into_bytes()));
+        package.parts.insert("docProps/app.xml".into(), ("application/vnd.openxmlformats-officedocument.extended-properties+xml".into(), format!("<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\" xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\"><Application>dugix studio</Application><PresentationFormat>Custom</PresentationFormat><Slides>{}</Slides><Notes>{}</Notes><TitlesOfParts><vt:vector size=\"{}\" baseType=\"lpstr\">{titles}</vt:vector></TitlesOfParts></Properties>", deck.slides.len(), deck.slides.len(), deck.slides.len()).into_bytes()));
         package
     }
 
@@ -308,7 +308,7 @@ fn theme(deck: &Deck) -> String {
         "<a:ln w=\"12700\" cap=\"flat\" cmpd=\"sng\" algn=\"ctr\">{fill}<a:prstDash val=\"solid\"/></a:ln>"
     );
     format!(
-        "<a:theme xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" name=\"nexus\"><a:themeElements><a:clrScheme name=\"Deck colors\">{colors}</a:clrScheme><a:fontScheme name=\"Deck fonts\"><a:majorFont>{}</a:majorFont><a:minorFont>{}</a:minorFont></a:fontScheme><a:fmtScheme name=\"nexus\"><a:fillStyleLst>{}</a:fillStyleLst><a:lnStyleLst>{}</a:lnStyleLst><a:effectStyleLst>{}</a:effectStyleLst><a:bgFillStyleLst>{}</a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>",
+        "<a:theme xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" name=\"dugix\"><a:themeElements><a:clrScheme name=\"Deck colors\">{colors}</a:clrScheme><a:fontScheme name=\"Deck fonts\"><a:majorFont>{}</a:majorFont><a:minorFont>{}</a:minorFont></a:fontScheme><a:fmtScheme name=\"dugix\"><a:fillStyleLst>{}</a:fillStyleLst><a:lnStyleLst>{}</a:lnStyleLst><a:effectStyleLst>{}</a:effectStyleLst><a:bgFillStyleLst>{}</a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>",
         font("heading"),
         font("body"),
         fill.repeat(3),

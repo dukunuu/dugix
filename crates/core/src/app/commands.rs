@@ -172,6 +172,11 @@ pub const COMMANDS: &[Command] = &[
         aliases: &["subagents", "sub-agents"],
     },
     Command {
+        name: "fleet",
+        desc: "run Claude Code, Codex, pi or OpenCode inside Dugix: start, watch, steer and stop them from one board",
+        aliases: &["herd"],
+    },
+    Command {
         name: "library",
         desc: "your decks and docs: open in studio, export, delete",
         aliases: &["decks", "lib"],
@@ -193,7 +198,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "memory",
-        desc: "what nexus remembers — /memory [edit|tidy|share [<chapter> with all|none|<space>[, <space>…]]]",
+        desc: "what dugix remembers — /memory [edit|tidy|share [<chapter> with all|none|<space>[, <space>…]]]",
         aliases: &["remember"],
     },
     Command {
@@ -233,7 +238,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "improve",
-        desc: "improve nexus in a review worktree — /improve <what>",
+        desc: "improve dugix in a review worktree — /improve <what>",
         aliases: &[],
     },
     Command {
@@ -398,6 +403,10 @@ pub enum AppCommand {
     /// Act on the messages waiting for the running reply.
     Queue {
         action: super::QueueAction,
+    },
+    /// Open the fleet board, or start, steer or stop an external agent.
+    Fleet {
+        action: super::FleetAction,
     },
     AnswerGate {
         text: String,
@@ -652,6 +661,9 @@ impl App {
             "queue" => {
                 super::queue::parse(&rest(cmd, token)).map(|action| AppCommand::Queue { action })
             }
+            "fleet" => {
+                super::fleet::parse(&rest(cmd, token)).map(|action| AppCommand::Fleet { action })
+            }
             "connectors" => parse_connectors(&rest(cmd, token)),
             "pin-panel" => parse_pin_panel(token, &rest(cmd, token)),
             "research" => Ok(AppCommand::RunResearch {
@@ -780,7 +792,7 @@ impl App {
                     updated_at: chrono::Utc::now().to_rfc3339(),
                 };
                 self.db.save_job(&job)?;
-                self.push_status("job created · run `nexus jobs daemon` to schedule it");
+                self.push_status("job created · run `dugix jobs daemon` to schedule it");
             }
             AppCommand::SetJobEnabled { id, on } => {
                 let mut job = self.owned_job(&id)?;
@@ -845,6 +857,7 @@ impl App {
             AppCommand::Approve { decision } => self.answer_approval(decision),
             AppCommand::Steer { text } => self.steer_research(&text),
             AppCommand::Queue { action } => self.run_queue_action(action)?,
+            AppCommand::Fleet { action } => self.run_fleet_action(action)?,
             AppCommand::AnswerGate { text } => self.reply_to_survey_gate(&text),
             AppCommand::NewSession => self.new_session(),
             AppCommand::Compact => self.force_compact(),
@@ -860,7 +873,7 @@ impl App {
             }
             AppCommand::Memory { action } => match action {
                 MemoryAction::Edit => self.push_status(
-                    "edit memory in the terminal UI with /memory, or run nexus memory --edit",
+                    "edit memory in the terminal UI with /memory, or run dugix memory --edit",
                 ),
                 MemoryAction::Tidy => self.memory_tidy()?,
                 MemoryAction::Share { chapter, with } => {
@@ -889,7 +902,7 @@ impl App {
             AppCommand::SetWorkMode { mode, root } => {
                 self.set_work_mode(mode, root.as_deref())?;
             }
-            AppCommand::Improve { what } => self.improve_nexus(&what)?,
+            AppCommand::Improve { what } => self.improve_dugix(&what)?,
             AppCommand::Incognito { on } => {
                 if on != self.incognito {
                     self.toggle_incognito()?;

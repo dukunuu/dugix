@@ -53,7 +53,7 @@ struct Config {
 #[serde(default)]
 pub struct AgentConfig {
     pub allow: Vec<String>,
-    pub nexus_repo: Option<String>,
+    pub dugix_repo: Option<String>,
     pub decider: Option<ModelDecider>,
     pub decider_model: String,
     pub scope_threshold: f64,
@@ -74,7 +74,7 @@ impl Default for AgentConfig {
     fn default() -> Self {
         Self {
             allow: Vec::new(),
-            nexus_repo: None,
+            dugix_repo: None,
             decider: None,
             decider_model: "typesafe/jev-1.14".into(),
             scope_threshold: 0.90,
@@ -311,10 +311,10 @@ fn restrict_to_owner(path: &std::path::Path) {
 #[cfg(not(unix))]
 fn restrict_to_owner(_path: &std::path::Path) {}
 
-/// The app's dirs: `~/.config/nexus-chat` and `~/.local/share/nexus-chat` on
-/// Linux, both `~/Library/Application Support/nexus-chat` on macOS.
+/// The app's dirs: `~/.config/dugix` and `~/.local/share/dugix` on
+/// Linux, both `~/Library/Application Support/dugix` on macOS.
 pub fn project_dirs() -> Result<ProjectDirs> {
-    ProjectDirs::from("", "", "nexus-chat").context("could not resolve home directory")
+    ProjectDirs::from("", "", "dugix").context("could not resolve home directory")
 }
 
 pub fn config_path() -> Result<PathBuf> {
@@ -1111,7 +1111,7 @@ mod tests {
 
     #[test]
     fn credential_writes_keep_every_other_table_and_key() {
-        let dir = std::env::temp_dir().join(format!("nexus-config-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-config-{}", uuid::Uuid::new_v4()));
         let path = dir.join("config.toml");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
@@ -1330,7 +1330,7 @@ mod tests {
 
     #[test]
     fn extract_converters_survive_a_credential_save() {
-        let dir = std::env::temp_dir().join(format!("nexus-config-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-config-{}", uuid::Uuid::new_v4()));
         let path = dir.join("config.toml");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(

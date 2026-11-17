@@ -3,7 +3,7 @@
 
 use super::{Session, accent_color, display, glyph, tone_color};
 use crate::theme::Theme;
-use nexus_core::interactive::{Node, Tone};
+use dugix_core::interactive::{Node, Tone};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};

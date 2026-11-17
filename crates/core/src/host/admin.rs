@@ -260,7 +260,7 @@ mod tests {
 
     #[test]
     fn document_rejects_stale_edits_and_wrong_spaces() {
-        let root = std::env::temp_dir().join(format!("nexus-admin-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-admin-{}", uuid::Uuid::new_v4()));
         let mut app = App::new(
             crate::db::Db::open_in_memory().unwrap(),
             None,
@@ -282,7 +282,7 @@ mod tests {
 
     #[test]
     fn settings_api_rejects_removed_model_keys() {
-        let root = std::env::temp_dir().join(format!("nexus-admin-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-admin-{}", uuid::Uuid::new_v4()));
         let mut app = App::new(
             crate::db::Db::open_in_memory().unwrap(),
             None,
@@ -350,7 +350,7 @@ mod tests {
 
     #[test]
     fn image_upload_uses_incognito_storage_and_validates_space() {
-        let root = std::env::temp_dir().join(format!("nexus-attachment-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-attachment-{}", uuid::Uuid::new_v4()));
         let mut app = App::new(
             crate::db::Db::open_in_memory().unwrap(),
             None,

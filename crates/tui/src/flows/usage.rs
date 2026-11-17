@@ -1,6 +1,6 @@
 //! Usage dashboard interactions.
 
-use nexus_core::app::Popup;
+use dugix_core::app::Popup;
 
 use crate::app_view::AppView;
 

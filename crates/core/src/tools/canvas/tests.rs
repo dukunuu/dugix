@@ -101,7 +101,7 @@ async fn docs_create_read_edit_rebase_comments_history_and_export() {
     .await;
     assert!(exported.contains("exports/report.md"), "{exported}");
     let markdown = std::fs::read_to_string(f.file("exports/report.md")).unwrap();
-    assert!(markdown.contains("Ship **carefully**.") && !markdown.contains("nexus-block"));
+    assert!(markdown.contains("Ship **carefully**.") && !markdown.contains("dugix-block"));
     let again = call(
         &f,
         "export",
@@ -190,7 +190,7 @@ async fn designs_layouts_and_drift_are_visible_through_canvas() {
     let f = Fixture::new();
     let listed = call(&f, "design", json!({"op":"list"})).await;
     assert!(
-        listed.contains("nexus · built-in · default") && listed.contains("templates: none yet"),
+        listed.contains("dugix · built-in · default") && listed.contains("templates: none yet"),
         "{listed}"
     );
     let read = call(&f, "design", json!({"op":"read"})).await;
@@ -298,7 +298,7 @@ async fn markdown_export_flattens_all_internal_extensions_and_copies_images() {
     assert!(result.starts_with("exported"), "{result}");
     let output = std::fs::read_to_string(f.file("exports/report.md")).unwrap();
     assert!(
-        !output.contains("nexus-block") && !output.contains("page_break"),
+        !output.contains("dugix-block") && !output.contains("page_break"),
         "{output}"
     );
     for expected in [
@@ -325,7 +325,7 @@ fn revised_layout_previews() {
     let root =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/layout-previews/p1b");
     let assets =
-        std::env::temp_dir().join(format!("nexus-canvas-preview-{}", uuid::Uuid::new_v4()));
+        std::env::temp_dir().join(format!("dugix-canvas-preview-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&assets).unwrap();
     image::RgbImage::from_fn(640, 640, |x, y| {
         if x.abs_diff(320).pow(2) + y.abs_diff(320).pow(2) < 180_u32.pow(2) {
@@ -341,7 +341,7 @@ fn revised_layout_previews() {
             let value = match slot.as_str() {
                 "number" if name == "section" => "02", "number" => "42%",
                 "image" => "assets/sample.png", "title" => "Make room for what matters.",
-                "kicker" => "NEXUS / A NEW PERSPECTIVE", "subtitle" => "One source. A clearer story.",
+                "kicker" => "DUGIX / A NEW PERSPECTIVE", "subtitle" => "One source. A clearer story.",
                 "quote" => "Clarity is the space between the things we choose to say.", "attribution" => "The design team",
                 "left_title"=>"Today", "right_title"=>"Tomorrow",
                 "items"=>"1. Start with the question\n2. Follow the evidence\n3. Make the decision",
@@ -363,7 +363,7 @@ fn revised_layout_previews() {
             "{name}"
         );
         let png = render::render_slide_at(&next, &next.slides[0].id, 640, Some(&assets)).unwrap();
-        if std::env::var_os("NEXUS_LAYOUT_PREVIEWS").is_some() {
+        if std::env::var_os("DUGIX_LAYOUT_PREVIEWS").is_some() {
             std::fs::create_dir_all(&root).unwrap();
             std::fs::write(root.join(format!("{name}.png")), png).unwrap();
         }

@@ -823,7 +823,7 @@ mod tests {
     }
 
     fn temp_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("nexus-extract-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-extract-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -1233,7 +1233,7 @@ mod tests {
     #[test]
     fn scanned_pdf_embedding_page_count_reports_missing_tools() {
         assert!(matches!(
-            pdf_page_count("nexus-definitely-not-a-binary", Path::new("scan.pdf")),
+            pdf_page_count("dugix-definitely-not-a-binary", Path::new("scan.pdf")),
             Err(ToolError::MissingTools)
         ));
     }
@@ -1252,7 +1252,7 @@ mod tests {
             eprintln!("skipping render_pdf_pages_renders_sorted_pages_at_dpi: tools not installed");
             return;
         }
-        let dir = std::env::temp_dir().join(format!("nexus-render-test-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-render-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let pdf = dir.join("multi.pdf");
         std::fs::write(&pdf, pdf_with_pages(&["ONE", "TWO", "THREE"])).unwrap();

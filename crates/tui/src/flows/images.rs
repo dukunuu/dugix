@@ -6,13 +6,13 @@
 )]
 use anyhow::Result;
 
-use nexus_core::app::ImagesMode;
+use dugix_core::app::ImagesMode;
 
 use crate::app_view::AppView;
 
 impl AppView {
     pub fn move_images_selection(&mut self, delta: i32) {
-        self.images_selected = nexus_core::app::clamp_cursor(
+        self.images_selected = dugix_core::app::clamp_cursor(
             self.images_selected,
             self.core.caches.images.len(),
             delta,
@@ -33,7 +33,7 @@ impl AppView {
             &crate::image_viewer::Anchor::ByTarget,
             crate::image_viewer::Return::Files,
         );
-        if self.popup != nexus_core::app::Popup::ImageViewer {
+        if self.popup != dugix_core::app::Popup::ImageViewer {
             self.push_status(format!("opened {}", img.name));
         }
     }

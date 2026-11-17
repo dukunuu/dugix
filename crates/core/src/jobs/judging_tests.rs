@@ -18,7 +18,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!("nexus-job-judge-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-job-judge-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("data/spaces")).unwrap();
         std::fs::create_dir(root.join("work")).unwrap();
         let mut app = App::new(

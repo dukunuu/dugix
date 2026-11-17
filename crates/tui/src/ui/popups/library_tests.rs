@@ -5,12 +5,12 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use nexus_core::app::{App, Popup};
-use nexus_core::canvas::dialogs::Scripted;
-use nexus_core::db::Db;
-use nexus_core::deck::Deck;
-use nexus_core::doc::Doc;
-use nexus_core::space::Space;
+use dugix_core::app::{App, Popup};
+use dugix_core::canvas::dialogs::Scripted;
+use dugix_core::db::Db;
+use dugix_core::deck::Deck;
+use dugix_core::doc::Doc;
+use dugix_core::space::Space;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
@@ -25,7 +25,7 @@ impl Fixture {
     fn new() -> Self {
         let db = Db::open_in_memory().unwrap();
         let root =
-            std::env::temp_dir().join(format!("nexus-library-popup-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("dugix-library-popup-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
         let root = root.canonicalize().unwrap();
         let app = AppView::new(App::new(db, Some("k"), Space { root: root.clone() }));
@@ -55,9 +55,9 @@ impl Fixture {
     }
 
     fn doc(&self, relative: &str, title: &str, age_seconds: u64) -> PathBuf {
-        let mut doc = Doc::from_design(title, &nexus_core::design::Design::default());
+        let mut doc = Doc::from_design(title, &dugix_core::design::Design::default());
         doc.blocks =
-            nexus_core::doc::markdown::parse_document("# T\n\nBody.\n\nMore.\n", true).blocks;
+            dugix_core::doc::markdown::parse_document("# T\n\nBody.\n\nMore.\n", true).blocks;
         let doc = Doc::check(&serde_json::to_string(&doc).unwrap()).unwrap();
         self.put(
             relative,
@@ -141,23 +141,23 @@ fn body(screen: &str) -> Vec<String> {
 fn library_is_a_command_with_a_catalog_entry() {
     let mut f = Fixture::new();
     assert!(
-        nexus_core::app::COMMANDS
+        dugix_core::app::COMMANDS
             .iter()
             .any(|c| c.name == "library" && !c.desc.is_empty())
     );
     assert_eq!(
         f.app.core.parse_command("library").unwrap(),
-        nexus_core::app::AppCommand::OpenLibrary
+        dugix_core::app::AppCommand::OpenLibrary
     );
     assert_eq!(
         f.app.core.parse_command("decks").unwrap(),
-        nexus_core::app::AppCommand::OpenLibrary
+        dugix_core::app::AppCommand::OpenLibrary
     );
     f.app.run_command("library").unwrap();
     assert_eq!(f.app.popup, Popup::Library);
     f.app
         .core
-        .execute(nexus_core::app::AppCommand::OpenLibrary)
+        .execute(dugix_core::app::AppCommand::OpenLibrary)
         .unwrap();
 }
 
@@ -177,7 +177,7 @@ fn the_popup_lists_kind_title_count_and_time_newest_first() {
             "▸ deck   Launch review".to_string(),
             "1 slide · 3 hours ago".to_string(),
             "doc    Q3 memo".to_string(),
-            "3 blocks · yesterday · nexus".to_string(),
+            "3 blocks · yesterday · dugix".to_string(),
             "deck   Roadmap 2027".to_string(),
             "1 slide · 5 days ago".to_string(),
         ]

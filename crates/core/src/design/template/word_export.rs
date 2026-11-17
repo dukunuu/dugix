@@ -68,7 +68,7 @@ fn styles(
         } else {
             let mut candidate = id.to_string();
             while occupied.contains(&candidate) || ids.values().any(|v| v == &candidate) {
-                candidate = format!("Nexus{candidate}");
+                candidate = format!("Dugix{candidate}");
             }
             candidate
         };
@@ -308,7 +308,7 @@ pub(super) fn merge(template: &[u8], generated: &[u8]) -> Result<Vec<u8>> {
         {
             continue;
         }
-        let mut new_id = format!("nexus{id}");
+        let mut new_id = format!("dugix{id}");
         while old_rels
             .kids_named("Relationship")
             .any(|r| r.attr("Id") == Some(&new_id))
@@ -320,13 +320,13 @@ pub(super) fn merge(template: &[u8], generated: &[u8]) -> Result<Vec<u8>> {
         if kind.ends_with("/image")
             && let Some(target) = el.attr("Target")
         {
-            let mut new_target = format!("media/nexus-{}", target.trim_start_matches("media/"));
+            let mut new_target = format!("media/dugix-{}", target.trim_start_matches("media/"));
             while base.contains_key(&format!("word/{new_target}"))
                 || media_ids
                     .values()
                     .any(|v| v == &format!("word/{new_target}"))
             {
-                new_target = new_target.replacen("media/", "media/nexus-", 1);
+                new_target = new_target.replacen("media/", "media/dugix-", 1);
             }
             media_ids.insert(format!("word/{target}"), format!("word/{new_target}"));
             added = added.replace(

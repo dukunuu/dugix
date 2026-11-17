@@ -1,4 +1,4 @@
-//! Minimal Cloudflare v4 control-plane calls for `nexus host --setup`; the API
+//! Minimal Cloudflare v4 control-plane calls for `dugix host --setup`; the API
 //! token comes from `CF_API_TOKEN` and never appears in errors or on disk.
 
 use std::path::PathBuf;
@@ -130,7 +130,7 @@ pub async fn provision_named_tunnel(options: &SetupOptions) -> Result<SetupResul
         "TunnelID": tunnel.id,
     });
     write_private(&credentials_path, &serde_json::to_vec_pretty(&credentials)?)?;
-    let config_path = dir.join(format!("nexus-{}.yml", tunnel.id));
+    let config_path = dir.join(format!("dugix-{}.yml", tunnel.id));
     write_named_config(
         &config_path,
         &credentials_path,
@@ -183,7 +183,7 @@ fn client() -> Result<reqwest::Client> {
         .default_headers(headers)
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(30))
-        .user_agent("nexus-chat host setup")
+        .user_agent("dugix host setup")
         .build()
         .context("building Cloudflare API client")
 }

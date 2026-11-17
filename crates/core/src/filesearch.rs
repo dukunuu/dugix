@@ -223,7 +223,7 @@ mod tests {
     impl TempHome {
         fn new(files: &[&str]) -> Self {
             let root =
-                std::env::temp_dir().join(format!("nexus-filesearch-{}", uuid::Uuid::new_v4()));
+                std::env::temp_dir().join(format!("dugix-filesearch-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&root).unwrap();
             let root = root.canonicalize().unwrap();
             for file in files {

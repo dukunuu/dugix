@@ -31,7 +31,7 @@ fn render(
         &mut lines,
         &content(),
         expanded,
-        &nexus_core::app::Settings::default(),
+        &dugix_core::app::Settings::default(),
         140,
         &crate::theme::Theme::default(),
         CardEnv {
@@ -164,7 +164,7 @@ fn expanded_failed_row_snapshot_keeps_the_short_error() {
 
 #[test]
 fn batch_deck_and_media_images_belong_only_to_their_open_row() {
-    let files = std::env::temp_dir().join(format!("nexus-batch-images-{}", uuid::Uuid::new_v4()));
+    let files = std::env::temp_dir().join(format!("dugix-batch-images-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&files).unwrap();
     image::RgbImage::from_pixel(4, 4, image::Rgb([1, 2, 3]))
         .save(files.join("slide.png"))
@@ -186,7 +186,7 @@ fn batch_deck_and_media_images_belong_only_to_their_open_row() {
             &mut lines,
             &content,
             true,
-            &nexus_core::app::Settings::default(),
+            &dugix_core::app::Settings::default(),
             80,
             &crate::theme::Theme::default(),
             CardEnv {

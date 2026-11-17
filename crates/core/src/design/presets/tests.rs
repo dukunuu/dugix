@@ -43,7 +43,7 @@ fn every_preset_is_a_valid_design_with_its_own_voice() {
         assert_ne!(pair.0, pair.1, "{slug}: a display face over the body face");
         assert!(pairings.insert(pair), "{slug}: pairing repeated");
     }
-    assert!(preset("nexus").is_none() && preset("nope").is_none());
+    assert!(preset("dugix").is_none() && preset("nope").is_none());
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn dark_presets_keep_panels_dark_and_their_text_light() {
 
 #[test]
 fn presets_are_listed_loaded_and_resolved_like_stored_designs() {
-    let root = std::env::temp_dir().join(format!("nexus-presets-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-presets-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let names = crate::design::list(&root).unwrap();
     for (slug, _) in catalog() {

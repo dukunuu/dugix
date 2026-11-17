@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use anyhow::{Context as _, Result, anyhow, bail};
 use clap::{Parser, Subcommand};
 
-use nexus_core::db;
-use nexus_core::space;
+use dugix_core::db;
+use dugix_core::space;
 
 mod ask;
 mod canvas;
@@ -49,7 +49,7 @@ use self::eval::{
 #[cfg(test)]
 use data::{prune_targets, transcript_markdown, unzip_into, zip_dir};
 #[cfg(test)]
-use nexus_core::config;
+use dugix_core::config;
 #[cfg(test)]
 use selection::{DEFAULT_CLIPBOARD_INSTRUCTION, build_clipboard_prompt, build_selection_prompt};
 #[cfg(test)]
@@ -57,7 +57,7 @@ use usage::session_usage_output;
 
 /// Local-first terminal chat for deep research and multi-agent work.
 #[derive(Parser)]
-#[command(name = "nexus", version, about, max_term_width = 100)]
+#[command(name = "dugix", version, about, max_term_width = 100)]
 pub struct Cli {
     /// Open the most recently updated session instead of starting a blank chat.
     #[arg(long = "continue")]
@@ -154,7 +154,7 @@ pub enum Command {
     },
     /// Analyze text from the OS clipboard with one headless turn. The
     /// optional instruction is applied to the copied text; when omitted,
-    /// Nexus explains it and points out interesting facts and context.
+    /// Dugix explains it and points out interesting facts and context.
     #[command(name = "clip", visible_alias = "clipboard")]
     Clip {
         /// Custom instruction for the copied text.
@@ -278,7 +278,7 @@ pub enum Command {
     },
     /// Zip the local data (db + spaces + skills) into one file.
     Backup {
-        /// Destination path (default: `nexus-backup-<date>.zip` next to the
+        /// Destination path (default: `dugix-backup-<date>.zip` next to the
         /// data dir).
         #[arg(short, long)]
         output: Option<PathBuf>,
@@ -374,11 +374,11 @@ pub enum Command {
         path: Option<PathBuf>,
     },
     /// Update to the latest release from crates.io — runs
-    /// `cargo install nexus-chat` when a newer version exists.
+    /// `cargo install dugix` when a newer version exists.
     Update,
     /// Sync with another device: export/import changesets, a shared-dir
-    /// mailbox, or over ssh. `nexus sync <dir>` and `nexus sync ssh://host`
-    /// are the two transports — see `nexus sync --help`.
+    /// mailbox, or over ssh. `dugix sync <dir>` and `dugix sync ssh://host`
+    /// are the two transports — see `dugix sync --help`.
     Sync {
         #[command(subcommand)]
         cmd: Option<SyncCmd>,
@@ -761,7 +761,7 @@ pub(crate) fn resolve_session(db: &db::Db, reference: &str) -> Result<(String, d
             }
         }
     }
-    bail!("no session matching {reference:?} — `nexus sessions` lists them")
+    bail!("no session matching {reference:?} — `dugix sessions` lists them")
 }
 
 fn resolve_space_name(db: &db::Db, space_name: Option<&str>) -> Result<String> {
@@ -770,7 +770,7 @@ fn resolve_space_name(db: &db::Db, space_name: Option<&str>) -> Result<String> {
             .into_iter()
             .find(|s| s.name == name)
             .map(|s| s.name)
-            .ok_or_else(|| anyhow!("no space named {name:?} — `nexus spaces` lists them"))
+            .ok_or_else(|| anyhow!("no space named {name:?} — `dugix spaces` lists them"))
     } else {
         let id = db.default_space_id()?;
         db.list_spaces()?

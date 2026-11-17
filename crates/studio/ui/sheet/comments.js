@@ -67,11 +67,11 @@ export function commentsController(api) {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeComposer(); api.grid.focus(); }
       else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(state.linked); }
     });
-    const note = el('button', 'small quiet', 'Comment'), ask = el('button', 'small primary-quiet', 'Send to nexus');
+    const note = el('button', 'small quiet', 'Comment'), ask = el('button', 'small primary-quiet', 'Send to dugix');
     note.type = ask.type = 'button';
     ask.prepend(glyph('send'));
     ask.disabled = !state.linked;
-    ask.title = state.linked ? 'Send this comment to the conversation' : 'Not linked to a conversation — open it from nexus with /studio';
+    ask.title = state.linked ? 'Send this comment to the conversation' : 'Not linked to a conversation — open it from dugix with /studio';
     note.addEventListener('click', () => submit(false));
     ask.addEventListener('click', () => submit(true));
     const actions = el('div', 'reply-actions');

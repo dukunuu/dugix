@@ -22,7 +22,7 @@ fn error(doc: &Doc, raw: Value, path: &str) -> String {
     errors[0].message.clone()
 }
 fn temp() -> std::path::PathBuf {
-    let path = std::env::temp_dir().join(format!("nexus-doc-{}", uuid::Uuid::new_v4()));
+    let path = std::env::temp_dir().join(format!("dugix-doc-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&path).unwrap();
     path
 }
@@ -178,7 +178,7 @@ fn every_operation_applies_in_order_and_keeps_the_original() {
         Some("Ship **the docs**. Quarter 4 Quarter 1.")
     );
     let design = Design::default();
-    let applied = edit(&doc, json!([{"op":"apply_design","design":"nexus"}]));
+    let applied = edit(&doc, json!([{"op":"apply_design","design":"dugix"}]));
     assert_eq!(applied.design_rev, Some(design.revision()));
     assert_eq!(
         applied.block("b5").unwrap().style.as_deref(),

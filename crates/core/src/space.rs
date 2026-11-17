@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 
 use crate::config;
 
-/// The shared data directory (holding `nexus.db`) and per-space directories.
+/// The shared data directory (holding `dugix.db`) and per-space directories.
 pub struct Space {
     pub root: PathBuf,
 }
@@ -19,7 +19,7 @@ impl Space {
     }
 
     pub fn db_path(&self) -> PathBuf {
-        self.root.join("nexus.db")
+        self.root.join("dugix.db")
     }
 
     /// Device-local traces beside the shared database, never synced.

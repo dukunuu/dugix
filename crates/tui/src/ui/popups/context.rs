@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app_view::AppView;
-use nexus_core::app::Popup;
+use dugix_core::app::Popup;
 
 use super::chrome::{self, PopupFrame, hint, keys};
 
@@ -122,7 +122,7 @@ fn session_lines(app: &AppView) -> Vec<Line<'static>> {
             ];
         }
     };
-    let t = nexus_core::app::usage::SessionUsageTotals::from_rows(&rows);
+    let t = dugix_core::app::usage::SessionUsageTotals::from_rows(&rows);
     let cost = match t.cost {
         Some(c) if t.unknown_cost_requests > 0 => {
             format!("${c:.4} + {} unpriced", t.unknown_cost_requests)

@@ -5,6 +5,7 @@ pub mod connectors;
 pub mod context;
 pub mod copy;
 pub mod files;
+pub mod fleet;
 pub mod harness;
 pub mod help;
 pub mod image_viewer;

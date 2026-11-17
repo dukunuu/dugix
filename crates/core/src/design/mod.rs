@@ -120,7 +120,7 @@ impl Default for Design {
         let (_, doc) = derive_styles(Scale::default(), &theme.fonts);
         Self {
             version: 1,
-            name: "nexus".into(),
+            name: "dugix".into(),
             source: None,
             colors: theme.colors,
             fonts: theme.fonts,
@@ -286,12 +286,12 @@ pub type Resolver<'a> = dyn Fn(&str) -> anyhow::Result<Design> + 'a;
 pub(crate) fn resolve(slug: &str, resolver: Option<&Resolver<'_>>) -> anyhow::Result<Design> {
     if let Some(resolver) = resolver {
         resolver(slug)
-    } else if slug == "nexus" {
+    } else if slug == "dugix" {
         Ok(Design::default())
     } else if let Some(design) = presets::preset(slug) {
         Ok(design)
     } else {
-        anyhow::bail!("unknown design {slug:?}; fix: supply a design resolver or use nexus")
+        anyhow::bail!("unknown design {slug:?}; fix: supply a design resolver or use dugix")
     }
 }
 

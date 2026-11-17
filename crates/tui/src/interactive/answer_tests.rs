@@ -1,6 +1,6 @@
 use super::*;
-use nexus_core::app::AppEvent;
-use nexus_core::provider::{BackendTag, openrouter::OpenRouter};
+use dugix_core::app::AppEvent;
+use dugix_core::provider::{BackendTag, openrouter::OpenRouter};
 use ratatui::{Terminal, backend::TestBackend};
 use serde_json::{Value, json};
 
@@ -25,11 +25,11 @@ fn quiz(label: &str) -> Value {
 }
 
 fn app(data: &Value) -> AppView {
-    let mut app = AppView::new(nexus_core::app::App::new(
-        nexus_core::db::Db::open_in_memory().unwrap(),
+    let mut app = AppView::new(dugix_core::app::App::new(
+        dugix_core::db::Db::open_in_memory().unwrap(),
         None,
-        nexus_core::space::Space {
-            root: std::env::temp_dir().join(format!("nexus-answer-test-{}", uuid::Uuid::new_v4())),
+        dugix_core::space::Space {
+            root: std::env::temp_dir().join(format!("dugix-answer-test-{}", uuid::Uuid::new_v4())),
         },
     ));
     app.backends.set(
@@ -37,9 +37,9 @@ fn app(data: &Value) -> AppView {
         OpenRouter::local("http://127.0.0.1:9/v1").unwrap(),
     );
     app.current_model = Some("answer-test".into());
-    app.messages.push(nexus_core::db::Message {
+    app.messages.push(dugix_core::db::Message {
         role: "assistant".into(),
-        content: format!("```nexus-ui\n{data}\n```"),
+        content: format!("```dugix-ui\n{data}\n```"),
         model: None,
         reasoning: None,
         tokens: None,
@@ -204,7 +204,7 @@ fn invalid_rendered_labels_and_send_preconditions_never_restore_over_a_draft() {
         if no_model {
             app.current_model = None;
         } else {
-            app.backends = nexus_core::app::Backends::default();
+            app.backends = dugix_core::app::Backends::default();
         }
         app.set_input("keep this draft");
         draw(&mut app);
@@ -329,7 +329,7 @@ fn long_choices_wrap_under_the_label_and_reserve_exactly_the_drawn_height() {
     for width in [60, 80, 120] {
         let source = data.to_string();
         let rendered = crate::ui::markdown::render(
-            &format!("```nexus-ui\n{source}\n```"),
+            &format!("```dugix-ui\n{source}\n```"),
             usize::from(width),
             crate::ui::markdown::MdColors::default(),
         );
@@ -495,7 +495,7 @@ async fn choice_clicks_include_the_chip_blank_space_arrow_and_wrapped_continuati
 #[tokio::test(flavor = "current_thread")]
 async fn number_choices_are_blocked_while_a_user_command_is_running() {
     let mut app = app(&quiz("First"));
-    app.work_mode = nexus_core::app::WorkMode::Agent;
+    app.work_mode = dugix_core::app::WorkMode::Agent;
     app.execute(AppCommand::RunUserCommand { cmd: "true".into() })
         .unwrap();
     // No await: the command task cannot start or touch the filesystem.

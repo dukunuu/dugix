@@ -293,7 +293,7 @@ pub(super) fn render_history(f: &mut Frame, app: &mut AppView, area: Rect) {
         .collect();
 
     f.render_widget(Paragraph::new(visible), inner);
-    if app.popup == nexus_core::app::Popup::None {
+    if app.popup == dugix_core::app::Popup::None {
         let regions = crate::pictures::regions(
             &app.history_cache.lines,
             &app.history_cache.image_at_line,
@@ -303,7 +303,7 @@ pub(super) fn render_history(f: &mut Frame, app: &mut AppView, area: Rect) {
             .paint(f.buffer_mut(), inner, top, &regions, |target| {
                 if target.contains("://") {
                     match crate::app_view::remote_image(target) {
-                        nexus_core::remote_image::Status::Ready(path) => Some(path),
+                        dugix_core::remote_image::Status::Ready(path) => Some(path),
                         _ => None,
                     }
                 } else {
@@ -315,9 +315,9 @@ pub(super) fn render_history(f: &mut Frame, app: &mut AppView, area: Rect) {
         f.buffer_mut(),
         inner,
         crate::app_view::favicon,
-        app.popup == nexus_core::app::Popup::None,
+        app.popup == dugix_core::app::Popup::None,
     );
-    if app.popup == nexus_core::app::Popup::None {
+    if app.popup == dugix_core::app::Popup::None {
         let mut placements = app.history_cache.diagrams.clone();
         placements.extend(tail_diagrams.into_iter().map(|mut placement| {
             placement.row += cached_lines;
@@ -343,11 +343,11 @@ pub(super) fn render_history(f: &mut Frame, app: &mut AppView, area: Rect) {
         &app.theme,
         matches!(
             app.popup,
-            nexus_core::app::Popup::None | nexus_core::app::Popup::InteractiveUi
+            dugix_core::app::Popup::None | dugix_core::app::Popup::InteractiveUi
         ),
     );
     // Diagrams inside panels paint after the panels, over their placeholders.
-    if app.popup == nexus_core::app::Popup::None {
+    if app.popup == dugix_core::app::Popup::None {
         let placements = app.interactive.diagram_placements(&widgets, inner.width);
         if !placements.is_empty() {
             app.diagrams.paint(f, inner, top, &placements, app.theme.bg);
@@ -720,8 +720,8 @@ pub(super) fn day_label(day: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexus_core::app::App;
-    use nexus_core::db::{Db, Message};
+    use dugix_core::app::App;
+    use dugix_core::db::{Db, Message};
 
     fn msg(role: &str, content: &str) -> Message {
         Message {
@@ -740,8 +740,8 @@ mod tests {
 
     fn test_app() -> AppView {
         let db = Db::open_in_memory().unwrap();
-        let space = nexus_core::space::Space {
-            root: std::env::temp_dir().join(format!("nexus-hist-{}", uuid::Uuid::new_v4())),
+        let space = dugix_core::space::Space {
+            root: std::env::temp_dir().join(format!("dugix-hist-{}", uuid::Uuid::new_v4())),
         };
         AppView::new(App::new(db, Some("k"), space))
     }
@@ -771,14 +771,14 @@ mod tests {
             ));
         }
         let abort = tokio::spawn(async {}).abort_handle();
-        let task = nexus_core::app::ChatTask {
+        let task = dugix_core::app::ChatTask {
             id: 1,
             session_id: s.id.clone(),
             session_title: "stream test".into(),
             space_id: space,
             model: "a/one".into(),
             model_id: "one".into(),
-            backend: nexus_core::provider::BackendTag::OpenRouter,
+            backend: dugix_core::provider::BackendTag::OpenRouter,
             incognito: false,
             buffer: buffer.into(),
             thinking: thinking.into(),
@@ -787,7 +787,7 @@ mod tests {
             usage_row_id: None,
             started: std::time::Instant::now(),
             thinking_idx: 0,
-            spinner_color: nexus_core::app::SpinnerColor::Green,
+            spinner_color: dugix_core::app::SpinnerColor::Green,
             abort,
         };
         a.chat_tasks.insert(1, task);
@@ -1179,7 +1179,7 @@ mod tests {
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
         let before = visible_snapshot(&terminal);
 
-        a.on_chat_event(1, nexus_core::provider::StreamEvent::Done)
+        a.on_chat_event(1, dugix_core::provider::StreamEvent::Done)
             .unwrap();
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
 
@@ -1208,7 +1208,7 @@ mod tests {
             "viewport should be in the reasoning, got: {before}"
         );
 
-        a.on_chat_event(1, nexus_core::provider::StreamEvent::Done)
+        a.on_chat_event(1, dugix_core::provider::StreamEvent::Done)
             .unwrap();
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
 
@@ -1239,7 +1239,7 @@ mod tests {
 
         a.on_chat_event(
             1,
-            nexus_core::provider::StreamEvent::ToolCall {
+            dugix_core::provider::StreamEvent::ToolCall {
                 id: "call_0".into(),
                 reasoning: None,
                 assistant_content: None,
@@ -1289,7 +1289,7 @@ mod tests {
             .join("\n");
         app.on_chat_event(
             1,
-            nexus_core::provider::StreamEvent::ToolCall {
+            dugix_core::provider::StreamEvent::ToolCall {
                 id: "batch-complete".into(),
                 reasoning: None,
                 assistant_content: None,
@@ -1455,7 +1455,7 @@ mod tests {
             .draw(|f| render_history(f, &mut app, f.area()))
             .unwrap();
         assert_eq!(app.tool_open.get(&60), Some(&true));
-        app.apply_event(&nexus_core::app::AppEvent::ViewportReset);
+        app.apply_event(&dugix_core::app::AppEvent::ViewportReset);
         assert!(app.tool_open.is_empty());
         terminal
             .draw(|f| render_history(f, &mut app, f.area()))
@@ -1721,7 +1721,7 @@ mod tests {
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
         assert_eq!(a.scroll, 0, "follows the bottom while streaming");
 
-        a.on_chat_event(1, nexus_core::provider::StreamEvent::Done)
+        a.on_chat_event(1, dugix_core::provider::StreamEvent::Done)
             .unwrap();
         terminal.draw(|f| crate::ui::render(f, &mut a)).unwrap();
         assert_eq!(
@@ -1881,15 +1881,15 @@ mod tests {
 #[cfg(test)]
 mod card_background_tests {
     use super::*;
-    use nexus_core::app::App;
-    use nexus_core::db::{Db, Message};
-    use nexus_core::space::Space;
+    use dugix_core::app::App;
+    use dugix_core::db::{Db, Message};
+    use dugix_core::space::Space;
 
     #[test]
     fn user_card_uses_configured_bg_and_stays_right_aligned() {
         let db = Db::open_in_memory().unwrap();
         let space = Space {
-            root: std::env::temp_dir().join(format!("nexus-tint-{}", uuid::Uuid::new_v4())),
+            root: std::env::temp_dir().join(format!("dugix-tint-{}", uuid::Uuid::new_v4())),
         };
         let mut app = AppView::new(App::new(db, Some("k"), space));
         app.messages.push(Message {

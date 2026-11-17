@@ -179,7 +179,7 @@ impl Workbook {
         model.workbook.name.clone_from(&sheet.title);
         // Use a fresh temporary name to avoid collisions with another tab's name.
         let temporary = (0..=sheet.tabs.len())
-            .map(|n| format!("_nexus_{n}"))
+            .map(|n| format!("_dugix_{n}"))
             .find(|name| !sheet.tabs.iter().any(|t| t.name.eq_ignore_ascii_case(name)))
             .expect("finite tab names");
         ic(model.rename_sheet_by_index(0, &temporary))?;

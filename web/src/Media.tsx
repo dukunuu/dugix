@@ -1,12 +1,12 @@
 import { For, Show, createEffect, createSignal, onCleanup, untrack } from "solid-js";
-import type { NexusStore } from "./state";
+import type { DugixStore } from "./state";
 
 type Kind = "files" | "images" | "videos" | "scripts";
 interface MediaEntry { name: string; size: number; modified: string; mime: string; kind: string; hash?: string }
 interface Catalog { space_id: string; files: MediaEntry[]; images: MediaEntry[]; videos: MediaEntry[]; scripts: MediaEntry[] }
 
 /** The media workspace mirrors the TUI's files, images, and scripts flows. */
-export function MediaPage(props: { store: NexusStore; onAttach: (markdown: string) => void }) {
+export function MediaPage(props: { store: DugixStore; onAttach: (markdown: string) => void }) {
   const [kind, setKind] = createSignal<Kind>("files");
   const [catalog, setCatalog] = createSignal<Catalog>();
   const [error, setError] = createSignal("");

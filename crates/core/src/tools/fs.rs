@@ -342,7 +342,7 @@ fn fs_atomic_write(
 ) -> Result<crate::workspace::FileStamp, PathError> {
     let parent = path.parent().expect("workspace file parent");
     std::fs::create_dir_all(parent)?;
-    let temp = parent.join(format!(".nexus-{}.tmp", uuid::Uuid::new_v4()));
+    let temp = parent.join(format!(".dugix-{}.tmp", uuid::Uuid::new_v4()));
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)

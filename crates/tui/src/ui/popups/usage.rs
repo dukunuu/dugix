@@ -39,23 +39,23 @@ pub fn render(f: &mut Frame, app: &AppView) {
         },
         app,
     );
-    let active = nexus_core::db::UsageRange::CYCLE
+    let active = dugix_core::db::UsageRange::CYCLE
         .iter()
         .position(|range| *range == app.usage_range)
         .unwrap_or_default();
     let inner = chrome::render_tabs(f, inner, &["24h", "7d", "30d", "All"], active, theme);
     if data.totals.requests == 0 {
         let message = match app.usage_range {
-            nexus_core::db::UsageRange::Day => {
+            dugix_core::db::UsageRange::Day => {
                 "No usage in the last 24 hours. ←→ widens the period."
             }
-            nexus_core::db::UsageRange::Week => {
+            dugix_core::db::UsageRange::Week => {
                 "No usage in the last 7 days. ←→ widens the period."
             }
-            nexus_core::db::UsageRange::Month => {
+            dugix_core::db::UsageRange::Month => {
                 "No usage in the last 30 days. ←→ widens the period."
             }
-            nexus_core::db::UsageRange::All => "No usage logged yet. Send a message first.",
+            dugix_core::db::UsageRange::All => "No usage logged yet. Send a message first.",
         };
         chrome::render_empty(f, inner, message, theme);
         return;
@@ -437,7 +437,7 @@ fn fmt_cost_agg(cost: f64) -> String {
 }
 
 pub fn handle_key(app: &mut AppView, key: KeyEvent) {
-    use nexus_core::app::Popup;
+    use dugix_core::app::Popup;
     match key.code {
         KeyCode::Esc => app.popup = Popup::None,
         KeyCode::Up | KeyCode::Char('k') => app.scroll_usage(-1),

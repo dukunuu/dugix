@@ -166,7 +166,7 @@ pub fn sleep_guard() -> Result<Option<ChildGuard>> {
         let child = Command::new("systemd-inhibit")
             .args([
                 "--what=sleep",
-                "--who=nexus",
+                "--who=dugix",
                 "--mode=block",
                 "sleep",
                 "infinity",
@@ -188,7 +188,7 @@ pub fn install_service(port: u16, tunnel: bool) -> Result<PathBuf> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .context("HOME is not set; cannot locate the user service directory")?;
-    let binary = std::env::current_exe().context("locating the nexus executable")?;
+    let binary = std::env::current_exe().context("locating the dugix executable")?;
     let manager =
         service_manager().context("host service installation is unsupported on this platform")?;
     let path = service_path(&config_home(&home), &home, manager);
@@ -243,10 +243,10 @@ pub fn uninstall_service() -> Result<bool> {
 /// `home` the launchd root.
 fn service_path(config_home: &Path, home: &Path, manager: ServiceManager) -> PathBuf {
     match manager {
-        ServiceManager::Systemd => config_home.join("systemd/user").join("nexus-host.service"),
+        ServiceManager::Systemd => config_home.join("systemd/user").join("dugix-host.service"),
         ServiceManager::Launchd => home
             .join("Library/LaunchAgents")
-            .join("chat.nexus.host.plist"),
+            .join("chat.dugix.host.plist"),
     }
 }
 
@@ -278,7 +278,7 @@ fn systemd_quote(path: &Path) -> String {
 fn systemd_unit(binary: &Path, port: u16, tunnel: bool) -> String {
     let tunnel = if tunnel { " --tunnel" } else { "" };
     format!(
-        "[Unit]\nDescription=Nexus host daemon\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nExecStart={} host --port {} --no-sleep-guard{}\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
+        "[Unit]\nDescription=Dugix host daemon\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nExecStart={} host --port {} --no-sleep-guard{}\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
         systemd_quote(binary),
         port,
         tunnel
@@ -301,7 +301,7 @@ fn launchd_plist(binary: &Path, port: u16, tunnel: bool) -> String {
         ""
     };
     format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>chat.nexus.host</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>{}</string>\n    <string>host</string>\n    <string>--port</string>\n    <string>{port}</string>\n    <string>--no-sleep-guard</string>{tunnel}\n  </array>\n  <key>RunAtLoad</key>\n  <true/>\n  <key>KeepAlive</key>\n  <true/>\n</dict>\n</plist>\n",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>chat.dugix.host</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>{}</string>\n    <string>host</string>\n    <string>--port</string>\n    <string>{port}</string>\n    <string>--no-sleep-guard</string>{tunnel}\n  </array>\n  <key>RunAtLoad</key>\n  <true/>\n  <key>KeepAlive</key>\n  <true/>\n</dict>\n</plist>\n",
         xml_escape(&binary.display().to_string())
     )
 }
@@ -386,14 +386,14 @@ mod tests {
     #[test]
     fn installs_service_definition_under_requested_home() {
         let home =
-            std::env::temp_dir().join(format!("nexus-service-test-{}", uuid::Uuid::new_v4()));
-        let path = super::install_service_at(&home, Path::new("/opt/nexus"), 8643, false)
+            std::env::temp_dir().join(format!("dugix-service-test-{}", uuid::Uuid::new_v4()));
+        let path = super::install_service_at(&home, Path::new("/opt/dugix"), 8643, false)
             .expect("installs service definition");
         assert!(path.is_file());
         assert!(
             std::fs::read_to_string(&path)
                 .expect("reads service definition")
-                .contains("ExecStart=\"/opt/nexus\" host --port 8643")
+                .contains("ExecStart=\"/opt/dugix\" host --port 8643")
         );
         std::fs::remove_dir_all(home).expect("cleans service test directory");
     }
@@ -408,15 +408,15 @@ mod tests {
         );
         assert_eq!(
             path,
-            Path::new("/home/test/.config/systemd/user/nexus-host.service")
+            Path::new("/home/test/.config/systemd/user/dugix-host.service")
         );
-        let unit = super::systemd_unit(Path::new("/opt/Nexus Chat/nexus"), 8643, true);
-        assert!(unit.contains("ExecStart=\"/opt/Nexus Chat/nexus\" host --port 8643"));
+        let unit = super::systemd_unit(Path::new("/opt/Dugix Chat/dugix"), 8643, true);
+        assert!(unit.contains("ExecStart=\"/opt/Dugix Chat/dugix\" host --port 8643"));
         assert!(unit.contains("--no-sleep-guard --tunnel"));
         // A literal % in the path is a systemd specifier prefix unless doubled.
-        let unit = super::systemd_unit(Path::new("/opt/100%nexus/nexus"), 8643, false);
+        let unit = super::systemd_unit(Path::new("/opt/100%dugix/dugix"), 8643, false);
         assert!(
-            unit.contains("ExecStart=\"/opt/100%%nexus/nexus\""),
+            unit.contains("ExecStart=\"/opt/100%%dugix/dugix\""),
             "unescaped specifier: {unit}"
         );
     }
@@ -448,10 +448,10 @@ mod tests {
         );
         assert_eq!(
             path,
-            Path::new("/Users/test/Library/LaunchAgents/chat.nexus.host.plist")
+            Path::new("/Users/test/Library/LaunchAgents/chat.dugix.host.plist")
         );
-        let plist = super::launchd_plist(Path::new("/opt/Nexus & Chat/nexus"), 8643, true);
-        assert!(plist.contains("/opt/Nexus &amp; Chat/nexus"));
+        let plist = super::launchd_plist(Path::new("/opt/Dugix & Chat/dugix"), 8643, true);
+        assert!(plist.contains("/opt/Dugix &amp; Chat/dugix"));
         assert!(plist.contains("<string>--tunnel</string>"));
     }
 }

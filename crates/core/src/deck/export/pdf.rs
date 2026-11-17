@@ -108,8 +108,8 @@ pub(crate) fn assemble(
     document.set_metadata(
         Metadata::new()
             .title(title.to_string())
-            .creator("nexus studio".into())
-            .producer("nexus".into()),
+            .creator("dugix studio".into())
+            .producer("dugix".into()),
     );
     document
         .finish()

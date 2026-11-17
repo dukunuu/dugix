@@ -509,7 +509,7 @@ mod tests {
     use crate::{db::Db, space::Space};
 
     fn app() -> App {
-        let root = std::env::temp_dir().join(format!("nexus-media-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("dugix-media-{}", uuid::Uuid::new_v4()));
         App::new(Db::open_in_memory().expect("db"), None, Space { root })
     }
 

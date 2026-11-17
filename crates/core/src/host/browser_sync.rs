@@ -74,7 +74,7 @@ pub(super) fn refresh_after_merge(app: &mut App) -> Result<()> {
 struct Scratch(std::path::PathBuf);
 impl Scratch {
     fn new() -> Result<Self> {
-        let path = std::env::temp_dir().join(format!("nexus-web-sync-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("dugix-web-sync-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&path)?;
         Ok(Self(path))
     }

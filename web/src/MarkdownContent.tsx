@@ -1,8 +1,8 @@
 import { createContext, createEffect, onCleanup, useContext } from "solid-js";
-import type { NexusApi } from "./api";
+import type { DugixApi } from "./api";
 import { markdown } from "./markdown";
 
-export const MediaContext = createContext<{ api: NexusApi; space: () => string | undefined; showReasoning: () => boolean }>();
+export const MediaContext = createContext<{ api: DugixApi; space: () => string | undefined; showReasoning: () => boolean }>();
 
 /** Resolve local image references through authenticated requests, without tokens in URLs. */
 export function MarkdownContent(props: { content: string }) {

@@ -36,7 +36,7 @@ pub fn skill_search_paths(data_dir: &Path) -> Vec<PathBuf> {
     let cwd = std::env::current_dir().ok();
     let home = home_dir();
     add_project_roots(&mut roots, cwd.as_deref());
-    // Nexus's managed root is explicit user state, so it outranks adapter roots
+    // Dugix's managed root is explicit user state, so it outranks adapter roots
     // but stays below project-specific skills.
     push_skill_root(&mut roots, &skills_dir(data_dir));
     add_user_roots(&mut roots, home.as_deref());
@@ -71,12 +71,12 @@ fn add_user_roots(roots: &mut Vec<PathBuf>, home: Option<&Path>) {
     if let Some(value) = std::env::var_os("PI_AGENT_DIR") {
         push_skill_root(roots, &PathBuf::from(value).join("skills"));
     }
-    if let Some(value) = std::env::var_os("NEXUS_SKILLS_DIR") {
+    if let Some(value) = std::env::var_os("DUGIX_SKILLS_DIR") {
         push_skill_root(roots, &PathBuf::from(value));
     }
 
     let Some(home) = home else { return };
-    // `.agents/skills` is the portable location; the adapter roots let Nexus
+    // `.agents/skills` is the portable location; the adapter roots let Dugix
     // consume skills installed by other agent runtimes too.
     for relative in [
         ".agents/skills",
@@ -365,7 +365,7 @@ fn valid_relative_path(path: &str) -> bool {
 }
 
 /// Only app-managed skills may be removed by the `/skills` UI; external agent roots
-/// stay readable but are never deleted by Nexus.
+/// stay readable but are never deleted by Dugix.
 #[must_use]
 pub fn is_app_managed(skill: &Skill, data_dir: &Path) -> bool {
     skill
@@ -402,7 +402,7 @@ pub async fn install_from_github(
     };
     let skill_md = client
         .get(skill_url)
-        .header("User-Agent", "nexus-chat")
+        .header("User-Agent", "dugix")
         .send()
         .await?
         .error_for_status()?
@@ -450,7 +450,7 @@ async fn fetch_gh_contents(
     let url = format!("https://api.github.com/repos/{owner}/{repo}/contents/{path}");
     let resp = client
         .get(&url)
-        .header("User-Agent", "nexus-chat")
+        .header("User-Agent", "dugix")
         .send()
         .await?
         .error_for_status()?
@@ -493,7 +493,7 @@ fn download_gh_entries<'a>(
                     };
                     let bytes = client
                         .get(url)
-                        .header("User-Agent", "nexus-chat")
+                        .header("User-Agent", "dugix")
                         .send()
                         .await?
                         .error_for_status()?
@@ -546,7 +546,7 @@ mod tests {
 
     #[test]
     fn install_builtin_writes_find_skills_without_overwriting() {
-        let dir = temp_dir("nexus-skills");
+        let dir = temp_dir("dugix-skills");
         install_builtin(&dir);
         let names: Vec<String> = load_skills(&dir).iter().map(|s| s.name.clone()).collect();
         assert_eq!(names, vec!["find-skills"]);
@@ -625,7 +625,7 @@ mod tests {
 
     #[test]
     fn mismatched_directory_names_are_not_loaded() {
-        let root = temp_dir("nexus-skill-strict");
+        let root = temp_dir("dugix-skill-strict");
         write_skill(&root, "folder", "different", "d", "body");
         assert!(load_skills(&root).is_empty());
         let _ = std::fs::remove_dir_all(root);
@@ -633,8 +633,8 @@ mod tests {
 
     #[test]
     fn roots_are_merged_with_specific_root_precedence() {
-        let first = temp_dir("nexus-skills-first");
-        let second = temp_dir("nexus-skills-second");
+        let first = temp_dir("dugix-skills-first");
+        let second = temp_dir("dugix-skills-second");
         write_skill(&first, "shared", "shared", "first", "one");
         write_skill(&second, "shared", "shared", "second", "two");
         write_skill(&second, "other", "other", "other", "three");
@@ -699,7 +699,7 @@ mod tests {
 
     #[test]
     fn confined_skill_files_support_external_roots() {
-        let root = temp_dir("nexus-skills-confined");
+        let root = temp_dir("dugix-skills-confined");
         write_skill(&root, "t", "t", "d", "x");
         std::fs::write(root.join("t/readme.md"), "resource").unwrap();
         let roots = vec![root.clone()];

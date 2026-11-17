@@ -7,13 +7,13 @@ test("streamed Markdown updates, local images authenticate, and failed reload pr
     window.fetch = async (input, init) => {
       if (String(input).endsWith("/v1/events")) return new Response(new ReadableStream({
         start(controller) {
-          Object.assign(window, { emitNexus: (event: unknown) => controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)) });
+          Object.assign(window, { emitDugix: (event: unknown) => controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)) });
         },
       }), { headers: { "Content-Type": "text/event-stream" } });
       return original(input, init);
     };
   });
-  await page.route("**/.well-known/nexus", (route) => route.fulfill({ json: { host_id: "stream", product: "nexus-chat" } }));
+  await page.route("**/.well-known/dugix", (route) => route.fulfill({ json: { host_id: "stream", product: "dugix" } }));
   await page.route("**/v1/**", (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/v1/snapshot") return route.fulfill({ json: {
@@ -38,16 +38,16 @@ test("streamed Markdown updates, local images authenticate, and failed reload pr
   await page.getByLabel("Host token").fill("test-token");
   await page.getByRole("button", { name: "Connect", exact: false }).click();
   await expect(page.getByRole("heading", { name: "Stream test" })).toBeVisible();
-  const emit = (event: unknown) => page.evaluate((value) => (window as unknown as { emitNexus: (event: unknown) => void }).emitNexus(value), event);
+  const emit = (event: unknown) => page.evaluate((value) => (window as unknown as { emitDugix: (event: unknown) => void }).emitDugix(value), event);
   await emit({ type: "stream", payload: [1, { Token: "Hello" }] });
   await expect(page.locator(".draft-message .markdown")).toHaveText("Hello");
   await emit({ type: "stream", payload: [1, { Token: " **world**\n\n![sample](sample.png)" }] });
   await expect(page.locator(".draft-message strong").filter({ hasText: "world" })).toBeVisible();
   await expect(page.getByRole("img", { name: "sample" })).toHaveAttribute("src", /^blob:/);
   await page.getByLabel("Attach image", { exact: true }).setInputFiles({ name: "sample.png", mimeType: "image/png", buffer: Buffer.from("test image") });
-  await expect(page.getByPlaceholder("Ask Nexus anything…")).toHaveValue("![pasted image](uploaded.png)");
+  await expect(page.getByPlaceholder("Ask Dugix anything…")).toHaveValue("![pasted image](uploaded.png)");
   await emit({ type: "composer_set", payload: "Restored draft" });
-  await expect(page.getByPlaceholder("Ask Nexus anything…")).toHaveValue("Restored draft");
+  await expect(page.getByPlaceholder("Ask Dugix anything…")).toHaveValue("Restored draft");
   failMessages = true;
   await emit({ type: "stream", payload: [1, "Done"] });
   await expect(page.getByText("Temporary reload failure")).toBeVisible();

@@ -215,9 +215,9 @@ fn session_workspace_binding_is_cache_only_and_round_trips() {
 
 #[test]
 fn session_workspace_binding_survives_reopening_the_database() {
-    let dir = std::env::temp_dir().join(format!("nexus-workspace-{}", Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-workspace-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("nexus.db");
+    let path = dir.join("dugix.db");
     let root = dir.join("workspace");
     {
         let db = Db::open(&path).unwrap();
@@ -1361,9 +1361,9 @@ fn list_jobs_returns_research_jobs_from_all_spaces() {
 
 #[test]
 fn fresh_db_creates_sibling_cache_db_with_split_tables() {
-    let dir = std::env::temp_dir().join(format!("nexus-fresh-{}", uuid::Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("dugix-fresh-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
-    let db_path = dir.join("nexus.db");
+    let db_path = dir.join("dugix.db");
     let db = Db::open(&db_path).unwrap();
     let space = db.default_space_id().unwrap();
     let id = db.upsert_file(&space, "doc.txt", "h", 1, "ok").unwrap();

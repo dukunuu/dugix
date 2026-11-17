@@ -203,7 +203,7 @@ fn clicking_an_editor_line_places_the_caret_there() {
     let state = session(&widgets, &p).editor(0);
     assert!(state.editing);
     assert_eq!(
-        nexus_core::interactive::line_col(&session(&widgets, &p).value("code"), state.cursor),
+        dugix_core::interactive::line_col(&session(&widgets, &p).value("code"), state.cursor),
         (1, 3)
     );
 }

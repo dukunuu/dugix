@@ -613,7 +613,7 @@
     "Tab"
    ],
    "group": "Flow",
-   "source": "root = Panel(\"nexus-api\", [Tabs([Tab(\"Overview\", [Kv([[\"Owner\", \"platform\"], [\"Language\", \"Rust\"], [\"Uptime\", \"99.98%\"]])]), Tab(\"Deploys\", [Text(\"3 this week, last one 2 h ago.\")]), Tab(\"Settings\", [Toggle($autoscale, \"Autoscale\")])])])\n$autoscale = true"
+   "source": "root = Panel(\"dugix-api\", [Tabs([Tab(\"Overview\", [Kv([[\"Owner\", \"platform\"], [\"Language\", \"Rust\"], [\"Uptime\", \"99.98%\"]])]), Tab(\"Deploys\", [Text(\"3 this week, last one 2 h ago.\")]), Tab(\"Settings\", [Toggle($autoscale, \"Autoscale\")])])])\n$autoscale = true"
   },
   {
    "id": "accordion",

@@ -13,7 +13,7 @@ struct Pair {
 
 impl Pair {
     fn new() -> Self {
-        let dir = std::env::temp_dir().join(format!("nexus-sync-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-sync-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         Self {
             a: Db::open_in_memory().unwrap(),
@@ -1352,7 +1352,7 @@ fn different_or_missing_schema_is_refused_without_changes() {
         assert_eq!(
             error.to_string(),
             format!(
-                "laptop runs a different nexus version (schema {theirs}, this device {ours}) — update nexus on both devices, then sync again"
+                "laptop runs a different dugix version (schema {theirs}, this device {ours}) — update dugix on both devices, then sync again"
             )
         );
         assert_eq!(row_counts(), counts_before);

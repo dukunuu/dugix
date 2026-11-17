@@ -1,19 +1,19 @@
 import { For, Show, createEffect, createSignal } from "solid-js";
-import type { NexusStore } from "./state";
+import type { DugixStore } from "./state";
 
 type Persona = { name: string; model: string; blurb: string };
 type Skill = { name: string; description: string; managed: boolean; body?: string };
 type Watch = { id: string; topic: string; interval_hours: number; session_id: string; last_run_at?: string };
 
 /** Web management panel for the app's swarm, skills, and standing watches. */
-export function ManagementPage(props: { store: NexusStore }) {
+export function ManagementPage(props: { store: DugixStore }) {
   const [tab, setTab] = createSignal<"swarm" | "skills" | "watches">("swarm");
   return <section class="workspace-page management-page"><div class="management-tabs" role="tablist">
     <For each={[["swarm", "Swarm"], ["skills", "Skills"], ["watches", "Watches"]] as const}>{(item) => <button role="tab" aria-selected={tab() === item[0]} onClick={() => setTab(item[0])}>{item[1]}</button>}</For>
   </div><Show when={tab() === "swarm"}><SwarmPanel store={props.store} /></Show><Show when={tab() === "skills"}><SkillsPanel store={props.store} /></Show><Show when={tab() === "watches"}><WatchesPanel store={props.store} /></Show></section>;
 }
 
-function SwarmPanel(props: { store: NexusStore }) {
+function SwarmPanel(props: { store: DugixStore }) {
   const [personas, setPersonas] = createSignal<Persona[]>([]);
   const [enabled, setEnabled] = createSignal(false);
   const [error, setError] = createSignal("");
@@ -28,7 +28,7 @@ function SwarmPanel(props: { store: NexusStore }) {
   return <div><h1>Swarm</h1><p class="muted">Configure the panel for the active conversation.</p><label><input type="checkbox" checked={enabled()} onChange={(event) => void mode(event.currentTarget.checked)} /> Swarm mode</label> <button onClick={() => void run("start")}>Start</button> <button onClick={() => void run("stop")}>Stop</button><For each={personas()}>{(persona, index) => <div class="file-row"><input aria-label="Persona name" value={persona.name} onInput={(event) => { const rows = personas().slice(); rows[index()].name = event.currentTarget.value; setPersonas(rows); }} /><input aria-label="Persona model" value={persona.model} onInput={(event) => { const rows = personas().slice(); rows[index()].model = event.currentTarget.value; setPersonas(rows); }} /><input aria-label="Persona blurb" value={persona.blurb} onInput={(event) => { const rows = personas().slice(); rows[index()].blurb = event.currentTarget.value; setPersonas(rows); }} /><button onClick={() => setPersonas(personas().filter((_, row) => row !== index()))}>Remove</button></div>}</For><button onClick={() => setPersonas([...personas(), { name: "", model: "", blurb: "" }])}>Add persona</button> <button onClick={() => void save()}>Save roster</button><Show when={error()}><p class="error-banner" role="alert">{error()}</p></Show></div>;
 }
 
-function SkillsPanel(props: { store: NexusStore }) {
+function SkillsPanel(props: { store: DugixStore }) {
   const [skills, setSkills] = createSignal<Skill[]>([]); const [detail, setDetail] = createSignal<Skill>(); const [source, setSource] = createSignal(""); const [error, setError] = createSignal("");
   const [busy, setBusy] = createSignal(false); const [status, setStatus] = createSignal("");
   async function refresh() { try { setSkills((await props.store.api.request<{ skills: Skill[] }>("/v1/skills")).skills); } catch (value) { setError(String(value)); } }
@@ -41,7 +41,7 @@ function SkillsPanel(props: { store: NexusStore }) {
   return <div><h1>Skills</h1><div class="file-row"><input aria-label="GitHub skill source" placeholder="owner/repo/path" value={source()} onInput={(event) => setSource(event.currentTarget.value)} /><button disabled={busy() || !source().trim()} onClick={() => void install()}>Install</button><button disabled={busy()} onClick={() => void refresh()}>Refresh</button></div><Show when={status()}><p role="status">{status()}</p></Show><For each={skills()}>{(skill) => <article class="file-row"><div><strong>{skill.name}</strong><small>{skill.description}</small></div><div><button onClick={() => void show(skill)}>Details</button><button onClick={() => void arm(skill.name)}>Arm</button><Show when={skill.managed}><button onClick={() => void remove(skill.name)}>Remove</button></Show></div></article>}</For><Show when={detail()}>{(value) => <article><h2>{value().name}</h2><pre>{value().body}</pre></article>}</Show><Show when={error()}><p class="error-banner" role="alert">{error()}</p></Show></div>;
 }
 
-function WatchesPanel(props: { store: NexusStore }) {
+function WatchesPanel(props: { store: DugixStore }) {
   const [watches, setWatches] = createSignal<Watch[]>([]); const [topic, setTopic] = createSignal(""); const [interval, setInterval] = createSignal(24); const [error, setError] = createSignal("");
   async function refresh() { try { setWatches((await props.store.api.request<{ watches: Watch[] }>("/v1/watches")).watches); } catch (value) { setError(String(value)); } }
   createEffect(() => { props.store.state.snapshot?.active_space_id; void refresh(); });

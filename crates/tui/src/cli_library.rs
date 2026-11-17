@@ -2,8 +2,8 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use nexus_core::canvas::{self, Entry};
-use nexus_core::deck::link::Kind;
+use dugix_core::canvas::{self, Entry};
+use dugix_core::deck::link::Kind;
 
 fn wanted(kind: Option<&str>) -> Result<Option<Kind>> {
     Ok(match kind {
@@ -69,8 +69,8 @@ pub fn run(kind: Option<&str>, json: bool, files: &std::path::Path) -> Result<()
 mod tests {
     use std::time::{Duration, SystemTime};
 
-    use nexus_core::deck::Deck;
-    use nexus_core::doc::Doc;
+    use dugix_core::deck::Deck;
+    use dugix_core::doc::Doc;
 
     use super::*;
 
@@ -78,7 +78,7 @@ mod tests {
     impl Space {
         fn new() -> Self {
             let path =
-                std::env::temp_dir().join(format!("nexus-cli-library-{}", uuid::Uuid::new_v4()));
+                std::env::temp_dir().join(format!("dugix-cli-library-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&path).unwrap();
             Self(path.canonicalize().unwrap())
         }
@@ -107,8 +107,8 @@ mod tests {
             &serde_json::to_vec(&Deck::titled("Launch review")).unwrap(),
             3 * 3600 + 120,
         );
-        let mut doc = Doc::from_design("Q3 memo", &nexus_core::design::Design::default());
-        doc.blocks = nexus_core::doc::markdown::parse_document("# T\n\nBody.\n", true).blocks;
+        let mut doc = Doc::from_design("Q3 memo", &dugix_core::design::Design::default());
+        doc.blocks = dugix_core::doc::markdown::parse_document("# T\n\nBody.\n", true).blocks;
         let doc = Doc::check(&serde_json::to_string(&doc).unwrap()).unwrap();
         space.put("docs/memo.doc.json", &serde_json::to_vec(&doc).unwrap(), 90);
         space.put(

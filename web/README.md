@@ -1,6 +1,6 @@
-# Nexus Chat web client
+# Dugix Chat web client
 
-Build the SolidJS client and serve it directly from `nexus host`:
+Build the SolidJS client and serve it directly from `dugix host`:
 
 ```sh
 cd web
@@ -11,9 +11,9 @@ cargo run -- host
 ```
 
 Open `http://127.0.0.1:8643` and enter the host bearer token. The client defaults
-to its own origin and discovers the host at `/.well-known/nexus`. No Vite server
-is needed in production. `nexus host` serves `web/dist` relative to its working
-directory; for an installed binary or service set `NEXUS_WEB_DIR` to an absolute
+to its own origin and discovers the host at `/.well-known/dugix`. No Vite server
+is needed in production. `dugix host` serves `web/dist` relative to its working
+directory; for an installed binary or service set `DUGIX_WEB_DIR` to an absolute
 path containing the built `index.html` and `assets/` directory. Distribute that
 directory alongside the binary; the build is not embedded in the Rust executable.
 
@@ -65,9 +65,9 @@ Run `scripts/check.sh` at the repository root for the Rust gate, plus
 `npm --prefix web run build` and `npm --prefix web test` for web changes.
 CI runs all three. Browser tests use mocked data and never contact a provider.
 
-`VITE_NEXUS_URL` can override the default origin for development. Enter credentials
+`VITE_DUGIX_URL` can override the default origin for development. Enter credentials
 in the pairing form; do not bake real tokens into distributed builds using
-`VITE_NEXUS_TOKEN`.
+`VITE_DUGIX_TOKEN`.
 
 ## Workspace API
 

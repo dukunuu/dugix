@@ -1,4 +1,4 @@
-//! OS selection and clipboard plumbing for `nexus clip` and the
+//! OS selection and clipboard plumbing for `dugix clip` and the
 //! selection-chat launcher.
 
 #[cfg(all(
@@ -89,7 +89,7 @@ pub(crate) const fn clear_primary_selection() {}
     not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
 ))]
 fn selection_socket_path() -> Option<PathBuf> {
-    std::env::var_os("XDG_RUNTIME_DIR").map(|dir| PathBuf::from(dir).join("nexus-chat.sock"))
+    std::env::var_os("XDG_RUNTIME_DIR").map(|dir| PathBuf::from(dir).join("dugix.sock"))
 }
 
 #[cfg(all(
@@ -189,12 +189,12 @@ pub(crate) fn start_selection_server() -> Result<(
         use std::os::unix::net::UnixStream;
 
         if UnixStream::connect(&path).is_ok() {
-            bail!("another Nexus TUI instance is already running");
+            bail!("another Dugix TUI instance is already running");
         }
         let _ = std::fs::remove_file(&path);
     }
     let listener = tokio::net::UnixListener::bind(&path)
-        .with_context(|| format!("binding Nexus instance socket {}", path.display()))?;
+        .with_context(|| format!("binding Dugix instance socket {}", path.display()))?;
     let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
     let task = tokio::spawn(accept_selection_requests(listener, sender));
     Ok((Some(SelectionServer { path, task }), Some(receiver)))

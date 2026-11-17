@@ -132,7 +132,7 @@ mod tests {
     fn test_app() -> App {
         let db = Db::open_in_memory().unwrap();
         let root =
-            std::env::temp_dir().join(format!("nexus-research-jobs-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("dugix-research-jobs-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
         let space = Space { root };
         App::new(db, Some("k"), space)

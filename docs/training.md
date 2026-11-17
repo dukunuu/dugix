@@ -1,13 +1,13 @@
 # Exporting traces and tuning a local model
 
-Nexus records data and evaluates models. It does **not** train models, download
+Dugix records data and evaluates models. It does **not** train models, download
 training packages, or automatically promote adapters.
 
 ## Record with consent
 
 In a space, run `/training on` before chatting. Recording is off by default,
 per space, and always disabled in incognito. `/training off` stops recording.
-Calls go to the device-local `traces/` directory beside `nexus.db`: requests,
+Calls go to the device-local `traces/` directory beside `dugix.db`: requests,
 responses, tool definitions, full and model-visible tool outputs, and labels.
 `/retry` labels the replaced turn rejected and records its replacement normally.
 
@@ -18,7 +18,7 @@ the output before moving it off the device. Redaction is not a privacy guarantee
 ## Export offline
 
 ```sh
-nexus train export --format chat-jsonl --filter success \
+dugix train export --format chat-jsonl --filter success \
   --models 'local:*,distillable' --since 2026-10-01 \
   --space default --evals ./evals --out ./data --split
 ```
@@ -100,7 +100,7 @@ The unsplit `chat-jsonl.jsonl` is still written. Split is not supported for the
 other formats. Inspect for overlapping conversation history across the split;
 this mechanical split is not an independent benchmark.
 
-## Train outside Nexus
+## Train outside Dugix
 
 Install `mlx-lm` in a separate environment on a supported Apple Silicon machine.
 Use a base model whose tokenizer/chat template supports the exported tool-call
@@ -114,12 +114,12 @@ mlx_lm.lora --model mlx-community/YOUR-BASE-MODEL \
 
 `--data` points to the directory containing `train.jsonl` and `valid.jsonl`,
 not the unsplit file. Training parameters, GPU memory budgets and evaluation
-frequency belong to the external trainer, not Nexus. For Unsloth or axolotl,
+frequency belong to the external trainer, not Dugix. For Unsloth or axolotl,
 configure its chat/tools template and dataset loader against `chat-jsonl.jsonl`.
 
 Optionally run the same external command from an opt-in phase-13 agent job:
 use a disposable training workspace, set the job's working directory there,
-and explicitly approve the shell command under your normal agent rules. Nexus
+and explicitly approve the shell command under your normal agent rules. Dugix
 does not provision the training environment or schedule Loop-4 automation.
 
 ## Serve and compare
@@ -136,7 +136,7 @@ ADAPTER /absolute/path/to/compatible/adapter
 
 Create a distinct model name with `ollama create notes-tuned -f Modelfile`,
 start the chosen runtime, and select `/local mlx-serve` or `/local ollama` in
-Nexus. Refresh `/model`; the server's catalog must advertise a distinct tuned
+Dugix. Refresh `/model`; the server's catalog must advertise a distinct tuned
 model ID so the base and tuned model can both be selected. Follow the serving
 runtime's adapter/fusion instructions; an MLX adapter is not automatically
 portable to Ollama.
@@ -144,8 +144,8 @@ portable to Ollama.
 Run the same held-out tasks against both advertised local model IDs:
 
 ```sh
-nexus eval ./evals --model local:BASE-ID --json > base-eval.json
-nexus eval ./evals --model local:TUNED-ID --json > tuned-eval.json
+dugix eval ./evals --model local:BASE-ID --json > base-eval.json
+dugix eval ./evals --model local:TUNED-ID --json > tuned-eval.json
 ```
 
 Compare task pass rates, invalid calls, token use and cost before choosing the

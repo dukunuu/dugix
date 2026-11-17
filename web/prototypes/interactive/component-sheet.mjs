@@ -1,4 +1,4 @@
-// Component sheet: one realistic nexus-ui program per component family, in
+// Component sheet: one realistic dugix-ui program per component family, in
 // the chosen "Chart" direction. The Rust exporter renders every program with
 // the real renderer (crates/tui/src/interactive/terminal_library_tests.rs).
 // Generate: node component-sheet.mjs --export
@@ -86,7 +86,7 @@ const S = {
   gauge: ['Gauge', 'Data', panel('Storage', 'Gauge("Disk used", 0.72, 1, "warning")')],
   meter: ['Meter', 'Data', panel('Laptop', 'Meter("Battery", 0.84, 1, "success"), Meter("Storage", 0.91, 1, "warning")')],
   heatmap: ['Heatmap', 'Data', panel('Deploys by hour', 'Heatmap([[0, 2, 5, 3, 1, 0, 0], [1, 4, 8, 6, 2, 0, 1], [0, 3, 7, 9, 4, 1, 0]], ["Week 1", "Week 2", "Week 3"])')],
-  tabs: ['Tabs', 'Flow', panel('nexus-api', 'Tabs([Tab("Overview", [Kv([["Owner", "platform"], ["Language", "Rust"], ["Uptime", "99.98%"]])]), Tab("Deploys", [Text("3 this week, last one 2 h ago.")]), Tab("Settings", [Toggle($autoscale, "Autoscale")])])', { autoscale: true })],
+  tabs: ['Tabs', 'Flow', panel('dugix-api', 'Tabs([Tab("Overview", [Kv([["Owner", "platform"], ["Language", "Rust"], ["Uptime", "99.98%"]])]), Tab("Deploys", [Text("3 this week, last one 2 h ago.")]), Tab("Settings", [Toggle($autoscale, "Autoscale")])])', { autoscale: true })],
   accordion: ['Accordion', 'Flow', panel('FAQ', 'Accordion([Section("Why is my build slow?", [Text("Most time goes to linking. Try the mold linker.")], true), Section("How do I cache dependencies?", [Text("Use sccache with a shared bucket.")])])')],
   form: ['Form', 'Flow', panel('Team', 'Form("Invite a teammate", [Input($email, "Email", {required:true}, "name@company.com"), Select($role, "Role", ["Viewer", "Editor", "Admin"])], "Send invite", @ToAssistant("Send the invite"))', { email: 'ana@company.com', role: 'Editor' })],
   steps: ['Steps', 'Flow', panel('Pipeline', 'Steps([Step("Build", "2m 04s", "done"), Step("Test", "412 passed", "done"), Step("Deploy", "2 of 3 regions", "current"), Step("Verify", null, "todo")])')],

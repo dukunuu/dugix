@@ -9,7 +9,7 @@ use ratatui::widgets::Paragraph;
 
 use crate::app_view::AppView;
 use crate::theme::Theme;
-use nexus_core::app::{COMMANDS, Popup};
+use dugix_core::app::{COMMANDS, Popup};
 
 use super::chrome::{self, PopupFrame, hint, keys};
 

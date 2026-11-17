@@ -273,7 +273,7 @@ impl App {
         {
             history.push(ChatMessage::text(
                 "system",
-                format!("nexus-ui errors: {}", serde_json::Value::Array(ui_errors)),
+                format!("dugix-ui errors: {}", serde_json::Value::Array(ui_errors)),
             ));
         }
         self.mark_cache_breakpoints(&mut history);

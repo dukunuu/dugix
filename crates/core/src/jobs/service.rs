@@ -8,9 +8,9 @@ pub(crate) use super::tree::{Tree, git};
 
 fn path(home: &Path, config: &Path) -> Result<PathBuf> {
     if cfg!(target_os = "macos") {
-        Ok(home.join("Library/LaunchAgents/chat.nexus.jobs.plist"))
+        Ok(home.join("Library/LaunchAgents/chat.dugix.jobs.plist"))
     } else if cfg!(target_os = "linux") {
-        Ok(config.join("systemd/user/nexus-jobs.service"))
+        Ok(config.join("systemd/user/dugix-jobs.service"))
     } else {
         bail!("jobs services are supported on macOS and Linux")
     }
@@ -26,7 +26,7 @@ fn contents(binary: &Path) -> String {
             .replace('"', "&quot;")
             .replace('\'', "&apos;");
         format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>\n<key>Label</key><string>chat.nexus.jobs</string>\n<key>ProgramArguments</key><array><string>{escaped}</string><string>jobs</string><string>daemon</string></array>\n<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><true/>\n</dict></plist>\n"
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>\n<key>Label</key><string>chat.dugix.jobs</string>\n<key>ProgramArguments</key><array><string>{escaped}</string><string>jobs</string><string>daemon</string></array>\n<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><true/>\n</dict></plist>\n"
         )
     } else {
         let escaped = binary
@@ -34,7 +34,7 @@ fn contents(binary: &Path) -> String {
             .replace('"', "\\\"")
             .replace('%', "%%");
         format!(
-            "[Unit]\nDescription=Nexus jobs daemon\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nExecStart=\"{escaped}\" jobs daemon\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
+            "[Unit]\nDescription=Dugix jobs daemon\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nExecStart=\"{escaped}\" jobs daemon\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
         )
     }
 }

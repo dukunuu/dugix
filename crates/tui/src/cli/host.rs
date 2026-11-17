@@ -1,12 +1,12 @@
-//! `nexus host` — the headless host daemon, tunnel and sleep guard.
+//! `dugix host` — the headless host daemon, tunnel and sleep guard.
 
 use std::io::{IsTerminal as _, Write as _};
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result, bail};
 
-use nexus_core::config;
-use nexus_core::host::{HostConfig, HostServer};
+use dugix_core::config;
+use dugix_core::host::{HostConfig, HostServer};
 
 use super::HostOptions;
 use super::out;
@@ -27,17 +27,17 @@ enum HostTunnel {
     },
 }
 
-async fn start_host_tunnel(spec: &HostTunnel) -> Result<nexus_core::host::process::Tunnel> {
+async fn start_host_tunnel(spec: &HostTunnel) -> Result<dugix_core::host::process::Tunnel> {
     match spec {
-        HostTunnel::Quick { port } => nexus_core::host::process::Tunnel::quick(*port).await,
+        HostTunnel::Quick { port } => dugix_core::host::process::Tunnel::quick(*port).await,
         HostTunnel::Named {
             config_path,
             tunnel_id,
-        } => nexus_core::host::process::Tunnel::named(config_path, tunnel_id),
+        } => dugix_core::host::process::Tunnel::named(config_path, tunnel_id),
     }
 }
 
-async fn wait_host_tunnel(tunnel: &mut Option<nexus_core::host::process::Tunnel>) {
+async fn wait_host_tunnel(tunnel: &mut Option<dugix_core::host::process::Tunnel>) {
     if let Some(tunnel) = tunnel.as_mut() {
         let _ = tunnel.wait().await;
     }
@@ -53,13 +53,13 @@ pub(super) async fn host(options: HostOptions) -> Result<()> {
         service_action,
     } = options;
     if matches!(service_action, Some(HostServiceAction::Install)) {
-        let path = nexus_core::host::process::install_service(port, quick_tunnel)?;
+        let path = dugix_core::host::process::install_service(port, quick_tunnel)?;
         out(format!("installed host service: {}", path.display()));
         print_service_activation_hint();
         return Ok(());
     }
     if matches!(service_action, Some(HostServiceAction::Uninstall)) {
-        let removed = nexus_core::host::process::uninstall_service()?;
+        let removed = dugix_core::host::process::uninstall_service()?;
         out(if removed {
             "removed host service"
         } else {
@@ -83,10 +83,10 @@ pub(super) async fn host(options: HostOptions) -> Result<()> {
     // Provider loading must scaffold the credential template before token creation creates the config.
     let saved = config::load_all_providers()?;
     let token = config::ensure_host_token()?;
-    let mut app = nexus_core::boot(saved).await?;
+    let mut app = dugix_core::boot(saved).await?;
     app.refresh_codex_in_background();
     app.init();
-    let web_dir = std::env::var_os("NEXUS_WEB_DIR").map_or_else(
+    let web_dir = std::env::var_os("DUGIX_WEB_DIR").map_or_else(
         || std::path::PathBuf::from("web/dist"),
         std::path::PathBuf::from,
     );
@@ -103,7 +103,7 @@ pub(super) async fn host(options: HostOptions) -> Result<()> {
             tunnel_id: named.tunnel_id.clone(),
         })
     } else if quick_tunnel {
-        nexus_core::host::process::require_cloudflared()?;
+        dugix_core::host::process::require_cloudflared()?;
         Some(HostTunnel::Quick {
             port: server.local_addr().port(),
         })
@@ -126,7 +126,7 @@ pub(super) async fn host(options: HostOptions) -> Result<()> {
         // Browser navigation needs a query token; `/v1/*` still requires the Authorization header.
         server.set_public_base(Some(base.clone())).await?;
         out(format!("public host: {base}"));
-        let healthy = nexus_core::host::process::health_check(base).await;
+        let healthy = dugix_core::host::process::health_check(base).await;
         out(if healthy {
             "public host health check: reachable"
         } else {
@@ -136,7 +136,7 @@ pub(super) async fn host(options: HostOptions) -> Result<()> {
         out("tunnel started, but no public URL was discovered");
     }
     let enrollment_host = public_host.as_deref().unwrap_or(&local_url);
-    let enrollment = format!("nexus://host={enrollment_host}&token={token}");
+    let enrollment = format!("dugix://host={enrollment_host}&token={token}");
     out(format!("host listening at {local_url}"));
     // Detached studio/service logs must not contain the bearer capability.
     if std::io::stdout().is_terminal() {
@@ -156,7 +156,7 @@ pub(super) async fn host(options: HostOptions) -> Result<()> {
     let mut sleep_guard = if no_sleep_guard {
         None
     } else {
-        match nexus_core::host::process::sleep_guard() {
+        match dugix_core::host::process::sleep_guard() {
             Ok(guard) => guard,
             Err(error) => {
                 out(format!("sleep guard unavailable: {error:#}"));
@@ -164,7 +164,7 @@ pub(super) async fn host(options: HostOptions) -> Result<()> {
             }
         }
     };
-    if nexus_core::host::process::on_battery() == Some(true) {
+    if dugix_core::host::process::on_battery() == Some(true) {
         out("warning: hosting while on battery power");
     }
     let mut restart_delay = 1u64;
@@ -224,15 +224,15 @@ pub(super) async fn host(options: HostOptions) -> Result<()> {
 }
 
 fn print_service_activation_hint() {
-    match nexus_core::host::process::service_manager() {
-        Some(nexus_core::host::process::ServiceManager::Systemd) => {
+    match dugix_core::host::process::service_manager() {
+        Some(dugix_core::host::process::ServiceManager::Systemd) => {
             out(
-                "activate with: systemctl --user daemon-reload && systemctl --user enable --now nexus-host.service",
+                "activate with: systemctl --user daemon-reload && systemctl --user enable --now dugix-host.service",
             );
         }
-        Some(nexus_core::host::process::ServiceManager::Launchd) => {
+        Some(dugix_core::host::process::ServiceManager::Launchd) => {
             out(
-                "activate with: launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/chat.nexus.host.plist",
+                "activate with: launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/chat.dugix.host.plist",
             );
         }
         None => {}
@@ -240,12 +240,12 @@ fn print_service_activation_hint() {
 }
 
 fn print_service_deactivation_hint() {
-    match nexus_core::host::process::service_manager() {
-        Some(nexus_core::host::process::ServiceManager::Systemd) => {
-            out("if running, stop with: systemctl --user disable --now nexus-host.service");
+    match dugix_core::host::process::service_manager() {
+        Some(dugix_core::host::process::ServiceManager::Systemd) => {
+            out("if running, stop with: systemctl --user disable --now dugix-host.service");
         }
-        Some(nexus_core::host::process::ServiceManager::Launchd) => {
-            out("if running, stop with: launchctl bootout gui/$(id -u)/chat.nexus.host");
+        Some(dugix_core::host::process::ServiceManager::Launchd) => {
+            out("if running, stop with: launchctl bootout gui/$(id -u)/chat.dugix.host");
         }
         None => {}
     }
@@ -254,15 +254,15 @@ fn print_service_deactivation_hint() {
 fn reuse_named_tunnel(
     saved: &config::NamedTunnelConfig,
     port: u16,
-) -> Result<nexus_core::host::cloudflare::SetupResult> {
-    nexus_core::host::cloudflare::write_named_config(
+) -> Result<dugix_core::host::cloudflare::SetupResult> {
+    dugix_core::host::cloudflare::write_named_config(
         &saved.config_path,
         &saved.credentials_path,
         &saved.tunnel_id,
         &saved.hostname,
         port,
     )?;
-    Ok(nexus_core::host::cloudflare::SetupResult {
+    Ok(dugix_core::host::cloudflare::SetupResult {
         tunnel_id: saved.tunnel_id.clone(),
         hostname: saved.hostname.clone(),
         credentials_path: saved.credentials_path.clone(),
@@ -270,8 +270,8 @@ fn reuse_named_tunnel(
     })
 }
 
-async fn setup_named_tunnel(port: u16) -> Result<nexus_core::host::cloudflare::SetupResult> {
-    use nexus_core::host::cloudflare::{
+async fn setup_named_tunnel(port: u16) -> Result<dugix_core::host::cloudflare::SetupResult> {
+    use dugix_core::host::cloudflare::{
         SetupOptions, list_accounts, list_zones, provision_named_tunnel,
     };
     if let Some(saved) = config::load_named_tunnel()?
@@ -322,9 +322,9 @@ async fn setup_named_tunnel(port: u16) -> Result<nexus_core::host::cloudflare::S
     };
     let hostname = env_id("CF_HOSTNAME").unwrap_or_else(|| {
         let suffix = zone_name.as_deref().unwrap_or("example.com");
-        prompt("hostname", &format!("nexus.{suffix}"))
+        prompt("hostname", &format!("dugix.{suffix}"))
     });
-    let tunnel_name = env_id("CF_TUNNEL_NAME").unwrap_or_else(|| prompt("tunnel name", "nexus"));
+    let tunnel_name = env_id("CF_TUNNEL_NAME").unwrap_or_else(|| prompt("tunnel name", "dugix"));
     out(format!("creating Cloudflare tunnel {tunnel_name:?}…"));
     let result = provision_named_tunnel(&SetupOptions {
         account_id,

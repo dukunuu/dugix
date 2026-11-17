@@ -9,7 +9,7 @@ const DOTX: &[u8] = include_bytes!("../../../tests/fixtures/templates/brand.dotx
 struct Temp(PathBuf);
 impl Temp {
     fn new() -> Self {
-        Self(std::env::temp_dir().join(format!("nexus-template-{}", uuid::Uuid::new_v4())))
+        Self(std::env::temp_dir().join(format!("dugix-template-{}", uuid::Uuid::new_v4())))
     }
 }
 impl Drop for Temp {
@@ -122,7 +122,7 @@ fn potx_extracts_brand_styles_slots_art_and_exports_real_placeholders() {
     let sheet = contact_sheet(&temp.0, &imported).unwrap().unwrap();
     let png = image::open(&sheet).unwrap();
     assert!(png.width() > 100 && png.height() > 100);
-    if let Ok(directory) = std::env::var("NEXUS_RENDER_OUT") {
+    if let Ok(directory) = std::env::var("DUGIX_RENDER_OUT") {
         std::fs::create_dir_all(&directory).unwrap();
         std::fs::copy(&sheet, Path::new(&directory).join("p4-contact.png")).unwrap();
     }
@@ -432,7 +432,7 @@ fn template_section_ids_are_not_remapped_with_generated_hyperlinks() {
     let parts = package::open(&output.bytes).unwrap();
     let source = package::text(&parts, "word/document.xml").unwrap();
     assert!(source.contains("w:headerReference w:type=\"default\" r:id=\"rId1\""));
-    assert!(source.contains("w:hyperlink r:id=\"nexusrId1\""));
+    assert!(source.contains("w:hyperlink r:id=\"dugixrId1\""));
     relationships_valid(&parts);
 }
 

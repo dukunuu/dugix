@@ -167,7 +167,7 @@ fn controls_or_actions_are_not_static_and_legacy_plain_text_is_readable() {
         );
     }
     let example = LAYOUTS
-        .split("```nexus-ui\n")
+        .split("```dugix-ui\n")
         .nth(1)
         .unwrap()
         .split("\n```")

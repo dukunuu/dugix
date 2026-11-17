@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn design_cli_import_list_and_plain_export_switches() {
-    let temp = std::env::temp_dir().join(format!("nexus-cli-template-{}", uuid::Uuid::new_v4()));
+    let temp = std::env::temp_dir().join(format!("dugix-cli-template-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp).unwrap();
     std::fs::write(
         temp.join("brand.dotx"),
@@ -16,19 +16,19 @@ fn design_cli_import_list_and_plain_export_switches() {
         vec!["import", "brand.dotx", "--name", "Corporate"],
         vec!["list"],
     ] {
-        let cli = Cli::try_parse_from(["nexus", "design"].into_iter().chain(args)).unwrap();
+        let cli = Cli::try_parse_from(["dugix", "design"].into_iter().chain(args)).unwrap();
         let Some(Command::Design { cmd }) = cli.command else {
             panic!("design command");
         };
         design_files(cmd, &temp).unwrap();
     }
-    let design = nexus_core::design::load(&temp, "corporate").unwrap();
+    let design = dugix_core::design::load(&temp, "corporate").unwrap();
     assert_eq!(design.name, "Corporate");
     assert_eq!(design.source.unwrap().template, "templates/corporate.dotx");
     for (kind, format) in [("deck", "pptx"), ("doc", "docx")] {
         assert!(
             Cli::try_parse_from([
-                "nexus",
+                "dugix",
                 kind,
                 "export",
                 "file",
@@ -41,7 +41,7 @@ fn design_cli_import_list_and_plain_export_switches() {
         );
         assert!(
             Cli::try_parse_from([
-                "nexus",
+                "dugix",
                 kind,
                 "export",
                 "file",

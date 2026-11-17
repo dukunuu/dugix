@@ -4,7 +4,7 @@
 // text font: they rasterize them to fill each cell exactly, so rules join,
 // bars sit on the baseline and half blocks split the cell evenly. Drawing
 // them with fillText (as the first preview did) leaves gaps, misaligned
-// partial bars and faint dots that Nexus never shows. This painter keeps text
+// partial bars and faint dots that Dugix never shows. This painter keeps text
 // in a monospace font on an integer pixel grid and draws those ranges as
 // geometry. Nothing is redesigned: every cell's symbol and colors come from
 // the native export.

@@ -1,25 +1,25 @@
-//! `nexus ask` — one-shot headless turns.
+//! `dugix ask` — one-shot headless turns.
 
 use std::io::Read as _;
 
 use anyhow::{Context as _, Result, bail};
 
-use nexus_core::app;
-use nexus_core::config;
-use nexus_core::db;
-use nexus_core::space;
+use dugix_core::app;
+use dugix_core::config;
+use dugix_core::db;
+use dugix_core::space;
 
 use super::{out, short_id};
 
 pub(super) async fn build_app(model: Option<&str>, space_name: Option<&str>) -> Result<app::App> {
     let saved = config::load_all_providers()?;
-    let mut app = nexus_core::boot(saved).await?;
+    let mut app = dugix_core::boot(saved).await?;
     // Headless requests must wait for background connectors before building their tool list.
     app.connectors
         .wait_ready(std::time::Duration::from_secs(12))
         .await;
     if let Some(name) = space_name {
-        app.execute(nexus_core::app::AppCommand::SwitchSpace {
+        app.execute(dugix_core::app::AppCommand::SwitchSpace {
             name: name.to_string(),
         })?;
     }

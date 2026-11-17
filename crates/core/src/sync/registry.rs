@@ -517,11 +517,11 @@ pub(super) fn valid_component(name: &str) -> bool {
 }
 
 pub fn device_name() -> String {
-    if let Ok(n) = std::env::var("NEXUS_DEVICE_NAME")
+    if let Ok(n) = std::env::var("DUGIX_DEVICE_NAME")
         && !n.trim().is_empty()
     {
         return n;
     }
     std::fs::read_to_string("/etc/hostname")
-        .map_or_else(|_| "nexus-device".to_string(), |s| s.trim().to_string())
+        .map_or_else(|_| "dugix-device".to_string(), |s| s.trim().to_string())
 }

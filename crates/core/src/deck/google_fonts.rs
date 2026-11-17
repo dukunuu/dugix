@@ -47,7 +47,7 @@ impl Http {
     pub fn new() -> Result<Self> {
         Ok(Self(
             reqwest::Client::builder()
-                .user_agent("nexus-studio")
+                .user_agent("dugix-studio")
                 .timeout(Duration::from_secs(10))
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())

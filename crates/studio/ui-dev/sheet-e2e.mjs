@@ -161,7 +161,7 @@ const tests = {
     assert.ok((await A(page, 'A12').getAttribute('class')).split(' ').includes('i'), 'italic');
     assert.equal(await addr(page), 'A1');
     assert.equal(await barText(page), 'Category');
-    assert.equal(await page.title(), 'Q3 budget — nexus studio');
+    assert.equal(await page.title(), 'Q3 budget — dugix studio');
     assert.equal(await page.locator('#sheet-app .sg-title').inputValue(), 'Q3 budget');
     // Column letters and row numbers, widths from the sheet (A is 150 wide), merged cells as one.
     assert.equal(await page.locator('#sheet-app .sg-ch').first().textContent(), 'A');
@@ -480,7 +480,7 @@ const tests = {
     const big = await A(page, 'B2').boundingBox();
     assert.ok(Math.abs(big.width / before.width - 1.2) < .02 && Math.abs(big.height / before.height - 1.2) < .06, 'cells grow with the zoom');
     assert.equal(await A(page, 'B2').evaluate(n => getComputedStyle(n).fontSize), '15.6px', 'text grows with them');
-    assert.equal(await page.evaluate(() => localStorage.getItem('nexus-sheet-zoom')), '1.2', 'the zoom is remembered');
+    assert.equal(await page.evaluate(() => localStorage.getItem('dugix-sheet-zoom')), '1.2', 'the zoom is remembered');
     // A dragged border stores the unzoomed width.
     await click(page, 'C3');
     assert.equal(await page.locator('#sheet-app .sg-addr').inputValue(), 'C3');
@@ -490,7 +490,7 @@ const tests = {
     await page.mouse.move(c.x + c.width + 59, c.y + c.height / 2, { steps: 4 }); await page.mouse.up(); await settle(page);
     assert.equal((await lastApply(page)).ops[0].width, start + 50, '60 screen pixels at 120% are 50 sheet pixels');
     await page.keyboard.press(`${MOD}+-`); await settle(page);
-    assert.equal(await page.evaluate(() => localStorage.getItem('nexus-sheet-zoom')), '1.1');
+    assert.equal(await page.evaluate(() => localStorage.getItem('dugix-sheet-zoom')), '1.1');
     await page.keyboard.press(`${MOD}+0`); await settle(page);
     assert.equal(Math.round((await A(page, 'B2').boundingBox()).width), Math.round(before.width), 'Mod+0 goes back to 100%');
     // A pinch is many small control-wheels; they add up.
@@ -499,11 +499,11 @@ const tests = {
     await page.keyboard.down('Control');
     for (let i = 0; i < 20; i++) await page.mouse.wheel(0, -1);
     await page.keyboard.up('Control'); await settle(page);
-    const pinched = Number(await page.evaluate(() => localStorage.getItem('nexus-sheet-zoom')));
+    const pinched = Number(await page.evaluate(() => localStorage.getItem('dugix-sheet-zoom')));
     assert.ok(pinched > 1.15 && pinched < 1.3, `twenty small pinch steps add up (${pinched})`);
     const after = await A(page, 'D6').boundingBox();
     assert.ok(spot.x >= after.x && spot.x <= after.x + after.width && spot.y >= after.y && spot.y <= after.y + after.height, 'the cell under the pointer stays under it');
-    await page.evaluate(() => localStorage.removeItem('nexus-sheet-zoom'));
+    await page.evaluate(() => localStorage.removeItem('dugix-sheet-zoom'));
     await page.close();
   },
   async resizing() {
@@ -789,7 +789,7 @@ const tests = {
     assert.ok((await page.locator('#sheet-app .card.active').textContent()).includes('Contractors jumped'));
     // Reply.
     await page.locator('#sheet-app .reply textarea').fill('A one-off, yes.');
-    await page.getByRole('button', { name: 'Send to nexus' }).click(); await settle(page);
+    await page.getByRole('button', { name: 'Send to dugix' }).click(); await settle(page);
     assert.deepEqual(await page.evaluate(() => window.__mock.sent.at(-1)), { type: 'Reply', text: 'A one-off, yes.', thread: 'th1' });
     // A new comment on the selection: the composer, then SheetCommentCreate with send on.
     await click(page, 'B5');
@@ -824,14 +824,14 @@ const tests = {
   },
   async focusAndExternalEdits() {
     const page = await open('dark');
-    // Selecting sends the focus to nexus, debounced.
+    // Selecting sends the focus to dugix, debounced.
     await click(page, 'C4');
     await click(page, 'D5');
     await page.waitForTimeout(450);
     const focus = await page.evaluate(() => window.__mock.sent.filter(s => s.type === 'Focus'));
     assert.deepEqual(focus.at(-1), { type: 'Focus', tab: 'Budget', range: 'D5' });
     assert.ok(focus.length <= 2, 'rapid moves are one message');
-    // A focus from nexus scrolls to the range and outlines it.
+    // A focus from dugix scrolls to the range and outlines it.
     await page.evaluate(() => window.__mock.remoteFocus('Budget', 'D8:E9'));
     await page.locator('#sheet-app .sg-remote').waitFor();
     const box = await page.locator('#sheet-app .sg-remote').boundingBox(), cellBox = await A(page, 'D8').boundingBox();
@@ -968,11 +968,11 @@ const tests = {
     await page.locator('#sheet-app .sg-title').fill('Q4 budget');
     await page.keyboard.press('Enter'); await settle(page);
     assert.deepEqual(await lastApply(page), { command: 'SheetApply', ops: [{ op: 'set_title', title: 'Q4 budget' }] });
-    assert.equal(await page.title(), 'Q4 budget — nexus studio');
+    assert.equal(await page.title(), 'Q4 budget — dugix studio');
     await page.close();
     // The library lists sheets and starts new ones.
     const now = new Date().toISOString();
-    const items = [{ kind: 'sheet', relative: 'sheets/q3-budget.sheet.json', title: 'Q3 budget', modified: now, count: 57, design: 'Nexus', thumb: null, current: true }, { kind: 'doc', relative: 'docs/notes.doc.json', title: 'Notes', modified: now, count: 3, design: 'Nexus', thumb: null, current: false }];
+    const items = [{ kind: 'sheet', relative: 'sheets/q3-budget.sheet.json', title: 'Q3 budget', modified: now, count: 57, design: 'Dugix', thumb: null, current: true }, { kind: 'doc', relative: 'docs/notes.doc.json', title: 'Notes', modified: now, count: 3, design: 'Dugix', thumb: null, current: false }];
     const lib = await open('dark', undefined, { scripts: [`window.__libraryItems = ${JSON.stringify(items)}; window.__libraryCurrent = 'sheets/q3-budget.sheet.json';`, libraryMock] });
     await lib.locator('#sheet-app .crumb-link').click();
     await lib.locator('#library .lib-card').first().waitFor();

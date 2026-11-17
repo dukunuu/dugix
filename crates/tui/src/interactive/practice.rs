@@ -5,7 +5,7 @@ use super::{Control, Entry, branch_regions, control_style, display, glyph, wrapp
 use crate::theme::Theme;
 use crate::vim::Outcome;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use nexus_core::interactive::{EditorKey, Node, Question, Session, line_col};
+use dugix_core::interactive::{EditorKey, Node, Question, Session, line_col};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Modifier, Style};
@@ -334,7 +334,7 @@ fn editor(
     buffer.set_style(body, Style::default().bg(theme.raised));
     let gutter = gutter(&text, state.top, rows);
     let width = usize::from(area.width.saturating_sub(gutter));
-    let (line, column) = nexus_core::interactive::line_col(&text, state.cursor);
+    let (line, column) = dugix_core::interactive::line_col(&text, state.cursor);
     let caret_x = text
         .split('\n')
         .nth(line)

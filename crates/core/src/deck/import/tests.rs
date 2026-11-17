@@ -9,7 +9,7 @@ struct Temp(PathBuf);
 
 impl Temp {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!("nexus-import-{}", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("dugix-import-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&path).unwrap();
         Self(path.canonicalize().unwrap())
     }

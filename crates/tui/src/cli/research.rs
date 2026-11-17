@@ -1,10 +1,10 @@
-//! `nexus chat`, `nexus research` and `nexus jobs`.
+//! `dugix chat`, `dugix research` and `dugix jobs`.
 
 use anyhow::{Context as _, Result, bail};
 
-use nexus_core::app;
-use nexus_core::db;
-use nexus_core::space;
+use dugix_core::app;
+use dugix_core::db;
+use dugix_core::space;
 
 use super::ask::build_app;
 use super::{JobsCmd, out, short_id};
@@ -61,7 +61,7 @@ pub(super) async fn research(
 }
 
 pub(super) async fn jobs(cmd: JobsCmd) -> Result<()> {
-    use nexus_core::jobs;
+    use dugix_core::jobs;
 
     match cmd {
         JobsCmd::InstallService => {
@@ -74,13 +74,13 @@ pub(super) async fn jobs(cmd: JobsCmd) -> Result<()> {
                 ));
             } else {
                 out(
-                    "activate: systemctl --user daemon-reload && systemctl --user enable --now nexus-jobs.service",
+                    "activate: systemctl --user daemon-reload && systemctl --user enable --now dugix-jobs.service",
                 );
             }
         }
         JobsCmd::UninstallService => {
             out(
-                "stop the loaded service first: launchctl bootout gui/$(id -u)/chat.nexus.jobs (macOS), or systemctl --user disable --now nexus-jobs.service (Linux)",
+                "stop the loaded service first: launchctl bootout gui/$(id -u)/chat.dugix.jobs (macOS), or systemctl --user disable --now dugix-jobs.service (Linux)",
             );
             out(format!(
                 "service file removed: {}",

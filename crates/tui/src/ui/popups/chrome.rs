@@ -44,7 +44,7 @@ pub const MIN_POPUP_H: u16 = 10;
 /// The rect popup `id` occupies on `screen`: its persisted size, else the
 /// `default` percentages. Pure, so hit-testing can ask without drawing.
 pub fn popup_rect(app: &AppView, screen: Rect, id: &str, default: (u16, u16)) -> Rect {
-    let custom = nexus_core::app::popup_size(&app.settings.popup_sizes, id);
+    let custom = dugix_core::app::popup_size(&app.settings.popup_sizes, id);
     let (pct_w, pct_h) = custom.unwrap_or(default);
     let rect = crate::ui::centered(screen, pct_w, pct_h);
     if custom.is_none() {

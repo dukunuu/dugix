@@ -4,7 +4,7 @@ use ratatui::style::Style;
 use ratatui::widgets::Paragraph;
 
 use crate::app_view::AppView;
-use nexus_core::app::Popup;
+use dugix_core::app::Popup;
 
 use super::chrome::{self, PopupFrame, hint, keys};
 

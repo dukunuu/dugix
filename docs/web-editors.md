@@ -4,7 +4,7 @@ Status: design, not yet built.
 
 ## Goal
 
-Two editors in the web UI (`web/`, Solid), both backed by `nexus host` and
+Two editors in the web UI (`web/`, Solid), both backed by `dugix host` and
 both with model suggestions you accept or reject:
 
 - **Decks**: create a slide deck from a prompt, an outline or a document;
@@ -28,7 +28,7 @@ and deployments must not turn into remote-access tools.
 |---|---|---|
 | Host auth | one shared bearer token (`host/api.rs` `authorized`), constant-time compared | anyone holding it has full control; it can't be scoped, expired per device or revoked per device |
 | CORS | `Access-Control-Allow-Origin: *` | any page in the browser can call the host if it has the token |
-| Remote access | `nexus host --tunnel` (quick or named Cloudflare tunnel) | the token is the only barrier on the public internet |
+| Remote access | `dugix host --tunnel` (quick or named Cloudflare tunnel) | the token is the only barrier on the public internet |
 | Model web apps | `app` tool, served by `appserver.rs` under `/apps/<uuid>/`; the UUID is the capability | apps must never gain host control |
 | Slides | none in core; `.pptx` text extraction only (`extract.rs`); decks come from skills or web apps | no editing, no suggestions |
 | Docs | Markdown files in spaces, rendered read-only | no editing UI, no suggestions |
@@ -40,15 +40,15 @@ the client.
 
 ### Keys
 
-- **Host key.** On first run `nexus host` creates an Ed25519 key pair in
+- **Host key.** On first run `dugix host` creates an Ed25519 key pair in
   the config dir (`host_ed25519`, mode 0600). Its fingerprint
-  (`SHA256:…`, like `ssh-keygen -l`) is shown by `nexus host`, in the TUI
+  (`SHA256:…`, like `ssh-keygen -l`) is shown by `dugix host`, in the TUI
   (`/devices`) and on the web pairing screen.
 - **Device keys.** Each browser generates a **non-extractable** ECDSA P-256
   key with WebCrypto (`extractable: false`, kept in IndexedDB), so script
   on the page can use the key but can never read it out. P-256 because
   WebCrypto Ed25519 support still varies across browsers. CLI clients
-  (`nexus remote`) use an ordinary SSH key file (`~/.ssh/id_ed25519`), so
+  (`dugix remote`) use an ordinary SSH key file (`~/.ssh/id_ed25519`), so
   an existing key and agent work unchanged.
 - **Optional hardware step-up: passkeys (WebAuthn).** A device can also
   register a passkey (Touch ID, Windows Hello, a security key). It is
@@ -76,7 +76,7 @@ entries; revocation takes effect on the next request.
 2. It sends a pairing request: public key + requested name + scopes. The
    host holds **one** pending request at a time; it expires after 2
    minutes, and requests are rate-limited per IP.
-3. On the host machine (TUI `/devices`, or `nexus devices pair`), the user
+3. On the host machine (TUI `/devices`, or `dugix devices pair`), the user
    sees the pending request's fingerprint and compares it with the one on
    the browser screen (the same check as SSH's "are you sure you want to
    continue connecting"), checks the host fingerprint shown in the browser
@@ -119,7 +119,7 @@ remote_control = "local"   # off | local | paired
 | Mode | Who can control the host | Editors over a tunnel |
 |---|---|---|
 | `off` | nobody over HTTP except read-only routes | read-only views |
-| `local` (default for `nexus host` without a tunnel) | loopback only | not reachable |
+| `local` (default for `dugix host` without a tunnel) | loopback only | not reachable |
 | `paired` | paired devices, by scope | full, by scope |
 
 `--tunnel` without `paired` forces read-only; enabling `paired` over a

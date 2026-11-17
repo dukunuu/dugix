@@ -3,11 +3,11 @@ use serde_json::json;
 
 #[test]
 fn animation_resources_and_single_transaction_undo() {
-    let root = std::env::temp_dir().join(format!("nexus-motion-{}", Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-motion-{}", Uuid::new_v4()));
     let mut backend = Backend::start(None, &root.join("files"), &root.join("data")).unwrap();
     for name in ["animations", "playback", "animate-panel"] {
         let (mime, bytes) = backend
-            .serve(&format!("nexus://localhost/{name}.js"))
+            .serve(&format!("dugix://localhost/{name}.js"))
             .unwrap();
         assert_eq!(mime, "text/javascript");
         assert!(!bytes.is_empty());
@@ -43,7 +43,7 @@ fn animation_resources_and_single_transaction_undo() {
 
 #[test]
 fn unparseable_animation_on_disk_is_dropped_with_a_one_time_notice() {
-    let root = std::env::temp_dir().join(format!("nexus-motion-{}", Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-motion-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).unwrap();
     let path = root.join("legacy.deck.json");
     fs::write(

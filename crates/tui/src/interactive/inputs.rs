@@ -5,7 +5,7 @@ use super::{components, safe};
 use crate::theme::Theme;
 use crate::vim::{Outcome, Vim};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use nexus_core::interactive::{Node, Session};
+use dugix_core::interactive::{Node, Session};
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},

@@ -13,7 +13,7 @@ use ratatui::text::Span;
 use ratatui::widgets::Block;
 
 use crate::app_view::AppView;
-use nexus_core::app::Popup;
+use dugix_core::app::Popup;
 
 mod cards;
 pub mod citations_style;
@@ -133,6 +133,7 @@ pub fn render(f: &mut Frame, app: &mut AppView) {
         Popup::Jobs => popups::jobs::render(f, app),
         Popup::Harness => popups::harness::render(f, app),
         Popup::Procs => popups::procs::render(f, app),
+        Popup::Fleet => popups::fleet::render(f, app),
         Popup::Login => popups::login::render(f, app),
         Popup::Local => popups::local::render(f, app),
         Popup::Help => popups::help::render(f, app),
@@ -179,11 +180,11 @@ pub fn dim(s: impl Into<String>, theme: &crate::theme::Theme) -> Span<'static> {
 }
 
 /// Map core's abstract spinner palette onto terminal colors.
-pub fn to_color(c: nexus_core::app::SpinnerColor) -> Color {
+pub fn to_color(c: dugix_core::app::SpinnerColor) -> Color {
     match c {
-        nexus_core::app::SpinnerColor::Green => Color::Green,
-        nexus_core::app::SpinnerColor::Cyan => Color::Cyan,
-        nexus_core::app::SpinnerColor::Magenta => Color::Magenta,
+        dugix_core::app::SpinnerColor::Green => Color::Green,
+        dugix_core::app::SpinnerColor::Cyan => Color::Cyan,
+        dugix_core::app::SpinnerColor::Magenta => Color::Magenta,
     }
 }
 
@@ -299,8 +300,8 @@ mod tests {
         assert_eq!(c.x, 3 + 15);
     }
 
-    fn message(role: &str, content: &str) -> nexus_core::db::Message {
-        nexus_core::db::Message {
+    fn message(role: &str, content: &str) -> dugix_core::db::Message {
+        dugix_core::db::Message {
             role: role.into(),
             content: content.into(),
             model: None,
@@ -316,11 +317,11 @@ mod tests {
 
     #[test]
     fn a_wide_screen_lays_the_conversation_out_in_the_auto_column() {
-        use nexus_core::app::App;
-        let root = std::env::temp_dir().join(format!("nexus-wide-{}", uuid::Uuid::new_v4()));
+        use dugix_core::app::App;
+        let root = std::env::temp_dir().join(format!("dugix-wide-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("spaces")).unwrap();
-        let db = nexus_core::db::Db::open_in_memory().unwrap();
-        let mut app = AppView::new(App::new(db, Some("k"), nexus_core::space::Space { root }));
+        let db = dugix_core::db::Db::open_in_memory().unwrap();
+        let mut app = AppView::new(App::new(db, Some("k"), dugix_core::space::Space { root }));
         app.messages
             .push(message("user", "How wide should this column be?"));
         app.messages.push(message(

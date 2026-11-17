@@ -1,4 +1,4 @@
-//! Wire types for the `nexus host` `HTTP`/`SSE` API: a serde mirror of domain
+//! Wire types for the `dugix host` `HTTP`/`SSE` API: a serde mirror of domain
 //! events with a stable `JSON` shape, converted in one direction only.
 
 use serde::{Deserialize, Serialize};

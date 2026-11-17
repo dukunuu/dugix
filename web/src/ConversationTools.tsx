@@ -1,9 +1,9 @@
 import { Show, createMemo, createSignal } from "solid-js";
 import type { Message } from "./types";
-import type { NexusStore } from "./state";
+import type { DugixStore } from "./state";
 
 /** Copy/export/context controls kept beside the transcript so they work on mobile too. */
-export function ConversationTools(props: { messages: Message[]; onExport?: () => void; store?: NexusStore; sessionId?: string | null }) {
+export function ConversationTools(props: { messages: Message[]; onExport?: () => void; store?: DugixStore; sessionId?: string | null }) {
   const [open, setOpen] = createSignal(false);
   const [error, setError] = createSignal("");
   const [context, setContext] = createSignal<{ system_tokens: number; memory_tokens: number; skills_tokens: number; conversation_tokens: number; limit: number | null; compacted: boolean }>();

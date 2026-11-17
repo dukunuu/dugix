@@ -2,7 +2,7 @@
 #![allow(unused_imports)]
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use nexus_core::app::Popup;
+use dugix_core::app::Popup;
 
 use super::tests::{render_to_string, test_app};
 
@@ -32,7 +32,7 @@ fn library_app() -> crate::app_view::AppView {
     for (name, title) in [("plan", "Quarterly Plan"), ("launch", "Launch Notes")] {
         std::fs::write(
             files.join(format!("decks/{name}.deck.json")),
-            serde_json::to_vec(&nexus_core::deck::Deck::titled(title)).unwrap(),
+            serde_json::to_vec(&dugix_core::deck::Deck::titled(title)).unwrap(),
         )
         .unwrap();
     }
@@ -50,8 +50,8 @@ fn spaces_follow_the_list_pattern() {
     assert!(screen.contains("⌕ Type to filter"), "{screen}");
     assert!(screen.contains("▸   Work"), "{screen}");
     for (mode, title) in [
-        (nexus_core::app::SpaceMode::Create, "New space"),
-        (nexus_core::app::SpaceMode::Rename, "Rename space"),
+        (dugix_core::app::SpaceMode::Create, "New space"),
+        (dugix_core::app::SpaceMode::Rename, "Rename space"),
     ] {
         app.space_mode = mode;
         app.space_edit = "Project".into();
@@ -66,7 +66,7 @@ fn spaces_follow_the_list_pattern() {
 #[test]
 fn skills_follow_the_list_pattern() {
     let mut app = test_app();
-    app.core.skills = vec![nexus_core::skills::Skill {
+    app.core.skills = vec![dugix_core::skills::Skill {
         name: "plan".into(),
         description: "Plan a project.".into(),
         dir: app.space.root.join("skills/plan"),
@@ -75,7 +75,7 @@ fn skills_follow_the_list_pattern() {
     assert_frame(&screen, "Skills", "1 skill");
     assert!(screen.contains("Plan a project."), "{screen}");
     assert!(screen.contains("⌕ Type to filter"), "{screen}");
-    app.skills_mode = nexus_core::app::SkillsMode::Install;
+    app.skills_mode = dugix_core::app::SkillsMode::Install;
     let screen = render_to_string(110, 30, |f| super::skills::render(f, &app));
     assert!(screen.contains("✎ owner/repo/path"), "{screen}");
     assert!(!screen.contains('▏'), "{screen}");
@@ -85,7 +85,7 @@ fn skills_follow_the_list_pattern() {
     assert!(screen.contains("✎ owner/repo/path▏"), "{screen}");
     assert!(screen.contains("Enter install · Esc cancel"), "{screen}");
     assert_key_spelling(&screen);
-    app.skills_mode = nexus_core::app::SkillsMode::ConfirmRemove;
+    app.skills_mode = dugix_core::app::SkillsMode::ConfirmRemove;
     let screen = render_to_string(110, 30, |f| super::skills::render(f, &app));
     assert!(screen.contains("╭ Remove skill? "), "{screen}");
     assert!(screen.contains("“plan” will be removed."), "{screen}");
@@ -104,9 +104,9 @@ fn apps_follow_the_list_pattern() {
     assert!(screen.contains("^E edit"), "{screen}");
     assert!(!screen.contains("^R rename"), "{screen}");
     for (mode, title, verb) in [
-        (nexus_core::app::AppsMode::EditFile, "Edit app file", "open"),
+        (dugix_core::app::AppsMode::EditFile, "Edit app file", "open"),
         (
-            nexus_core::app::AppsMode::RenamePanel,
+            dugix_core::app::AppsMode::RenamePanel,
             "Rename panel",
             "save",
         ),
@@ -122,7 +122,7 @@ fn apps_follow_the_list_pattern() {
         );
         assert_key_spelling(&screen);
     }
-    app.apps_mode = nexus_core::app::AppsMode::ConfirmDelete;
+    app.apps_mode = dugix_core::app::AppsMode::ConfirmDelete;
     let screen = render_to_string(110, 30, |f| super::apps::render(f, &app));
     assert!(screen.contains("╭ Delete app? "), "{screen}");
     assert!(
@@ -137,7 +137,7 @@ fn apps_follow_the_list_pattern() {
 #[test]
 fn files_follow_the_list_pattern() {
     let mut app = test_app();
-    app.core.caches.files = vec![nexus_core::db::FileRow {
+    app.core.caches.files = vec![dugix_core::db::FileRow {
         id: "file".into(),
         name: "report.txt".into(),
         hash: String::new(),
@@ -151,8 +151,8 @@ fn files_follow_the_list_pattern() {
     assert!(screen.contains("Files   Images   Scripts"), "{screen}");
     assert!(screen.contains("report.txt"), "{screen}");
     for (mode, title, verb) in [
-        (nexus_core::app::FilesMode::Add, "Import file", "import"),
-        (nexus_core::app::FilesMode::Rename, "Rename file", "save"),
+        (dugix_core::app::FilesMode::Add, "Import file", "import"),
+        (dugix_core::app::FilesMode::Rename, "Rename file", "save"),
     ] {
         app.files_mode = mode;
         app.files_edit = "report.txt".into();
@@ -165,7 +165,7 @@ fn files_follow_the_list_pattern() {
         );
         assert_key_spelling(&screen);
     }
-    app.files_mode = nexus_core::app::FilesMode::ConfirmDelete;
+    app.files_mode = dugix_core::app::FilesMode::ConfirmDelete;
     let screen = render_to_string(110, 30, |f| super::files::render(f, &app));
     assert!(screen.contains("╭ Delete file? "), "{screen}");
     assert!(screen.contains("“report.txt” will be removed."), "{screen}");
@@ -191,7 +191,7 @@ fn models_follow_the_list_pattern_with_one_frame() {
     let mut app = test_app();
     app.core.models = ["a/favorite", "b/available"]
         .into_iter()
-        .map(|id| nexus_core::provider::Model {
+        .map(|id| dugix_core::provider::Model {
             id: id.into(),
             name: id.into(),
             reasoning_efforts: Vec::new(),
@@ -199,7 +199,7 @@ fn models_follow_the_list_pattern_with_one_frame() {
             supports_images: false,
             supports_image_generation: false,
             supports_video_generation: false,
-            backend: nexus_core::provider::BackendTag::OpenRouter,
+            backend: dugix_core::provider::BackendTag::OpenRouter,
             pricing: None,
             aliases: Vec::new(),
         })
@@ -283,7 +283,7 @@ fn spaces_confirm_delete_uses_the_question_and_filter_escape_clears_first() {
     app.spaces_cache = vec![app.db.create_space("Work").unwrap()];
     app.popup = Popup::Space;
     super::space::handle_key(&mut app, ctrl('d')).unwrap();
-    assert!(app.space_mode == nexus_core::app::SpaceMode::ConfirmDelete);
+    assert!(app.space_mode == dugix_core::app::SpaceMode::ConfirmDelete);
     let screen = render_to_string(110, 30, |f| super::space::render(f, &app));
     assert!(screen.contains("╭ Delete space? "), "{screen}");
     assert!(screen.contains("^D delete · Esc cancel"), "{screen}");
@@ -328,7 +328,7 @@ fn skills_filter_as_you_type_and_esc_clears_before_closing() {
     let mut app = test_app();
     app.core.skills = ["plan", "pdf", "deck"]
         .into_iter()
-        .map(|name| nexus_core::skills::Skill {
+        .map(|name| dugix_core::skills::Skill {
             name: name.into(),
             description: format!("About {name}."),
             dir: app.space.root.join("skills").join(name),
@@ -358,7 +358,7 @@ fn skills_filter_as_you_type_and_esc_clears_before_closing() {
         "{screen}"
     );
     press(&mut app, &Popup::Skills, ctrl('d'));
-    assert!(app.skills_mode == nexus_core::app::SkillsMode::Browse);
+    assert!(app.skills_mode == dugix_core::app::SkillsMode::Browse);
     press(&mut app, &Popup::Skills, KeyCode::Enter.into());
     assert_eq!(app.popup, Popup::Skills);
 
@@ -390,7 +390,7 @@ fn apps_filter_moves_only_among_matches() {
     assert!(screen.contains(" 2 of 3 ╮"), "{screen}");
     assert!(!screen.contains("dashboard"), "{screen}");
     press(&mut app, &Popup::Apps, ctrl('d'));
-    assert!(app.apps_mode == nexus_core::app::AppsMode::ConfirmDelete);
+    assert!(app.apps_mode == dugix_core::app::AppsMode::ConfirmDelete);
     let screen = render_to_string(110, 30, |f| super::apps::render(f, &app));
     assert!(
         screen.contains("App “notes”"),
@@ -404,7 +404,7 @@ fn files_filter_after_slash_finds_and_letters_filter() {
     let mut app = test_app();
     app.core.caches.files = ["report.txt", "notes/plan.md", "data.csv"]
         .into_iter()
-        .map(|name| nexus_core::db::FileRow {
+        .map(|name| dugix_core::db::FileRow {
             id: name.into(),
             name: name.into(),
             hash: String::new(),
@@ -429,9 +429,9 @@ fn files_filter_after_slash_finds_and_letters_filter() {
         "the tab strip sits above the field row: {screen}"
     );
     press(&mut app, &Popup::Files, KeyCode::Char('/').into());
-    assert!(app.files_mode == nexus_core::app::FilesMode::Pick);
+    assert!(app.files_mode == dugix_core::app::FilesMode::Pick);
     press(&mut app, &Popup::Files, KeyCode::Esc.into());
-    assert!(app.files_mode == nexus_core::app::FilesMode::Browse);
+    assert!(app.files_mode == dugix_core::app::FilesMode::Browse);
 
     type_text(&mut app, &Popup::Files, "notes/");
     assert_eq!(app.files_filter, "notes/", "once filtering, / is text");

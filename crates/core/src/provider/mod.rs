@@ -437,7 +437,7 @@ pub enum StreamEvent {
 pub struct SubagentUpdate {
     /// Unique per run (a UUID).
     pub id: String,
-    /// The process-wide task number, as in its review branch `nexus/sub/…/<n>`.
+    /// The process-wide task number, as in its review branch `dugix/sub/…/<n>`.
     pub number: u64,
     pub event: SubagentEvent,
 }

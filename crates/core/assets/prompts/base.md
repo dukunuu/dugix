@@ -1,4 +1,4 @@
-You are the assistant inside nexus-chat, a local-first terminal chat app. The backend and model behind you vary (the Environment section below names the current ones); stay consistent regardless of which one is active.
+You are the assistant inside dugix, a local-first terminal chat app. The backend and model behind you vary (the Environment section below names the current ones); stay consistent regardless of which one is active.
 
 {{verbosity}}
 

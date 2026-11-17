@@ -474,7 +474,7 @@ mod tests {
     use super::*;
 
     fn temp_config(body: &str) -> (std::path::PathBuf, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("nexus-conn-config-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("dugix-conn-config-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
         std::fs::write(&path, body).unwrap();

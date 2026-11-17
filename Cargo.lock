@@ -662,6 +662,12 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "cfg_aliases"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
+
+[[package]]
+name = "cfg_aliases"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
@@ -1338,6 +1344,112 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd1511a7b6a56299bd043a9c167a6d2bfb37bf84a6dfceaba651168adfb43c87"
 dependencies = [
  "dtoa",
+]
+
+[[package]]
+name = "dugix"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "chrono",
+ "clap",
+ "crossterm",
+ "dugix-core",
+ "futures-util",
+ "image",
+ "mermaid-rs-renderer",
+ "open",
+ "pulldown-cmark",
+ "qrcode",
+ "ratatui",
+ "ratatui-image",
+ "reqwest",
+ "resvg",
+ "serde",
+ "serde_json",
+ "textwrap",
+ "tokio",
+ "toml 1.1.2+spec-1.1.0",
+ "tui-markdown",
+ "tui-textarea-2",
+ "unicode-width",
+ "uuid",
+ "zip",
+]
+
+[[package]]
+name = "dugix-core"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "base64",
+ "chrono",
+ "csv",
+ "directories",
+ "futures-util",
+ "ignore",
+ "image",
+ "ironcalc",
+ "keyring",
+ "krilla",
+ "krilla-svg",
+ "libc",
+ "open",
+ "pdf-extract",
+ "png",
+ "portable-pty",
+ "pulldown-cmark",
+ "rand 0.10.3",
+ "reqwest",
+ "reqwest-eventsource",
+ "resvg",
+ "rfd",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "taffy",
+ "tokio",
+ "toml 1.1.2+spec-1.1.0",
+ "tree-sitter",
+ "tree-sitter-bash",
+ "tree-sitter-c",
+ "tree-sitter-cpp",
+ "tree-sitter-css",
+ "tree-sitter-go",
+ "tree-sitter-highlight",
+ "tree-sitter-html",
+ "tree-sitter-java",
+ "tree-sitter-javascript",
+ "tree-sitter-json",
+ "tree-sitter-md",
+ "tree-sitter-python",
+ "tree-sitter-ruby",
+ "tree-sitter-rust",
+ "tree-sitter-toml-ng",
+ "tree-sitter-typescript",
+ "tree-sitter-yaml",
+ "uuid",
+ "vt100",
+ "zip",
+]
+
+[[package]]
+name = "dugix-studio"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "dugix-core",
+ "image",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tao",
+ "tokio",
+ "uuid",
+ "wry",
 ]
 
 [[package]]
@@ -3157,107 +3269,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
-name = "nexus-chat"
-version = "1.0.0"
+name = "nix"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4"
 dependencies = [
- "anyhow",
- "arboard",
- "chrono",
- "clap",
- "crossterm",
- "futures-util",
- "image",
- "mermaid-rs-renderer",
- "nexus-chat-core",
- "open",
- "pulldown-cmark",
- "qrcode",
- "ratatui",
- "ratatui-image",
- "reqwest",
- "resvg",
- "serde",
- "serde_json",
- "textwrap",
- "tokio",
- "toml 1.1.2+spec-1.1.0",
- "tui-markdown",
- "tui-textarea-2",
- "unicode-width",
- "uuid",
- "zip",
-]
-
-[[package]]
-name = "nexus-chat-core"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "arboard",
- "base64",
- "chrono",
- "csv",
- "directories",
- "futures-util",
- "ignore",
- "image",
- "ironcalc",
- "keyring",
- "krilla",
- "krilla-svg",
+ "bitflags 2.13.0",
+ "cfg-if",
+ "cfg_aliases 0.1.1",
  "libc",
- "open",
- "pdf-extract",
- "png",
- "pulldown-cmark",
- "rand 0.10.3",
- "reqwest",
- "reqwest-eventsource",
- "resvg",
- "rfd",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "taffy",
- "tokio",
- "toml 1.1.2+spec-1.1.0",
- "tree-sitter",
- "tree-sitter-bash",
- "tree-sitter-c",
- "tree-sitter-cpp",
- "tree-sitter-css",
- "tree-sitter-go",
- "tree-sitter-highlight",
- "tree-sitter-html",
- "tree-sitter-java",
- "tree-sitter-javascript",
- "tree-sitter-json",
- "tree-sitter-md",
- "tree-sitter-python",
- "tree-sitter-ruby",
- "tree-sitter-rust",
- "tree-sitter-toml-ng",
- "tree-sitter-typescript",
- "tree-sitter-yaml",
- "uuid",
- "zip",
-]
-
-[[package]]
-name = "nexus-studio"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "image",
- "nexus-chat-core",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tao",
- "tokio",
- "uuid",
- "wry",
 ]
 
 [[package]]
@@ -3268,7 +3288,7 @@ checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
 dependencies = [
  "bitflags 2.13.0",
  "cfg-if",
- "cfg_aliases",
+ "cfg_aliases 0.2.1",
  "libc",
  "memoffset",
 ]
@@ -3281,7 +3301,7 @@ checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
 dependencies = [
  "bitflags 2.13.0",
  "cfg-if",
- "cfg_aliases",
+ "cfg_aliases 0.2.1",
  "libc",
 ]
 
@@ -3684,7 +3704,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.45.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4078,6 +4098,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
 
 [[package]]
+name = "portable-pty"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4a596a2b3d2752d94f51fac2d4a96737b8705dddd311a32b9af47211f08671e"
+dependencies = [
+ "anyhow",
+ "bitflags 1.3.2",
+ "downcast-rs",
+ "filedescriptor",
+ "lazy_static",
+ "libc",
+ "log",
+ "nix 0.28.0",
+ "serial2",
+ "shared_library",
+ "shell-words",
+ "winapi",
+ "winreg",
+]
+
+[[package]]
 name = "postscript"
 version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4274,7 +4315,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c1a41e437b6bbd489372cd4971de128e85c855f56c57f283d20ff016cf7c0a8"
 dependencies = [
  "bytes",
- "cfg_aliases",
+ "cfg_aliases 0.2.1",
  "pin-project-lite",
  "quinn-proto",
  "quinn-udp",
@@ -4315,7 +4356,7 @@ version = "0.5.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af66907df18639dcf4db56ca65490cabc4b27a97dbadd96f2926cca73298f016"
 dependencies = [
- "cfg_aliases",
+ "cfg_aliases 0.2.1",
  "libc",
  "once_cell",
  "socket2",
@@ -5117,6 +5158,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serial2"
+version = "0.2.39"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c924c7ef58d1fb741cfecb65b9b38a9e049841edd1e419544089f0cbb5a127e7"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "servo_arc"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5157,6 +5209,22 @@ dependencies = [
  "cpufeatures 0.3.0",
  "digest 0.11.3",
 ]
+
+[[package]]
+name = "shared_library"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a9e7e0f2bfae24d8a5b5a66c5b257a83c7412304311512a0c054cd5e619da11"
+dependencies = [
+ "lazy_static",
+ "libc",
+]
+
+[[package]]
+name = "shell-words"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc6fe69c597f9c37bfeeeeeb33da3530379845f10be461a66d16d03eca2ded77"
 
 [[package]]
 name = "shlex"
@@ -5569,7 +5637,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
@@ -6488,6 +6556,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
 
 [[package]]
+name = "vt100"
+version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb05cdd19ae8707bf6a0a269972c07e6358103a7079faec749dec318a5b3dc23"
+dependencies = [
+ "itoa",
+ "unicode-width",
+ "vte",
+]
+
+[[package]]
+name = "vte"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5924018406ce0063cd67f8e008104968b74b563ee1b85dde3ed1f7cb87d3dbd"
+dependencies = [
+ "arrayvec",
+ "memchr",
+]
+
+[[package]]
 name = "vtparse"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7340,6 +7429,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0592e1c9d151f854e6fd382574c3a0855250e1d9b2f99d9281c6e6391af352f1"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "winreg"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80d0f4e272c85def139476380b12f9ac60926689dd2e01d4923222f40580869d"
+dependencies = [
+ "winapi",
 ]
 
 [[package]]

@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
-use nexus_core::app::{App, Popup, SubagentRow, SubagentRun, SubagentStatus};
-use nexus_core::db::Db;
-use nexus_core::space::Space;
+use dugix_core::app::{App, Popup, SubagentRow, SubagentRun, SubagentStatus};
+use dugix_core::db::Db;
+use dugix_core::space::Space;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
@@ -9,7 +9,7 @@ use crate::app_view::AppView;
 
 fn app_with_session() -> AppView {
     let db = Db::open_in_memory().unwrap();
-    let root = std::env::temp_dir().join(format!("nexus-agents-test-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!("dugix-agents-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("spaces")).unwrap();
     let mut app = AppView::new(App::new(db, Some("k"), Space { root }));
     let session = app

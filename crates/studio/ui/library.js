@@ -61,7 +61,7 @@ export function libraryController({ command, toast: modeToast }) {
 
   const top = el('header', 'lib-top');
   const brand = el('div', 'brand');
-  brand.append('nexus ', el('span', '', 'studio'));
+  brand.append('dugix ', el('span', '', 'studio'));
   const openFile = button('lib-action', 'Open a file from disk', 'folder', 'Open…');
   const newDoc = button('lib-action', 'New doc', 'file-doc', 'New doc');
   const newSheet = button('lib-action', 'New sheet', 'node-table', 'New sheet');
@@ -247,7 +247,7 @@ export function libraryController({ command, toast: modeToast }) {
     if (!empty.hidden) {
       if (!state.items.length) {
         empty.append(icon('library'), el('h2', '', 'Nothing in your library yet'),
-          el('p', '', 'Decks, docs and sheets you make here, or ask nexus to draft in the conversation, collect in this list.'));
+          el('p', '', 'Decks, docs and sheets you make here, or ask dugix to draft in the conversation, collect in this list.'));
         const actions = el('div', 'lib-empty-actions');
         const doc = button('', null, 'file-doc', 'New doc'), deck = button('primary', null, 'plus', 'New deck');
         doc.addEventListener('click', () => create('doc')); deck.addEventListener('click', () => create('deck'));

@@ -323,7 +323,7 @@ Object.assign(tests, {
     await page.locator('.card.draft textarea').waitFor();
     await shot(page, 'doc-comment-composer');
     await page.locator('.card.draft textarea').fill('Is this still the right framing?');
-    await page.locator('.card.draft').getByRole('button', { name: 'Send to nexus' }).click();
+    await page.locator('.card.draft').getByRole('button', { name: 'Send to dugix' }).click();
     await page.locator('.card[data-thread^="new-"]').waitFor();
     const create = await page.evaluate(() => window.__mock.commands.find(c => c.command === 'DocCommentCreate'));
     assert.deepEqual(create.anchor, { block: 'b9', range: { start: 0, end: 15 }, quote: 'Make the report' });
@@ -405,10 +405,10 @@ Object.assign(tests, {
     assert.equal(await page.locator('.resolved-list .card').count(), 2);
     await page.evaluate(() => window.__mock.activity('t1', 'working'));
     await page.waitForTimeout(100);
-    assert.equal(await page.locator('#doc-app .status-line.link').textContent(), 'nexus is working');
+    assert.equal(await page.locator('#doc-app .status-line.link').textContent(), 'dugix is working');
     assert.match(await page.locator('#doc-app .status-dot').getAttribute('class'), /working/);
     await page.locator('.card[data-thread="t1"]').click();
-    assert.match(await page.locator('.card[data-thread="t1"] .activity').textContent(), /nexus is working/);
+    assert.match(await page.locator('.card[data-thread="t1"] .activity').textContent(), /dugix is working/);
     await page.evaluate(() => window.__mock.activity('t1', 'done', 'edited blocks b2'));
     await page.waitForTimeout(100);
     assert.match(await page.locator('.card[data-thread="t1"] .activity').textContent(), /Done/);
@@ -756,7 +756,7 @@ Object.assign(tests, {
     await page.keyboard.press('Home');
     await page.keyboard.type('Z');
     assert.ok((await input.inputValue()).includes('Z'));
-    await page.evaluate(() => localStorage.removeItem('nexus.studio.sourceVim'));
+    await page.evaluate(() => localStorage.removeItem('dugix.studio.sourceVim'));
     await page.keyboard.press('Meta+Shift+m');
     await page.locator('.source-pane').waitFor({ state: 'hidden' });
     await page.close();
@@ -1041,7 +1041,7 @@ Object.assign(tests, {
     assert.deepEqual((await sent()).at(-1), { command: 'ExportAs', format: 'md' });
     await page.getByRole('button', { name: 'Export' }).click();
     await page.locator('.export-pop').getByRole('menuitemcheckbox', { name: /without asking/ }).click();
-    assert.equal(await page.evaluate(() => localStorage.getItem('nexus-quick-export')), '1');
+    assert.equal(await page.evaluate(() => localStorage.getItem('dugix-quick-export')), '1');
     assert.equal(await page.locator('.export-pop').getByRole('menuitemcheckbox', { name: /without asking/ }).getAttribute('aria-checked'), 'true');
     await page.locator('.export-pop .menu-row', { hasText: 'PDF' }).click();
     await page.locator('.doc-toast', { hasText: 'Exported q3-strategy.pdf' }).waitFor();
@@ -1057,7 +1057,7 @@ Object.assign(tests, {
     assert.deepEqual((await sent()).at(-1), { command: 'PickTemplate' });
     assert.ok(!(await page.evaluate(() => window.__mock.commands.some(c => c.command === 'ImportTemplateData'))), 'no bytes travel through the page');
     // Cancelling every dialog does nothing: no toast, no change.
-    await page.evaluate(() => { localStorage.removeItem('nexus-quick-export'); window.__library.state.cancel = true; document.querySelector('.doc-toast').hidden = true; });
+    await page.evaluate(() => { localStorage.removeItem('dugix-quick-export'); window.__library.state.cancel = true; document.querySelector('.doc-toast').hidden = true; });
     await page.getByRole('button', { name: 'Export' }).click();
     await page.locator('.export-pop .menu-row', { hasText: 'Word' }).click();
     await page.waitForFunction(() => window.__library.commands.filter(c => c.command === 'ExportAs').length === 2);

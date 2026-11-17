@@ -7,11 +7,11 @@ too); secrets live in the OS keychain.
 
 ## Goal
 
-Connect nexus to outside services the way Claude, ChatGPT and Cursor do:
+Connect dugix to outside services the way Claude, ChatGPT and Cursor do:
 add a connector (a URL for a hosted server, or a command for a local one),
 sign in once, and its tools become available to the model in every space,
 in chat and agent mode. Existing MCP configs from Claude Desktop, Claude
-Code and Cursor import with one command. Later the `nexus host` shares the
+Code and Cursor import with one command. Later the `dugix host` shares the
 same connectors with the web app.
 
 ## Protocol support
@@ -24,7 +24,7 @@ MCP's current revision is **2026-07-28**, which is stateless: no
 round-trip requests (`input_required`). Most deployed servers still speak
 **2025-11-25 / 2025-06-18 / 2025-03-26** (initialize handshake, sessions).
 
-nexus implements its own small client (no SDK dependency; the protocol is
+dugix implements its own small client (no SDK dependency; the protocol is
 JSON-RPC over two transports) that speaks both:
 
 1. Call `server/discover`. If the server answers, use 2026-07-28 rules.
@@ -73,11 +73,11 @@ create_issue = "ask"                       # ask | allow | deny (overrides)
   charset, ≤ 64 chars, collisions get a numeric suffix).
 - Secrets never appear in config.toml when a keychain exists: OAuth tokens,
   client credentials and bearer tokens are stored with the `keyring`
-  crate under service `nexus-chat`, account `connector:<name>:<kind>`,
+  crate under service `dugix`, account `connector:<name>:<kind>`,
   keyed by the authorization server's issuer as the spec requires. Where no
   keychain is available, they fall back to config.toml (0600) with a
   one-time warning.
-- `nexus connectors import` reads Claude Desktop
+- `dugix connectors import` reads Claude Desktop
   (`claude_desktop_config.json`), Claude Code (`~/.claude.json` and
   project `.mcp.json`) and Cursor (`~/.cursor/mcp.json`) server entries,
   shows them, and adds the chosen ones (secrets in their `env`/`headers`
@@ -92,7 +92,7 @@ OAuth 2.1 as the MCP authorization spec requires:
   authorization server metadata (RFC 8414 / OpenID discovery).
 - Client registration, in order: a pre-registered client id from config;
   **Client ID Metadata Document** (client_id is an https URL serving
-  nexus's client metadata — `token_endpoint_auth_method: none`, loopback
+  dugix's client metadata — `token_endpoint_auth_method: none`, loopback
   redirect URIs; hosting it needs a public URL, see open questions);
   Dynamic Client Registration (RFC 7591, deprecated but still the most
   widely deployed) with `application_type: native`.
@@ -143,8 +143,8 @@ OAuth 2.1 as the MCP authorization spec requires:
 - `/connectors` popup: list (status dot: connected, needs sign-in, error,
   disabled), add (URL or command), sign in / out, enable / disable, tools
   list with per-tool allow / ask / deny, last error and the log path.
-- CLI: `nexus connectors list|add|remove|login|logout|import|tools`.
-- `nexus host` (later): connectors run on the host; the web app sees them
+- CLI: `dugix connectors list|add|remove|login|logout|import|tools`.
+- `dugix host` (later): connectors run on the host; the web app sees them
   through the host API with the same approval rules (approvals from the web
   follow `docs/web-editors.md` §3).
 
@@ -204,7 +204,7 @@ Notes where the implementation settled a detail the design left open:
 ## Open questions
 
 - A public URL for the Client ID Metadata Document (e.g. a file served from
-  the project's GitHub Pages). Until it exists, nexus uses DCR or
+  the project's GitHub Pages). Until it exists, dugix uses DCR or
   pre-registered client ids.
 - A curated directory of popular connectors (URL + auth notes) in
   `/connectors` → "Browse", or leave discovery to the user.
