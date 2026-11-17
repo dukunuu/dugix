@@ -970,10 +970,7 @@ async fn proxy_app(
         .request(method, target)
         .body(request.body.clone());
     for (name, value) in &request.headers {
-        if is_hop_by_hop(name)
-            || name == "cookie"
-            || name == "x-dugix-token"
-        {
+        if is_hop_by_hop(name) || name == "cookie" || name == "x-dugix-token" {
             continue;
         }
         let Ok(header_name) = reqwest::header::HeaderName::from_bytes(name.as_bytes()) else {
